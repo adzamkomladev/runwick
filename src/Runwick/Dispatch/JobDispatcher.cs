@@ -165,7 +165,7 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
             _ => ex,
         };
 
-    Exception Rejection(StoreStatus status, StoreError? error, DateTimeOffset decidedAt, DispatchOperationId operationId,
+    internal static Exception Rejection(StoreStatus status, StoreError? error, DateTimeOffset decidedAt, DispatchOperationId operationId,
         DateTimeOffset notAfter, PreparedDispatch? prepared, PreparedBatch? batch)
     {
         var code = error?.Code ?? status.ToString();

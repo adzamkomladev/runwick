@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Npgsql;
 using NpgsqlTypes;
 using Runwick.Protocol;
 using Runwick.Serialization;
@@ -11,38 +12,56 @@ internal sealed partial class PgStore
     const string ActiveKind = "active";
 
     public Task<StoreReply<DispatchResult>> DispatchAsync(StoreCommand<DispatchRequest> command, CancellationToken ct) =>
-        runner.ExecuteAsync(
-            Op(command.Application, command.CommandId, Operations.Dispatch, command.NotAfter, command.Body.CommandFingerprint, PgLane.Producer, command.Body.StoreId),
-            async tx =>
-            {
-                var outcome = await DispatchCoreAsync(tx, [command.Body.Item], continueOnConflict: false).ConfigureAwait(false);
-                if (outcome.Rejection is { } rejection)
-                {
-                    return new PgOutcome<DispatchResult>.Rollback(StoreReply<DispatchResult>.NoEffect(rejection.Status, rejection.Error, tx.Now));
-                }
-
-                var result = outcome.Items[0].Result!;
-                return new PgOutcome<DispatchResult>.Commit(StoreReply<DispatchResult>.Applied(result, tx.Now), ReceiptCodec.Dispatch(result));
-            },
-            (tx, row) => Task.FromResult(StoreReply<DispatchResult>.Applied(ReceiptCodec.ReadDispatch(row.Result!), row.DecidedAt!.Value, replayed: true)),
-            ct);
+        runner.ExecuteAsync(DispatchOp(command), DispatchBody(command), DispatchReplay, ct);
 
     public Task<StoreReply<DispatchBatchResult>> DispatchManyAsync(StoreCommand<DispatchBatchRequest> command, CancellationToken ct) =>
-        runner.ExecuteAsync(
-            Op(command.Application, command.CommandId, Operations.DispatchMany, command.NotAfter, command.Body.CommandFingerprint, PgLane.Producer, command.Body.StoreId),
-            async tx =>
-            {
-                var outcome = await DispatchCoreAsync(tx, command.Body.Items, command.Body.ContinueOnConflict).ConfigureAwait(false);
-                if (outcome.Rejection is { } rejection)
-                {
-                    return new PgOutcome<DispatchBatchResult>.Rollback(StoreReply<DispatchBatchResult>.NoEffect(rejection.Status, rejection.Error, tx.Now));
-                }
+        runner.ExecuteAsync(DispatchManyOp(command), DispatchManyBody(command), DispatchManyReplay, ct);
 
-                var result = new DispatchBatchResult(outcome.Items);
-                return new PgOutcome<DispatchBatchResult>.Commit(StoreReply<DispatchBatchResult>.Applied(result, tx.Now), ReceiptCodec.DispatchMany(result));
-            },
-            (tx, row) => Task.FromResult(StoreReply<DispatchBatchResult>.Applied(ReceiptCodec.ReadDispatchMany(row.Result!), row.DecidedAt!.Value, replayed: true)),
-            ct);
+    /// <summary>Dispatch/1 on a caller-owned transaction (01 §15, 04 §6.1).</summary>
+    public Task<StoreReply<DispatchResult>> StageDispatchAsync(NpgsqlTransaction transaction, StoreCommand<DispatchRequest> command, CancellationToken ct) =>
+        runner.StageAsync(transaction, DispatchOp(command), DispatchBody(command), DispatchReplay, ct);
+
+    /// <summary>DispatchMany/1 on a caller-owned transaction.</summary>
+    public Task<StoreReply<DispatchBatchResult>> StageDispatchManyAsync(NpgsqlTransaction transaction, StoreCommand<DispatchBatchRequest> command, CancellationToken ct) =>
+        runner.StageAsync(transaction, DispatchManyOp(command), DispatchManyBody(command), DispatchManyReplay, ct);
+
+    PgOp DispatchOp(StoreCommand<DispatchRequest> command) =>
+        Op(command.Application, command.CommandId, Operations.Dispatch, command.NotAfter, command.Body.CommandFingerprint, PgLane.Producer, command.Body.StoreId);
+
+    PgOp DispatchManyOp(StoreCommand<DispatchBatchRequest> command) =>
+        Op(command.Application, command.CommandId, Operations.DispatchMany, command.NotAfter, command.Body.CommandFingerprint, PgLane.Producer, command.Body.StoreId);
+
+    Func<PgTx, Task<PgOutcome<DispatchResult>>> DispatchBody(StoreCommand<DispatchRequest> command) =>
+        async tx =>
+        {
+            var outcome = await DispatchCoreAsync(tx, [command.Body.Item], continueOnConflict: false).ConfigureAwait(false);
+            if (outcome.Rejection is { } rejection)
+            {
+                return new PgOutcome<DispatchResult>.Rollback(StoreReply<DispatchResult>.NoEffect(rejection.Status, rejection.Error, tx.Now));
+            }
+
+            var result = outcome.Items[0].Result!;
+            return new PgOutcome<DispatchResult>.Commit(StoreReply<DispatchResult>.Applied(result, tx.Now), ReceiptCodec.Dispatch(result));
+        };
+
+    Func<PgTx, Task<PgOutcome<DispatchBatchResult>>> DispatchManyBody(StoreCommand<DispatchBatchRequest> command) =>
+        async tx =>
+        {
+            var outcome = await DispatchCoreAsync(tx, command.Body.Items, command.Body.ContinueOnConflict).ConfigureAwait(false);
+            if (outcome.Rejection is { } rejection)
+            {
+                return new PgOutcome<DispatchBatchResult>.Rollback(StoreReply<DispatchBatchResult>.NoEffect(rejection.Status, rejection.Error, tx.Now));
+            }
+
+            var result = new DispatchBatchResult(outcome.Items);
+            return new PgOutcome<DispatchBatchResult>.Commit(StoreReply<DispatchBatchResult>.Applied(result, tx.Now), ReceiptCodec.DispatchMany(result));
+        };
+
+    static Task<StoreReply<DispatchResult>> DispatchReplay(PgTx tx, ReceiptRow row) =>
+        Task.FromResult(StoreReply<DispatchResult>.Applied(ReceiptCodec.ReadDispatch(row.Result!), row.DecidedAt!.Value, replayed: true));
+
+    static Task<StoreReply<DispatchBatchResult>> DispatchManyReplay(PgTx tx, ReceiptRow row) =>
+        Task.FromResult(StoreReply<DispatchBatchResult>.Applied(ReceiptCodec.ReadDispatchMany(row.Result!), row.DecidedAt!.Value, replayed: true));
 
     sealed class KeyState(Guid? bound, byte[]? business, byte[]? policy, int? version, DateTimeOffset? expires)
     {

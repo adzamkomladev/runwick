@@ -51,7 +51,12 @@ async Task<JsonObject> RunAsync(string cmd, JsonObject m)
         case "open":
             var max = m["maxExecutions"]?.GetValue<int>() ?? 3;
             client = await TestClient.CreateAsync(m["cs"]!.GetValue<string>(), m["app"]!.GetValue<string>(), faults,
-                r => TestJobs.Register(r, max)).ConfigureAwait(false);
+                r =>
+                {
+                    TestJobs.Register(r, max);
+                    // Concurrent peer commands queue behind the 2-call admission limit; under suite load 1 s is too short.
+                    r.Producer(o => o.AdmissionWait = TimeSpan.FromSeconds(20));
+                }).ConfigureAwait(false);
             return new JsonObject { ["identity"] = identity, ["pid"] = Environment.ProcessId, ["workerInstanceId"] = client.WorkerInstanceId.ToString("D") };
         case "dispatch":
             var kind = m["job"]?.GetValue<string>() ?? "ping";
@@ -60,10 +65,22 @@ async Task<JsonObject> RunAsync(string cmd, JsonObject m)
             {
                 "keyed" => new KeyedJob(jobId, m["key"]!.GetValue<string>()),
                 "resource" => new ResourceJob(jobId, m["key"]!.GetValue<string>()),
+                "capped" => new CappedJob(jobId),
+                "pair" => new PairJob(jobId, m["key"]!.GetValue<string>(), m["key2"]!.GetValue<string>()),
                 _ => new PingJob(jobId),
             };
-            var receipt = await Dispatch(job).ConfigureAwait(false);
-            return new JsonObject { ["jobId"] = receipt.JobId.Value.ToString("D"), ["disposition"] = receipt.Disposition.ToString() };
+            return ReceiptJson(await Dispatch(job).ConfigureAwait(false));
+        case "dispatchPrepared":
+            // The same PreparedDispatch (operation ID, body, NotAfter) imported from the local process's envelope.
+            var imported = C().Prepared.ImportPrepared(Convert.FromBase64String(m["envelope"]!.GetValue<string>()));
+            try
+            {
+                return ReceiptJson(await C().Prepared.DispatchAsync(imported).ConfigureAwait(false));
+            }
+            catch (RunwickException ex)
+            {
+                return new JsonObject { ["error"] = ex.Code, ["disposition"] = ex.Disposition.ToString() };
+            }
         case "reserve":
             var reserved = await C().ReserveAsync(m["queue"]?.GetValue<string>() ?? "default", m["priority"]?.GetValue<string>() ?? "medium",
                 TimeSpan.FromMilliseconds(m["leaseMs"]?.GetValue<long>() ?? 30_000)).ConfigureAwait(false);
@@ -96,6 +113,9 @@ async Task<JsonObject> RunAsync(string cmd, JsonObject m)
             var expired = new ExpiredLease(Guid.Parse(m["jobId"]!.GetValue<string>()), Guid.Parse(m["attemptId"]!.GetValue<string>()),
                 Guid.Parse(m["ownershipToken"]!.GetValue<string>()), "", default);
             return PeerJson.Reply(await C().RecoverAsync(expired).ConfigureAwait(false));
+        case "conflicts":
+            // Transient conflicts (40P01/40001/55P03) this process's runner has observed: deadlock-freedom evidence.
+            return new JsonObject { ["count"] = ((Runwick.Postgres.Store.PgRunner)C().Services.GetService(typeof(Runwick.Postgres.Store.PgRunner))!).TransientConflicts };
         case "armFault":
             faults.Arm(m);
             return [];
@@ -110,12 +130,21 @@ async Task<JsonObject> RunAsync(string cmd, JsonObject m)
     }
 }
 
+static JsonObject ReceiptJson(DispatchReceipt receipt) => new()
+{
+    ["jobId"] = receipt.JobId.Value.ToString("D"),
+    ["disposition"] = receipt.Disposition.ToString(),
+    ["match"] = receipt.DuplicateMatch.ToString(),
+};
+
 TestClient C() => client ?? throw new InvalidOperationException("send 'open' first");
 
 Task<DispatchReceipt> Dispatch(IQueueJob job) => job switch
 {
     KeyedJob k => C().Dispatcher.DispatchAsync(k),
     ResourceJob r => C().Dispatcher.DispatchAsync(r),
+    CappedJob cj => C().Dispatcher.DispatchAsync(cj),
+    PairJob pj => C().Dispatcher.DispatchAsync(pj),
     PingJob p => C().Dispatcher.DispatchAsync(p),
     _ => throw new ArgumentOutOfRangeException(nameof(job)),
 };

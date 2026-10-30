@@ -156,6 +156,23 @@ internal sealed class DriverFixture : IAsyncDisposable
         }
     }
 
+    /// <summary>Reads one scalar with admin SQL (assertions only).</summary>
+    public async Task<long> CountAsync(string sql, params (string Name, object Value)[] parameters)
+    {
+        var conn = new NpgsqlConnection(AdminConnectionString);
+        await using (conn.ConfigureAwait(false))
+        {
+            await conn.OpenAsync().ConfigureAwait(false);
+            using var cmd = new NpgsqlCommand(sql, conn);
+            foreach (var (name, value) in parameters)
+            {
+                cmd.Parameters.AddWithValue(name, value);
+            }
+
+            return Convert.ToInt64(await cmd.ExecuteScalarAsync().ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
+        }
+    }
+
     /// <summary>Runs admin SQL against the per-test database (setup only; never used to fake protocol effects under test).</summary>
     public async Task ExecAsync(string sql, params (string Name, object Value)[] parameters)
     {

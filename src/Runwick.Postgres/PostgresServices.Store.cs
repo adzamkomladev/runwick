@@ -22,5 +22,6 @@ internal static partial class PostgresServices
         services.AddSingleton(sp => new PgStore(
             sp.GetRequiredService<PgDataSources>(), sp.GetRequiredService<PgRunner>(), sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton<IRunwickStore>(sp => sp.GetRequiredService<PgStore>());
+        services.AddSingleton<IPostgresJobDispatcher, PostgresJobDispatcher>();
     }
 }

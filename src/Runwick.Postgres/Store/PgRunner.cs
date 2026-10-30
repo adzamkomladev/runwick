@@ -16,7 +16,12 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
     const int MaxTransientRetries = 3;
     static readonly TimeSpan DefaultBudget = TimeSpan.FromSeconds(5);
 
+    long _transientConflicts;
+
     public IFaultInjector Faults => faults;
+
+    /// <summary>40P01/40001/55P03 rollbacks observed by this runner (each retried or surfaced); deadlock-freedom evidence for tests.</summary>
+    public long TransientConflicts => Interlocked.Read(ref _transientConflicts);
 
     /// <summary>Known store identity (from Describe); gates compare against it.</summary>
     public Guid? StoreId { get; set; }
@@ -42,6 +47,16 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
                     var nominal = Math.Min(1000, 100 << attempt);
                     var delay = (nominal + 1) / 2 + RandomNumberGenerator.GetInt32(nominal / 2 + 1);
                     await Task.Delay(TimeSpan.FromMilliseconds(delay), time, ct).ConfigureAwait(false);
+                }
+                catch (TransientConflictException) when (time.GetUtcNow() >= op.NotAfter)
+                {
+                    // A lock wait outlived NotAfter: rolled back, and the receipt protocol rejects any later
+                    // application of this command, so the outcome is known (03 §1.3, CMD-04).
+                    return StoreReply<T>.NoEffect(StoreStatus.CommandExpired, new StoreError("command_expired"), PgTime.Floor(time.GetUtcNow()));
+                }
+                catch (StoreNotAppliedException ex) when (ex.Code == "statement_timeout" && time.GetUtcNow() >= op.NotAfter)
+                {
+                    return StoreReply<T>.NoEffect(StoreStatus.CommandExpired, new StoreError("command_expired"), PgTime.Floor(time.GetUtcNow()));
                 }
                 catch (TransientConflictException ex)
                 {
@@ -82,23 +97,7 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
                 await SetTimeoutsAsync(tx, op).ConfigureAwait(false);
                 await tx.Fault(FaultPoint.BeforeGateLock).ConfigureAwait(false);
 
-                if (await CheckGatesAsync<T>(tx).ConfigureAwait(false) is { } gateReply)
-                {
-                    await transaction.RollbackAsync(ct).ConfigureAwait(false);
-                    return gateReply;
-                }
-
-                if (op.HasReceipt)
-                {
-                    var receipt = await AcquireReceiptAsync<T>(tx, replay).ConfigureAwait(false);
-                    if (receipt is not null)
-                    {
-                        await transaction.RollbackAsync(ct).ConfigureAwait(false);
-                        return receipt;
-                    }
-                }
-
-                var outcome = await body(tx).ConfigureAwait(false);
+                var outcome = await ProtocolAsync(tx, body, replay).ConfigureAwait(false);
                 if (outcome is PgOutcome<T>.Rollback rollback)
                 {
                     await transaction.RollbackAsync(ct).ConfigureAwait(false);
@@ -106,11 +105,6 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
                 }
 
                 var commit = (PgOutcome<T>.Commit)outcome;
-                if (op.HasReceipt)
-                {
-                    await FinalizeReceiptAsync(tx, commit).ConfigureAwait(false);
-                }
-
                 await tx.Fault(FaultPoint.BeforeCommit).ConfigureAwait(false);
                 commitSent = true;
                 await transaction.CommitAsync(ct).ConfigureAwait(false);
@@ -119,6 +113,7 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
             }
             catch (PostgresException ex) when (ex.SqlState is "40P01" or "40001" or "55P03")
             {
+                Interlocked.Increment(ref _transientConflicts);
                 throw new TransientConflictException(ex);
             }
             catch (InjectedFaultException ex) when (!commitSent && ex.Kind is "Deadlock40P01" or "Serialization40001")
@@ -155,6 +150,85 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
                 }
             }
         }
+    }
+
+    /// <summary>Gates, receipt acquisition, body and receipt finalization (no BEGIN/COMMIT): shared by driver-owned runs and staging.</summary>
+    async Task<PgOutcome<T>> ProtocolAsync<T>(
+        PgTx tx,
+        Func<PgTx, Task<PgOutcome<T>>> body,
+        Func<PgTx, ReceiptRow, Task<StoreReply<T>>>? replay) where T : class
+    {
+        if (await CheckGatesAsync<T>(tx).ConfigureAwait(false) is { } gateReply)
+        {
+            return new PgOutcome<T>.Rollback(gateReply);
+        }
+
+        if (tx.Op.HasReceipt && await AcquireReceiptAsync<T>(tx, replay).ConfigureAwait(false) is { } receipt)
+        {
+            return new PgOutcome<T>.Rollback(receipt);
+        }
+
+        var outcome = await body(tx).ConfigureAwait(false);
+        if (outcome is PgOutcome<T>.Commit commit && tx.Op.HasReceipt)
+        {
+            await FinalizeReceiptAsync(tx, commit).ConfigureAwait(false);
+        }
+
+        return outcome;
+    }
+
+    /// <summary>
+    /// Caller-owned staging (04 §6.1): the same statements on the caller's transaction, inside a savepoint so a
+    /// rejection leaves the caller's transaction as it was. Never begins, commits, rolls back or retries the
+    /// caller's transaction; PostgreSQL errors (40001/40P01/...) propagate unchanged.
+    /// </summary>
+    public async Task<StoreReply<T>> StageAsync<T>(
+        NpgsqlTransaction transaction,
+        PgOp op,
+        Func<PgTx, Task<PgOutcome<T>>> body,
+        Func<PgTx, ReceiptRow, Task<StoreReply<T>>>? replay,
+        CancellationToken ct) where T : class
+    {
+        const string Savepoint = "runwick_stage";
+        var connection = transaction.Connection ?? throw new StagingValidationException("transaction_invalid", "The transaction is completed or has no connection.");
+        var tx = new PgTx(connection, transaction, op, faults, ct);
+        string? readOnly;
+        try
+        {
+            using var ro = tx.Sql("SELECT current_setting('transaction_read_only')");
+            readOnly = (string?)await ro.ExecuteScalarAsync(ct).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Npgsql: completed transaction or closed connection.
+            throw new StagingValidationException("transaction_invalid", ex.Message);
+        }
+
+        if (readOnly == "on")
+        {
+            throw new StagingValidationException("transaction_invalid", "The transaction is read-only.");
+        }
+
+        await transaction.SaveAsync(Savepoint, ct).ConfigureAwait(false);
+        PgOutcome<T> outcome;
+        try
+        {
+            outcome = await ProtocolAsync(tx, body, replay).ConfigureAwait(false);
+        }
+        catch (InvariantViolationException ex)
+        {
+            await transaction.RollbackAsync(Savepoint, ct).ConfigureAwait(false);
+            return StoreReply<T>.NoEffect(StoreStatus.InvariantFault, new StoreError(ex.Code), time.GetUtcNow());
+        }
+
+        if (outcome is PgOutcome<T>.Rollback rollback)
+        {
+            await transaction.RollbackAsync(Savepoint, ct).ConfigureAwait(false);
+            return rollback.Reply;
+        }
+
+        await transaction.ReleaseAsync(Savepoint, ct).ConfigureAwait(false);
+        return ((PgOutcome<T>.Commit)outcome).Reply;
     }
 
     static StoreReply<T> Classify<T>(PgOp op, PostgresException ex) where T : class
@@ -373,4 +447,10 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
     }
 
     sealed class TransientConflictException(Exception inner) : Exception("transient conflict", inner);
+}
+
+/// <summary>The caller's transaction cannot host staging (01 §15); mapped to TransactionValidationException.</summary>
+internal sealed class StagingValidationException(string code, string message) : Exception(message)
+{
+    public string Code { get; } = code;
 }
