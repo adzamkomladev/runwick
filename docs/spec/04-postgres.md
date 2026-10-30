@@ -46,6 +46,17 @@ Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retent
 | P-16 | Readiness probe and expired-lease listing are single statements that take the store gate `FOR SHARE` in a CTE (one round trip each). |
 | P-17 | Receipt cleanup (SP-021, not M2) shape is fixed here so the G-1 harness `PruneReceipts` uses the production predicate (§7.16). |
 
+### Implementation choices (2026-10-30, SP-005 implementation)
+
+| ID | Choice |
+|---|---|
+| P-18 | Public deployment API: `RunwickPostgresMigrations.MigrateAsync(connectionString, ct)` returns `PostgresMigrationResult(StoreId, SchemaRevision, AppliedPhases)`; failures throw `PostgresMigrationException` with `Code` ∈ `store_unavailable`, `server_version_unsupported`, `encoding_unsupported`, `standard_conforming_strings_off`, `migration_lock_unavailable`, `schema_not_empty`, `migration_checksum_mismatch`, `schema_validation_failed`, `migration_lock_timeout`, `migration_phase_failed`. The `0001_grants` step (§9.3) is not shipped in M2: the migration and runtime roles may be the same role; grants arrive with SP-021/SP-033. |
+| P-19 | The §8.3 expected-object list is derived at build time from the embedded `0001_initial.sql` (table, index and named-constraint declarations), so the binary and its DDL cannot drift. |
+| P-20 | `ReadinessProbe/1` and `ListExpiredLeases/1` validate the gate columns read-only: a store-identity or schema-revision/epoch mismatch throws `StoreIncompatibleException`; `maintenance` mode returns an empty result (no work, no recovery). |
+| P-21 | `PublishPresence/1` with a non-increasing `presence_sequence` returns `PresenceAck(Accepted = false)` and commits nothing. |
+| P-22 | Store-side bound checks (03 I-6) run before any SQL: LeaseDuration 1 s–1 h and 1–512 contracts for Reserve/Renew/Probe; Dispatch item policy bounds and ≤ 8 scopes return `InvalidRequest` `invalid_request`; a negative `RequestedRetryDelay` returns `InvalidRequest` `requested_delay_invalid`. |
+| P-23 | Statement row-count violations inside a transaction (e.g. §7.10 "exactly one row") raise an internal invariant exception that the runner maps to `InvariantFault` `invalid_transition` with rollback and no receipt. |
+
 ---
 
 ## 1. Targets and boundaries

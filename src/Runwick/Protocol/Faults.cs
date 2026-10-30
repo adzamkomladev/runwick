@@ -27,16 +27,18 @@ internal enum FaultAction
 /// </summary>
 internal interface IFaultInjector
 {
-    /// <summary>Called at <paramref name="point"/> of <paramref name="operation"/>.</summary>
-    ValueTask OnAsync(FaultPoint point, string operation, Guid commandId, CancellationToken cancellationToken);
+    /// <summary>Called at <see cref="FaultContext.Point"/> of a store command.</summary>
+    ValueTask OnAsync(FaultContext context, CancellationToken cancellationToken);
 }
+
+/// <summary>Where a store command is: point, operation, command, and the 1-based mutation step (AfterMutation only).</summary>
+internal readonly record struct FaultContext(FaultPoint Point, string Operation, Guid CommandId, string Application, int Step = 0);
 
 internal sealed class NullFaultInjector : IFaultInjector
 {
     public static readonly NullFaultInjector Instance = new();
 
-    public ValueTask OnAsync(FaultPoint point, string operation, Guid commandId, CancellationToken cancellationToken) =>
-        ValueTask.CompletedTask;
+    public ValueTask OnAsync(FaultContext context, CancellationToken cancellationToken) => ValueTask.CompletedTask;
 }
 
 /// <summary>Thrown by a fault injector to simulate a reply lost after a successful commit.</summary>
@@ -44,8 +46,11 @@ internal sealed class InjectedReplyLossException(string operation)
     : IOException($"Injected reply loss after commit of {operation}.");
 
 /// <summary>Thrown by a fault injector at a point before commit.</summary>
-internal sealed class InjectedFaultException(FaultPoint point, string operation)
-    : Exception($"Injected fault at {point} of {operation}.")
+internal sealed class InjectedFaultException(FaultPoint point, string operation, string kind = "Transient")
+    : Exception($"Injected {kind} fault at {point} of {operation}.")
 {
     public FaultPoint Point { get; } = point;
+
+    /// <summary><c>Transient</c>, <c>Io</c>, <c>Deadlock40P01</c> or <c>Serialization40001</c>.</summary>
+    public string Kind { get; } = kind;
 }

@@ -1,5 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <InternalsVisibleTo Include="Runwick.Core.Tests" />
+    <InternalsVisibleTo Include="Runwick.Postgres.Tests" />
+    <InternalsVisibleTo Include="Runwick.Harness.Peer" />
+    <InternalsVisibleTo Include="Runwick.Workloads" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Runwick.Postgres\Runwick.Postgres.csproj" />
     <ProjectReference Include="..\Runwick.ReferenceModel\Runwick.ReferenceModel.csproj" />
   </ItemGroup>

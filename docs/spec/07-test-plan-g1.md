@@ -30,6 +30,7 @@ Contradictions resolved and implementation choices made while consolidating the 
 | I-11 | Implementation choice | P-01 arrivals are an open-loop Poisson process with a recorded seed. P-02 ramp steps and saturation rule are defined in §14.3. |
 | I-12 | Implementation choice | CMD-06, UNI-04, CAP-01, CAP-10, CAP-11, PGX-04, PGX-09, SER-06 and TIME-06 have sub-parts that depend on later items (rates, manual retry, retention cleanup, autoscaler, other drivers). Those sub-parts are reported `not-applicable` with the named later SP; every other sub-part is mandatory. |
 | I-13 | Implementation choice | SER-12 bounds: allocation for preparing a payload of size *n* is linear (ratio at 1 MiB vs 512 KiB ≤ 2.2) and an over-limit input is rejected before more than limit + 64 KiB is buffered. |
+| I-14 | Implementation choice (2026-10-30, SP-003/SP-005) | Harness shapes: `ArmFault(point, FaultSpec, FaultTarget, times)` returns a `FaultHandle` whose barrier is awaited/released through `WaitAtBarrier(handle)` / `ReleaseBarrier(handle)`; `OpenClient("local")` builds an in-process client over the real `AddRunwick(...).UsePostgres(...)` service graph with the harness fault injector; peers are opened with `PeerClient`. Each per-test database cloned from `rw_template` receives a fresh `store_id`. Test projects run under VSTest (`IsTestingPlatformApplication=false`) so trait filters work. |
 
 ## 1. Test suites and projects
 

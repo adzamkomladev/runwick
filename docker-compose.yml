@@ -5,5 +5,6 @@ services:
       POSTGRES_PASSWORD: pg
       POSTGRES_DB: rw
     ports:
-      - "5432:5432"
-    command: ["postgres", "-c", "fsync=on", "-c", "synchronous_commit=on"]
+      # Bound to loopback on a non-default port so it does not collide with other local PostgreSQL servers.
+      - "127.0.0.1:55499:5432"
+    command: ["postgres", "-c", "fsync=on", "-c", "synchronous_commit=on", "-c", "full_page_writes=on", "-c", "max_connections=300"]

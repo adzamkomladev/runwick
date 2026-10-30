@@ -3,5 +3,8 @@
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- Test projects run under VSTest (xunit.runner.visualstudio) so dotnet test trait filters (Item=SP-00x) work on the .NET 10 SDK. -->
+    <IsTestingPlatformApplication>false</IsTestingPlatformApplication>
+    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
   </PropertyGroup>
 </Project>
