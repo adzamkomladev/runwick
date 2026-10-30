@@ -86,14 +86,17 @@ internal sealed class LocalCapacityGate(int target)
         }
     }
 
-    internal void Release()
+    internal void Release(bool refill)
     {
         lock (_lock)
         {
             _outstanding--;
         }
 
-        Released?.Invoke();
+        if (refill)
+        {
+            Released?.Invoke();
+        }
     }
 }
 
@@ -104,11 +107,20 @@ internal sealed class CapacityTicket(LocalCapacityGate gate)
 
     public bool IsReleased => Volatile.Read(ref _released) == 1;
 
-    public void Release()
+    /// <summary>Released by a retiring holder: raises the refill wake.</summary>
+    public void Release() => Release(refill: true);
+
+    /// <summary>
+    /// Returned unused by the opportunity loop (no reservation came of it): no refill wake, which would otherwise end
+    /// the loop's own idle backoff at once and turn an idle pool into a probe loop.
+    /// </summary>
+    public void Return() => Release(refill: false);
+
+    void Release(bool refill)
     {
         if (Interlocked.Exchange(ref _released, 1) == 0)
         {
-            gate.Release();
+            gate.Release(refill);
         }
     }
 }

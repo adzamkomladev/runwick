@@ -95,6 +95,23 @@ internal static class SnapshotReader
         _ => value.ToString() ?? "",
     };
 
+    /// <summary>Only the ReferenceModel view, in one REPEATABLE READ snapshot (workload end checks over large stores).</summary>
+    public static async Task<StoreSnapshot> ReadModelAsync(string connectionString)
+    {
+        var conn = new NpgsqlConnection(connectionString);
+        await using (conn.ConfigureAwait(false))
+        {
+            await conn.OpenAsync().ConfigureAwait(false);
+            var tx = await conn.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead).ConfigureAwait(false);
+            await using (tx.ConfigureAwait(false))
+            {
+                using var now = new NpgsqlCommand("SELECT clock_timestamp()", conn, tx);
+                var readAt = new DateTimeOffset(DateTime.SpecifyKind((DateTime)(await now.ExecuteScalarAsync().ConfigureAwait(false))!, DateTimeKind.Utc));
+                return await ReadModelAsync(conn, tx, readAt).ConfigureAwait(false);
+            }
+        }
+    }
+
     static async Task<StoreSnapshot> ReadModelAsync(NpgsqlConnection conn, NpgsqlTransaction tx, DateTimeOffset readAt)
     {
         static DateTimeOffset T(NpgsqlDataReader r, int i) => new(DateTime.SpecifyKind(r.GetDateTime(i), DateTimeKind.Utc));

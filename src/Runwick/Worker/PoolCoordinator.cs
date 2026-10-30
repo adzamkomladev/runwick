@@ -80,7 +80,7 @@ internal sealed class PoolCoordinator
             }
             catch (Exception ex) when (!stop.IsCancellationRequested)
             {
-                ticket.Release();
+                ticket.Return();
                 _engine.Logger.LogDebug(ex, "Runwick readiness probe failed.");
                 await IdleAsync(stop).ConfigureAwait(false);
                 continue;
@@ -102,7 +102,7 @@ internal sealed class PoolCoordinator
             var choice = Selector.Choose(ages, now);
             if (choice is null)
             {
-                ticket.Release();
+                ticket.Return();
                 if (ages.Count == 0)
                 {
                     // Nothing claimable in this hint: the next opportunity probes afresh.
@@ -153,7 +153,7 @@ internal sealed class PoolCoordinator
             {
                 // Control stop with the claim unresolved: recorded; any reservation is left to recovery.
                 _engine.Diagnose($"unresolved claim at control stop in pool {Settings.Name}");
-                ticket.Release();
+                ticket.Return();
                 return false;
             }
 
@@ -165,7 +165,7 @@ internal sealed class PoolCoordinator
             }
 
             Selector.OnNotApplied(choice);
-            ticket.Release();
+            ticket.Return();
             switch (reply.Status)
             {
                 case StoreStatus.NoWork:

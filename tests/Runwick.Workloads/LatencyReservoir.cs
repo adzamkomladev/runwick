@@ -7,6 +7,7 @@ public sealed class LatencyReservoir(int capacity = 100_000, int seed = 17)
     readonly Random _random = new(seed);
     readonly Lock _gate = new();
     long _count;
+    double _sum;
     double _min = double.MaxValue;
     double _max;
 
@@ -17,6 +18,7 @@ public sealed class LatencyReservoir(int capacity = 100_000, int seed = 17)
         lock (_gate)
         {
             _count++;
+            _sum += milliseconds;
             _min = Math.Min(_min, milliseconds);
             _max = Math.Max(_max, milliseconds);
             if (_count <= _samples.Length)
@@ -31,6 +33,24 @@ public sealed class LatencyReservoir(int capacity = 100_000, int seed = 17)
                     _samples[slot] = milliseconds;
                 }
             }
+        }
+    }
+
+    public double Mean { get { lock (_gate) { return _count == 0 ? 0 : _sum / _count; } } }
+
+    public double Quantile(double q)
+    {
+        lock (_gate)
+        {
+            var n = (int)Math.Min(_count, _samples.Length);
+            if (n == 0)
+            {
+                return 0;
+            }
+
+            var sorted = _samples.AsSpan(0, n).ToArray();
+            Array.Sort(sorted);
+            return sorted[Math.Clamp((int)Math.Ceiling(q * n) - 1, 0, n - 1)];
         }
     }
 

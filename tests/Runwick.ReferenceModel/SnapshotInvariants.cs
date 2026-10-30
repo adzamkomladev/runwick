@@ -6,6 +6,8 @@ public static class SnapshotInvariants
     public static IReadOnlyList<string> Violations(StoreSnapshot snapshot)
     {
         var errors = new List<string>();
+        var permitsByJob = snapshot.Permits.ToLookup(p => p.JobId);
+        var attemptsByJob = snapshot.Attempts.ToLookup(a => a.JobId);
         foreach (var job in snapshot.Jobs)
         {
             if (!States.All.Contains(job.State))
@@ -26,7 +28,7 @@ public static class SnapshotInvariants
                 errors.Add($"{job.JobId}: state {job.State} but ownership present={present == 4}");
             }
 
-            var permits = snapshot.Permits.Where(p => p.JobId == job.JobId).ToList();
+            var permits = permitsByJob[job.JobId].ToList();
             if (!owned && permits.Count > 0)
             {
                 errors.Add($"{job.JobId}: {permits.Count} permit(s) held while {job.State}");
@@ -42,7 +44,7 @@ public static class SnapshotInvariants
                 errors.Add($"{job.JobId}: started {job.StartedCount} > budget {job.MaxExecutions}");
             }
 
-            var open = snapshot.AttemptsOf(job.JobId).Where(a => a.ClosedAt is null).ToList();
+            var open = attemptsByJob[job.JobId].Where(a => a.ClosedAt is null).ToList();
             if (open.Count > 1)
             {
                 errors.Add($"{job.JobId}: {open.Count} open attempts");

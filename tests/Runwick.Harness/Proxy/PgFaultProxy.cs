@@ -55,6 +55,22 @@ public sealed class PgFaultProxy : IAsyncDisposable
         Latency = delay;
     }
 
+    /// <summary>
+    /// CommitReplyLatency(delay, roleFilter): holds the server's reply to each COMMIT on matching connections for
+    /// <paramref name="delay"/>, leaving every other message on time (one late reply per store command; TIME-02).
+    /// </summary>
+    public void SetCommitReplyLatency(TimeSpan delay, Func<string?, bool>? applicationNameFilter = null)
+    {
+        _commitDelayFilter = applicationNameFilter ?? (_ => true);
+        CommitReplyLatency = delay;
+    }
+
+    public TimeSpan CommitReplyLatency { get; private set; }
+
+    Func<string?, bool> _commitDelayFilter = _ => true;
+
+    bool CommitDelayApplies(string? applicationName) => CommitReplyLatency > TimeSpan.Zero && _commitDelayFilter(applicationName);
+
     /// <summary>Filter matching the <c>rw:&lt;identity&gt;:&lt;role&gt;</c> application-name convention.</summary>
     public static Func<string?, bool> Role(string role, string? identity = null) =>
         name => name is not null && name.EndsWith(":" + role, StringComparison.Ordinal)
@@ -307,6 +323,10 @@ public sealed class PgFaultProxy : IAsyncDisposable
                 {
                     _commitInFlightToDrop = true;
                 }
+                else if (IsCommit((char)header[0], body) && owner.CommitDelayApplies(_applicationName))
+                {
+                    _commitReplyToDelay = true;
+                }
 
                 await to.WriteAsync(header, _abort.Token).ConfigureAwait(false);
                 await to.WriteAsync(body, _abort.Token).ConfigureAwait(false);
@@ -314,6 +334,7 @@ public sealed class PgFaultProxy : IAsyncDisposable
         }
 
         volatile bool _awaitingNegotiationByte;
+        volatile bool _commitReplyToDelay;
 
         async Task PumpServerToClientAsync(NetworkStream from, NetworkStream to)
         {
@@ -353,6 +374,12 @@ public sealed class PgFaultProxy : IAsyncDisposable
                 if (owner.DelayApplies(_applicationName, clientToServer: false))
                 {
                     await Task.Delay(owner.Latency, _abort.Token).ConfigureAwait(false);
+                }
+
+                if (_commitReplyToDelay && header[0] == (byte)'C')
+                {
+                    _commitReplyToDelay = false;
+                    await Task.Delay(owner.CommitReplyLatency, _abort.Token).ConfigureAwait(false);
                 }
 
                 await to.WriteAsync(header, _abort.Token).ConfigureAwait(false);

@@ -143,6 +143,9 @@ Fault points are invoked by the PostgreSQL transaction runner for every operatio
 | `Latency(delay, direction, roleFilter)` | Delay each message in `ClientToServer`, `ServerToClient` or `Both` directions for matching connections |
 | `DropCommitReply(roleFilter, times)` | On a matching client `Query` (`'Q'`) whose text is `COMMIT` (case-insensitive, leading whitespace allowed), or an extended-protocol `Parse`/`Bind`/`Execute`/`Sync` sequence executing `COMMIT`: forward it to the server, keep reading server bytes until `ReadyForQuery` (`'Z'`), record the `CommandComplete` tag, then close the client socket with linger 0 **without relaying any of those bytes**, and close the server socket |
 | `Sever(roleFilter)` | Immediately close matching client and server sockets |
+| `CommitReplyLatency(delay, roleFilter)` | Hold the server's reply to each `COMMIT` on matching connections for `delay`; every other message passes on time |
+
+**Change 2026-10-30 (SP-010, failed test).** `Latency` delays every message, and one ownership command is about ten round trips (BEGIN, timeouts, gates, receipt, body, receipt finalization, COMMIT). At `Latency(4 s, ServerToClient)` each Renew therefore takes about 40 s, more than `ControlRequestTimeout`. No Renew completes, so TIME-02 cannot observe `d`. TIME-02's real-store sub-part uses `CommitReplyLatency(4 s, control)`, which gives one reply 4 s late per command and matches the case's "reply at t = 4 s". The P-08 workloads keep per-message `Latency` as written. Their effective per-command delay, about 10–20 s at 1 s, is reported with the results.
 
 `DropCommitReply` records whether the server tag was `COMMIT` or `ROLLBACK`. A test that expects a committed-then-lost reply fails with "fault not exercised" if the tag was `ROLLBACK`. `RestartStore` re-points the proxy upstream to the restarted container's port, so clients keep a stable endpoint.
 

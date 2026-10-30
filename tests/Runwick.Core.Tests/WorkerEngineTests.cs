@@ -328,17 +328,19 @@ public sealed class WorkerEngineTests
 
         // An unbegun reservation: the claim for it commits but its reply is held until the stop signal (WRK-04 shape).
         var hold = new TaskCompletionSource();
+        var held = 0;
         e.Store.Before = async call =>
         {
             if (call.Operation == Operations.Reserve && e.Store.Jobs.Any(j => j.State == JobStates.Pending))
             {
+                Volatile.Write(ref held, 1);
                 await hold.Task;
             }
 
             return CallEffect.Proceed;
         };
         var unbegun = e.Add("unbegun");
-        await e.RunUntilAsync(() => e.Store.Calls.Count(c => c.Operation == Operations.Reserve) >= 2, Long, "claim held");
+        await e.RunUntilAsync(() => Volatile.Read(ref held) == 1, Long, "claim held");
 
         e.Engine.SignalStop();
         var t0 = e.Engine.StopSignalAt!.Value;
@@ -850,6 +852,10 @@ public sealed class WorkerEngineTests
         e.Step = TimeSpan.FromMilliseconds(20);
         await e.StartAsync();
         await e.AdvanceAsync(TimeSpan.FromSeconds(30));
+
+        // Idle backoff 100 ms doubling to 2 s (±20 %): returning an unused ticket must not wake the loop early.
+        // 30 s idle is ~19 probes at nominal spacing; a self-woken loop probes every step.
+        Assert.InRange(e.Engine.Readiness.Probes, 5, 30);
 
         // No local post-commit wake: the job appears in the store only.
         var added = e.Engine.Clock.Now;

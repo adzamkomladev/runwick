@@ -341,6 +341,7 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
             || arbiterBlocked || lag > Options.SchedulerAllowance;
         var healthy = minMargin >= Settings.ResumeMargin && oldestFinish <= TimeSpan.FromSeconds(1) && controlWait <= TimeSpan.FromMilliseconds(250)
             && !arbiterBlocked && lag <= Options.SchedulerAllowance && !_entries.Values.Any(e => e.CommandUnresolved && e.IsLost);
+        string? transition = null;
         lock (_lock)
         {
             if (stop)
@@ -349,25 +350,33 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
                 {
                     Logger.LogWarning("Runwick worker pressure stop: margin {Margin}, oldest finish {Finish}, control wait {Wait}, lag {Lag}.",
                         minMargin, oldestFinish, controlWait, lag);
+                    transition = "pressureStop:" + (minMargin < Settings.StopMargin ? "margin" : oldestFinish >= TimeSpan.FromSeconds(5) ? "finish"
+                        : controlWait >= TimeSpan.FromSeconds(1) ? "controlWait" : arbiterBlocked ? "arbiter" : "lag");
                 }
 
                 _pressureStopped = true;
                 _healthyChecks = 0;
-                return;
             }
-
-            if (_pressureStopped)
+            else if (_pressureStopped)
             {
                 _healthyChecks = healthy ? _healthyChecks + 1 : 0;
                 if (_healthyChecks >= 3)
                 {
                     _pressureStopped = false;
                     _healthyChecks = 0;
+                    transition = "pressureResume";
                 }
             }
         }
 
-        if (!PressureStopped)
+        if (transition is not null)
+        {
+            Emit(transition);
+        }
+
+        // Only the resume transition wakes the pools: a wake on every healthy tick would cut the idle backoff
+        // (100 ms → 2 s) to the 1 s tick and double idle probes.
+        if (transition == "pressureResume")
         {
             WakePools();
         }

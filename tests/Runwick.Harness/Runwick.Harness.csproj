@@ -16,4 +16,7 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="xunit.v3.extensibility.core" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="Docker\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
