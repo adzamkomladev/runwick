@@ -4,17 +4,17 @@ Status: concrete D-08 recommendation, researched 2026-10-29. Planning only; no s
 
 ## 1. Dependency selection and inspected implementations
 
-Recommend **Cronos 0.13.0** for calendar matching and **NodaTime 3.3.7** for explicit time-zone mapping. These are the stable versions listed during this research. Keep both internal to Spindle's existing scheduler module; expose no dependency-specific types in job contracts. Recheck/pin exact versions when SP-015 starts. [Cronos package](https://www.nuget.org/packages/Cronos/0.13.0), [NodaTime package](https://www.nuget.org/packages/NodaTime/3.3.7)
+Recommend **Cronos 0.13.0** for calendar matching and **NodaTime 3.3.7** for explicit time-zone mapping. These are the stable versions listed during this research. Keep both internal to Runwick's existing scheduler module; expose no dependency-specific types in job contracts. Recheck/pin exact versions when SP-015 starts. [Cronos package](https://www.nuget.org/packages/Cronos/0.13.0), [NodaTime package](https://www.nuget.org/packages/NodaTime/3.3.7)
 
-The inspected [Cronos v0.13.0 implementation](https://github.com/HangfireIO/Cronos/blob/v0.13.0/src/Cronos/CronExpression.cs) has a UTC-only next-occurrence path and a separate TimeZoneInfo path. Its day predicate combines day-of-month and day-of-week with AND. Its time-zone path shifts gap matches and handles repeated interval expressions differently from fixed-time expressions. Therefore directly passing a zone to Cronos would not implement Spindle's proposed OR/day and configurable gap/fold semantics.
+The inspected [Cronos v0.13.0 implementation](https://github.com/HangfireIO/Cronos/blob/v0.13.0/src/Cronos/CronExpression.cs) has a UTC-only next-occurrence path and a separate TimeZoneInfo path. Its day predicate combines day-of-month and day-of-week with AND. Its time-zone path shifts gap matches and handles repeated interval expressions differently from fixed-time expressions. Therefore directly passing a zone to Cronos would not implement Runwick's proposed OR/day and configurable gap/fold semantics.
 
-The corresponding [Cronos tests](https://github.com/HangfireIO/Cronos/blob/v0.13.0/tests/Cronos.Tests/CronExpressionFacts.cs) include UTC-kind rejection, gap/fold boundaries and half-hour transitions. We inspected those cases; we did not execute them. These are useful adapter regression inputs, not evidence that upstream rejected Spindle's policies for security or performance reasons.
+The corresponding [Cronos tests](https://github.com/HangfireIO/Cronos/blob/v0.13.0/tests/Cronos.Tests/CronExpressionFacts.cs) include UTC-kind rejection, gap/fold boundaries and half-hour transitions. We inspected those cases; we did not execute them. These are useful adapter regression inputs, not evidence that upstream rejected Runwick's policies for security or performance reasons.
 
-The inspected [NodaTime 3.3.7 implementation](https://github.com/nodatime/nodatime/blob/3.3.7/src/NodaTime/DateTimeZone.cs) provides MapLocal with zero/one/two mappings and enumerates constant-offset zone intervals in instant order. Those primitives support Spindle's explicit mapping choices. Use an adapter around them rather than converting back through machine-local TimeZoneInfo rules.
+The inspected [NodaTime 3.3.7 implementation](https://github.com/nodatime/nodatime/blob/3.3.7/src/NodaTime/DateTimeZone.cs) provides MapLocal with zero/one/two mappings and enumerates constant-offset zone intervals in instant order. Those primitives support Runwick's explicit mapping choices. Use an adapter around them rather than converting back through machine-local TimeZoneInfo rules.
 
 ## 2. Versioned cron grammar
 
-Recommend two explicit dialect IDs: `spindle.cron5.v1` and `spindle.cron6.v1`. Five-field is the default; six-field requires an explicit selection. No field-count guessing. Both use the ISO/Gregorian calendar, with second zero implied by the five-field form.
+Recommend two explicit dialect IDs: `runwick.cron5.v1` and `runwick.cron6.v1`. Five-field is the default; six-field requires an explicit selection. No field-count guessing. Both use the ISO/Gregorian calendar, with second zero implied by the five-field form.
 
 | Field | Values |
 |---|---|
@@ -25,7 +25,7 @@ Recommend two explicit dialect IDs: `spindle.cron5.v1` and `spindle.cron6.v1`. F
 | Month | 1–12; case-insensitive English JAN–DEC aliases |
 | Day of week | 0–6, Sunday=0; 7 is also accepted as Sunday; SUN–SAT aliases |
 
-Allow `*`, values, comma lists, ascending inclusive ranges, `*/n` and `a-b/n`. Steps are positive integers no greater than that field's domain width. Reject bare `a/n`, reversed/wrapping ranges, empty list members, leap second 60, year fields, macros, `?`, `L`, `W`, `#`, `H`, randomization and embedded time-zone/environment directives. New Cronos features do not automatically become Spindle grammar. Bound raw input to 256 ASCII characters and 64 list terms across the expression before parser calls; allow ASCII spaces/tabs as separators, not newlines/control characters.
+Allow `*`, values, comma lists, ascending inclusive ranges, `*/n` and `a-b/n`. Steps are positive integers no greater than that field's domain width. Reject bare `a/n`, reversed/wrapping ranges, empty list members, leap second 60, year fields, macros, `?`, `L`, `W`, `#`, `H`, randomization and embedded time-zone/environment directives. New Cronos features do not automatically become Runwick grammar. Bound raw input to 256 ASCII characters and 64 list terms across the expression before parser calls; allow ASCII spaces/tabs as separators, not newlines/control characters.
 
 Normalize names, duplicates and equivalent field sets into deterministic numeric bitsets. For day-of-week, expand ranges in the input's 0–7 domain before mapping 7 to 0. A field selecting its entire domain is unrestricted, including `*/1` or a full-range list. Preserve raw text for display, but hash the normalized sets, explicit dialect and policy/profile metadata. Formatting-only changes do not create definition drift.
 
@@ -55,11 +55,11 @@ NodaTime supports loading an NZD stream into a separate provider, independently 
 
 Persist and include in the definition fingerprint:
 
-- Dialect ID and evaluator profile, initially proposed as `spindle.cron.v1/cronos-0.13.0/nodatime-3.3.7`.
+- Dialect ID and evaluator profile, initially proposed as `runwick.cron.v1/cronos-0.13.0/nodatime-3.3.7`.
 - Canonical zone ID, TZDB release label, exact NZD SHA-256 and stored gap/fold policy.
 - Existing normalized cron fields, job/template profile, misfire/overlap settings and bounds.
 
-Add `zone_data_sha256 bytea` to the initial schedule-definition schema, constrained to 32 bytes for cron definitions. Keep `zone_data_version` as the release label. The hash also identifies mapping/build differences that a release label alone cannot distinguish. UTC cron definitions retain the same explicit profile tuple for uniform compatibility checks. One-time schedules use `spindle.instant.v1` and need no cron/zone artifact.
+Add `zone_data_sha256 bytea` to the initial schedule-definition schema, constrained to 32 bytes for cron definitions. Keep `zone_data_version` as the release label. The hash also identifies mapping/build differences that a release label alone cannot distinguish. UTC cron definitions retain the same explicit profile tuple for uniform compatibility checks. One-time schedules use `runwick.instant.v1` and need no cron/zone artifact.
 
 Scheduler replicas advertise their supported profile/artifact tuples and query only compatible definitions. A replica missing an artifact reports local incompatibility; it must not globally set needs_review and block another capable replica. A deterministic failure reproduced under the required profile can set needs_review via a revision-checked command.
 
@@ -145,7 +145,7 @@ These are expected vectors to execute under the pinned evaluator/NZD pair. Insta
 | SCHED-14 | Invalid, sparse and dense expressions honor step/byte/task bounds; slow evaluator/provider work cannot spawn unbounded replacement tasks or starve renewal capacity |
 | SCHED-15 | One-time late execution/skip, resume choices, manual trigger replay, overlap and explicit cross-occurrence reuse retain their distinct dispositions |
 
-SP-015 owns evaluator/grammar/preview vectors; SP-016 owns plans/transactions/misfires; SP-026 owns profile/data upgrades; SP-027–029 own multi-process/fault/performance evidence. Combine these with existing SCH/PGX/UPG cases. Source inspection and artifact hashing performed here are evidence inputs; none of these cases has passed against Spindle.
+SP-015 owns evaluator/grammar/preview vectors; SP-016 owns plans/transactions/misfires; SP-026 owns profile/data upgrades; SP-027–029 own multi-process/fault/performance evidence. Combine these with existing SCH/PGX/UPG cases. Source inspection and artifact hashing performed here are evidence inputs; none of these cases has passed against Runwick.
 
 An independent Python calendar/system-zoneinfo check confirmed the Berlin gap/fold, 120 repeated-minute instants, July OR example and 2096→2104 leap-year example. That environment reports zone data 2026e; this is deliberately not presented as validation of the selected 2026f NZD artifact or the Cronos/NodaTime adapter.
 

@@ -8,21 +8,21 @@ This develops D-01/D-06/D-09 and the connection requirements of [execution timin
 
 | Dependency | Owner | Baseline and disposition |
 |---|---|---|
-| Npgsql | Spindle.Postgres | **10.0.3 selected** under the user's latest-stable direction; net10.0 asset available |
-| Microsoft.Data.Sqlite | Spindle.Sqlite | **10.0.14 recommended**, current stable; start with its default native SQLite bundle |
-| StackExchange.Redis | Spindle.Redis | **3.4.20 selected planning pin**; runtime acceptance depends on the selected AOF-always profile prototype |
+| Npgsql | Runwick.Postgres | **10.0.3 selected** under the user's latest-stable direction; net10.0 asset available |
+| Microsoft.Data.Sqlite | Runwick.Sqlite | **10.0.14 recommended**, current stable; start with its default native SQLite bundle |
+| StackExchange.Redis | Runwick.Redis | **3.4.20 selected planning pin**; runtime acceptance depends on the selected AOF-always profile prototype |
 | System.Text.Json, diagnostics and time primitives | Contracts/core as needed | Use net10.0 framework APIs; no extra package solely to duplicate framework functionality |
 | Microsoft.Extensions abstractions/hosting | Core as needed | Select and pin only the actual required packages at SP-002; provider package numbers do not determine their versions |
 | Cronos / NodaTime | Internal scheduler module | D-08 now recommends 0.13.0 / 3.3.7 with an explicit TZDB 2026f artifact/hash; adapter conformance remains open |
 | Inertia adapter/client | Dashboard | Inertia.Net 1.5.3 with Inertia React/core 3.9.1 and React 19.3.1; [selected integration](dashboard-integration-closure.md), tests pending |
 
-Version evidence: [Npgsql 10.0.3](https://www.nuget.org/packages/Npgsql/10.0.3), [Microsoft.Data.Sqlite 10.0.14](https://www.nuget.org/packages/Microsoft.Data.Sqlite/10.0.14), [StackExchange.Redis 3.4.20](https://www.nuget.org/packages/StackExchange.Redis/3.4.20). A dependency's older target assets do not broaden Spindle's .NET 10+ support floor. Package compatibility is not certification of the storage protocol.
+Version evidence: [Npgsql 10.0.3](https://www.nuget.org/packages/Npgsql/10.0.3), [Microsoft.Data.Sqlite 10.0.14](https://www.nuget.org/packages/Microsoft.Data.Sqlite/10.0.14), [StackExchange.Redis 3.4.20](https://www.nuget.org/packages/StackExchange.Redis/3.4.20). A dependency's older target assets do not broaden Runwick's .NET 10+ support floor. Package compatibility is not certification of the storage protocol.
 
 Use explicit SQL and provider APIs initially. EF, Dapper and provider-specific telemetry exporters are not required dependencies. Hosts may use them independently.
 
 ## 2. Npgsql connection and transaction ownership
 
-Npgsql supplies thread-safe, long-lived data sources and pooled connections. Spindle should keep a small, explicit set of data sources per configured store rather than construct one per operation. Each atomic command opens one connection, starts one transaction and retains that connection through commit/rollback. All gate, receipt, job and permit statements belong to that transaction. [Npgsql basic usage](https://www.npgsql.org/doc/basic-usage.html)
+Npgsql supplies thread-safe, long-lived data sources and pooled connections. Runwick should keep a small, explicit set of data sources per configured store rather than construct one per operation. Each atomic command opens one connection, starts one transaction and retains that connection through commit/rollback. All gate, receipt, job and permit statements belong to that transaction. [Npgsql basic usage](https://www.npgsql.org/doc/basic-usage.html)
 
 Proposed connection roles:
 
@@ -42,7 +42,7 @@ Keep initial execution on ordinary explicit connections. Defer multiplexing and 
 
 ## 3. Failure and timeout integration
 
-The inspected [NpgsqlTransaction implementation at v10.0.3](https://github.com/npgsql/npgsql/blob/v10.0.3/src/Npgsql/NpgsqlTransaction.cs) routes CommitAsync to a connector COMMIT command; rollback is a separate path. This is source inspection, not an executed failure test. Spindle's inference: a missing COMMIT response must still follow the existing uncertain-outcome/receipt protocol. Choosing a current driver does not remove that requirement.
+The inspected [NpgsqlTransaction implementation at v10.0.3](https://github.com/npgsql/npgsql/blob/v10.0.3/src/Npgsql/NpgsqlTransaction.cs) routes CommitAsync to a connector COMMIT command; rollback is a separate path. This is source inspection, not an executed failure test. Runwick's inference: a missing COMMIT response must still follow the existing uncertain-outcome/receipt protocol. Choosing a current driver does not remove that requirement.
 
 1. One operation deadline covers admission wait, pool acquisition, connection establishment, SQL, commit and response handling. Do not reset the full allowance at every stage.
 2. Configure provider timeouts/cancellation within that budget. Npgsql has separate connection, command and cancellation-response timeouts; cancellation is not evidence of rollback. A late task cannot restore locally expired execution authority. [Connection parameters](https://www.npgsql.org/doc/connection-string-parameters.html)
@@ -50,7 +50,7 @@ The inspected [NpgsqlTransaction implementation at v10.0.3](https://github.com/n
 4. I/O loss, cancellation or timeout around commit is potentially ambiguous. Resolve the receipt within the command's resolution budget; do not generate a fresh operation ID to hide uncertainty.
 5. Resolve receipts and ownership against the authoritative primary. Npgsql can select/connect to hosts, but does not synchronize their histories and does not implicitly replay a failed command on another server. HA durability remains a declared server/deployment profile. [Npgsql failover behavior](https://www.npgsql.org/doc/failover-and-load-balancing.html)
 
-Keep parameter logging and server error-detail inclusion disabled by default. Use parameterized values, validated/quoted schema identifiers and schema-qualified objects. Network deployment examples should use authenticated, certificate-verified transport; do not inherit an opportunistic encryption setting as Spindle's production recommendation. Caller-provided authentication/rotation remains host-controlled.
+Keep parameter logging and server error-detail inclusion disabled by default. Use parameterized values, validated/quoted schema identifiers and schema-qualified objects. Network deployment examples should use authenticated, certificate-verified transport; do not inherit an opportunistic encryption setting as Runwick's production recommendation. Caller-provided authentication/rotation remains host-controlled.
 
 ## 4. PostgreSQL server and encoding targets
 

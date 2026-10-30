@@ -1,4 +1,4 @@
-# Spindle v1 delivery plan — milestones, slices and tasks
+# Runwick v1 delivery plan — milestones, slices and tasks
 
 Status: consolidated 2026-10-30 from the [implementation backlog](implementation-backlog.md), the [acceptance gates](architecture-acceptance.md) and every decision in the [review](review-2026-10-30.md). This is the single list to track. Task IDs are the backlog's SP numbers; nothing is renumbered. Sizes are relative (S ≈ days, M ≈ 1–2 weeks, L ≈ 3–5 weeks for one experienced engineer) and are planning aids, not commitments.
 
@@ -12,7 +12,7 @@ Status: consolidated 2026-10-30 from the [implementation backlog](implementation
 | **M3 — Distributed controls, capacity, scheduling, outbox** | G-2 | All five deployment modes; cancel/retry/rerun; transactional completion; rates; autoscaling; cron; outbox | SP-011, SP-012, SP-013, SP-014, SP-015, SP-016, SP-017 (+ spikes SP-018, SP-023 in parallel) |
 | **M4 — Providers, management, CLI, dashboard** | G-3, G-4 | SQLite and Redis; management API; CLI; telemetry; dashboard; retention | SP-019, SP-020, SP-021, SP-022, SP-024, SP-025, SP-032 |
 | **M5 — Qualification and release** | G-5, G-6 | Upgrades, deployment/security scenarios, driver reports, performance, packaging | SP-026, SP-027, SP-028, SP-029, SP-030 |
-| **v1.x — Hosted-store track** | — | Protocol additions, cloud wire contract, `Spindle.Cloud` driver | SP-031, SP-033, SP-034 |
+| **v1.x — Hosted-store track** | — | Protocol additions, cloud wire contract, `Runwick.Cloud` driver | SP-031, SP-033, SP-034 |
 
 The first runnable milestone is **M2**. The hosted service itself (server tenancy, metering, billing, hosted dashboard) is a separate proprietary repository and is not in this plan.
 
@@ -39,7 +39,7 @@ Slice 1.1 — *Skeleton that compiles*
 
 | ID | Task | Size | Depends on | Done when |
 |---|---|---|---|---|
-| SP-002 | Solution and package scaffolding: `Spindle.Contracts`, `Spindle`, `Spindle.Postgres`, `Spindle.Sqlite`, `Spindle.Redis`, `Spindle.AspNetCore`, `Spindle.Dashboard`, `Spindle.Outbox(.Postgres/.Sqlite)`, `Spindle.Testing`, `Spindle.Cli`, `Spindle.OpenTelemetry`; pinned SDK (`global.json`), C# 14, central package versions (Npgsql 10.0.3, Microsoft.Data.Sqlite 10.0.14, StackExchange.Redis 3.4.20, Cronos 0.13.0, NodaTime 3.3.7 — recheck at creation); CI; attribute/fluent examples compile; NuGet name availability checked | M | SP-001 | Graph is acyclic; producer install pulls no web/provider/EF deps; examples from the API contract compile |
+| SP-002 | Solution and package scaffolding: `Runwick.Contracts`, `Runwick`, `Runwick.Postgres`, `Runwick.Sqlite`, `Runwick.Redis`, `Runwick.AspNetCore`, `Runwick.Dashboard`, `Runwick.Outbox(.Postgres/.Sqlite)`, `Runwick.Testing`, `Runwick.Cli`, `Runwick.OpenTelemetry`; pinned SDK (`global.json`), C# 14, central package versions (Npgsql 10.0.3, Microsoft.Data.Sqlite 10.0.14, StackExchange.Redis 3.4.20, Cronos 0.13.0, NodaTime 3.3.7 — recheck at creation); CI; attribute/fluent examples compile; NuGet name availability checked | M | SP-001 | Graph is acyclic; producer install pulls no web/provider/EF deps; examples from the API contract compile |
 
 Slice 1.2 — *Test harness before features*
 
@@ -51,7 +51,7 @@ Slice 1.3 — *Registry, serialization, schema*
 
 | ID | Task | Size | Depends on | Done when |
 |---|---|---|---|---|
-| SP-004 | Immutable registration/policy registry (names, versions, upgrade chains, middleware aliases, precedence with source map); `spindle.json` v1 profile with bounds; canonical encoder + **two-digest** fingerprint (R3); prepared-dispatch codec and export envelope | L | SP-003 | SER-01–12 and wire vectors pass; identity conflicts rejected at startup; no runtime type loading from payload metadata |
+| SP-004 | Immutable registration/policy registry (names, versions, upgrade chains, middleware aliases, precedence with source map); `runwick.json` v1 profile with bounds; canonical encoder + **two-digest** fingerprint (R3); prepared-dispatch codec and export envelope | L | SP-003 | SER-01–12 and wire vectors pass; identity conflicts rejected at startup; no runtime type loading from payload metadata |
 | SP-005 | PostgreSQL schema and migration runner (advisory lock, ledger, expand/validate/activate phases); store/application gates; receipt table and codec (no Renew receipts, R1); capability/version handshake; transaction runner with fresh-time-after-locks and lock-order enforcement; `job_generations.created_reason`; two fingerprint columns on `dispatch_keys` | L | SP-003 | Fresh and interrupted initialization recover; PGX-05 constraints hold under injected rollback/commit loss; incompatible writers rejected; receipt insert uses `ON CONFLICT DO NOTHING` + `FOR UPDATE` |
 
 ## 4. M2 — PostgreSQL execution (G-1)
@@ -106,14 +106,14 @@ Slice 3.4 — *Scheduling*
 
 | ID | Task | Size | Depends on | Done when |
 |---|---|---|---|---|
-| SP-015 | Versioned cron grammar (`spindle.cron5.v1`/`cron6.v1`), Cronos OR-union adapter, NodaTime zone mapping with pinned TZDB artifact + hash, gap/fold policies, bounded planner, preview | M | SP-004 | SCHED-01–08, 14 pass as pure tests |
+| SP-015 | Versioned cron grammar (`runwick.cron5.v1`/`cron6.v1`), Cronos OR-union adapter, NodaTime zone mapping with pinned TZDB artifact + hash, gap/fold policies, bounded planner, preview | M | SP-004 | SCHED-01–08, 14 pass as pure tests |
 | SP-016 | Schedule records; atomic materialization (occurrence + jobs + cursor + receipt); misfire episodes (skip/run-once/catch-up); manual trigger; pause/resume/edit cutover; needs_review and RevalidateSchedule; serialize overlap via schedule scope | L | SP-011, SP-013, SP-015 | SCH-01–05, SCHED-09–13, 15 pass across replicas |
 
 Slice 3.5 — *Outbox*
 
 | ID | Task | Size | Depends on | Done when |
 |---|---|---|---|---|
-| SP-017 | `Spindle.Outbox` relay; PostgreSQL and SQLite source adapters (Stage, Claim, Renew, MarkDelivered, Block); `ReceiveOutbox/1` destination op with delivery identity and 7-day horizon | M | SP-006 | OUTBOX-01–07, OUT-01–02 pass; lost delivered-mark recovers to the same job |
+| SP-017 | `Runwick.Outbox` relay; PostgreSQL and SQLite source adapters (Stage, Claim, Renew, MarkDelivered, Block); `ReceiveOutbox/1` destination op with delivery identity and 7-day horizon | M | SP-006 | OUTBOX-01–07, OUT-01–02 pass; lost delivered-mark recovers to the same job |
 
 Parallel spikes (start as soon as dependencies allow; results feed M4):
 
@@ -129,14 +129,14 @@ Slice 4.1 — *Management surface*
 | ID | Task | Size | Depends on | Done when |
 |---|---|---|---|---|
 | SP-020 | Management application services behind transport-free `IManagementSession`; **public versioned management API** (ASP.NET Core); Basic/host/OIDC; antiforgery; keyset queries with signed cursors; bulk controls; reveal with disclosure audit; request limits | L | SP-011, SP-012, SP-014, SP-016 | MGMT-01–05, 07–10 pass; standalone host runs without workers |
-| SP-032 | `Spindle.Cli` (`dotnet tool` + single-file): login/context, jobs/queues/schedules/workers/capacity/dispatch/events, migrate/doctor; human output, `--output json`, and the distinct **`--agent`** contract with `--agent describe` manifest; `--expected-revision`/`--command-id` everywhere | M | SP-020 | Every MGMT control drivable from the CLI against self-hosted; replayed commands resolve by receipt; agent envelopes validate against their schema |
+| SP-032 | `Runwick.Cli` (`dotnet tool` + single-file): login/context, jobs/queues/schedules/workers/capacity/dispatch/events, migrate/doctor; human output, `--output json`, and the distinct **`--agent`** contract with `--agent describe` manifest; `--expected-revision`/`--command-id` everywhere | M | SP-020 | Every MGMT control drivable from the CLI against self-hosted; replayed commands resolve by receipt; agent envelopes validate against their schema |
 
 Slice 4.2 — *Retention and telemetry*
 
 | ID | Task | Size | Depends on | Done when |
 |---|---|---|---|---|
 | SP-021 | Dependency-aware retention/cleanup (resumable keyset batches, record-class horizons, detail-expired projections, receipt partition/class cleanup) | M | SP-011, SP-013, SP-016 | RET-01, MGMT-11, OPS-02/04/05 pass; live receipts/grants/windows/fences never pruned |
-| SP-022 | `ActivitySource`/`Meter` "Spindle" with the frozen instrument/span/log tables; redaction; role health/readiness; bounded samplers; `Spindle.OpenTelemetry` (`AddSpindleInstrumentation()`, views, cardinality limits); pinned messaging-convention mapping; shipped Grafana dashboard + alert rules | M | SP-009, SP-012, SP-014, SP-016 | OBS-01–11 pass; no exporter dependency; stale snapshots never read as zero |
+| SP-022 | `ActivitySource`/`Meter` "Runwick" with the frozen instrument/span/log tables; redaction; role health/readiness; bounded samplers; `Runwick.OpenTelemetry` (`AddRunwickInstrumentation()`, views, cardinality limits); pinned messaging-convention mapping; shipped Grafana dashboard + alert rules | M | SP-009, SP-012, SP-014, SP-016 | OBS-01–11 pass; no exporter dependency; stale snapshots never read as zero |
 
 Slice 4.3 — *Dashboard*
 
@@ -169,7 +169,7 @@ Starts after G-6. SP-031 benefits self-hosted users directly and may begin durin
 |---|---|---|---|---|
 | SP-031 | Versioned protocol additions: `ReserveAndBegin/1`, batched Reserve, batched Renew, `application`-kind concurrency scope, `QuotaExceeded`, push-assignment hint channel alongside pull | M | SP-008, SP-011, SP-013 | Combined op preserves accounting and rate semantics; batch failures isolated per lease; old versions cannot bypass the application ceiling |
 | SP-033 | Cloud wire contract: gRPC operation set, pull and push delivery, per-environment API-key scopes, tenant/store binding, reconnect rules | L | SP-031, SP-028 | Contract vectors for every operation; disconnect at every boundary resolves old commands; cross-tenant ISO cases pass |
-| SP-034 | `Spindle.Cloud` client driver passing the shared contract suite against a reference server; `StageAsync` explicitly unsupported; outbox as dispatch path | L | SP-033 | Driver report with topology "hosted" |
+| SP-034 | `Runwick.Cloud` client driver passing the shared contract suite against a reference server; `StageAsync` explicitly unsupported; outbox as dispatch path | L | SP-033 | Driver report with topology "hosted" |
 
 Server-side tenancy, metering (runs by `created_reason`, 5 free manual retries, concurrency slots, retention tiers), billing and the hosted dashboard are tracked in the proprietary repository.
 

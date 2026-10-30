@@ -24,7 +24,7 @@ The user selected .NET 10+. The [platform/package foundation](architecture/platf
 | Outbox adapter | Source-store enlistment, relay/recovery, declared deduplication horizon | Prepared dispatch and selected source provider |
 | Tests and samples | Independent model, contract suite, fault fixtures, workloads and deployment examples | Relevant components; never runtime dependencies |
 
-The platform document refines these boundaries into proposed Spindle.Contracts, Spindle, provider, ASP.NET, Dashboard and Testing packages. Keep hosting/scheduling as internal core modules. Producer/worker installations require no EF, web server or frontend toolchain. The optional packages are Spindle.Outbox, Spindle.Outbox.Postgres and Spindle.Outbox.Sqlite; their [source adapters and delivery contract](architecture/transactional-outbox.md) are selected.
+The platform document refines these boundaries into proposed Runwick.Contracts, Runwick, provider, ASP.NET, Dashboard and Testing packages. Keep hosting/scheduling as internal core modules. Producer/worker installations require no EF, web server or frontend toolchain. The optional packages are Runwick.Outbox, Runwick.Outbox.Postgres and Runwick.Outbox.Sqlite; their [source adapters and delivery contract](architecture/transactional-outbox.md) are selected.
 
 ## 3. Foundation and first PostgreSQL milestone
 
@@ -70,7 +70,7 @@ Verify all five hosting modes on PostgreSQL in SP-011/012 and repeat relevant sc
 | SP-024 | Embedded/standalone bundled dashboard | SP-020, SP-022, SP-023 | MGMT-01–12 across response paths; jobs/attempts, queues, workers/capacity, schedules, scaling, settings/retention usable; no sensitive props/history leakage |
 | SP-025 | Full Redis provider using accepted prototype design | SP-013, SP-016, SP-018, SP-020, SP-021 | Execution/schedules/audit/retention share publication protocol; indexed bounded projections; certification remains pending SP-028 |
 
-Run SP-018 and SP-023 early after their dependencies and review gates; they need not wait for PostgreSQL scheduling. Redis failure may require representation/contract review before SP-025. BullMQ research is evidence, not a complete implementation of Spindle's command contract.
+Run SP-018 and SP-023 early after their dependencies and review gates; they need not wait for PostgreSQL scheduling. Redis failure may require representation/contract review before SP-025. BullMQ research is evidence, not a complete implementation of Runwick's command contract.
 
 SP-019 starts the SQLite port; later management/retention/telemetry cases also apply before certification. PostgreSQL needs those later schema/query changes too. No driver gets an exemption because it was implemented first.
 
@@ -93,9 +93,9 @@ Added after the user selected a hosted job store as the commercial product; see 
 | ID | Deliverable | Depends on | Acceptance evidence |
 |---|---|---|---|
 | SP-031 | Versioned protocol additions: `ReserveAndBegin/1`, batched Reserve, batched Renew with independent per-lease outcomes, `RerunSucceeded` (new generation of a succeeded job, confirmed 2026-10-30), `job_generations.created_reason`, `application`-kind concurrency scope, typed `QuotaExceeded` known-not-applied rejection, push-assignment hint channel alongside pull | SP-008, SP-011, SP-013 | Combined operation preserves Begin accounting and rate semantics; batch failures never roll back unrelated healthy leases; old operation versions cannot bypass the application ceiling; quota rejection produces no receipt and a stable code; generation reason is immutable and audited; push hints never bypass Reserve validation |
-| SP-032 | Management API as a public versioned surface; `Spindle.Cli` (`dotnet tool` + single-file) over it with human output, `--output json`, and a distinct `--agent` contract (schema-versioned envelopes, JSON Lines streaming, stable error codes with hints, `nextActions`, `--agent describe` manifest); `--expected-revision` and `--command-id` on every mutation | SP-020 | CLI drives every MGMT control against self-hosted and reference server; replayed CLI commands resolve by receipt; human and agent outputs generated from one command model; agent envelopes validate against their published schema; no credential or payload leakage in output by default |
+| SP-032 | Management API as a public versioned surface; `Runwick.Cli` (`dotnet tool` + single-file) over it with human output, `--output json`, and a distinct `--agent` contract (schema-versioned envelopes, JSON Lines streaming, stable error codes with hints, `nextActions`, `--agent describe` manifest); `--expected-revision` and `--command-id` on every mutation | SP-020 | CLI drives every MGMT control against self-hosted and reference server; replayed CLI commands resolve by receipt; human and agent outputs generated from one command model; agent envelopes validate against their published schema; no credential or payload leakage in output by default |
 | SP-033 | Cloud wire contract: gRPC operation set mirroring the storage command protocol, pull (long-poll) and push (stream) delivery modes, per-environment API-key scopes, tenant/store binding in every command, reconnect rules | SP-031, SP-028 | Contract vectors for every operation; both delivery modes pass the same ownership/admission cases; disconnect at every boundary resolves old commands without fresh IDs; cross-tenant ISO cases pass |
-| SP-034 | `Spindle.Cloud` client driver passing the applicable shared contract suite against a reference server | SP-033 | Driver report per §7 with topology "hosted"; `StageAsync` explicitly unsupported; outbox cases pass as the dispatch path |
+| SP-034 | `Runwick.Cloud` client driver passing the applicable shared contract suite against a reference server | SP-033 | Driver report per §7 with topology "hosted"; `StageAsync` explicitly unsupported; outbox cases pass as the dispatch path |
 
 ## 7. Validation traceability
 

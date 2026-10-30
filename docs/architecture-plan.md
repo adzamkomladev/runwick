@@ -1,4 +1,4 @@
-# Spindle architecture plan
+# Runwick architecture plan
 
 **Planning complete:** all six remaining items are consolidated in the [architecture baseline](architecture-baseline.md). Start there for current decisions and the fixed implementation sequence. Earlier discussion below is design history; runtime evidence remains pending.
 
@@ -8,9 +8,9 @@ Continuity correction: the original [Queue Library Design conversation](https://
 
 ## Product and agreed scope
 
-Spindle is a free, open-source, monolith-first .NET background job library. It should be approachable in one application and support distributed production deployments without changing job definitions or execution semantics.
+Runwick is a free, open-source, monolith-first .NET background job library. It should be approachable in one application and support distributed production deployments without changing job definitions or execution semantics.
 
-The project name and namespace prefix are **Spindle**, replacing the provisional JobQueues name. Package-name availability has not been checked.
+The project name and namespace prefix are **Runwick**, replacing the provisional JobQueues name. Package-name availability has not been checked.
 
 The user selected **.NET 10 and newer, with current/newer C#**. The [platform/package foundation](architecture/platform-and-packages.md) proposes net10.0/C# 14 initially, compatible newer stable language/runtime adoption and pinned builds. No older .NET/Framework/Standard targets are planned.
 
@@ -106,21 +106,21 @@ Cross-store dispatch needs an outbox protocol. Outbox delivery can repeat, so di
 
 Proposed initial packages, refined in the [platform/package design](architecture/platform-and-packages.md):
 
-- `Spindle.Contracts`: lightweight job/handler/context contracts and metadata attributes for shared application contracts.
-- `Spindle`: dispatcher/recovery APIs, configuration, worker execution, middleware, scheduling and management application services; includes Contracts transitively.
-- `Spindle.Postgres`, `Spindle.Sqlite`, `Spindle.Redis`: storage dependencies and implementations.
-- `Spindle.AspNetCore`: HTTP management integration.
-- `Spindle.Dashboard`: bundled UI over the management backend.
-- `Spindle.Testing`: test-host and application-testing helpers.
+- `Runwick.Contracts`: lightweight job/handler/context contracts and metadata attributes for shared application contracts.
+- `Runwick`: dispatcher/recovery APIs, configuration, worker execution, middleware, scheduling and management application services; includes Contracts transitively.
+- `Runwick.Postgres`, `Runwick.Sqlite`, `Runwick.Redis`: storage dependencies and implementations.
+- `Runwick.AspNetCore`: HTTP management integration.
+- `Runwick.Dashboard`: bundled UI over the management backend.
+- `Runwick.Testing`: test-host and application-testing helpers.
 
 Keep execution and scheduling as internal modules initially. The Contracts split is now the concrete recommendation to keep shared application contracts independent of hosting and provider dependencies. Public package names/availability and the graph remain reviewable; no runtime packages exist yet.
 
 ## Research notes
 
-- [River transactional enqueueing](https://riverqueue.com/docs/transactional-enqueueing): committing application data and queue records together closes the failure window between separate writes. Spindle should make this a first-class PostgreSQL path.
-- [River unique jobs](https://riverqueue.com/docs/unique-jobs): insertion uniqueness does not guarantee exactly-once execution. Spindle must document uniqueness independently from execution and retention.
-- [Laravel Horizon](https://laravel.com/framework/docs/horizon): process balancing and timeout behavior provide operational ideas, but process termination does not translate directly to Spindle's in-process async handlers. Spindle should scale available concurrency and drain running handlers on scale-down.
-- [Hatchet durable execution](https://docs.hatchet.run/v1/durable-execution): replay/checkpoint semantics introduce additional execution contracts. These belong in Spindle v2; ordinary v1 handlers must not imply resumable execution.
+- [River transactional enqueueing](https://riverqueue.com/docs/transactional-enqueueing): committing application data and queue records together closes the failure window between separate writes. Runwick should make this a first-class PostgreSQL path.
+- [River unique jobs](https://riverqueue.com/docs/unique-jobs): insertion uniqueness does not guarantee exactly-once execution. Runwick must document uniqueness independently from execution and retention.
+- [Laravel Horizon](https://laravel.com/framework/docs/horizon): process balancing and timeout behavior provide operational ideas, but process termination does not translate directly to Runwick's in-process async handlers. Runwick should scale available concurrency and drain running handlers on scale-down.
+- [Hatchet durable execution](https://docs.hatchet.run/v1/durable-execution): replay/checkpoint semantics introduce additional execution contracts. These belong in Runwick v2; ordinary v1 handlers must not imply resumable execution.
 
 These are an initial documentation review, not a completed source-code or algorithm review.
 
@@ -185,6 +185,6 @@ The [provider dependency plan](architecture/provider-dependency-plan.md) records
 
 The [capacity defaults/budgets packet](architecture/capacity-defaults-and-budgets.md) develops D-07: fixed/automatic targets and shared attempt bounds, fairness/probe settings, rate-edit policy, an occupancy-plus-backlog controller, pressure gates and partitioned connection budgets. It adds typed known-not-submitted local overload handling to the API proposal. Planning arithmetic was checked; CAP-01–12 runtime cases remain unexecuted.
 
-The [scheduler evaluator/defaults packet](architecture/scheduler-evaluator-and-defaults.md) now develops D-08: Cronos 0.13.0/NodaTime 3.3.7 recommendations, restricted cron grammar with an OR adapter, TZDB artifact/hash identity, UTC-interval DST evaluation, misfire/overlap/pacing budgets and prepared forward cutovers. Source inspection and an artifact hash were checked; SCHED-01–15 remain unexecuted against Spindle. The [final baseline](architecture-baseline.md) closes all six remaining planning items. Runtime evidence belongs to the implementation backlog.
+The [scheduler evaluator/defaults packet](architecture/scheduler-evaluator-and-defaults.md) now develops D-08: Cronos 0.13.0/NodaTime 3.3.7 recommendations, restricted cron grammar with an OR adapter, TZDB artifact/hash identity, UTC-interval DST evaluation, misfire/overlap/pacing budgets and prepared forward cutovers. Source inspection and an artifact hash were checked; SCHED-01–15 remain unexecuted against Runwick. The [final baseline](architecture-baseline.md) closes all six remaining planning items. Runtime evidence belongs to the implementation backlog.
 
 The acceptance checklist's decision register now tracks remaining choices, distinguishing established behavior from exact algorithms, defaults, dependency versions and unverified guarantees.

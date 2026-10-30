@@ -168,28 +168,28 @@ These are executable SQL shapes once the described tables exist, not a complete 
 
 ```sql
 CREATE INDEX jobs_ready
-ON spindle.jobs (application, queue, priority, eligible_at, job_id)
+ON runwick.jobs (application, queue, priority, eligible_at, job_id)
 WHERE state IN ('pending', 'retrying');
 
 CREATE INDEX jobs_expired_lease
-ON spindle.jobs (application, lease_expires_at, job_id)
+ON runwick.jobs (application, lease_expires_at, job_id)
 WHERE state IN ('reserved', 'running');
 
 CREATE INDEX jobs_terminal_retention
-ON spindle.jobs (application, terminal_at, job_id)
+ON runwick.jobs (application, terminal_at, job_id)
 WHERE state IN ('succeeded', 'failed', 'cancelled');
 
 CREATE INDEX permits_live_count
-ON spindle.concurrency_permits (application, scope_id, lease_expires_at);
+ON runwick.concurrency_permits (application, scope_id, lease_expires_at);
 
 CREATE INDEX permits_attempt
-ON spindle.concurrency_permits (application, attempt_id, scope_id);
+ON runwick.concurrency_permits (application, attempt_id, scope_id);
 
 CREATE INDEX command_retention
-ON spindle.storage_commands (application, retain_until, command_id);
+ON runwick.storage_commands (application, retain_until, command_id);
 
 CREATE INDEX events_job_history
-ON spindle.queue_events (application, job_id, event_id);
+ON runwick.queue_events (application, job_id, event_id);
 ```
 
 Attempt history is covered by its unique job/reservation-number index. Add dashboard-specific indexes only against actual query shapes. The ready query must use the same literal state predicate; the predicate must not depend on current time. Lease-expiry index updates add write cost on every renewal; benchmark WAL volume, vacuum pressure, and lease batch size. [Partial index behavior](https://www.postgresql.org/docs/18/indexes-partial.html)
@@ -231,7 +231,7 @@ The request selects one queue and one priority lane. Queue weighting and lane fa
 ```sql
 -- Executed inside the transaction, after locking queue_controls.
 SELECT j.job_id, j.eligible_at, j.generation, j.revision
-FROM spindle.jobs AS j
+FROM runwick.jobs AS j
 WHERE j.application = @application
   AND j.queue = @queue
   AND j.priority = @priority
@@ -266,7 +266,7 @@ Renew locks command → job → every associated scope; capture a new decision i
 The job-row update shape is:
 
 ```sql
-UPDATE spindle.jobs
+UPDATE runwick.jobs
 SET lease_expires_at = @new_expiry
 WHERE application = @application AND job_id = @job_id
   AND current_attempt_id = @attempt_id
@@ -315,7 +315,7 @@ Polling is sufficient for correctness. The first implementation can signal its l
 
 PostgreSQL NOTIFY inside a transaction is delivered only on commit, but notification queue exhaustion can fail the commit. Do not quietly make notification infrastructure a new failure condition for business transactions. Introduce LISTEN/NOTIFY as an optional, tested optimization with reconnect/resubscribe and fallback polling. Notifications contain only non-sensitive wake-up hints. [NOTIFY semantics](https://www.postgresql.org/docs/18/sql-notify.html)
 
-Keep Spindle's migration ledger separate from EF. The [upgrade contract](postgres-upgrades-and-compatibility.md) specifies deployment-owned migration locking/checksums, transactional compatibility gates, expand/backfill/activate/contract phases and interrupted-DDL recovery. Workers check compatibility but do not invent migrations.
+Keep Runwick's migration ledger separate from EF. The [upgrade contract](postgres-upgrades-and-compatibility.md) specifies deployment-owned migration locking/checksums, transactional compatibility gates, expand/backfill/activate/contract phases and interrupted-DDL recovery. Workers check compatibility but do not invent migrations.
 
 Retention uses bounded transactions. Default detail cleanup keeps required job/attempt/generation identity while removing eligible payload/error details; it records history expiry. Physical job purge requires all correctness dependencies to have ended and FK-safe removal order. Window keys, rate grants, audit, receipts and fences have independent lifetimes. Missing retained payload blocks manual retry with HistoryUnavailable. Apply sanitization before persistence as well as authorized projection; UI-only redaction is insufficient.
 

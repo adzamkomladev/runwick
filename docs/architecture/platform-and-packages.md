@@ -12,7 +12,7 @@ The language/runtime relationship matters when adopting newer syntax. Microsoft'
 
 Forward policy:
 
-1. Keep the .NET 10 asset while it is a supported Spindle target; run consumer/runtime tests on each newer stable .NET version added to the advertised matrix.
+1. Keep the .NET 10 asset while it is a supported Runwick target; run consumer/runtime tests on each newer stable .NET version added to the advertised matrix.
 2. Add a newer target only when it enables useful platform-specific APIs/implementation or is needed for dependency compatibility. Do not multiply targets solely to list runtime versions.
 3. Use the latest stable supported language per target. Shared source must compile for every selected target; newer-only syntax belongs in target-specific source when needed.
 4. Raising the minimum above .NET 10 is an explicit breaking release decision. It is not an automatic side effect of an SDK update. Future-target certification also depends on providers and optional dashboard integration.
@@ -30,41 +30,41 @@ No SDK patch number is frozen in this planning document because implementation h
 
 ## 3. Concrete package proposal
 
-| Package | Contents | Direct Spindle dependencies |
+| Package | Contents | Direct Runwick dependencies |
 |---|---|---|
-| Spindle.Contracts | IQueueJob, IJobHandler<T>, optional IJobContext, job metadata attributes and context value types | None |
-| Spindle | Dispatcher/preparation/recovery APIs, registration/configuration, worker engine, middleware, scheduler/capacity modules, management application services and storage extension contracts | Spindle.Contracts |
-| Spindle.Postgres | PostgreSQL commands/projections, migrations, profile checks and provider-specific transaction staging | Spindle |
-| Spindle.Sqlite | SQLite commands/projections, migrations, bounded executor and transaction staging | Spindle |
-| Spindle.Redis | Redis commands/projections, publication/recovery and persistence-profile checks | Spindle |
-| Spindle.AspNetCore | Auth/policy adapters, management endpoints, antiforgery and HTTP result mapping | Spindle |
-| Spindle.Dashboard | Inertia server adapter integration, page projections and prebuilt frontend assets | Spindle.AspNetCore |
-| Spindle.Outbox | Optional relay, immutable source intent and delivery contracts | Spindle |
-| Spindle.Outbox.Postgres | Source staging and relay persistence on Npgsql | Spindle.Outbox |
-| Spindle.Outbox.Sqlite | Source staging and relay persistence on Microsoft.Data.Sqlite | Spindle.Outbox |
-| Spindle.Testing | Public application test helpers for registration, dispatch capture and controlled handler invocation | Spindle |
+| Runwick.Contracts | IQueueJob, IJobHandler<T>, optional IJobContext, job metadata attributes and context value types | None |
+| Runwick | Dispatcher/preparation/recovery APIs, registration/configuration, worker engine, middleware, scheduler/capacity modules, management application services and storage extension contracts | Runwick.Contracts |
+| Runwick.Postgres | PostgreSQL commands/projections, migrations, profile checks and provider-specific transaction staging | Runwick |
+| Runwick.Sqlite | SQLite commands/projections, migrations, bounded executor and transaction staging | Runwick |
+| Runwick.Redis | Redis commands/projections, publication/recovery and persistence-profile checks | Runwick |
+| Runwick.AspNetCore | Auth/policy adapters, management endpoints, antiforgery and HTTP result mapping | Runwick |
+| Runwick.Dashboard | Inertia server adapter integration, page projections and prebuilt frontend assets | Runwick.AspNetCore |
+| Runwick.Outbox | Optional relay, immutable source intent and delivery contracts | Runwick |
+| Runwick.Outbox.Postgres | Source staging and relay persistence on Npgsql | Runwick.Outbox |
+| Runwick.Outbox.Sqlite | Source staging and relay persistence on Microsoft.Data.Sqlite | Runwick.Outbox |
+| Runwick.Testing | Public application test helpers for registration, dispatch capture and controlled handler invocation | Runwick |
 
-Names are proposals; registry availability has not been checked. The decision register D-02 remains reviewable. This refines the earlier optional abstractions boundary into a concrete Spindle.Contracts recommendation: an application-owned shared job-contract project should not need worker-hosting, database or ASP.NET dependencies. Handler/context interfaces in that package remain plain contracts, without container registration or HttpContext types.
+Names are proposals; registry availability has not been checked. The decision register D-02 remains reviewable. This refines the earlier optional abstractions boundary into a concrete Runwick.Contracts recommendation: an application-owned shared job-contract project should not need worker-hosting, database or ASP.NET dependencies. Handler/context interfaces in that package remain plain contracts, without container registration or HttpContext types.
 
-The main Spindle package transitively includes Contracts, so ordinary applications need no extra direct reference. A producer adds Spindle and one storage provider; a worker adds the same packages and its handlers. Installing the engine assembly does not start it: AddWorker/AddScheduler remain explicit. Avoid separate worker/scheduler/scaler packages while they share one engine/versioning contract.
+The main Runwick package transitively includes Contracts, so ordinary applications need no extra direct reference. A producer adds Runwick and one storage provider; a worker adds the same packages and its handlers. Installing the engine assembly does not start it: AddWorker/AddScheduler remain explicit. Avoid separate worker/scheduler/scaler packages while they share one engine/versioning contract.
 
 Provider dependencies point toward the core; core never references a concrete provider. The driver's service-provider interface must be accessible across assemblies, with an explicit versioned extension contract rather than pretending all implementation interfaces can be C# internal. Initially ship core/provider releases together and negotiate semantic operation capabilities at startup. Exact NuGet compatibility ranges follow D-13; interfaces being public does not establish unlimited third-party driver compatibility.
 
-Core emits through .NET diagnostic primitives without an exporter dependency. Hosts select telemetry integration/exporters. A separate Spindle telemetry package is unnecessary unless a concrete host convenience integration later justifies it. The [selected optional outbox packages](transactional-outbox.md) never enter every installation's dependency graph.
+Core emits through .NET diagnostic primitives without an exporter dependency. Hosts select telemetry integration/exporters. A separate Runwick telemetry package is unnecessary unless a concrete host convenience integration later justifies it. The [selected optional outbox packages](transactional-outbox.md) never enter every installation's dependency graph.
 
-Spindle.Testing helpers must label simulated storage/dispatch accurately. The repository's independent reference model, container fixtures, fault injectors and durability certification suite are internal test projects, not production APIs or a certified in-memory driver.
+Runwick.Testing helpers must label simulated storage/dispatch accurately. The repository's independent reference model, container fixtures, fault injectors and durability certification suite are internal test projects, not production APIs or a certified in-memory driver.
 
 ## 4. Installation and role matrix
 
 | Consumer | Required package set | Enabled roles |
 |---|---|---|
-| Shared application job definitions | Spindle.Contracts | None |
-| Producer application | Spindle + selected provider | Producer |
-| Embedded application | Spindle + selected provider + handler project | Producer and worker; scheduler only if configured |
-| External worker | Spindle + selected provider + handler project | Worker; scheduler independently configurable |
-| Management API host | Spindle.AspNetCore + selected provider | Management; no worker requirement |
-| Embedded/standalone dashboard | Spindle.Dashboard + selected provider | Management/dashboard; other roles explicit |
-| Application test project | Spindle.Testing and relevant application packages | Test helpers only |
+| Shared application job definitions | Runwick.Contracts | None |
+| Producer application | Runwick + selected provider | Producer |
+| Embedded application | Runwick + selected provider + handler project | Producer and worker; scheduler only if configured |
+| External worker | Runwick + selected provider + handler project | Worker; scheduler independently configurable |
+| Management API host | Runwick.AspNetCore + selected provider | Management; no worker requirement |
+| Embedded/standalone dashboard | Runwick.Dashboard + selected provider | Management/dashboard; other roles explicit |
+| Application test project | Runwick.Testing and relevant application packages | Test helpers only |
 
 The web packages may require ASP.NET Core; Contracts/core/providers must not bring in Microsoft.AspNetCore.App. Frontend assets are built during package production and embedded/versioned with the dashboard; consumers do not need Node/npm. PostgreSQL, SQLite and Redis client dependencies are isolated to their respective providers. No EF dependency is required.
 

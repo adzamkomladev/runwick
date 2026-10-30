@@ -23,7 +23,7 @@ The review's optional-versus-required name attribute, custom priority labels, nu
 
 ## 2. Runtime ownership
 
-Use one `WorkerHostedService : IHostedService` per configured Spindle worker instance. It owns a `WorkerSupervisor` and all long-lived tasks below. Producer-only registration creates none of them. Embedded and external hosts instantiate the same tree. An explicit hosted-service implementation makes staged stopping independent of a single automatically cancelled execution token. .NET supports both direct hosted-service implementations and BackgroundService. [Hosting reference](https://learn.microsoft.com/en-us/dotnet/core/extensions/workers)
+Use one `WorkerHostedService : IHostedService` per configured Runwick worker instance. It owns a `WorkerSupervisor` and all long-lived tasks below. Producer-only registration creates none of them. Embedded and external hosts instantiate the same tree. An explicit hosted-service implementation makes staged stopping independent of a single automatically cancelled execution token. .NET supports both direct hosted-service implementations and BackgroundService. [Hosting reference](https://learn.microsoft.com/en-us/dotnet/core/extensions/workers)
 
 | Internal component | Owns | Must not own |
 |---|---|---|
@@ -297,4 +297,4 @@ Scheduling/capacity, drivers, public API, management/observability and the backl
 
 ## 13. Relationship to the implementation research
 
-This design applies the pinned [upstream implementation review](../implementation-research.md): Hangfire's coordinated idle polling informs shared readiness; FastEndpoints' free-slot refill and separate shutdown bookkeeping inform tickets and staged drain; TickerQ's key-lifetime work constrains any later local gate; Wolverine's persistence-failure lesson informs honest durable-result reporting; Quartz's provider-specific contention findings require real PostgreSQL measurements. Coravel's local exclusion does not supply Spindle's distributed limits. These are adaptations and test obligations, not claims that upstream libraries implement this complete design.
+This design applies the pinned [upstream implementation review](../implementation-research.md): Hangfire's coordinated idle polling informs shared readiness; FastEndpoints' free-slot refill and separate shutdown bookkeeping inform tickets and staged drain; TickerQ's key-lifetime work constrains any later local gate; Wolverine's persistence-failure lesson informs honest durable-result reporting; Quartz's provider-specific contention findings require real PostgreSQL measurements. Coravel's local exclusion does not supply Runwick's distributed limits. These are adaptations and test obligations, not claims that upstream libraries implement this complete design.

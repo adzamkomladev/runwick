@@ -43,7 +43,7 @@ No default pipeline timeout avoids automatically repeating legitimate long-runni
 | CleanupBudget | 10 s | From starting scope disposal after pipeline exit |
 | OwnershipCommandLifetime | 30 s | Frozen NotAfter offset for new Reserve/Begin/Renew/Finish/Recover commands; store time still validates it |
 | RecoveryScanInterval | Nominal 5 s, jitter [4 s, 6 s] | Bounded expiry discovery; does not grant/revoke ownership itself |
-| ShutdownBudget | 25 s | Planned maximum Spindle shutdown work, subject to the host's earlier cancellation |
+| ShutdownBudget | 25 s | Planned maximum Runwick shutdown work, subject to the host's earlier cancellation |
 | ShutdownDrain / cancellation / finalization slices | 15 s / 5 s / 5 s | Absolute phase cutoffs, not fresh per-job budgets |
 
 The 30-second ownership command lifetime does not permit spending 30 seconds on a renewal network call: each request is bounded by the shorter request timeout, resolution budget and safety deadline. Begin's result retains its original lease; it does not silently grant another full lease. These settings are internal worker policies, not per-dispatch options.
@@ -142,11 +142,11 @@ At shutdown use absolute cutoffs measured from the first locally observed stop s
 | 20–25 s | Reserve remaining time for completed cleanup/finalization and pending receipt resolution; continue observing user work, but no new execution |
 | At 25 s or earlier host cancellation | Stop control I/O/renewal and return boundedly; report unresolved work; leave recovery to durable lease rules |
 
-The finalization slice is not an instruction to dispose live code or ignore a finished handler. A task that completes during it can still clean up/finalize if time remains. All ordinary grace/cleanup/resolution budgets are shortened by the applicable absolute shutdown boundary. Host deadline cancellation overrides every phase, including a token already cancelled before Spindle's StopAsync starts.
+The finalization slice is not an instruction to dispose live code or ignore a finished handler. A task that completes during it can still clean up/finalize if time remains. All ordinary grace/cleanup/resolution budgets are shortened by the applicable absolute shutdown boundary. Host deadline cancellation overrides every phase, including a token already cancelled before Runwick's StopAsync starts.
 
-Inspected .NET 10 HostOptions defaults ShutdownTimeout to 30 seconds. Host.StopAsync creates a shared timeout token before stopping services, which are sequential by default; Spindle may receive less than the full interval. The 25-second proposal leaves nominal room but cannot reserve it against other services. Do not overwrite host options automatically. Validate configured budgets and document the deployment termination grace; honor the actual token even when static settings appear sufficient. [HostOptions source](https://raw.githubusercontent.com/dotnet/runtime/v10.0.0/src/libraries/Microsoft.Extensions.Hosting/src/HostOptions.cs), [Host.StopAsync source](https://raw.githubusercontent.com/dotnet/runtime/v10.0.0/src/libraries/Microsoft.Extensions.Hosting/src/Internal/Host.cs)
+Inspected .NET 10 HostOptions defaults ShutdownTimeout to 30 seconds. Host.StopAsync creates a shared timeout token before stopping services, which are sequential by default; Runwick may receive less than the full interval. The 25-second proposal leaves nominal room but cannot reserve it against other services. Do not overwrite host options automatically. Validate configured budgets and document the deployment termination grace; honor the actual token even when static settings appear sufficient. [HostOptions source](https://raw.githubusercontent.com/dotnet/runtime/v10.0.0/src/libraries/Microsoft.Extensions.Hosting/src/HostOptions.cs), [Host.StopAsync source](https://raw.githubusercontent.com/dotnet/runtime/v10.0.0/src/libraries/Microsoft.Extensions.Hosting/src/Internal/Host.cs)
 
-The host can dispose its service provider after stopping while noncooperative tasks remain. Spindle cannot guarantee DI availability beyond host lifetime or provide a safe in-process hard kill. Tests/runbooks must distinguish orderly drain from abrupt process termination.
+The host can dispose its service provider after stopping while noncooperative tasks remain. Runwick cannot guarantee DI availability beyond host lifetime or provide a safe in-process hard kill. Tests/runbooks must distinguish orderly drain from abrupt process termination.
 
 ## 8. Required contract additions
 

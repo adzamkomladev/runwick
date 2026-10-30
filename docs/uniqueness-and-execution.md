@@ -1,6 +1,6 @@
 # Uniqueness and execution planning
 
-Status: planning draft. Confirmed: Spindle will support both active-job uniqueness and a fixed idempotency retention window. Detailed semantics and execution defaults below are proposals for review. No runtime implementation has started.
+Status: planning draft. Confirmed: Runwick will support both active-job uniqueness and a fixed idempotency retention window. Detailed semantics and execution defaults below are proposals for review. No runtime implementation has started.
 
 Current-contract notice, 2026-10-29: use the [consolidated public API](architecture/public-api-contract.md), [wire/fingerprint contract](architecture/dispatch-wire-contract.md), and [storage protocol](architecture/storage-command-protocol.md). The historical five-state lifecycle, reservation-counted budget, and numerical defaults below are superseded/unapproved alternatives, retained for provenance rather than implementation guidance.
 
@@ -86,7 +86,7 @@ Proposed outcome precedence:
 
 Read cancellation state in the same ownership-checked transaction that finalizes the outcome. A cancellation request that arrives after committed success returns an already-terminal result. Record when user code finishes separately from when its outcome is persisted; delayed bookkeeping must not invent an execution timeout. Precise durable/local-clock reconciliation is part of the ownership-protocol design.
 
-When a timeout or cancellation is ignored, keep the handler's local slot and DI scope until user code actually exits. While ownership remains valid, renew it and retain the associated permits; do not release them simply because a cancellation timer fired. Show the overdue/cancellation-requested condition in operations. Operators can terminate an isolated worker process if necessary; Spindle cannot guarantee termination of arbitrary in-process code.
+When a timeout or cancellation is ignored, keep the handler's local slot and DI scope until user code actually exits. While ownership remains valid, renew it and retain the associated permits; do not release them simply because a cancellation timer fired. Show the overdue/cancellation-requested condition in operations. Operators can terminate an isolated worker process if necessary; Runwick cannot guarantee termination of arbitrary in-process code.
 
 Lease expiry can still allow a replacement worker while an old handler continues. Cancellation and uniqueness cannot eliminate that possibility. External side effects need idempotency, and external fencing works only when the receiving resource validates an appropriate fencing token.
 

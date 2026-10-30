@@ -1,6 +1,6 @@
 > Historical draft preserved on 2026-10-29. Superseded by the [consolidated public API proposal](../public-api-proposal.md). The alternatives below are not the current contract.
 
-# Spindle public API proposal
+# Runwick public API proposal
 
 Status: draft for discussion. The user has selected **attributes first** for getting-started examples, with defaults beside each job class. Other choices below are recommendations, not approved contracts. Code is illustrative proposed API, not an implemented package.
 
@@ -51,15 +51,15 @@ public interface IJobHandler<in TJob> where TJob : class
 ## 2. Embedded hosting stays small
 
 ```csharp
-builder.Services.AddSpindle(spindle =>
+builder.Services.AddRunwick(runwick =>
 {
-    spindle.UsePostgres(connectionString, postgres =>
-        postgres.Schema = "spindle");
+    runwick.UsePostgres(connectionString, postgres =>
+        postgres.Schema = "runwick");
 
-    spindle.AddJobsFromAssemblyContaining<SendWelcomeEmail>();
-    spindle.AddHandlersFromAssemblyContaining<SendWelcomeEmailHandler>();
+    runwick.AddJobsFromAssemblyContaining<SendWelcomeEmail>();
+    runwick.AddHandlersFromAssemblyContaining<SendWelcomeEmailHandler>();
 
-    spindle.AddWorker(worker =>
+    runwick.AddWorker(worker =>
     {
         worker.Queues("emails");
         worker.MaxConcurrency = 8;
@@ -72,14 +72,14 @@ Discovery scans explicitly selected assemblies at startup. It does not scan ever
 Explicit registration is also supported:
 
 ```csharp
-spindle.AddJob<SendWelcomeEmail>(); // reads the payload attributes
-spindle.AddHandler<SendWelcomeEmail, SendWelcomeEmailHandler>();
+runwick.AddJob<SendWelcomeEmail>(); // reads the payload attributes
+runwick.AddHandler<SendWelcomeEmail, SendWelcomeEmailHandler>();
 ```
 
 For applications that cannot or do not want to annotate payloads:
 
 ```csharp
-spindle.AddJob<SendWelcomeEmail>("email.welcome", version: 1)
+runwick.AddJob<SendWelcomeEmail>("email.welcome", version: 1)
     .ToQueue("emails")
     .WithPriority("medium")
     .WithMaxAttempts(5);
@@ -152,7 +152,7 @@ A successful ordinary enqueue means the storage driver confirmed its transaction
 
 ## 4. Transactional dispatch is explicit and provider-specific
 
-In `Spindle.Postgres`, propose a separate staging contract:
+In `Runwick.Postgres`, propose a separate staging contract:
 
 ```csharp
 public interface IPostgresJobClient
@@ -186,7 +186,7 @@ await transaction.CommitAsync(ct);
 
 `StageAsync` executes the insert using the supplied transaction. Its successful return means accepted within that transaction, not committed. The caller owns commit, rollback, and disposal. Rollback removes the insertion; workers cannot reserve an uncommitted job. The returned ID may never become an executable job if the caller rolls back.
 
-The transaction's connection is authoritative. The driver validates supported transaction state and uses the configured schema/application namespace on that connection. The caller must target the same Spindle store the workers use; there is no fallback to a separately opened connection. We must decide how configured-store compatibility is validated without brittle connection-string comparisons.
+The transaction's connection is authoritative. The driver validates supported transaction state and uses the configured schema/application namespace on that connection. The caller must target the same Runwick store the workers use; there is no fallback to a separately opened connection. We must decide how configured-store compatibility is validated without brittle connection-string comparisons.
 
 Wake-up hints must respect commit visibility. Polling remains sufficient if notification is unavailable or lost. Core contracts do not depend on EF Core or pretend that every storage driver supports an application database transaction.
 
@@ -209,7 +209,7 @@ An optional EF integration can adapt an application's actual transaction. Cross-
 Example fluent override while retaining attributes as the introductory style:
 
 ```csharp
-spindle.ConfigureJob<SendWelcomeEmail>()
+runwick.ConfigureJob<SendWelcomeEmail>()
     .ToQueue("customer-emails")
     .WithMaxAttempts(3);
 ```
@@ -233,8 +233,8 @@ public interface IJobMiddleware
 Proposed registration:
 
 ```csharp
-spindle.UseMiddleware<LoggingMiddleware>();
-spindle.ConfigureJob<SendWelcomeEmail>()
+runwick.UseMiddleware<LoggingMiddleware>();
+runwick.ConfigureJob<SendWelcomeEmail>()
     .UseMiddleware<TenantContextMiddleware>();
 ```
 

@@ -4,7 +4,7 @@ Status: engineering proposal, 2026-10-29. Instrument names, timings and acceptan
 
 ## 1. Instrumentation ownership
 
-Core emits through ActivitySource and Meter named Spindle, with a versioned instrumentation schema. Hosts choose listeners, exporters, sampling, log providers and endpoints. No exporter is required to dispatch, renew, finish or recover work. Keep dashboard queries and scaler inputs independent of exported telemetry availability.
+Core emits through ActivitySource and Meter named Runwick, with a versioned instrumentation schema. Hosts choose listeners, exporters, sampling, log providers and endpoints. No exporter is required to dispatch, renew, finish or recover work. Keep dashboard queries and scaler inputs independent of exported telemetry availability.
 
 Instrument semantic boundaries inside coordinators and driver adapters. A storage retry is not another job execution; a replayed receipt is not another state transition. Local counters are operational observations and can be lost on crash or observed again after recovery. Durable history/receipts answer correctness questions; metric totals are not billing, audit or exactly-once accounting.
 
@@ -34,7 +34,7 @@ Use monotonic elapsed time for local durations and the driver's authoritative in
 
 Validate incoming trace IDs/state and bound metadata size. Baggage propagation is deny-by-default with explicit allowlisted keys. Trace metadata never selects tenant, permission or execution authority. Producers cannot force the host's sampling/export policy through stored metadata.
 
-OpenTelemetry messaging conventions distinguish processing and settlement, but the inspected messaging-span specification is marked Development. Use a documented Spindle schema and a pinned mapping where useful; do not claim automatic compatibility with all future convention revisions. [Messaging spans](https://opentelemetry.io/docs/specs/semconv/messaging/messaging-spans/)
+OpenTelemetry messaging conventions distinguish processing and settlement, but the inspected messaging-span specification is marked Development. Use a documented Runwick schema and a pinned mapping where useful; do not claim automatic compatibility with all future convention revisions. [Messaging spans](https://opentelemetry.io/docs/specs/semconv/messaging/messaging-spans/)
 
 ## 3. Metric surface and cardinality
 
@@ -42,20 +42,20 @@ Proposed instrument set; durations use seconds and counts use the indicated unit
 
 | Instrument | Kind / unit | Meaning |
 |---|---|---|
-| spindle.dispatch.operations | Counter / operation | Client-observed dispatch outcomes; created/reused/unknown/rejected are distinct |
-| spindle.execution.authorized | Counter / execution | Newly observed successful Begin transitions; known receipt replays excluded |
-| spindle.execution.duration | Histogram / s | Middleware/handler invocation duration, excluding waiting and Finish |
-| spindle.cleanup.duration | Histogram / s | Attempt cleanup duration |
-| spindle.settlement.duration | Histogram / s | Invocation end to confirmed Finish or definitive loss; result dimension distinguishes them |
-| spindle.storage.operation.duration | Histogram / s | Driver call latency by bounded operation/result |
-| spindle.lease.renewals | Counter / renewal | Observed renewed/stale/error results |
-| spindle.lease.margin | Histogram / s | Conservative remaining local safety margin when renewal result is received |
-| spindle.worker.tickets | Observable gauge / ticket | Local outstanding tickets by phase, including completion/cleanup |
-| spindle.worker.target | Observable gauge / ticket | Local configured/controller target, not free slots |
-| spindle.worker.oldest_unsettled.age | Observable gauge / s | Local age of oldest outstanding settlement |
-| spindle.schedule.materialization.delay | Histogram / s | Due-to-materialization delay for observed occurrences |
-| spindle.scaling.decisions | Counter / decision | Increase/decrease/hold by bounded reason code |
-| spindle.telemetry.dropped | Counter / record | Drops in library-owned bounded diagnostic buffers, where such buffers exist |
+| runwick.dispatch.operations | Counter / operation | Client-observed dispatch outcomes; created/reused/unknown/rejected are distinct |
+| runwick.execution.authorized | Counter / execution | Newly observed successful Begin transitions; known receipt replays excluded |
+| runwick.execution.duration | Histogram / s | Middleware/handler invocation duration, excluding waiting and Finish |
+| runwick.cleanup.duration | Histogram / s | Attempt cleanup duration |
+| runwick.settlement.duration | Histogram / s | Invocation end to confirmed Finish or definitive loss; result dimension distinguishes them |
+| runwick.storage.operation.duration | Histogram / s | Driver call latency by bounded operation/result |
+| runwick.lease.renewals | Counter / renewal | Observed renewed/stale/error results |
+| runwick.lease.margin | Histogram / s | Conservative remaining local safety margin when renewal result is received |
+| runwick.worker.tickets | Observable gauge / ticket | Local outstanding tickets by phase, including completion/cleanup |
+| runwick.worker.target | Observable gauge / ticket | Local configured/controller target, not free slots |
+| runwick.worker.oldest_unsettled.age | Observable gauge / s | Local age of oldest outstanding settlement |
+| runwick.schedule.materialization.delay | Histogram / s | Due-to-materialization delay for observed occurrences |
+| runwick.scaling.decisions | Counter / decision | Increase/decrease/hold by bounded reason code |
+| runwick.telemetry.dropped | Counter / record | Drops in library-owned bounded diagnostic buffers, where such buffers exist |
 
 Allowed dimensions are finite driver/operation/result/reason codes, configured pool names and optionally bounded registered queue/job names. Dynamically created queues/types fall into an overflow grouping when the configured series budget is reached. No job ID, attempt ID, command ID, tenant ID, arbitrary resource key, exception message or URL as a metric label. Cap combinations as well as individual labels; avoid constructing a series cache before applying the bound.
 

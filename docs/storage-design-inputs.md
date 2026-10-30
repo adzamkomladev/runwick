@@ -46,7 +46,7 @@ The lane model also gives aging a natural home: the pool manager occasionally of
 Illustrative shape (syntax provisional):
 
 ```csharp
-spindle.AddJob<SendWelcomeEmail>()            // current version from [Job(..., Version = 2)]
+runwick.AddJob<SendWelcomeEmail>()            // current version from [Job(..., Version = 2)]
     .UpgradeFrom<SendWelcomeEmailV1>(v1 => new SendWelcomeEmail(v1.UserId, Locale: "en"));
 ```
 

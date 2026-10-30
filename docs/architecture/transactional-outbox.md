@@ -4,7 +4,7 @@ Status: implementation baseline, 2026-10-29. Closes D-12's design choices; runti
 
 ## Scope and API
 
-Ship PostgreSQL and same-host SQLite source adapters, each able to deliver to any certified Spindle destination profile. Packages: `Spindle.Outbox` (relay/contracts, depends on Spindle), `Spindle.Outbox.Postgres` (Npgsql source), and `Spindle.Outbox.Sqlite` (Microsoft.Data.Sqlite source). No EF dependency or automatic SaveChanges interceptor. Other source databases are outside the initial adapter set; Redis is a destination, not a business-transaction source adapter.
+Ship PostgreSQL and same-host SQLite source adapters, each able to deliver to any certified Runwick destination profile. Packages: `Runwick.Outbox` (relay/contracts, depends on Runwick), `Runwick.Outbox.Postgres` (Npgsql source), and `Runwick.Outbox.Sqlite` (Microsoft.Data.Sqlite source). No EF dependency or automatic SaveChanges interceptor. Other source databases are outside the initial adapter set; Redis is a destination, not a business-transaction source adapter.
 
 Use native StageAsync when business data and queue writes actually share one compatible connection/transaction. Use the outbox when they do not. The caller must explicitly commit the business transaction in both cases. Wolverine's documented integration likewise persists outgoing envelopes in the business transaction; its batching discussion is a useful implementation comparison, not a reason to import its whole messaging model. [Wolverine outbox integration](https://wolverinefx.net/guide/durability/efcore/outbox-and-inbox.html)
 

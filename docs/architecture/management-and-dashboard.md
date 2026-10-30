@@ -12,7 +12,7 @@ Use three internal layers, without deciding final NuGet packaging here:
 2. ASP.NET Core adapters authenticate callers, validate antiforgery and request limits, construct trusted caller context, and translate service outcomes into HTTP responses.
 3. Dashboard pages and bundled assets consume those services. Initial HTML, Inertia responses, polling and optional event connections share the same authorization boundary.
 
-A standalone management host connects to the configured Spindle store without starting workers or schedulers. Embedded hosting mounts an explicit path prefix and selects named authentication schemes/policies without replacing the host's defaults. Registration must not install global authorization exceptions or expose an alternative unprotected JSON API.
+A standalone management host connects to the configured Runwick store without starting workers or schedulers. Embedded hosting mounts an explicit path prefix and selects named authentication schemes/policies without replacing the host's defaults. Registration must not install global authorization exceptions or expose an alternative unprotected JSON API.
 
 The service boundary requires a trusted caller context for every management operation. In-process host integration supplies an explicitly configured system identity/policy when appropriate; a missing HTTP context never means administrator. This is protection against untrusted requests, not isolation from application code that already owns database credentials.
 
@@ -40,7 +40,7 @@ Apply scope predicates before pagination, totals, facets and search. Single-reso
 
 The baseline isolation boundary is the configured application plus authorized queue set. A payload containing TenantId does not establish tenant isolation. Supporting finer tenant permissions requires immutable, indexed security-partition metadata and equivalent enforcement across every driver/query/command; do not advertise it until specified and tested. If a host's custom policy cannot be translated into a safe bounded query, reject that query configuration instead of filtering a page after reading unrestricted results.
 
-Queues and security-partition bindings used to authorize a mutation must be immutable for that generation or checked in the atomic command. Authorization uses current host policy at request evaluation; Spindle cannot make remote identity-provider revocation atomic with a database commit. Recheck authorization for each new request and every replay/resolution, even if a receipt already exists. Cached results are never authorization tokens.
+Queues and security-partition bindings used to authorize a mutation must be immutable for that generation or checked in the atomic command. Authorization uses current host policy at request evaluation; Runwick cannot make remote identity-provider revocation atomic with a database commit. Recheck authorization for each new request and every replay/resolution, even if a receipt already exists. Cached results are never authorization tokens.
 
 ## 3. Authentication and browser requests
 
@@ -48,7 +48,7 @@ Queues and security-partition bindings used to authorize a mutation must be immu
 |---|---|
 | Basic Auth | Explicit credential verifier/secret configuration, no default credentials; HTTPS required; use vetted credential verification and bounded authentication throttling; map identities to the same policies |
 | Existing host authentication | Explicit accepted schemes and required policies; preserve host login/challenge handling and default scheme configuration |
-| Host OIDC | Host performs the OIDC flow and maintains the authenticated server session; Spindle consumes that principal and does not place access/refresh tokens in props |
+| Host OIDC | Host performs the OIDC flow and maintains the authenticated server session; Runwick consumes that principal and does not place access/refresh tokens in props |
 
 Missing authentication/policy configuration prevents dashboard mapping/startup. No implicit anonymous mode based on environment name or perceived local address. This still permits a simple Basic Auth setup with an explicit permission preset.
 
@@ -110,7 +110,7 @@ If required successful-mutation audit cannot commit, the mutation cannot report 
 
 Denied/invalid requests go to bounded security logging, with safe target identifiers and rate limiting to resist log amplification. They need not write to an unavailable job store. External audit export can be retried asynchronously from persisted records; exporter failure does not undo a committed mutation. Ordinary execution telemetry is separate and never required for job completion.
 
-Audit is append-only through Spindle APIs, not tamper-proof against a database administrator. Cleanup is policy-controlled and itself audited; retention cannot erase live receipt/recovery/fence/uniqueness obligations. Separate payload, attempt-detail, command receipt and audit retention. Retention policy edits are revisioned; cleanup reports progress and failures instead of implying immediate deletion. No one TTL governs everything.
+Audit is append-only through Runwick APIs, not tamper-proof against a database administrator. Cleanup is policy-controlled and itself audited; retention cannot erase live receipt/recovery/fence/uniqueness obligations. Separate payload, attempt-detail, command receipt and audit retention. Retention policy edits are revisioned; cleanup reports progress and failures instead of implying immediate deletion. No one TTL governs everything.
 
 ## 7. Implementation evidence and adapter gate
 

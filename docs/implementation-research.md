@@ -1,4 +1,4 @@
-# Implementation lessons for Spindle
+# Implementation lessons for Runwick
 
 Reviewed: 2026-10-28. This is a focused static review of selected production paths, tests, and upstream discussions. It is not an exhaustive audit of these libraries. Tests were inspected, not executed; upstream performance measurements were not reproduced.
 
@@ -23,9 +23,9 @@ The earlier documentation comparison remains useful for API exploration. This do
 
 **Observed:** SQL Server dequeue first attempts a fetch, then coordinates waiting pollers with a semaphore keyed by storage and queue set. The source explicitly explains that coordination reduces database load. This is process-local coordination, not one global poller across a cluster.
 
-**Spindle proposal:** separate the number of active handlers from the number of idle polling loops. Use wake-up signals as an optimization with periodic polling for recovery. Design bounded polling/backoff and account for replicas and queue counts.
+**Runwick proposal:** separate the number of active handlers from the number of idle polling loops. Use wake-up signals as an optimization with periodic polling for recovery. Design bounded polling/backoff and account for replicas and queue counts.
 
-**Acceptance:** measure idle database queries as worker slots, queue counts, and replicas increase; dropped notifications must not strand work. Do not derive Spindle throughput claims from Hangfire's implementation.
+**Acceptance:** measure idle database queries as worker slots, queue counts, and replicas increase; dropped notifications must not strand work. Do not derive Runwick throughput claims from Hangfire's implementation.
 
 Evidence: [dequeue implementation](https://github.com/HangfireIO/Hangfire/blob/ad2f963ea9032e84de2c5233e11d52a88e26d3e4/src/Hangfire.SqlServer/SqlServerJobQueue.cs).
 
@@ -33,7 +33,7 @@ Evidence: [dequeue implementation](https://github.com/HangfireIO/Hangfire/blob/a
 
 **Observed:** SQL Server timeout jobs renew their fetched timestamp periodically; renewal, deletion, and requeue match the prior fetched timestamp. Renewal uses database time and notices when no matching row remains. Tests cover renewal and removal/requeue after renewal. This observation concerns queue rows, not every durable job-state transition.
 
-**Spindle proposal:** use an explicit reservation identity and ownership-checked renewal, completion, retry, and permit release. Decide expiry validation separately from token equality. A token does not stop external side effects.
+**Runwick proposal:** use an explicit reservation identity and ownership-checked renewal, completion, retry, and permit release. Decide expiry validation separately from token equality. A token does not stop external side effects.
 
 **Acceptance:** after worker B takes over, worker A cannot renew B's reservation, acknowledge it, or release B's permits.
 
@@ -43,7 +43,7 @@ Evidence: [timeout job](https://github.com/HangfireIO/Hangfire/blob/ad2f963ea903
 
 **Observed:** the current durable local queue awaits a bounded persistence retry before marking the envelope persisted. Its regression test explains that the earlier retry-block shape could return success to an outside-transaction publisher while later retries discarded the message. Tests cover publish/schedule failure and recovery within the retry budget. The test also distinguishes cascaded messages without an enlisted outbox; do not generalize the fix to every publishing path.
 
-**Spindle proposal:** ordinary durable enqueue must await persistence. Enqueue inside a caller-owned transaction returns before the caller's commit, so its result must not imply committed durability. Ambiguous commit outcomes require idempotent retry support.
+**Runwick proposal:** ordinary durable enqueue must await persistence. Enqueue inside a caller-owned transaction returns before the caller's commit, so its result must not imply committed durability. Ambiguous commit outcomes require idempotent retry support.
 
 **Acceptance:** storage failure cannot produce a false durable-success result; rollback removes the job; a lost commit response can be retried without creating a second logical job when a dispatch key is supplied.
 
@@ -53,7 +53,7 @@ Evidence: [queue implementation](https://github.com/JasperFx/wolverine/blob/9daa
 
 **Observed:** the distributed executor requests only available capacity, tracks executions individually, and waits for any task to finish when full. Completion/failure writes use a token separate from application-stopping cancellation. Tests cover slot refill, claim limits, and draining during shutdown.
 
-**Spindle proposal:** avoid waiting for a whole batch when one job is slow. Reserve against free slots. Separate stop-reserving, handler cancellation, and final bookkeeping, with a bounded cleanup deadline rather than an unbounded shutdown.
+**Runwick proposal:** avoid waiting for a whole batch when one job is slow. Reserve against free slots. Separate stop-reserving, handler cancellation, and final bookkeeping, with a bounded cleanup deadline rather than an unbounded shutdown.
 
 **Acceptance:** one slow job does not block refilling other slots; reservations never exceed available local capacity; shutdown still attempts ownership-checked completion; forced termination remains recoverable.
 
@@ -65,7 +65,7 @@ Evidence: [executor](https://github.com/FastEndpoints/FastEndpoints/blob/46416dd
 
 **Upstream rationale:** in the historical distributed-scheduling discussion, the maintainer identified maintaining database-specific mutex providers as a difficulty and later deprioritized the feature. The polling discussion cites control over batch timing and preserving simplicity. These are maintenance/product tradeoffs, not evidence of a security-based rejection.
 
-**Spindle proposal:** keep distributed guarantees explicit and budget for each driver's maintenance. PostgreSQL-first sequencing remains sensible; SQLite and Redis still require their own contract validation.
+**Runwick proposal:** keep distributed guarantees explicit and budget for each driver's maintenance. PostgreSQL-first sequencing remains sensible; SQLite and Redis still require their own contract validation.
 
 **Acceptance:** run multi-process exclusion and recovery tests for each driver claiming those guarantees. Never use an in-memory mutex to satisfy a global ceiling.
 
@@ -75,7 +75,7 @@ Evidence: [mutex](https://github.com/jamesmh/coravel/blob/4072e041820f2d14529276
 
 **Observed:** owned function permits count holders and waiters; an entry is removed and its semaphore disposed after the last reference. Cancellation releases a reference, and permit disposal is idempotent. Legacy raw-semaphore access pins entries. Tests exercise dynamic names, cancelled waiters, and concurrent acquire/release.
 
-**Spindle proposal:** resource-keyed local gates need safe reclamation. Distributed permit rows need retention too. Do not expose mutable/raw semaphore objects as the public ownership contract.
+**Runwick proposal:** resource-keyed local gates need safe reclamation. Distributed permit rows need retention too. Do not expose mutable/raw semaphore objects as the public ownership contract.
 
 **Acceptance:** many distinct keys do not accumulate indefinitely; cancelling a waiter does not release a held permit; reclaim/recreate races never admit two independent gates for one active key.
 
@@ -85,7 +85,7 @@ Evidence: [gate](https://github.com/Arcenox-co/TickerQ/blob/f366cf7fa32575be12e3
 
 **Observed:** Hangfire's ASP.NET Core middleware runs authorization filters and, when enabled and available, antiforgery validation before dispatch. TickerQ validates anonymous access acknowledgement, explicit CORS origins, and trusted forwarding configuration. Its tests also reproduce a branched-pipeline authorization integration failure.
 
-**Spindle proposal:** enforce authorization server-side for management operations; correctly wire embedded and standalone middleware. Validate required security services at startup. Host authentication alone does not imply permission to retry, cancel, edit schedules, or view sensitive payloads. Explicit proxy and origin trust are configuration requirements.
+**Runwick proposal:** enforce authorization server-side for management operations; correctly wire embedded and standalone middleware. Validate required security services at startup. Host authentication alone does not imply permission to retry, cancel, edit schedules, or view sensitive payloads. Explicit proxy and origin trust are configuration requirements.
 
 **Acceptance:** unauthorized mutations fail, cookie-authenticated mutations require CSRF protection, untrusted origins/forwarded headers do not grant access, and both hosting modes enforce the same permissions.
 
@@ -97,7 +97,7 @@ Evidence: [Hangfire middleware](https://github.com/HangfireIO/Hangfire/blob/ad2f
 
 **Upstream rationale:** issue #4117 records why the folded round was held back on SQL Server: multi-node tests showed deadlocks and scheduling delays. The source describes the subsequent split-transaction path. These are upstream results for that workload, not universal database rankings.
 
-**Spindle proposal:** define shared semantics while allowing driver-specific algorithms. Measure round trips, lock duration, fairness, and tail latency; fewer transactions is not automatically faster. Do not add SQL Server to scope merely because it illustrates the tradeoff.
+**Runwick proposal:** define shared semantics while allowing driver-specific algorithms. Measure round trips, lock duration, fairness, and tail latency; fewer transactions is not automatically faster. Do not add SQL Server to scope merely because it illustrates the tradeoff.
 
 **Acceptance:** validate correctness first, then benchmark contention and scheduling lag under representative multi-replica load. Preserve invariants when changing batch size or transaction boundaries.
 
@@ -107,7 +107,7 @@ Evidence: [implementation](https://github.com/quartznet/quartznet/blob/3e10f0f8d
 
 **Observed:** JSON serializer registries resolve registered trigger/calendar serializers and reject unknown names. Tests verify useful errors when a reader lacks the registration used by a writer. This does not establish that every Quartz serialization path uses an identical type policy.
 
-**Spindle proposal:** resolve stable job identifiers through approved registrations. Do not let stored payloads choose arbitrary CLR types. Define unknown-type/version behavior during rolling deployment, payload size/depth limits, and safe dashboard rendering.
+**Runwick proposal:** resolve stable job identifiers through approved registrations. Do not let stored payloads choose arbitrary CLR types. Define unknown-type/version behavior during rolling deployment, payload size/depth limits, and safe dashboard rendering.
 
 **Acceptance:** unknown identities do not instantiate arbitrary types or erase jobs; old/new worker versions coexist under a documented policy; malformed or oversized payloads fail predictably. Size limits and rendering protections are our proposals, not claims about the examined Quartz code.
 
@@ -119,15 +119,15 @@ Added 2026-10-29 at [f2fe2eff958267df9a9e7dea3fea66e14343563c](https://github.co
 
 Observed: server-side admission, token-checked lock extension/finalization, stalled-candidate rechecks, delayed sorted-set promotion, and an expiring rate counter. Selected tests cover missing/stolen locks, long-running renewal, stalled recovery, and rate timing; they were inspected, not run.
 
-Adapt server-side transitions, independent renewal results, bounded delayed work, noeviction, and explicit producer/worker reconnect behavior. Preserve Spindle's separate Begin, command receipts, and rolling-window semantics. Queue-level Redis Cluster hash tags do not cover Spindle's cross-queue resource scopes; the first atomic partition is the application namespace. Atomic script execution alone is not a proof of SQL-like rollback or acknowledged-write survival across failover.
+Adapt server-side transitions, independent renewal results, bounded delayed work, noeviction, and explicit producer/worker reconnect behavior. Preserve Runwick's separate Begin, command receipts, and rolling-window semantics. Queue-level Redis Cluster hash tags do not cover Runwick's cross-queue resource scopes; the first atomic partition is the application namespace. Atomic script execution alone is not a proof of SQL-like rollback or acknowledged-write survival across failover.
 
-These findings inform the [driver matrix](architecture/driver-capabilities.md) and [shared contract suite](architecture/driver-contract-suite.md), including explicit Redis recovery/durability release gates. No upstream motive for omitting Spindle's particular semantics is assumed.
+These findings inform the [driver matrix](architecture/driver-capabilities.md) and [shared contract suite](architecture/driver-contract-suite.md), including explicit Redis recovery/durability release gates. No upstream motive for omitting Runwick's particular semantics is assumed.
 
 ## Research still required before architecture approval
 
 This pass establishes concrete implementation precedents for all six libraries. It does not finish the engineering plan. Next, trace complete transaction/outbox paths, scheduler occurrence deduplication, PostgreSQL query/index design, Redis persistence/failover assumptions, SQLite contention, priority fairness, and autoscaling control behavior.
 
-For each major Spindle feature, record: requirement; pinned code/test evidence; explicit upstream rationale if available; adopt/adapt/defer decision; remaining uncertainty; and an acceptance test or benchmark. Where no upstream rejection rationale is found, record **unknown**, not an invented security or performance explanation.
+For each major Runwick feature, record: requirement; pinned code/test evidence; explicit upstream rationale if available; adopt/adapt/defer decision; remaining uncertainty; and an acceptance test or benchmark. Where no upstream rejection rationale is found, record **unknown**, not an invented security or performance explanation.
 
-All recommendations remain proposals. No Spindle runtime implementation has begun.
+All recommendations remain proposals. No Runwick runtime implementation has begun.
 

@@ -1,6 +1,6 @@
 # PostgreSQL migrations and mixed-version compatibility
 
-Status: concrete D-13 proposal, 2026-10-29. Uses the gates/version axes from the [consolidated PostgreSQL contract](postgres-schema-and-operations.md). No migration tool, live schema or compatibility test exists. The examples describe future upgrade classes, not released Spindle versions.
+Status: concrete D-13 proposal, 2026-10-29. Uses the gates/version axes from the [consolidated PostgreSQL contract](postgres-schema-and-operations.md). No migration tool, live schema or compatibility test exists. The examples describe future upgrade classes, not released Runwick versions.
 
 ## 1. Compatibility is explicit and checked during use
 
@@ -28,7 +28,7 @@ Normal maintenance mode rejects routine mutations/queries unless the migration m
 | Unknown receipt codec or incompatible read schema | Explicit compatibility/unavailable result | Same unless supported | No fabricated NotFound/success; retain recoverable history |
 | Restored database or lossy failover | Cannot assume original authority/history | Cannot assume original authority/history | Stop old writers and execute restore reconciliation |
 
-There is no safety guarantee for a pre-gate client with unrestricted SQL credentials. Such a client requires shutdown and, when necessary, credential/session revocation before activation. Gate checks are part of Spindle's supported protocol, not database enforcement of arbitrary client code. Do not use expired worker presence as proof of quiescence.
+There is no safety guarantee for a pre-gate client with unrestricted SQL credentials. Such a client requires shutdown and, when necessary, credential/session revocation before activation. Gate checks are part of Runwick's supported protocol, not database enforcement of arbitrary client code. Do not use expired worker presence as proof of quiescence.
 
 ## 3. Migration manifest and runner
 
@@ -70,7 +70,7 @@ Recovery after a crash depends on phase:
 
 Schema revision is advanced only by completed validated phases. An error must never label partially installed objects as a compatible final schema. Migration diagnostics contain object names/codes and safe progress, not payloads or secrets.
 
-## 6. Specific Spindle compatibility traps
+## 6. Specific Runwick compatibility traps
 
 | Change | Required treatment |
 |---|---|

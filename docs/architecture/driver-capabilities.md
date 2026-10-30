@@ -59,7 +59,7 @@ Use the existing READ COMMITTED + ordered row-lock design, explicit parameterize
 
 The persistent baseline requires ordinary WAL/fsync protections and synchronous local commit for driver-owned mutations. PostgreSQL documents that asynchronous commit can lose recently acknowledged transactions after a crash; it is a different acknowledgement profile, not an interchangeable performance switch. Caller-owned transaction settings belong to the caller and must be reported/validated without secretly committing or changing their transaction. [Commit durability](https://www.postgresql.org/docs/18/wal-async-commit.html)
 
-Local durable commit does not guarantee promotion of an arbitrary replica without data loss. Synchronous replication and an appropriate promotion/fencing policy can strengthen that guarantee; Spindle cannot create those deployment properties just by connecting to PostgreSQL. Record the tested replication/promotion profile and test it separately. A stale writable primary must be fenced by infrastructure. [Replication reference](https://www.postgresql.org/docs/18/warm-standby.html#SYNCHRONOUS-REPLICATION)
+Local durable commit does not guarantee promotion of an arbitrary replica without data loss. Synchronous replication and an appropriate promotion/fencing policy can strengthen that guarantee; Runwick cannot create those deployment properties just by connecting to PostgreSQL. Record the tested replication/promotion profile and test it separately. A stale writable primary must be fenced by infrastructure. [Replication reference](https://www.postgresql.org/docs/18/warm-standby.html#SYNCHRONOUS-REPLICATION)
 
 Driver-owned deadlock/serialization errors are retried only after confirmed rollback, reusing the command ID within its deadline. Lost connection around COMMIT is unknown until resolved. Caller-owned transactions are never reopened or retried internally. Statement, lock, and transaction deadlines must leave renewal headroom.
 
@@ -94,11 +94,11 @@ Measure WAL/checkpoint growth under long dashboard reads, busy latency, schedule
 
 ### Key placement and state structures
 
-Use a versioned Redis Functions/Lua command bundle with bounded inputs and work. A single command validates ownership, state, policies, and all expected revisions before mutating. A reference layout uses hashes for job/attempt/policy/receipt data, sorted sets for due work, lease expiries and rate grants, and explicit indexes for history/schedules. Preserve pending/reserved/running/retrying states. Redis Streams may carry events; their consumer groups do not replace Spindle's reservation/permit protocol.
+Use a versioned Redis Functions/Lua command bundle with bounded inputs and work. A single command validates ownership, state, policies, and all expected revisions before mutating. A reference layout uses hashes for job/attempt/policy/receipt data, sorted sets for due work, lease expiries and rate grants, and explicit indexes for history/schedules. Preserve pending/reserved/running/retrying states. Redis Streams may carry events; their consumer groups do not replace Runwick's reservation/permit protocol.
 
-BullMQ supplies concrete precedents for token locks, renewal results and delayed indexes. Spindle's additional fields and commands are intentional differences, documented in the [source review](bullmq-redis-review.md).
+BullMQ supplies concrete precedents for token locks, renewal results and delayed indexes. Runwick's additional fields and commands are intentional differences, documented in the [source review](bullmq-redis-review.md).
 
-Encode the application's stable partition ID in a hash tag, such as `spindle:{encoded-application-id}:...`. All keys touched by a command—including cross-queue limits, receipts, deduplication, schedules and audit indexes—must be in that slot. Reject brace/key-injection ambiguity and cross-partition operations. Multiple applications may use different slots; one application is not sharded across slots in v1. Redis Cluster requires same-slot multi-key operations. [Cluster rules](https://redis.io/docs/latest/operate/oss_and_stack/management/scaling/)
+Encode the application's stable partition ID in a hash tag, such as `runwick:{encoded-application-id}:...`. All keys touched by a command—including cross-queue limits, receipts, deduplication, schedules and audit indexes—must be in that slot. Reject brace/key-injection ambiguity and cross-partition operations. Multiple applications may use different slots; one application is not sharded across slots in v1. Redis Cluster requires same-slot multi-key operations. [Cluster rules](https://redis.io/docs/latest/operate/oss_and_stack/management/scaling/)
 
 Declare accessed keys explicitly. If candidate discovery is a separate read, pass candidate and required key names into the command and revalidate its state/revision/requirements there. Alternatively use fixed aggregate hashes with entity IDs as fields. Do not rely on undeclared dynamically generated key access for portable cluster support. Readiness/candidate reads remain hints. [EVAL key rules](https://raw.githubusercontent.com/redis/redis-doc/master/commands/eval.md)
 
@@ -106,7 +106,7 @@ Use Redis TIME for authoritative decisions. Do not use whole-job key TTL expiry 
 
 ### Atomic visibility is not SQL rollback
 
-Redis scripts prevent interleaving during execution, and Lua command failures can raise runtime errors. Those facts do not establish that previously executed writes have been undone. The BullMQ finish path inspected in the review also has writes before later error returns. Spindle must distinguish pure rejection, committed transition, and unknown/recovery-required outcome. [Script execution](https://redis.io/docs/latest/develop/programmability/eval-intro/), [Lua errors](https://redis.io/docs/latest/develop/programmability/lua-api/)
+Redis scripts prevent interleaving during execution, and Lua command failures can raise runtime errors. Those facts do not establish that previously executed writes have been undone. The BullMQ finish path inspected in the review also has writes before later error returns. Runwick must distinguish pure rejection, committed transition, and unknown/recovery-required outcome. [Script execution](https://redis.io/docs/latest/develop/programmability/eval-intro/), [Lua errors](https://redis.io/docs/latest/develop/programmability/lua-api/)
 
 First prototype the bounded validated command bundle: validate input types, key types, policy ranges, token/state checks, expected counts, and size limits before writes. Then inject a failure after every write position. If an unexpected failure can leave a partially applied operation visible, this bundle alone does **not** pass the shared contract. Do not classify it as success or confirmed rollback, or assume stalled-job recovery repairs every partial transition.
 
@@ -122,7 +122,7 @@ This is the selected design, still requiring prototype evidence, and is not attr
 
 ### Persistence and acknowledgement
 
-Require noeviction and namespaced ACLs; all writers to Spindle's keys use its protocol. Separate bounded producer command deadlines from worker reconnect loops. Reconnect must resolve an old command or reject its expired deadline, not replay a stale mutation with a fresh ID. BullMQ's [production guidance](https://docs.bullmq.io/guide/going-to-production) supports treating persistence, memory policy, and producer/worker retries as explicit concerns.
+Require noeviction and namespaced ACLs; all writers to Runwick's keys use its protocol. Separate bounded producer command deadlines from worker reconnect loops. Reconnect must resolve an old command or reject its expired deadline, not replay a stale mutation with a fresh ID. BullMQ's [production guidance](https://docs.bullmq.io/guide/going-to-production) supports treating persistence, memory policy, and producer/worker retries as explicit concerns.
 
 Distinguish at least these profiles:
 
@@ -154,7 +154,7 @@ A database restore is not an ordinary worker restart. Lost receipts, occurrence 
 
 ## 7. Business transactions and outbox boundary
 
-Enlistment is limited to a compatible caller transaction that physically contains both business changes and Spindle writes. Same server, same hostname, or same Redis connection is not sufficient. The staged result does not mean the caller committed.
+Enlistment is limited to a compatible caller transaction that physically contains both business changes and Runwick writes. Same server, same hostname, or same Redis connection is not sufficient. The staged result does not mean the caller committed.
 
 For a business store separate from the queue, define an outbox adapter boundary: the business transaction writes a stable message ID and payload; a relay dispatches with that ID; it marks delivered only after the queue's selected acknowledgement profile is confirmed. A crash between these steps causes repeat delivery. Deduplication retention must cover the allowed replay horizon; an expired window cannot promise unlimited deduplication. Restore can also resurrect delivery history and requires a runbook.
 

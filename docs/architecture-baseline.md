@@ -1,6 +1,6 @@
-# Spindle architecture baseline — planning closure 6 of 6
+# Runwick architecture baseline — planning closure 6 of 6
 
-**Review 2026-10-30:** the [v1 delivery plan](v1-delivery-plan.md) is the consolidated task/slice/milestone list to track. The [architecture review](review-2026-10-30.md) is the G-0 input for this baseline. It records two in-place corrections, five recommendations awaiting decision (R1–R5), and implementation observations. A plain-language walkthrough of the whole design is in [Spindle explained](spindle-explained.md).
+**Review 2026-10-30:** the [v1 delivery plan](v1-delivery-plan.md) is the consolidated task/slice/milestone list to track. The [architecture review](review-2026-10-30.md) is the G-0 input for this baseline. It records two in-place corrections, five recommendations awaiting decision (R1–R5), and implementation observations. A plain-language walkthrough of the whole design is in [Runwick explained](runwick-explained.md).
 
 Status: **all six remaining planning items completed**, 2026-10-29. Baseline version 1 is the consolidated design to implement and review. This records engineering selections made to finish the requested planning; it does not claim that every numerical setting was separately approved by the user, that runtime checks passed, or that coding has begun. There is no further scheduled planning topic after this document.
 
@@ -22,9 +22,9 @@ For conflicting drafts, this baseline and its five closure documents take preced
 | Decision | Baseline disposition |
 |---|---|
 | D-01 platform/dependencies | .NET 10+, initial net10.0/C#14; latest stable Npgsql direction, current planned pin 10.0.3; exact SDK/restore/image locks produced at scaffolding |
-| D-02 packages | Contracts, core Spindle, Postgres, Sqlite, Redis, AspNetCore, Dashboard, Testing; optional Outbox, Outbox.Postgres, Outbox.Sqlite |
+| D-02 packages | Contracts, core Runwick, Postgres, Sqlite, Redis, AspNetCore, Dashboard, Testing; optional Outbox, Outbox.Postgres, Outbox.Sqlite |
 | D-03 identity/configuration | Explicit stable name through attribute or fluent; ordinal identity; fixed low/medium/high lanes; deterministic precedence and collection composition |
-| D-04 serialization | spindle.json v1, original UTF-8 bytes, 1 MiB payload/2 MiB prepared envelope, exact profile capability tuples and canonical fingerprint rules |
+| D-04 serialization | runwick.json v1, original UTF-8 bytes, 1 MiB payload/2 MiB prepared envelope, exact profile capability tuples and canonical fingerprint rules |
 | D-05 execution timing | 3 executions; pre-start guard 5; 60 s lease, 10 s safety margin, 15 s jittered renewal; no universal pipeline timeout; bounded grace/cleanup/shutdown as specified |
 | D-06 storage | PostgreSQL first; seven states; Begin accounting, counted permits, gate-first transactions, original-byte payloads and versioned command receipts |
 | D-07 capacity | Fixed 4 default; explicit auto bounds, group cap 16; weighted 6:3:1 lanes and aging; exact rolling-window rates; occupancy/backlog controller and control-I/O budgets |
@@ -40,7 +40,7 @@ SQLite 10.0.14 and StackExchange.Redis 3.4.20 remain planned provider pins. Rest
 
 ## Public contract and package boundaries
 
-Keep `IQueueJob`, `IJobHandler<TJob>.HandleAsync(job, CancellationToken)`, `IJobDispatcher.DispatchAsync` and optional scoped `IJobContext`. Select the current public-contract spellings `[JobName]`, `[PayloadVersion]`, `[Queue]`, `[Priority]`, `[MaxExecutions]`, `[UseJobMiddleware]`, `AddSpindle`, explicit worker/pool roles, `IPreparedJobDispatcher`, provider-specific StageAsync and `IJobMiddleware.InvokeAsync`. Attribute-first examples and fluent-only definitions both ship. No mandatory context argument, persisted CLR type name or automatic handler scan of all loaded assemblies.
+Keep `IQueueJob`, `IJobHandler<TJob>.HandleAsync(job, CancellationToken)`, `IJobDispatcher.DispatchAsync` and optional scoped `IJobContext`. Select the current public-contract spellings `[JobName]`, `[PayloadVersion]`, `[Queue]`, `[Priority]`, `[MaxExecutions]`, `[UseJobMiddleware]`, `AddRunwick`, explicit worker/pool roles, `IPreparedJobDispatcher`, provider-specific StageAsync and `IJobMiddleware.InvokeAsync`. Attribute-first examples and fluent-only definitions both ship. No mandatory context argument, persisted CLR type name or automatic handler scan of all loaded assemblies.
 
 Use DispatchReceipt only for confirmed destination acknowledgement; StagedDispatch and StagedOutboxMessage make no caller-commit claim. Unknown-outcome handles retain immutable requests. Local overload uses known-not-submitted errors. Middleware's single continuation and explicit outcome rules stay intact. Compilation may require narrow signature/type corrections, recorded with examples; it does not reopen the behavioral baseline.
 

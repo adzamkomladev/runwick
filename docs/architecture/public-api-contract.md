@@ -54,15 +54,15 @@ One resolved identity cannot point to two current payload contracts/handlers in 
 ## 3. Registration, roles, and driver profiles
 
 ```csharp
-builder.Services.AddSpindle(spindle =>
+builder.Services.AddRunwick(runwick =>
 {
-    spindle.Application("customer-service");
-    spindle.UsePostgres(connectionString, pg => pg.Schema = "spindle");
+    runwick.Application("customer-service");
+    runwick.UsePostgres(connectionString, pg => pg.Schema = "runwick");
 
-    spindle.AddJobsFromAssemblyContaining<SendWelcomeEmail>();
-    spindle.AddHandlersFromAssemblyContaining<SendWelcomeEmailHandler>();
+    runwick.AddJobsFromAssemblyContaining<SendWelcomeEmail>();
+    runwick.AddHandlersFromAssemblyContaining<SendWelcomeEmailHandler>();
 
-    spindle.AddWorker(worker =>
+    runwick.AddWorker(worker =>
     {
         worker.Pool("email-workers", pool =>
         {
@@ -80,14 +80,14 @@ Producer-only hosts omit handler/worker registration. AddScheduler enables occur
 Fluent-only metadata retains the same marker and handler contracts:
 
 ```csharp
-spindle.AddJob<SendWelcomeEmail>()
+runwick.AddJob<SendWelcomeEmail>()
     .Named("email.welcome")
     .AtVersion(2)
     .ToQueue("emails")
     .WithPriority("medium")
     .WithMaxExecutions(3);
 
-spindle.AddHandler<SendWelcomeEmail, SendWelcomeEmailHandler>();
+runwick.AddHandler<SendWelcomeEmail, SendWelcomeEmailHandler>();
 ```
 
 The attribute and fluent examples are alternatives or matching declarations, not permission to register conflicting identities. Explicit name/version declarations must agree. Repeating identical registrations is idempotent; conflicting same-layer assignments fail validation rather than depending on container registration order.
@@ -242,7 +242,7 @@ The concrete advanced type names and codec need implementation review, but the b
 
 ## 6. Caller-owned transactions remain staged
 
-Provider-specific staging interfaces live in Spindle.Postgres and Spindle.Sqlite. Use `IPostgresJobDispatcher.StageAsync(job, NpgsqlTransaction, options, ct)` and its SQLite equivalent; they return `StagedDispatch`, not DispatchReceipt. They also accept a PreparedDispatch to preserve retry identity where applicable.
+Provider-specific staging interfaces live in Runwick.Postgres and Runwick.Sqlite. Use `IPostgresJobDispatcher.StageAsync(job, NpgsqlTransaction, options, ct)` and its SQLite equivalent; they return `StagedDispatch`, not DispatchReceipt. They also accept a PreparedDispatch to preserve retry identity where applicable.
 
 ```csharp
 await using var connection = await dataSource.OpenConnectionAsync(ct);
@@ -260,14 +260,14 @@ StagedDispatch reports proposed/resolved job ID, operation ID and duplicate disp
 
 Validate an initialized store ID, application namespace, schema and operation compatibility on the supplied transaction's connection, as well as write capability. A copied store must receive a new identity before being treated as an independent store; an identity field alone cannot detect an accidentally reused clone. The caller must enlist against the workers' actual store. Do not compare secret-bearing connection strings or silently fall back to another connection.
 
-Accepted 2026-10-30 (R6): the mirror operation for completion — `IPostgresJobCompletion.CompleteInTransactionAsync(NpgsqlTransaction, ct)` and a SQLite twin, callable from inside a handler — commits the handler's same-database side effects and the job's `succeeded` transition atomically. It returns a `StagedCompletion` token that the handler must return (or the engine detects); the engine then observes the caller's commit outcome instead of issuing its own Finish. Rules: same ownership checks and lock order as Finish, taken after the caller's business locks; Spindle never commits, rolls back or retries the caller's transaction; renewal continues as normal during the handler; an unknown commit reply follows the existing unknown-Finish receipt resolution; returning without a committed transaction is a pipeline fault, not success. This is the one place Spindle truthfully offers exactly-once; it is unavailable on the Cloud driver, where the inbox pattern applies. Scheduled with SP-011; engine consequences in the [review](../review-2026-10-30.md#r6--transactional-completion-exactly-once-for-same-database-effects).
+Accepted 2026-10-30 (R6): the mirror operation for completion — `IPostgresJobCompletion.CompleteInTransactionAsync(NpgsqlTransaction, ct)` and a SQLite twin, callable from inside a handler — commits the handler's same-database side effects and the job's `succeeded` transition atomically. It returns a `StagedCompletion` token that the handler must return (or the engine detects); the engine then observes the caller's commit outcome instead of issuing its own Finish. Rules: same ownership checks and lock order as Finish, taken after the caller's business locks; Runwick never commits, rolls back or retries the caller's transaction; renewal continues as normal during the handler; an unknown commit reply follows the existing unknown-Finish receipt resolution; returning without a committed transaction is a pipeline fault, not success. This is the one place Runwick truthfully offers exactly-once; it is unavailable on the Cloud driver, where the inbox pattern applies. Scheduled with SP-011; engine consequences in the [review](../review-2026-10-30.md#r6--transactional-completion-exactly-once-for-same-database-effects).
 
 Redis offers no general caller-business-transaction staging API. Cross-store delivery uses a source-store outbox with stable message IDs and a declared replay horizon; optional PostgreSQL and SQLite source adapters are selected in the [outbox baseline](transactional-outbox.md), with separate StagedOutboxMessage and ReceiveOutbox contracts. These guarantees are governed by the [driver matrix](driver-capabilities.md), not by overloading DispatchAsync with a generic transaction object.
 
 ## 7. Payload versions and safe registration
 
 ```csharp
-spindle.ConfigureJob<SendWelcomeEmail>()
+runwick.ConfigureJob<SendWelcomeEmail>()
     .Upgrade<SendWelcomeEmailV1, SendWelcomeEmail>(
         fromVersion: 1,
         toVersion: 2,
@@ -317,14 +317,14 @@ Rate options must identify their algorithm. The current proposal is `RollingWind
 Illustrative schedule registration:
 
 ```csharp
-spindle.AddSchedule("nightly-report", new BuildReport())
+runwick.AddSchedule("nightly-report", new BuildReport())
     .Cron("0 2 * * *", format: "five-field", timeZone: "Europe/Berlin")
     .OnGap("skip")
     .OnFold("earlier")
     .OnMisfire("run-once")
     .Overlap("serialize");
 
-spindle.AddScheduler();
+runwick.AddScheduler();
 ```
 
 BuildReport represents another registered IQueueJob contract; the values above are explicit example choices. Schedule definition registration persists a deterministic template and versioned settings. It neither starts workers nor overwrites an existing conflicting definition. Stable schedule key, evaluator/zone-data version, revisioned controls and previewed occurrences follow the [scheduling design](scheduling-internals.md).

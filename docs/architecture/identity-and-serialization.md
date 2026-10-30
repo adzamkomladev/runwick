@@ -39,7 +39,7 @@ Registration finalization validates names, known queues/lanes, serializer metada
 
 ## 3. Built-in serializer profile
 
-Recommend `spindle.json` profile version 1, implemented with System.Text.Json on the selected .NET 10 SDK. Register independent immutable options/type metadata; do not inherit ASP.NET JsonOptions or a process-global serializer. Explicitly configure the profile so SDK default changes cannot redefine persisted behavior.
+Recommend `runwick.json` profile version 1, implemented with System.Text.Json on the selected .NET 10 SDK. Register independent immutable options/type metadata; do not inherit ASP.NET JsonOptions or a process-global serializer. Explicitly configure the profile so SDK default changes cannot redefine persisted behavior.
 
 | Concern | Profile v1 behavior |
 |---|---|
@@ -56,15 +56,15 @@ Recommend `spindle.json` profile version 1, implemented with System.Text.Json on
 | Unstructured data | JsonElement allowed within the structural bounds; object/dynamic/interface values require an explicitly registered representation |
 | Binary data | Bounded byte arrays use base64 JSON strings; encoded bytes count against payload size |
 
-.NET 10 supplies duplicate-property rejection and strict serializer controls. Set the individual controls explicitly, including AllowDuplicateProperties=false, UnmappedMemberHandling=Disallow, PropertyNameCaseInsensitive=false, RespectNullableAnnotations=true and RespectRequiredConstructorParameters=true. The strict preset informs the profile; it is not a substitute for Spindle's format/version definition. [System.Text.Json changes in .NET 10](https://learn.microsoft.com/en-us/dotnet/core/whats-new/dotnet-10/libraries)
+.NET 10 supplies duplicate-property rejection and strict serializer controls. Set the individual controls explicitly, including AllowDuplicateProperties=false, UnmappedMemberHandling=Disallow, PropertyNameCaseInsensitive=false, RespectNullableAnnotations=true and RespectRequiredConstructorParameters=true. The strict preset informs the profile; it is not a substitute for Runwick's format/version definition. [System.Text.Json changes in .NET 10](https://learn.microsoft.com/en-us/dotnet/core/whats-new/dotnet-10/libraries)
 
 Required-member checks and nullability checks are distinct. System.Text.Json's nullable enforcement has limitations, including generic/collection-element cases; it is not a full domain validator. Worker validation middleware remains responsible for business invariants, and optional producer validation must not be described as a replacement. [Nullable enforcement](https://learn.microsoft.com/en-us/dotnet/standard/serialization/system-text-json/nullable-annotations)
 
 Select JsonTypeInfo from explicit registration, using generated metadata where supplied or a bounded registration-time reflection path. Finalize options with a configured resolver and MakeReadOnly. This freezes option mutation, not the internal state of user converters. Validate effective metadata so type/member attributes cannot silently relax duplicate handling, number coercion or unknown-member rules for the built-in profile. If an application needs different semantics, register a different named/versioned profile with its own vectors. [Read-only options](https://learn.microsoft.com/en-us/dotnet/api/system.text.json.jsonserializeroptions.makereadonly?view=net-10.0)
 
-Use ordinary registered System.Text.Json representations for GUIDs, DateOnly, TimeOnly and DateTimeOffset. Do not apply queue timestamp rounding to arbitrary payload data: the millisecond quantum governs Spindle envelope/control fields only. Recommend DateTimeOffset for instants. The built-in profile rejects DateTime with Unspecified/Local Kind to prevent host-local interpretation; UTC DateTime is allowed through a fixed profile converter. These date rules require explicit vectors. Do not normalize user strings merely because they look like dates.
+Use ordinary registered System.Text.Json representations for GUIDs, DateOnly, TimeOnly and DateTimeOffset. Do not apply queue timestamp rounding to arbitrary payload data: the millisecond quantum governs Runwick envelope/control fields only. Recommend DateTimeOffset for instants. The built-in profile rejects DateTime with Unspecified/Local Kind to prevent host-local interpretation; UTC DateTime is allowed through a fixed profile converter. These date rules require explicit vectors. Do not normalize user strings merely because they look like dates.
 
-Explicit polymorphic mappings are a supported serializer mechanism, but Spindle must validate the closed registration rather than enabling unknown derived-type fallback. Converters and polymorphic maps are executable application configuration, never code loaded from a queue payload. [Polymorphic serialization](https://learn.microsoft.com/en-us/dotnet/standard/serialization/system-text-json/polymorphism)
+Explicit polymorphic mappings are a supported serializer mechanism, but Runwick must validate the closed registration rather than enabling unknown derived-type fallback. Converters and polymorphic maps are executable application configuration, never code loaded from a queue payload. [Polymorphic serialization](https://learn.microsoft.com/en-us/dotnet/standard/serialization/system-text-json/polymorphism)
 
 ## 4. Bounded preparation and import
 

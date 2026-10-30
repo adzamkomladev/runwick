@@ -21,7 +21,7 @@ A group is the set of pools sharing one worker/store budget, even if they serve 
 
 Tickets remain held through pending claims, handler work, cleanup and settlement. Lost authority does not free a ticket while user code remains alive. Reducing a target stops refill, including when outstanding tickets already exceed it. No controller allocates replacement attempts around hung handlers. Configured payload-byte limits bound retained payload buffers, but cannot bound handler allocations or decoded object graphs.
 
-Do not derive a default from processor count: asynchronous external I/O, CPU-heavy work and handler memory have different constraints. Hosts can use separate pools with explicit maxima. Spindle changes no process-wide ThreadPool settings. Runtime starvation is an operational input, not something extra queue tickets fix. [ThreadPool starvation guidance](https://learn.microsoft.com/en-us/dotnet/core/diagnostics/debug-threadpool-starvation)
+Do not derive a default from processor count: asynchronous external I/O, CPU-heavy work and handler memory have different constraints. Hosts can use separate pools with explicit maxima. Runwick changes no process-wide ThreadPool settings. Runtime starvation is an operational input, not something extra queue tickets fix. [ThreadPool starvation guidance](https://learn.microsoft.com/en-us/dotnet/core/diagnostics/debug-threadpool-starvation)
 
 ## 2. Fairness, probing and cooldowns
 
@@ -160,7 +160,7 @@ Higher attempt maxima require an explicit budget change and new renewal/settleme
 
 ## 7. Acceptance workloads and evidence
 
-Use fake time for selector/controller decisions and real-store barriers for contention. All cases below remain unexecuted against Spindle.
+Use fake time for selector/controller decisions and real-store barriers for contention. All cases below remain unexecuted against Runwick.
 
 | Case | Required evidence |
 |---|---|
@@ -181,6 +181,6 @@ Workload matrix: 1/3/6 replicas; one hot queue versus queues weighted 1:3; 10 ms
 
 Compare fixed 4, fixed 16 and auto 1–16. Measure successful Begin/Finish throughput, queue-age percentiles, admission shares, rate deferrals, control queue wait/latency, safety margin/losses, unsettled age, connections, retained memory and rate-grant/receipt/WAL growth. Do not assert throughput targets before the first measured baseline. CAP-09/10 must verify no lease loss in the declared healthy-load profile; deliberately over-budget failures must prove safe abandonment and bounded resources, not uninterrupted execution.
 
-Planning arithmetic check performed with a standalone Python model, not Spindle: 10,000 selections gave queue shares 2,500/7,500 for weights 1:3 and lane shares 6,000/3,000/1,000 for 6:3:1 without aging. With exact 5 s samples, continuously qualifying backlog and candidate 16, target 4 grows to 5/7/9/12/15 at 15/45/75/105/135 s, then to 16 at 165 s under the R4 boundary rule (before R4 it stayed at 15 because candidate 16 lay inside the hysteresis band). From target 16 with candidate 1, the shrink trace is 12/9/6/4/3/2/1 at 30/60/90/120/150/180/210 s. Connection and renewal-wave arithmetic above was also checked. Dynamic membership, aging, estimator accuracy, storage contention and fault behavior remain unvalidated.
+Planning arithmetic check performed with a standalone Python model, not Runwick: 10,000 selections gave queue shares 2,500/7,500 for weights 1:3 and lane shares 6,000/3,000/1,000 for 6:3:1 without aging. With exact 5 s samples, continuously qualifying backlog and candidate 16, target 4 grows to 5/7/9/12/15 at 15/45/75/105/135 s, then to 16 at 165 s under the R4 boundary rule (before R4 it stayed at 15 because candidate 16 lay inside the hysteresis band). From target 16 with candidate 1, the shrink trace is 12/9/6/4/3/2/1 at 30/60/90/120/150/180/210 s. Connection and renewal-wave arithmetic above was also checked. Dynamic membership, aging, estimator accuracy, storage contention and fault behavior remain unvalidated.
 
 Map CAP-01–04 to SP-009/SP-012; CAP-05 to SP-013; CAP-06–08 to SP-014; CAP-09–12 to SP-005/SP-009/SP-027–029. Cross-check DEP-03/04 and TIME-13. The [D-08 scheduler packet](scheduler-evaluator-and-defaults.md) now supplies parser/time-zone selections, defaults and compatibility vectors using these I/O budgets. The [outbox design](transactional-outbox.md) and [final baseline](../architecture-baseline.md) complete the remaining planning.

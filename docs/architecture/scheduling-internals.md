@@ -122,7 +122,7 @@ Between batches yield to other due schedules and set a bounded scan delay for a 
 
 Skip/run-once require the evaluator to find the next occurrence after T without enumerating every missed second. Range audit counts may be unknown; record the covered interval rather than inventing an exact count. Catch-up advances only through emitted/coalesced/explicitly skipped occurrences. Preserve the episode cutoff until it is completed or explicitly changed by management.
 
-This adapts a known scheduler distinction: Quartz's CronTrigger implementation moves to a next firing for DoNothing or sets a single immediate firing for FireOnceNow. Spindle preserves its own occurrence identity, bounded episodes, and materialization-versus-execution boundary. No Quartz default or performance result is imported. [Pinned implementation](https://raw.githubusercontent.com/quartznet/quartznet/3e10f0f8d05591cbb2e75c18f10c838cb12b5efc/src/Quartz/Impl/Triggers/CronTriggerImpl.cs)
+This adapts a known scheduler distinction: Quartz's CronTrigger implementation moves to a next firing for DoNothing or sets a single immediate firing for FireOnceNow. Runwick preserves its own occurrence identity, bounded episodes, and materialization-versus-execution boundary. No Quartz default or performance result is imported. [Pinned implementation](https://raw.githubusercontent.com/quartznet/quartznet/3e10f0f8d05591cbb2e75c18f10c838cb12b5efc/src/Quartz/Impl/Triggers/CronTriggerImpl.cs)
 
 ## 6. Cron dialect and DST mapping
 
@@ -139,7 +139,7 @@ Separate nominal local cron matching from time-zone mapping. A candidate evaluat
 
 Recommended starting policy is skip gaps and earlier folds; it remains a proposal. UTC schedules have neither ambiguity. Do not assume a transition is always one hour, or that local calendar days always exist in every zone.
 
-The D-08 packet recommends Cronos 0.13.0 as a nominal calendar matcher. Its AND day-field semantics require the proposed union adapter, and its built-in time-zone path does not implement all Spindle gap/fold policies. Use the UTC-only matcher through the private nominal-calendar adapter, with separately controlled zone mapping. [Release-tag implementation](https://github.com/HangfireIO/Cronos/blob/v0.13.0/src/Cronos/CronExpression.cs)
+The D-08 packet recommends Cronos 0.13.0 as a nominal calendar matcher. Its AND day-field semantics require the proposed union adapter, and its built-in time-zone path does not implement all Runwick gap/fold policies. Use the UTC-only matcher through the private nominal-calendar adapter, with separately controlled zone mapping. [Release-tag implementation](https://github.com/HangfireIO/Cronos/blob/v0.13.0/src/Cronos/CronExpression.cs)
 
 The D-08 packet recommends NodaTime 3.3.7 and an explicit TZDB 2026f artifact with its verified byte hash. Persist canonical zone ID, data label/hash and evaluator profile; require matching supported capabilities before processing. A local unsupported version leaves that replica unable to process the schedule, without globally blocking capable replicas. A data/profile change is an explicit forward definition migration. Mapping/ordering and dependency integration remain unvalidated. [Mapping API](https://nodatime.org/3.3.x/api/NodaTime.TimeZones.ZoneLocalMapping.html)
 
@@ -218,4 +218,4 @@ Use the same command fingerprint/replay rules as execution storage. Final codec/
 
 Implement evaluator conformance and plan generation as pure tests first; then receipt/transaction/constraint tests against PostgreSQL; then multi-process crash and contention tests. Measure materialization lag separately from job start lag, batch lock duration, due-index query cost, recovery-storm throughput, and impact on worker renewal deadlines.
 
-The [D-08 packet](scheduler-evaluator-and-defaults.md) now supplies concrete parser/time-zone versions, grammar/defaults, tuning budgets and cutover refinements. Review and executable SCHED/SCH evidence remain open. Existing-library tests and documentation are evidence for comparison, not a substitute for these Spindle tests. The [outbox closure](transactional-outbox.md) and [final baseline](../architecture-baseline.md) now complete planning.
+The [D-08 packet](scheduler-evaluator-and-defaults.md) now supplies concrete parser/time-zone versions, grammar/defaults, tuning budgets and cutover refinements. Review and executable SCHED/SCH evidence remain open. Existing-library tests and documentation are evidence for comparison, not a substitute for these Runwick tests. The [outbox closure](transactional-outbox.md) and [final baseline](../architecture-baseline.md) now complete planning.

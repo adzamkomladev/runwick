@@ -8,7 +8,7 @@ Status: review checklist, 2026-10-29. Design documents exist; no runtime milesto
 
 These are carried-forward requirements/working directions, not a request to reopen them:
 
-- Spindle; IQueueJob, IJobDispatcher.DispatchAsync, IJobHandler<TJob>.HandleAsync(job, CancellationToken), optional injected IJobContext.
+- Runwick; IQueueJob, IJobDispatcher.DispatchAsync, IJobHandler<TJob>.HandleAsync(job, CancellationToken), optional injected IJobContext.
 - User-selected platform floor: .NET 10 and newer, with current/newer C#. The [platform/package design](architecture/platform-and-packages.md) specifies compatible stable-language adoption and reproducible builds.
 - User-selected latest Npgsql driver; [provider planning](architecture/provider-dependency-plan.md) records today's stable 10.0.3 baseline and explicit version-update policy.
 - Attribute-first examples; fluent-only registration and permitted fluent overrides remain supported.
@@ -32,7 +32,7 @@ D-01’s .NET 10+ floor and latest-Npgsql direction were selected by the user. T
 | D-01 | .NET 10+ and latest Npgsql accepted; initial net10.0/C# 14; Npgsql 10.0.3 baseline per [provider plan](architecture/provider-dependency-plan.md) | SP-002 | Pin SDK/restore graph; review remaining provider candidates; execute DEP cases and certify runtime/OS matrix; document trimming/AOT limits |
 | D-02 | Contracts/core/providers/optional web/dashboard/testing proposal in platform design | SP-002 | Review concrete graph, producer dependency budget, dashboard/EF isolation and package availability |
 | D-03 | Recommend explicit durable names, deterministic precedence/tie ordering and low/medium/high v1 lanes | SP-004 | Review identity/configuration packet, validation/limits and fixed-lane recommendation; preserve attribute/fluent choice |
-| D-04 | Recommend spindle.json v1, exact payload bytes, profile-aware capabilities and strict canonical replay | SP-004 | Review profile/bounds/export format; implement SER and wire vectors; verify SDK behavior and cross-driver bytes before freeze |
+| D-04 | Recommend runwick.json v1, exact payload bytes, profile-aware capabilities and strict canonical replay | SP-004 | Review profile/bounds/export format; implement SER and wire vectors; verify SDK behavior and cross-driver bytes before freeze |
 | D-05 | [Execution timing packet](architecture/execution-defaults-and-timing.md): concrete retry/abandonment, authority, grace and shutdown recommendations | SP-008; policy schema for SP-004 | Review proposed defaults; TIME cases and contention/fault evidence; reconcile policy fields and operation-class receipt retention |
 | D-06 | [Consolidated schema/operations](architecture/postgres-schema-and-operations.md) drafted; provider plan recommends PostgreSQL 16–18 targets, 18 reference, explicit connection ownership | SP-005–007 | Review integration; author DDL; PGX/DEP cases, plans, connection/gate/permit contention and actual constraints remain unvalidated |
 | D-07 | [Capacity packet](architecture/capacity-defaults-and-budgets.md) drafted: fixed/auto bounds, fairness, rate-edit freeze, occupancy/backlog estimator, pressure gates and I/O budgets | SP-012–014; group budgets in SP-009 | Review numeric settings and local-overload API; CAP-01–12 plus DEP-03/TIME-13; contention/renewal capacity and workload evidence remain open |

@@ -14,7 +14,7 @@ The [capacity defaults/budgets packet](capacity-defaults-and-budgets.md) now sup
 
 Scaling changes a pool's local ticket target. It neither changes a shared ceiling nor bypasses admission rules. Queue priority remains a string equality predicate in storage, not a numeric database sort. Queue weight divides opportunities between queues; priority weight divides them within a queue.
 
-Time-based and concurrency limiters are different algorithms. Microsoft's rate-limiter documentation also notes that chained time-based acquisitions need not refund an earlier charge when a later limiter rejects. Spindle instead proposes an all-or-none transaction across its rate scopes. This is an architectural choice, not a claim that .NET's process-local limiter supplies distributed admission. [Algorithm reference](https://learn.microsoft.com/en-us/aspnet/core/performance/rate-limit?view=aspnetcore-10.0)
+Time-based and concurrency limiters are different algorithms. Microsoft's rate-limiter documentation also notes that chained time-based acquisitions need not refund an earlier charge when a later limiter rejects. Runwick instead proposes an all-or-none transaction across its rate scopes. This is an architectural choice, not a claim that .NET's process-local limiter supplies distributed admission. [Algorithm reference](https://learn.microsoft.com/en-us/aspnet/core/performance/rate-limit?view=aspnetcore-10.0)
 
 ## 2. Exact local selection rule
 
@@ -138,7 +138,7 @@ Proposed test profile: 5-second samples, three consecutive high-demand samples t
 - If MinConcurrency=0, discovery, presence, and scaler loops remain alive and may raise target when trusted demand appears. With no fresh metrics, bootstrap at one ticket within MaxConcurrency, then require feedback before growth.
 - A manual fixed target disables automatic target changes until its revisioned override expires or is removed. Record source, expiry, and expected revision. Shared capacity edits remain separate controls.
 
-Record each applied target change with old/new values, input snapshot time, desired estimate, constraint reason, and configuration revision. Avoid writing a history row on every unchanged sample. Infrastructure replica scaling consumes metrics externally; Spindle does not launch containers.
+Record each applied target change with old/new values, input snapshot time, desired estimate, constraint reason, and configuration revision. Avoid writing a history row on every unchanged sample. Infrastructure replica scaling consumes metrics externally; Runwick does not launch containers.
 
 ## 6. Validation and acceptance gates
 

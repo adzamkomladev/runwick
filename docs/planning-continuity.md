@@ -1,8 +1,10 @@
 # Planning continuity and reconciliation
 
+> **Renamed 2026-10-30: Spindle → Runwick.** NuGet `Spindle`/`Spindle.Testing` belong to an unrelated workflow library, so every package ID, namespace, hash domain, instrument name, schema name and prefix was renamed before any release. No wire compatibility impact: nothing had been published. Normative specifications now live in [docs/spec](spec/00-overview.md).
+
 **Current position: all six planning items complete.** Read the [final architecture baseline](architecture-baseline.md) first. The discussion history below explains how the design developed; its former open choices are superseded where the baseline records a selection. Implementation and runtime validation have not begun.
 
-Reconciled on 2026-10-28 against [Queue Library Design](https://chatgpt.com/share/6ae25a83-ff20-83e9-aadb-b4d731f0e2e0), the supplied handoff, and the current Spindle conversation.
+Reconciled on 2026-10-28 against [Queue Library Design](https://chatgpt.com/share/6ae25a83-ff20-83e9-aadb-b4d731f0e2e0), the supplied handoff, and the current Runwick conversation.
 
 ## Where the original conversation stopped
 
@@ -26,7 +28,7 @@ The current conversation repeated material already covered and introduced altern
 - SQLite is single-host, with a same-host external worker possible; it is not the distributed replica backend. Redis requires its own atomic protocol and durability contract.
 - Manual retry retains the original job ID, increments retry generation, and preserves total attempt history.
 - Queue pause blocks new reservations, not dispatch. Cancellation is cooperative; execution timeout and reservation lease timeout are distinct.
-- Migrations belong to Spindle independently of EF. The earlier direction was deployment-controlled production migrations, optional development initialization, and startup compatibility checks.
+- Migrations belong to Runwick independently of EF. The earlier direction was deployment-controlled production migrations, optional development initialization, and startup compatibility checks.
 - Dashboard remains optional, embedded or standalone, with Inertia.NET. Basic Auth is the simple authentication path; host authentication and OIDC remain supported. Permissions and operational audit are part of the management backend.
 
 ## Changes introduced in this chat that were not approved replacements
@@ -42,12 +44,12 @@ The current conversation repeated material already covered and introduced altern
 | Retry defaults | Example proposal: three attempts, five-second initial delay | Five attempts, ten-second initial delay, equal jitter | Neither numerical set is a confirmed requirement; do not spend another product discussion choosing tuning constants |
 | Middleware data | Execution context included job payload and scoped metadata/items | Metadata-only context, typed access deferred | Preserve payload-aware middleware as the earlier design input; finalize its safe contract |
 | Middleware outcomes | Explicit outcomes already proposed | Treated as a new unresolved capability | Implement the existing direction through an exact outcome/continuation contract |
-| Packages | Internal modular boundaries, public package consolidation permitted | Consolidated `Spindle` core package | Consolidation is allowed to be evaluated, but package topology remains an engineering deliverable |
+| Packages | Internal modular boundaries, public package consolidation permitted | Consolidated `Runwick` core package | Consolidation is allowed to be evaluated, but package topology remains an engineering deliverable |
 | Distributed permits | Atomic admission and permit release established | Numbered slot rows mentioned in commentary | Slot rows are only a candidate algorithm. No such implementation has been selected |
 
 ## Confirmed additions in this chat
 
-1. The name is **Spindle**.
+1. The name is **Runwick**.
 2. Getting-started examples lead with attributes; fluent configuration remains supported.
 3. Support both active-job uniqueness and fixed-window dispatch idempotency. Composition details remain proposed.
 4. Expand implementation research to Coravel, Hangfire, Wolverine, FastEndpoints.JobQueues, TickerQ, and Quartz.NET, including upstream reasoning about performance, security, and maintenance.
@@ -90,7 +92,7 @@ The [consolidated PostgreSQL contract](architecture/postgres-schema-and-operatio
 
 The user subsequently selected **the latest Npgsql driver**. The [provider dependency plan](architecture/provider-dependency-plan.md) records the current stable 10.0.3 baseline, a stable-version recheck/pin policy, recommended SQLite/Redis candidates, PostgreSQL targets and connection/transaction ownership. Driver selection does not certify commit recovery, native loading or Redis persistence; DEP-01–08 remain unexecuted.
 
-The [capacity defaults/budgets packet](architecture/capacity-defaults-and-budgets.md) now develops D-07 into concrete recommendations: fixed 4 by default, explicit auto bounds, shared attempt limits, queue/lane fairness, rate-policy bounds/edit freeze, pressure gates and partitioned PostgreSQL I/O. The initial scaler now uses local occupancy plus allocated due backlog; the earlier arrival-rate term is deferred. Local overload is a typed known-not-submitted API error. Arithmetic-only models were checked; CAP-01–12 remain unexecuted against Spindle.
+The [capacity defaults/budgets packet](architecture/capacity-defaults-and-budgets.md) now develops D-07 into concrete recommendations: fixed 4 by default, explicit auto bounds, shared attempt limits, queue/lane fairness, rate-policy bounds/edit freeze, pressure gates and partitioned PostgreSQL I/O. The initial scaler now uses local occupancy plus allocated due backlog; the earlier arrival-rate term is deferred. Local overload is a typed known-not-submitted API error. Arithmetic-only models were checked; CAP-01–12 remain unexecuted against Runwick.
 
 The [scheduler evaluator/defaults packet](architecture/scheduler-evaluator-and-defaults.md) now develops D-08. It recommends Cronos 0.13.0 for nominal calendar matching, NodaTime 3.3.7 for mapping, and a hashed TZDB 2026f artifact. Pinned-source inspection exposed Cronos's AND/day and built-in DST differences, addressed by explicit OR and UTC-interval adapters. Defaults, bounded planning, profile upgrades and SCHED-01–15 are specified. The initial schema adds the zone artifact hash and a revision-checked evaluation-failure command. Prepared cutovers keep evaluation outside write locks. System-zoneinfo fixture checks used 2026e and are not pinned-adapter/runtime validation.
 
@@ -100,7 +102,7 @@ The six-item closure is complete in the [architecture baseline](architecture-bas
 
 1. This continuity record and the original handoff establish provenance and current planning position.
 2. `architecture-plan.md` records scope and the engineering backlog.
-3. `implementation-research.md` supplies inspected upstream evidence; it does not imply every observed approach is appropriate for Spindle.
+3. `implementation-research.md` supplies inspected upstream evidence; it does not imply every observed approach is appropriate for Runwick.
 4. `architecture/storage-command-protocol.md` and `architecture/postgres-storage-design.md` develop the next level of internal detail; choices marked as proposed still require review.
 5. `storage-design-inputs.md` records the updated review; `architecture/worker-engine-internals.md` applies it to runtime ownership and records outstanding storage additions.
 6. `architecture/capacity-control.md` and `architecture/scheduling-internals.md` extend the worker/storage design with explicit proposed admission and scheduler operations.
@@ -118,4 +120,4 @@ The six-item closure is complete in the [architecture baseline](architecture-bas
 18. `architecture/scheduler-evaluator-and-defaults.md` develops D-08 with package/source evidence, exact grammar, data/profile identity, bounded UTC mapping and SCHED cases.
 
 19. [Architecture baseline](architecture-baseline.md) completes the six-item closure and links the outbox, Redis, dashboard, operations and performance decisions. This is the current entry point; earlier “next” discussions are history.
-20. [Review 2026-10-30](review-2026-10-30.md) is the G-0 review of that baseline: corrections applied, recommendations R1–R5 awaiting decision, and implementation observations. [Spindle explained](spindle-explained.md) is the plain-language walkthrough of the whole design for newcomers.
+20. [Review 2026-10-30](review-2026-10-30.md) is the G-0 review of that baseline: corrections applied, recommendations R1–R5 awaiting decision, and implementation observations. [Runwick explained](runwick-explained.md) is the plain-language walkthrough of the whole design for newcomers.

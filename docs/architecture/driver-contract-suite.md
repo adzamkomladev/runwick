@@ -132,7 +132,7 @@ Do not count TX-02 as passed for Redis by executing independent Redis and busine
 - Restart an intact persistent primary and separately perform a deliberately lossy replica promotion. The latter must demonstrate/report the profile limitation, not be counted as passing no-history-loss conformance.
 - Remove script cache/reload function bundles as supported; operation versions and key schema must remain compatible.
 
-BullMQ tests for missing/stolen locks, renewal, stalled recovery, and rate limiting informed these cases. Spindle's additional command receipts, separate Begin, multi-scope rates, and partial-write requirements need its own tests. See the [pinned implementation review](bullmq-redis-review.md).
+BullMQ tests for missing/stolen locks, renewal, stalled recovery, and rate limiting informed these cases. Runwick's additional command receipts, separate Begin, multi-scope rates, and partial-write requirements need its own tests. See the [pinned implementation review](bullmq-redis-review.md).
 
 ## 6. Performance acceptance reports
 

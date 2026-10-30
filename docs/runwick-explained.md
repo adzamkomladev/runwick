@@ -1,4 +1,4 @@
-# Spindle, explained from the ground up
+# Runwick, explained from the ground up
 
 This is the friendly tour. It assumes you know C# and have used a database, and nothing else. Every technical word is explained the first time it appears, and there is a glossary at the end if you forget one. The formal design lives in the other documents under `docs/`; this one tells you *what* they decided and *why*, in plain language, so that when you open them they make sense.
 
@@ -19,9 +19,9 @@ Steps 2–4 are slow, can fail, and the user doesn't need to wait for them. So i
 
 That "somewhere safe" is a **job queue**. The note is a **job**. The code that does the work is a **handler**. The process that picks notes up and runs handlers is a **worker**. Writing the note is called **dispatching** (or enqueueing) the job.
 
-Spindle is a library that gives you all of that for .NET, using a database you already have (PostgreSQL, SQLite, or Redis) as the safe place.
+Runwick is a library that gives you all of that for .NET, using a database you already have (PostgreSQL, SQLite, or Redis) as the safe place.
 
-The hard part is not writing notes. The hard part is everything that goes wrong: the worker crashes halfway through, the network drops a reply, two workers grab the same note, someone dispatches the same job twice, the clock on one machine is wrong, and so on. Most of Spindle's design — and most of this document — is about handling those cases without ever lying to you about what happened.
+The hard part is not writing notes. The hard part is everything that goes wrong: the worker crashes halfway through, the network drops a reply, two workers grab the same note, someone dispatches the same job twice, the clock on one machine is wrong, and so on. Most of Runwick's design — and most of this document — is about handling those cases without ever lying to you about what happened.
 
 ---
 
@@ -51,7 +51,7 @@ These are *roles*, not separate programs. You turn each on with configuration. T
 | 4. App replicas + many external workers | Web tier only dispatches; a worker tier only works |
 | 5. Mixed | Some replicas embed workers, extra external workers too |
 
-The job classes and handlers are identical in all five. Only the `AddSpindle(...)` configuration changes.
+The job classes and handlers are identical in all five. Only the `AddRunwick(...)` configuration changes.
 
 ---
 
@@ -74,18 +74,18 @@ public sealed class SendWelcomeEmailHandler(IEmailSender emails)
 }
 ```
 
-You register Spindle at startup:
+You register Runwick at startup:
 
 ```csharp
-builder.Services.AddSpindle(spindle =>
+builder.Services.AddRunwick(runwick =>
 {
-    spindle.Application("customer-service");          // a namespace so apps can share a DB
-    spindle.UsePostgres(connectionString);
+    runwick.Application("customer-service");          // a namespace so apps can share a DB
+    runwick.UsePostgres(connectionString);
 
-    spindle.AddJobsFromAssemblyContaining<SendWelcomeEmail>();
-    spindle.AddHandlersFromAssemblyContaining<SendWelcomeEmailHandler>();
+    runwick.AddJobsFromAssemblyContaining<SendWelcomeEmail>();
+    runwick.AddHandlersFromAssemblyContaining<SendWelcomeEmailHandler>();
 
-    spindle.AddWorker(worker =>                        // omit this in a producer-only app
+    runwick.AddWorker(worker =>                        // omit this in a producer-only app
     {
         worker.Pool("email-workers", pool =>
         {
@@ -107,7 +107,7 @@ Need to enqueue many at once? `DispatchManyAsync(items)` admits up to 100 jobs i
 
 That's the whole beginner surface. Everything else in this document is what happens underneath, and the knobs you can turn when you need them.
 
-**Dependency injection (DI)** — the handler's constructor parameters (`IEmailSender` above) are filled in by .NET's service container. Spindle creates a fresh *scope* for each job run, so scoped services (like a `DbContext`) are isolated per attempt and disposed afterward. More in §7.
+**Dependency injection (DI)** — the handler's constructor parameters (`IEmailSender` above) are filled in by .NET's service container. Runwick creates a fresh *scope* for each job run, so scoped services (like a `DbContext`) are isolated per attempt and disposed afterward. More in §7.
 
 ---
 
@@ -187,7 +187,7 @@ In one sentence each:
 
 ## 6. The hard problems, one at a time
 
-Each sub-section is a question a sceptical engineer would ask, followed by Spindle's answer and the reasoning.
+Each sub-section is a question a sceptical engineer would ask, followed by Runwick's answer and the reasoning.
 
 ### 6.1 "Who owns this job right now?" — leases and ownership tokens
 
@@ -201,17 +201,17 @@ Each sub-section is a question a sceptical engineer would ask, followed by Spind
 Two subtle rules that make this actually work:
 
 1. **The store's clock is the only clock that matters for ownership.** Worker clocks can be wrong. So "has the lease expired?" is always answered by the database (`clock_timestamp()` in PostgreSQL), never by the worker.
-2. **Check the time *after* waiting for locks, not before.** Database operations sometimes wait in line for a lock (§6.4). If A's "renew" waits 5 seconds in line, the time it read *before* waiting is stale. Spindle reads the time again after acquiring locks. This sounds pedantic; it is the difference between a correct and an incorrect queue.
+2. **Check the time *after* waiting for locks, not before.** Database operations sometimes wait in line for a lock (§6.4). If A's "renew" waits 5 seconds in line, the time it read *before* waiting is stale. Runwick reads the time again after acquiring locks. This sounds pedantic; it is the difference between a correct and an incorrect queue.
 
 **What the worker does locally.** A keeps a conservative estimate of its own authority: "the store said my lease lasts `r` seconds from when it decided; I sent the request at local time `s`; so I trust myself until `s + r − 10 s`" (the 10 s is a safety margin). Using the *send* time, not the receive time, subtracts the whole round trip. If that local deadline passes without a confirmed renewal, A **latches loss**: it cancels the handler's `CancellationToken`, stops renewing, and will never write a result for that attempt, even if a renewal reply arrives late. Once lost, always lost — this avoids a flip-flop where A "regains" authority it may not have.
 
-**What this does *not* promise.** Lease expiry doesn't physically stop A's code. If A's handler ignores its cancellation token and keeps sending emails, both A and B may send. Spindle is honest about this: it is an **at-least-once** system. Your side effects should be **idempotent** (safe to repeat), or the external system should accept a **fencing token** (§6.5) and reject stale callers.
+**What this does *not* promise.** Lease expiry doesn't physically stop A's code. If A's handler ignores its cancellation token and keeps sending emails, both A and B may send. Runwick is honest about this: it is an **at-least-once** system. Your side effects should be **idempotent** (safe to repeat), or the external system should accept a **fencing token** (§6.5) and reject stale callers.
 
 ### 6.2 "What if the worker dies?" — recovery and retry budgets
 
 **Crash while running.** A's lease expires; the recovery loop on any worker notices (there's an index of expired leases), checks the token is still A's, closes A's attempt as `abandoned_running`, and puts the job back as `retrying` (if execution budget remains) or `failed`. If an operator had asked for cancellation meanwhile, it becomes `cancelled`.
 
-**Crash before even starting.** Here's the subtle bit. Between "claimed" (`reserved`) and "running" there's a gap, and Spindle makes this gap explicit with a second tiny transaction called **Begin**. Why two steps?
+**Crash before even starting.** Here's the subtle bit. Between "claimed" (`reserved`) and "running" there's a gap, and Runwick makes this gap explicit with a second tiny transaction called **Begin**. Why two steps?
 
 - `Reserve` = "this job is mine; here is the payload" (takes the lease).
 - `Begin` = "I am about to actually invoke the handler; charge one execution".
@@ -238,7 +238,7 @@ Before sending any write (reserve, begin, finish, recover, cancel, dispatch…),
 
 Now a lost reply is resolvable: A re-sends the exact same command (same ID, same body). The store finds the receipt and returns the original result without doing anything again. If there's no receipt, the store does the work now. If the deadline has passed and there's no receipt, it refuses — and A reports "outcome unknown" honestly rather than guessing.
 
-There are therefore **three** possible answers to "did my write happen?", and Spindle's API surfaces all three:
+There are therefore **three** possible answers to "did my write happen?", and Runwick's API surfaces all three:
 
 | Answer | Meaning | Example |
 |---|---|---|
@@ -252,7 +252,7 @@ A key rule, repeated throughout the design: **"I don't see a receipt" is not pro
 
 ### 6.4 "What if two workers grab the same job?" — transactions and lock order
 
-**Transactions.** A database **transaction** groups several writes so they all happen or none do (atomic), and other connections can't see a half-done state. Every Spindle store operation — reserve, begin, finish, dispatch — is one transaction. "Reserve" writes the attempt row, updates the job row, inserts the permit rows (§6.5) and the receipt row **together**. If any part fails, nothing happened.
+**Transactions.** A database **transaction** groups several writes so they all happen or none do (atomic), and other connections can't see a half-done state. Every Runwick store operation — reserve, begin, finish, dispatch — is one transaction. "Reserve" writes the attempt row, updates the job row, inserts the permit rows (§6.5) and the receipt row **together**. If any part fails, nothing happened.
 
 **Locks.** When a transaction changes a row, PostgreSQL **locks** that row until the transaction ends; others who want to change it wait in line. The claim query uses two tricks:
 
@@ -288,7 +288,7 @@ Two different things people both call "limits":
 |---|---|---|
 | Question | How many at the **same time**? | How many per **unit of time**? |
 | Example | "At most 5 PDF renders running at once" | "At most 100 API calls per minute" |
-| Spindle mechanism | Permits | Grants in a rolling window |
+| Runwick mechanism | Permits | Grants in a rolling window |
 | Checked at | Reserve | Begin |
 
 **Local vs distributed.** `FixedConcurrency(8)` is *local*: this process runs at most 8 jobs. It is enforced in memory with **tickets** — picture 8 physical tokens in a bowl; take one before claiming a job, put it back when done. No database involved. But four worker processes with 8 tickets each is 32 jobs, not 5, and the processes do not know about each other. The only thing they all share is the database, so a limit that must hold *across* processes — a **distributed** limit — has to live there.
@@ -311,7 +311,7 @@ One transaction, so you either got the job *and* the space, or neither. Because 
 
 The last one is a **distributed lock on a thing**. A job may require several scopes at once (queue + type + resource); it needs a space in *all* of them or it waits.
 
-**Fencing tokens (the stale-worker defence).** Recall §6.1: a worker can lose its lease but keep running because it froze and woke up. With `invoice:123` at capacity 1: A gets the permit, starts updating, freezes; 60 s later B gets the permit and updates; A wakes and overwrites B's work. Spindle cannot stop A's code. What it can do is hand each successive holder of a capacity-one scope a number that only increases: A got **#7**, B got **#8**. That is the **fencing token**, available on `IJobContext`. If the invoice service remembers "highest token seen = 8" and rejects anything lower, A's late write bounces. It only works if the *external* system checks the number.
+**Fencing tokens (the stale-worker defence).** Recall §6.1: a worker can lose its lease but keep running because it froze and woke up. With `invoice:123` at capacity 1: A gets the permit, starts updating, freezes; 60 s later B gets the permit and updates; A wakes and overwrites B's work. Runwick cannot stop A's code. What it can do is hand each successive holder of a capacity-one scope a number that only increases: A got **#7**, B got **#8**. That is the **fencing token**, available on `IJobContext`. If the invoice service remembers "highest token seen = 8" and rejects anything lower, A's late write bounces. It only works if the *external* system checks the number.
 
 **Rate limits: grants in a rolling window.** Permits cannot express rate limits, because a permit vanishes when the job finishes and a rate limit needs *history* ("how many started in the last 60 s?"). So: `rate_scopes` (`key = "email-api", limit = 100, window = 60 s`) and `rate_grants` with one row **per authorization, timestamped**, kept for at least a window. Inside the Begin transaction the worker locks the rate scope, counts grants with a timestamp in `(now − 60 s, now]`, and:
 
@@ -320,27 +320,27 @@ The last one is a **distributed lock on a thing**. A job may require several sco
 
 "Rolling" means it is always "the last 60 s from *now*", never "this calendar minute", so 200 cannot sneak through across a minute boundary. If a job requires several rate scopes it needs room in all of them or none are charged.
 
-Why at Begin and not Reserve? Begin is the instant Spindle says "you are authorized to run, I am charging one execution", so a limit on *authorizations* is exact there. The price is one wasted Reserve when a job turns out to be rate-blocked; the plan accepts and will measure that. And note what the limit bounds: *authorizations*, not the handler's later HTTP calls. If the handler sleeps five minutes before calling the API, the API sees odd timing. Spindle's limiter stops 50 workers from stampeding; a limiter at the HTTP boundary is still your call if the provider is strict.
+Why at Begin and not Reserve? Begin is the instant Runwick says "you are authorized to run, I am charging one execution", so a limit on *authorizations* is exact there. The price is one wasted Reserve when a job turns out to be rate-blocked; the plan accepts and will measure that. And note what the limit bounds: *authorizations*, not the handler's later HTTP calls. If the handler sleeps five minutes before calling the API, the API sees odd timing. Runwick's limiter stops 50 workers from stampeding; a limiter at the HTTP boundary is still your call if the provider is strict.
 
 ### 6.6 "Don't send the welcome email twice" — uniqueness and idempotency
 
-People say "idempotent" for three different problems. Spindle solves two and is honest that the third is yours.
+People say "idempotent" for three different problems. Runwick solves two and is honest that the third is yours.
 
-**Problem 1 — "Don't *create* the job twice."** A user double-clicks "Sign up": two HTTP requests, two `DispatchAsync` calls, and you want one job. This is **dispatch uniqueness** — Spindle's feature, store-level and atomic.
+**Problem 1 — "Don't *create* the job twice."** A user double-clicks "Sign up": two HTTP requests, two `DispatchAsync` calls, and you want one job. This is **dispatch uniqueness** — Runwick's feature, store-level and atomic.
 
 **Problem 2 — "Don't *run* two of them at the same time."** Two legitimate jobs both want to recalculate the same account balance; running them together corrupts it. This is **not** a uniqueness feature — it is a resource-key concurrency scope with capacity 1 (§6.5): `account:77`, one at a time.
 
-**Problem 3 — "If the handler runs twice, make the second run harmless."** A worker crashed after sending the email but before telling the store; the job will run again. No queue can prevent the second email, because the first one already left the building. Only your handler can: send with an idempotency key the provider honors, or record "sent to user 42" in your database first and check it. This is **side-effect idempotency**, and it is your responsibility (see §9a for how far Spindle can help).
+**Problem 3 — "If the handler runs twice, make the second run harmless."** A worker crashed after sending the email but before telling the store; the job will run again. No queue can prevent the second email, because the first one already left the building. Only your handler can: send with an idempotency key the provider honors, or record "sent to user 42" in your database first and check it. This is **side-effect idempotency**, and it is your responsibility (see §9a for how far Runwick can help).
 
-Spindle's uniqueness features address Problem 1 only. There are two flavours because there are two slightly different questions.
+Runwick's uniqueness features address Problem 1 only. There are two flavours because there are two slightly different questions.
 
 **Active key — "is one already in flight?"** Dispatch with `ActiveKey = "welcome:user:42"`. *While* a job with that key is pending, reserved, running or retrying, another dispatch with the same key creates nothing and returns the existing job's ID with disposition `Reused`. Once that job reaches a terminal state the key is free again. Use it for "don't pile up duplicates of work that is already queued" — a second "recompute statistics for tenant X" while one is waiting is pointless. Two facts to remember: **first writer wins** (the second dispatch's payload is discarded, which is why the receipt says `Reused` so you can react), and it is about being *queued*, not *running* — retries and recovery can still run the job more than once.
 
 **Window key — "I already asked for this, didn't I?"** Dispatch with `WindowKey = requestId, Window = 24 h`. For 24 hours after the *first* dispatch, any dispatch with the same key returns the same job — **even if that job finished hours ago**. After 24 h the key is forgotten. Use it for client retries: a mobile app POSTs "place order", the response is lost, it retries with the same request ID, and the retry finds the first job instead of placing a second order. The window does not slide: it is 24 h from the first time, so a client cannot keep a key alive forever by retrying.
 
-**Why the window key also stores a fingerprint.** Spindle hashes *what you asked for* — payload, job name, queue, priority, eligibility, keys, business metadata — into a SHA-256 **fingerprint** computed over a canonical form, so `{"a":1,"b":2}` and `{ "b": 2, "a": 1 }` match (same data, different formatting) while `1` and `"1"` do not. If you reuse request ID `abc` with a *different* payload, that is not a retry, it is a bug or a key collision, and Spindle returns an explicit **conflict** rather than quietly handing back an unrelated job. (Review note: the draft also hashes resolved retry *defaults*, which lets a library upgrade cause conflicts; see [review R3](review-2026-10-30.md).)
+**Why the window key also stores a fingerprint.** Runwick hashes *what you asked for* — payload, job name, queue, priority, eligibility, keys, business metadata — into a SHA-256 **fingerprint** computed over a canonical form, so `{"a":1,"b":2}` and `{ "b": 2, "a": 1 }` match (same data, different formatting) while `1` and `"1"` do not. If you reuse request ID `abc` with a *different* payload, that is not a retry, it is a bug or a key collision, and Runwick returns an explicit **conflict** rather than quietly handing back an unrelated job. (Review note: the draft also hashes resolved retry *defaults*, which lets a library upgrade cause conflicts; see [review R3](review-2026-10-30.md).)
 
-**Using both together.** `ActiveKey = "welcome:user:42"` plus `WindowKey = requestId`: the window key makes *your* retries of this exact request safe; the active key makes *any* request for user 42 collapse onto one queued job. If a new window key meets an existing active job, Spindle links the window key to that job so later retries still find it after it finishes. If a window key and an active key point at two *different* jobs, you get an explicit conflict instead of a guess.
+**Using both together.** `ActiveKey = "welcome:user:42"` plus `WindowKey = requestId`: the window key makes *your* retries of this exact request safe; the active key makes *any* request for user 42 collapse onto one queued job. If a new window key meets an existing active job, Runwick links the window key to that job so later retries still find it after it finishes. If a window key and an active key point at two *different* jobs, you get an explicit conflict instead of a guess.
 
 | Want to avoid… | Use |
 |---|---|
@@ -365,13 +365,13 @@ A **schedule** is a stored definition: a cron expression (`0 2 * * *`), a time z
 - `run-once` (default) — run one job now, recorded as covering the missed range.
 - `catch-up` — run every missed occurrence, in order, in bounded batches (max 1,000, max 7 days old; beyond that it stops and flags `needs_review` instead of silently dropping).
 
-**Time zones and DST.** "02:30 in Berlin" doesn't exist on the spring-forward night and happens twice on the fall-back night. Spindle stores an explicit policy for each: gaps `skip` (default) or `shift-to-next-valid`; folds `earlier` (default), `later`, or `both`. It uses Cronos only for calendar matching and NodaTime with a pinned time-zone database (whose hash is stored with the schedule) for the mapping, because Cronos's own day-field logic (`AND`) and DST handling differ from what Spindle promises. The pinned data means a zone rule change can't silently move an existing schedule.
+**Time zones and DST.** "02:30 in Berlin" doesn't exist on the spring-forward night and happens twice on the fall-back night. Runwick stores an explicit policy for each: gaps `skip` (default) or `shift-to-next-valid`; folds `earlier` (default), `later`, or `both`. It uses Cronos only for calendar matching and NodaTime with a pinned time-zone database (whose hash is stored with the schedule) for the mapping, because Cronos's own day-field logic (`AND`) and DST handling differ from what Runwick promises. The pinned data means a zone rule change can't silently move an existing schedule.
 
 **Overlap.** `Overlap("serialize")` simply adds a resource-key scope `schedule/<id>` with capacity 1 — reusing the permit machinery from §6.5.
 
 ### 6.8 "Make the queue insert part of my business transaction" — staging and the outbox
 
-If your business data and Spindle's tables are in the **same** PostgreSQL database, you can pass your open transaction in:
+If your business data and Runwick's tables are in the **same** PostgreSQL database, you can pass your open transaction in:
 
 ```csharp
 await users.InsertAsync(connection, transaction, user, ct);
@@ -379,9 +379,9 @@ var staged = await postgresDispatcher.StageAsync(new SendWelcomeEmail(user.Id, "
 await transaction.CommitAsync(ct);   // user row and job commit together, or neither does
 ```
 
-`StageAsync` returns a `StagedDispatch`, deliberately *not* a `DispatchReceipt`, because nothing is durable until *you* commit. Spindle never commits, rolls back or retries your transaction.
+`StageAsync` returns a `StagedDispatch`, deliberately *not* a `DispatchReceipt`, because nothing is durable until *you* commit. Runwick never commits, rolls back or retries your transaction.
 
-If they're in **different** databases (or your queue is Redis), no single transaction can span both. The standard fix is the **transactional outbox**: your business transaction writes a row to an `outbox_messages` table in *your* database; a **relay** reads those rows later and dispatches them to the queue; it marks them delivered only after the queue confirmed. Crash between steps → the relay sends again → the queue recognizes the delivery ID and returns the same job. Spindle ships optional outbox packages for PostgreSQL and SQLite sources, with a 7-day replay horizon after which an unsent message is flagged for a human rather than silently dropped.
+If they're in **different** databases (or your queue is Redis), no single transaction can span both. The standard fix is the **transactional outbox**: your business transaction writes a row to an `outbox_messages` table in *your* database; a **relay** reads those rows later and dispatches them to the queue; it marks them delivered only after the queue confirmed. Crash between steps → the relay sends again → the queue recognizes the delivery ID and returns the same job. Runwick ships optional outbox packages for PostgreSQL and SQLite sources, with a 7-day replay horizon after which an unsent message is flagged for a human rather than silently dropped.
 
 ### 6.9 "Which handler? The class got renamed." — stable names and payload versions
 
@@ -390,13 +390,13 @@ The job's identity in the database is `"email.welcome"`, not `MyApp.Jobs.SendWel
 Payloads are stored as the **original UTF-8 JSON bytes** your producer wrote, plus a **payload version** (`[PayloadVersion(2)]`) and the **serializer profile** that wrote them. The worker decodes those bytes fresh on every execution. If you change the shape of the record, you bump the version and register an **upgrade**:
 
 ```csharp
-spindle.ConfigureJob<SendWelcomeEmail>()
+runwick.ConfigureJob<SendWelcomeEmail>()
     .Upgrade<SendWelcomeEmailV1, SendWelcomeEmail>(1, 2, old => new SendWelcomeEmail(old.UserId, "en"));
 ```
 
 A worker advertises exactly which `(name, version, profile)` combinations it can decode. The claim query only picks jobs it can decode — so during a rolling deploy, old workers never grab a v2 job and crash on it; the job just waits until a new worker is up. The dashboard can show "3 jobs have no capable worker right now".
 
-Spindle's JSON profile (`spindle.json` v1) is strict: unknown properties rejected, duplicate keys rejected, no number coercion, 1 MiB max payload. Deliberately not inheriting your ASP.NET JSON settings, so changing those can't change what's in the queue.
+Runwick's JSON profile (`runwick.json` v1) is strict: unknown properties rejected, duplicate keys rejected, no number coercion, 1 MiB max payload. Deliberately not inheriting your ASP.NET JSON settings, so changing those can't change what's in the queue.
 
 ### 6.10 Priorities and fairness — lanes
 
@@ -427,7 +427,7 @@ Global middleware wraps per-job middleware wraps the handler. A middleware may r
 
 ### 6.12 Shutdown — draining gracefully
 
-When the host says stop, Spindle walks through phases with absolute cut-offs (defaults 15 / 20 / 25 s, inside the host's usual 30 s):
+When the host says stop, Runwick walks through phases with absolute cut-offs (defaults 15 / 20 / 25 s, inside the host's usual 30 s):
 
 1. **Stop admitting** — no new claims. Immediately.
 2. **Drain** — let running handlers finish; keep renewing their leases; keep writing results.
@@ -435,7 +435,7 @@ When the host says stop, Spindle walks through phases with absolute cut-offs (de
 4. **Finalize** — write whatever outcomes are known.
 5. **Stop control I/O** — at 25 s or when the host token fires, stop. Anything still unresolved is left to lease expiry and another worker's recovery.
 
-Spindle cannot kill a handler that ignores its token; .NET has no safe way to do that. Such a handler keeps its ticket and its DI scope until it actually returns, so the process never builds a pile of replacement tasks.
+Runwick cannot kill a handler that ignores its token; .NET has no safe way to do that. Such a handler keeps its ticket and its DI scope until it actually returns, so the process never builds a pile of replacement tasks.
 
 ### 6.13 Automatic concurrency (per process)
 
@@ -471,7 +471,7 @@ Plain-words tour of the main PostgreSQL tables (all keyed by `application` so se
 
 Three indexes do most of the work: *ready* `(application, queue, priority, eligible_at, job_id) WHERE state IN ('pending','retrying')` for claims; *expired lease* `(application, lease_expires_at) WHERE state IN ('reserved','running')` for recovery; *live permits* `(application, scope_id, lease_expires_at)` for counting.
 
-**Migrations** are Spindle's own (no Entity Framework), run by an explicit deployment command under an advisory lock, in expand → backfill → validate → activate → contract phases so old and new binaries can overlap safely.
+**Migrations** are Runwick's own (no Entity Framework), run by an explicit deployment command under an advisory lock, in expand → backfill → validate → activate → contract phases so old and new binaries can overlap safely.
 
 ---
 
@@ -501,13 +501,13 @@ handler sends email ──► provider says "sent" ──► worker tells DB "do
         job runs again → 2 emails      job runs again → 2 emails
 ```
 
-Two independent systems (your database and the email provider) cannot commit together. Whatever order you choose, there is a gap where one has happened and the other has not, and a crash in that gap forces a choice: run again (**at-least-once**, possible duplicate) or never run again (**at-most-once**, possible loss). That is a theorem — the "two generals problem" — not a Spindle limitation. Systems that advertise exactly-once are really at-least-once delivery plus duplicate suppression at the receiver ("effectively once").
+Two independent systems (your database and the email provider) cannot commit together. Whatever order you choose, there is a gap where one has happened and the other has not, and a crash in that gap forces a choice: run again (**at-least-once**, possible duplicate) or never run again (**at-most-once**, possible loss). That is a theorem — the "two generals problem" — not a Runwick limitation. Systems that advertise exactly-once are really at-least-once delivery plus duplicate suppression at the receiver ("effectively once").
 
-**But there is a large, useful special case that Spindle can and should offer.**
+**But there is a large, useful special case that Runwick can and should offer.**
 
 ### Exactly-once inside the same database — transactional completion
 
-If your handler's side effects are rows in the **same PostgreSQL (or SQLite) database** that holds Spindle's tables, one transaction can hold both, and the gap disappears:
+If your handler's side effects are rows in the **same PostgreSQL (or SQLite) database** that holds Runwick's tables, one transaction can hold both, and the gap disappears:
 
 ```csharp
 public async Task HandleAsync(ApplyPayment job, CancellationToken ct)
@@ -515,7 +515,7 @@ public async Task HandleAsync(ApplyPayment job, CancellationToken ct)
     await using var tx = await _db.BeginTransactionAsync(ct);
 
     await _ledger.CreditAsync(job.AccountId, job.Amount, tx);  // your business write
-    await _spindle.CompleteInTransactionAsync(tx, ct);         // Spindle marks the job succeeded IN THE SAME TRANSACTION
+    await _runwick.CompleteInTransactionAsync(tx, ct);         // Runwick marks the job succeeded IN THE SAME TRANSACTION
 
     await tx.CommitAsync(ct);   // credit and completion commit together, or neither does
 }
@@ -536,15 +536,15 @@ if (done is null)
     await _email.SendAsync(user, idempotencyKey: $"{job.JobId}:welcome", ct);  // 2. provider de-duplicates on this key
     await _db.ExternalCalls.InsertAsync(job.JobId, "send-welcome", tx);        // 3. remember we did it
 }
-await _spindle.CompleteInTransactionAsync(tx, ct);
+await _runwick.CompleteInTransactionAsync(tx, ct);
 await tx.CommitAsync(ct);
 ```
 
 A crash between step 2 and the commit makes the rerun call the provider again — with the **same key**, so Stripe, SendGrid and most serious APIs ignore the duplicate. This is as close to exactly-once as physics allows, and it is what "exactly-once" products do underneath.
 
-The sentence for the public docs: *Spindle is at-least-once. Exactly-once is available for effects inside the same database via transactional completion; for everything else, use idempotency keys.*
+The sentence for the public docs: *Runwick is at-least-once. Exactly-once is available for effects inside the same database via transactional completion; for everything else, use idempotency keys.*
 
-## 9. Things Spindle deliberately does not promise
+## 9. Things Runwick deliberately does not promise
 
 Read this twice; it's the part people get wrong about every queue.
 

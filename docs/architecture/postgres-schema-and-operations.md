@@ -21,7 +21,7 @@ Keep these identities distinct:
 
 Propose epoch 1 and operation version 1 for the first released consolidated contract. The early execution milestone can implement a subset, but must reject unimplemented operations/features. In particular Begin/1's full definition includes rate admission; an execution-only milestone may process jobs with no rate requirements but cannot accept a rate-enabled application. Do not publish an unversioned Begin that ignores extra requirements.
 
-No Spindle database has been implemented from earlier documents. Draft changes from jsonb to bytes or name/version to full decoding tuples are corrections to the initial schema, not fictitious migrations from a released v0. Future changes get immutable migration IDs and compatibility manifests as specified in [upgrade compatibility](postgres-upgrades-and-compatibility.md).
+No Runwick database has been implemented from earlier documents. Draft changes from jsonb to bytes or name/version to full decoding tuples are corrections to the initial schema, not fictitious migrations from a released v0. Future changes get immutable migration IDs and compatibility manifests as specified in [upgrade compatibility](postgres-upgrades-and-compatibility.md).
 
 All application-scoped keys include application. Use canonical UUID byte order for lock sorting and cursor encoding across drivers; do not inherit CLR Guid byte-array layout accidentally. Stable text identities compare bytewise/ordinally under an explicitly selected deterministic database collation. SQL collation/encoding fixtures must prove agreement with the wire contract. All duration columns use checked bigint milliseconds, including scheduler/rate settings previously sketched in microseconds.
 
