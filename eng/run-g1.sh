@@ -30,6 +30,12 @@ if [[ -z "${G1_SKIP_WORKLOADS:-}" ]]; then
   wl="$out/bin/Runwick.Workloads"
   for name in ${G1_WORKLOADS:-G1-M1 G1-M2 P-02 G1-M3 P-01 P-08a P-08b P-08c}; do
     args=()
+    # 07 §14.3 asks for 3 repetitions of P-01 and P-02 only; the P-08 variants run once. P-01's drain of everything
+    # accepted is bounded at 90 min (a backlog left after that is a run failure, never silently dropped).
+    case "$name" in
+      P-08*) args+=(--reps 1) ;;
+      P-01) args+=(--drain-min 90) ;;
+    esac
     if [[ "$name" == "G1-M3" ]]; then
       rate=$(python3 -c "import json,glob;f=sorted(glob.glob('$out/perf/*-P-02/result.json'))[-1];print(json.load(open(f))['sustainableRate'])" 2>/dev/null || echo 1)
       args+=(--rate "$rate")
