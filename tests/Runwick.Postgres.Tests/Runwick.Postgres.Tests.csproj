@@ -4,6 +4,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Runwick.Harness\Runwick.Harness.csproj" />
+    <!-- Build order only: peer tests start this process from its own output folder. -->
+    <ProjectReference Include="..\Runwick.Harness.Peer\Runwick.Harness.Peer.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\samples\Runwick.Samples.Contracts\Runwick.Samples.Contracts.csproj" />
   </ItemGroup>
   <ItemGroup>
