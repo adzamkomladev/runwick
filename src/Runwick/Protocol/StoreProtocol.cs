@@ -182,7 +182,8 @@ internal sealed record ReservedJob(
     string Queue,
     string Priority,
     ExecutionPolicy Policy,
-    IReadOnlyList<StoreFence> Fences);
+    IReadOnlyList<StoreFence> Fences,
+    DateTimeOffset CreatedAt);
 
 internal sealed record BeginRequest(LeaseHandle Lease);
 

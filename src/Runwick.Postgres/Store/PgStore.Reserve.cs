@@ -178,7 +178,7 @@ internal sealed partial class PgStore
                 await EventAsync(tx, job.JobId, attemptId, "attempt_reserved",
                     new JsonObject { ["generation"] = job.Generation, ["reservationNumber"] = reservationNumber }).ConfigureAwait(false);
 
-                var (payload, business, diagnostic) = await ReadPayloadAsync(tx, job.JobId).ConfigureAwait(false);
+                var (payload, business, diagnostic, createdAt) = await ReadPayloadAsync(tx, job.JobId).ConfigureAwait(false);
                 var reserved = new ReservedJob(
                     new JobPosition(job.JobId, job.Generation, revision, JobStates.Reserved),
                     new LeaseGrant(new LeaseHandle(job.JobId, attemptId, request.WorkerInstanceId, token, job.Generation), expiry),
@@ -188,14 +188,15 @@ internal sealed partial class PgStore
                     payload, business, diagnostic,
                     request.Queue, request.Priority,
                     policy.Policy,
-                    [.. scopes.Where(s => s.Fencing).Select(s => new StoreFence(s.ScopeId, fences[s.ScopeId]))]);
+                    [.. scopes.Where(s => s.Fencing).Select(s => new StoreFence(s.ScopeId, fences[s.ScopeId]))],
+                    createdAt);
                 return new PgOutcome<ReservedJob>.Commit(StoreReply<ReservedJob>.Applied(reserved, now), ReceiptCodec.Reserve(reserved));
             },
             async (tx, row) =>
             {
                 var o = row.Result!;
-                var (payload, business, diagnostic) = await ReadPayloadAsync(tx, Guid.Parse(o["jobId"]!.GetValue<string>())).ConfigureAwait(false);
-                return StoreReply<ReservedJob>.Applied(ReceiptCodec.ReadReserve(o, payload, business, diagnostic), row.DecidedAt!.Value, replayed: true);
+                var (payload, business, diagnostic, createdAt) = await ReadPayloadAsync(tx, Guid.Parse(o["jobId"]!.GetValue<string>())).ConfigureAwait(false);
+                return StoreReply<ReservedJob>.Applied(ReceiptCodec.ReadReserve(o, payload, business, diagnostic, createdAt), row.DecidedAt!.Value, replayed: true);
             },
             ct);
     }
@@ -207,18 +208,21 @@ internal sealed partial class PgStore
         return new Guid(bytes, bigEndian: true);
     }
 
-    static async Task<(byte[] Payload, Dictionary<string, string> Business, Dictionary<string, string> Diagnostic)> ReadPayloadAsync(PgTx tx, Guid jobId)
+    static async Task<(byte[] Payload, Dictionary<string, string> Business, Dictionary<string, string> Diagnostic, DateTimeOffset CreatedAt)> ReadPayloadAsync(PgTx tx, Guid jobId)
     {
-        using var cmd = tx.Sql("SELECT payload_utf8, headers::text FROM runwick.job_payloads WHERE application = @application AND job_id = @job_id")
-            .P("job_id", jobId);
-        var rows = await tx.QueryAsync(cmd, r => ((byte[])r[0], r.GetString(1))).ConfigureAwait(false);
+        using var cmd = tx.Sql("""
+            SELECT p.payload_utf8, p.headers::text, j.created_at
+            FROM runwick.job_payloads p JOIN runwick.jobs j USING (application, job_id)
+            WHERE p.application = @application AND p.job_id = @job_id
+            """).P("job_id", jobId);
+        var rows = await tx.QueryAsync(cmd, r => ((byte[])r[0], r.GetString(1), r.GetFieldValue<DateTimeOffset>(2))).ConfigureAwait(false);
         if (rows.Count != 1)
         {
             throw new InvalidOperationException("payload row missing for a waiting job");
         }
 
         var (business, diagnostic) = ReadHeaders(rows[0].Item2);
-        return (rows[0].Item1, business, diagnostic);
+        return (rows[0].Item1, business, diagnostic, rows[0].Item3);
     }
 
     sealed record GenerationRow(ExecutionPolicy Policy, int StartedCount, int ConsecutiveUnstarted);
@@ -437,8 +441,10 @@ internal sealed partial class PgStore
                     UPDATE runwick.concurrency_permits
                     SET lease_expires_at = @expiry
                     WHERE application = @application AND job_id = @job_id AND attempt_id = @attempt_id AND ownership_token = @token
+                      AND lease_expires_at = @previous
                     RETURNING scope_id
-                    """).P("expiry", expiry).P("job_id", lease.JobId).P("attempt_id", lease.AttemptId).P("token", lease.OwnershipToken))
+                    """).P("expiry", expiry).P("job_id", lease.JobId).P("attempt_id", lease.AttemptId).P("token", lease.OwnershipToken)
+                    .P("previous", job!.LeaseExpiresAt))
                 {
                     var renewed = (await tx.QueryAsync(p, r => r.GetGuid(0), mutation: true).ConfigureAwait(false)).ToHashSet();
                     if (!renewed.SetEquals(scopes.Select(s => s.ScopeId)))

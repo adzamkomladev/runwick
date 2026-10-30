@@ -121,7 +121,8 @@ internal static class ReceiptCodec
     };
 
     /// <summary>Rebuilds a reservation from its receipt plus the immutable payload row.</summary>
-    public static ReservedJob ReadReserve(JsonObject o, byte[] payload, IReadOnlyDictionary<string, string> business, IReadOnlyDictionary<string, string> diagnostic)
+    public static ReservedJob ReadReserve(JsonObject o, byte[] payload, IReadOnlyDictionary<string, string> business, IReadOnlyDictionary<string, string> diagnostic,
+        DateTimeOffset createdAt)
     {
         var jobId = G(o["jobId"]);
         var generation = o["generation"]!.GetValue<int>();
@@ -135,7 +136,8 @@ internal static class ReceiptCodec
             payload, business, diagnostic,
             o["queue"]!.GetValue<string>(), o["priority"]!.GetValue<string>(),
             ReadPolicy(o["policy"]!.AsObject()),
-            [.. o["fences"]!.AsArray().Select(f => new StoreFence(G(f!["scopeId"]), f["value"]!.GetValue<long>()))]);
+            [.. o["fences"]!.AsArray().Select(f => new StoreFence(G(f!["scopeId"]), f["value"]!.GetValue<long>()))],
+            createdAt);
     }
 
     public static JsonObject Policy(ExecutionPolicy p) => new()

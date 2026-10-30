@@ -130,7 +130,8 @@ public sealed class UniquenessTests
     {
         await using var f = await DriverFixture.StartAsync(Ns("uni04"));
         var c = await f.OpenClient(configure: r => TestJobs.Register(r));
-        var window = TimeSpan.FromSeconds(3);
+        // Long enough that steps (a) finish inside the window on a loaded host; (b) waits for its expiry.
+        var window = TimeSpan.FromSeconds(15);
         var j = await c.Dispatcher.DispatchAsync(new PingJob("j"), Window("w", window, active: "k"));
         var lease = await RunAsync(c, j.JobId.Value);
         Assert.Equal(StoreStatus.Applied, (await c.FinishAsync(lease, AttemptOutcome.Succeeded)).Status);
