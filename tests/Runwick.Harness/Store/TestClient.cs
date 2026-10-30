@@ -16,6 +16,32 @@ internal sealed record HistoryEntry(
 /// <summary>An in-process client: real registry, dispatcher, PostgreSQL store and SQL; no mocked client path.</summary>
 internal sealed class TestClient(ServiceProvider provider, string application) : IAsyncDisposable
 {
+    /// <summary>Builds a client over <c>AddRunwick(...).UsePostgres(...)</c> with the given fault injector.</summary>
+    internal static async Task<TestClient> CreateAsync(string connectionString, string application, IFaultInjector faults,
+        Action<RunwickBuilder>? configure = null, TimeProvider? time = null, bool ensureReady = true)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
+        services.AddSingleton(faults);
+        if (time is not null)
+        {
+            services.AddSingleton(time);
+        }
+
+        services.AddRunwick(r =>
+        {
+            r.Application(application).UsePostgres(connectionString);
+            configure?.Invoke(r);
+        });
+        var client = new TestClient(services.BuildServiceProvider(), application);
+        if (ensureReady)
+        {
+            await client.Runtime.EnsureReadyAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+
+        return client;
+    }
+
     public ServiceProvider Services => provider;
 
     public string Application => application;
