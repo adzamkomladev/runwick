@@ -29,6 +29,7 @@ internal sealed class RegistryCompiler(RunwickBuilder builder, bool isWorker)
 
         var queues = CompileQueues();
         var aliases = CompileAliases();
+        CheckDefaultsLayer();
         foreach (var t in builder.GlobalMiddleware.GroupBy(t => t).Where(g => g.Count() > 1))
         {
             Error(RunwickErrorCodes.DuplicateMiddleware, t.Key.Name, "Global middleware registered twice.");
@@ -70,6 +71,23 @@ internal sealed class RegistryCompiler(RunwickBuilder builder, bool isWorker)
         }
 
         return registry;
+    }
+
+    void CheckDefaultsLayer()
+    {
+        var d = builder.Defaults;
+        foreach (var (setting, conflict) in new[]
+        {
+            ("Queue", d.Queue.HasConflict), ("Priority", d.Priority.HasConflict), ("MaxExecutions", d.MaxExecutions.HasConflict),
+            ("ExecutionTimeout", d.ExecutionTimeout.HasConflict), ("RetryDelay", d.RetryDelay.HasConflict),
+            ("MaxUnstartedAbandonments", d.MaxUnstartedAbandonments.HasConflict), ("UnstartedRecoveryDelay", d.UnstartedDelay.HasConflict),
+        })
+        {
+            if (conflict)
+            {
+                Error(RunwickErrorCodes.SameLayerConflict, "JobDefaults", $"JobDefaults set {setting} to different values.");
+            }
+        }
     }
 
     string? CompileApplication()
@@ -219,20 +237,21 @@ internal sealed class RegistryCompiler(RunwickBuilder builder, bool isWorker)
             Error(RunwickErrorCodes.InvalidPriority, name, $"Priority '{priority.Value}' must be low, medium or high.");
         }
 
-        if (maxExecutions.Value is < 1 or > 1000)
+        if (maxExecutions.Value is < 1 or > PolicyBounds.MaxExecutions)
         {
-            Error(RunwickErrorCodes.InvalidPolicy, name, "MaxExecutions must be within 1–1,000.");
+            Error(RunwickErrorCodes.InvalidPolicy, name, $"MaxExecutions must be within 1–{PolicyBounds.MaxExecutions}.");
         }
 
-        if (unstarted.Value < 1)
+        if (unstarted.Value is < 1 or > PolicyBounds.MaxUnstartedAbandonments)
         {
-            Error(RunwickErrorCodes.InvalidPolicy, name, "MaxUnstartedAbandonments must be at least 1; the guard cannot be disabled.");
+            Error(RunwickErrorCodes.InvalidPolicy, name,
+                $"MaxUnstartedAbandonments must be within 1–{PolicyBounds.MaxUnstartedAbandonments}; the guard cannot be disabled.");
         }
 
         long? timeoutMs = null;
         if (timeout.Value is { } t)
         {
-            timeoutMs = WholeMs(name, "ExecutionTimeout", t);
+            timeoutMs = WholeMs(name, "ExecutionTimeout", t, PolicyBounds.MaxExecutionTimeoutMs);
         }
 
         var retryPolicy = DelayPolicy(name, "RetryDelay", retry.Value);
@@ -271,7 +290,7 @@ internal sealed class RegistryCompiler(RunwickBuilder builder, bool isWorker)
         if (d.WindowSelector.IsSet)
         {
             var w = d.WindowSelector.Value.Window;
-            if (w <= TimeSpan.Zero || w.Ticks % TimeSpan.TicksPerMillisecond != 0 || w > TimeSpan.FromDays(3650))
+            if (w <= TimeSpan.Zero || w.Ticks % TimeSpan.TicksPerMillisecond != 0 || w.Ticks / TimeSpan.TicksPerMillisecond > PolicyBounds.MaxWindowMs)
             {
                 Error(RunwickErrorCodes.InvalidUniqueness, name, "UniqueWithinWindow needs a positive whole-millisecond window of at most 3,650 days.");
             }
@@ -326,11 +345,6 @@ internal sealed class RegistryCompiler(RunwickBuilder builder, bool isWorker)
 
     EffectiveValue<T> Resolve<T>(string job, string setting, T library, LayerValue<T> defaults, (bool Set, T Value) attribute, LayerValue<T> fluent)
     {
-        if (defaults.HasConflict)
-        {
-            Error(RunwickErrorCodes.SameLayerConflict, job, $"JobDefaults set {setting} to different values.");
-        }
-
         if (fluent.HasConflict)
         {
             Error(RunwickErrorCodes.SameLayerConflict, job, $"Fluent configuration set {setting} to different values.");
@@ -349,7 +363,7 @@ internal sealed class RegistryCompiler(RunwickBuilder builder, bool isWorker)
         return defaults.IsSet ? new(defaults.Value, ConfigurationSource.ApplicationDefault) : new(library, ConfigurationSource.LibraryDefault);
     }
 
-    long WholeMs(string job, string setting, TimeSpan value)
+    long WholeMs(string job, string setting, TimeSpan value, long maximumMs)
     {
         if (value <= TimeSpan.Zero || value.Ticks % TimeSpan.TicksPerMillisecond != 0)
         {
@@ -357,13 +371,19 @@ internal sealed class RegistryCompiler(RunwickBuilder builder, bool isWorker)
             return 1;
         }
 
-        return value.Ticks / TimeSpan.TicksPerMillisecond;
+        var ms = value.Ticks / TimeSpan.TicksPerMillisecond;
+        if (ms > maximumMs)
+        {
+            Error(RunwickErrorCodes.InvalidPolicy, job, $"{setting} must be at most {maximumMs} ms.");
+        }
+
+        return ms;
     }
 
     RetryPolicy DelayPolicy(string job, string setting, (TimeSpan Initial, TimeSpan Max) value)
     {
-        var initial = WholeMs(job, setting + ".initial", value.Initial);
-        var max = WholeMs(job, setting + ".max", value.Max);
+        var initial = WholeMs(job, setting + ".initial", value.Initial, PolicyBounds.MaxRetryDelayMs);
+        var max = WholeMs(job, setting + ".max", value.Max, PolicyBounds.MaxRetryDelayMs);
         if (initial > max)
         {
             Error(RunwickErrorCodes.InvalidPolicy, job, $"{setting}: initial delay exceeds the maximum.");
@@ -496,8 +516,31 @@ internal sealed class RegistryCompiler(RunwickBuilder builder, bool isWorker)
         while (pending.Count > 0)
         {
             var type = pending.Pop();
-            if (!seen.Add(type) || type.IsPrimitive || type == typeof(string) || type.Namespace?.StartsWith("System", StringComparison.Ordinal) == true && !type.IsGenericType)
+            if (type == typeof(object))
             {
+                Error(RunwickErrorCodes.InvalidPolicy, name, "A member or collection element is typed object; use JsonElement or a concrete type.");
+                continue;
+            }
+
+            if (!seen.Add(type) || type.IsPrimitive || type == typeof(string))
+            {
+                continue;
+            }
+
+            if (type.IsArray)
+            {
+                pending.Push(type.GetElementType()!);
+                continue;
+            }
+
+            // Framework types (collections, Nullable<T>, JsonElement, Guid, …): only their type arguments are user data.
+            if (type.Namespace?.StartsWith("System", StringComparison.Ordinal) == true)
+            {
+                foreach (var argument in type.IsGenericType ? type.GenericTypeArguments : [])
+                {
+                    pending.Push(argument);
+                }
+
                 continue;
             }
 
@@ -512,28 +555,38 @@ internal sealed class RegistryCompiler(RunwickBuilder builder, bool isWorker)
                 Error(RunwickErrorCodes.InvalidPolicy, name, $"{type.Name} relaxes the runwick.json v1 profile.");
             }
 
+            // Custom converters are executable configuration that Runwick has not registered (spec 02 §3.2).
+            if (type.GetCustomAttribute<JsonConverterAttribute>() is not null)
+            {
+                Error(RunwickErrorCodes.InvalidPolicy, name, $"{type.Name} carries [JsonConverter]; runwick.json v1 accepts no custom converters.");
+            }
+
             foreach (var argument in type.IsGenericType ? type.GenericTypeArguments : [])
             {
                 pending.Push(argument);
             }
 
-            if (type.IsArray)
+            foreach (var derived in type.GetCustomAttributes<JsonDerivedTypeAttribute>(inherit: false))
             {
-                pending.Push(type.GetElementType()!);
-                continue;
+                pending.Push(derived.DerivedType);
             }
 
             foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
             {
+                if (property.GetIndexParameters().Length > 0 || property.GetCustomAttribute<JsonIgnoreAttribute>() is { Condition: JsonIgnoreCondition.Always })
+                {
+                    continue;
+                }
+
                 if (property.GetCustomAttribute<JsonExtensionDataAttribute>() is not null
                     || property.GetCustomAttribute<JsonNumberHandlingAttribute>() is { Handling: not JsonNumberHandling.Strict })
                 {
                     Error(RunwickErrorCodes.InvalidPolicy, name, $"{type.Name}.{property.Name} relaxes the runwick.json v1 profile.");
                 }
 
-                if (property.PropertyType == typeof(object))
+                if (property.GetCustomAttribute<JsonConverterAttribute>() is not null)
                 {
-                    Error(RunwickErrorCodes.InvalidPolicy, name, $"{type.Name}.{property.Name} is typed object; use JsonElement or a concrete type.");
+                    Error(RunwickErrorCodes.InvalidPolicy, name, $"{type.Name}.{property.Name} carries [JsonConverter]; runwick.json v1 accepts no custom converters.");
                 }
 
                 pending.Push(property.PropertyType);

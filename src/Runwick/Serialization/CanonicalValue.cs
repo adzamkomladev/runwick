@@ -2,7 +2,6 @@ using System.Buffers.Binary;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 
 namespace Runwick.Serialization;
 
@@ -135,7 +134,7 @@ internal static class CanonicalEncoder
                 {
                     if (sorted[i - 1].Name.AsSpan().SequenceEqual(sorted[i].Name))
                     {
-                        throw new CanonicalEncodingException("duplicate_property", "Duplicate decoded property name.");
+                        throw new CanonicalEncodingException(RunwickErrorCodes.PayloadDuplicateProperty, "Duplicate decoded property name.");
                     }
                 }
 
@@ -161,7 +160,7 @@ internal static class CanonicalEncoder
         }
         catch (EncoderFallbackException)
         {
-            throw new CanonicalEncodingException("malformed_unicode", "String contains an unpaired surrogate.");
+            throw new CanonicalEncodingException(RunwickErrorCodes.PayloadInvalidUtf8, "String contains an unpaired surrogate.");
         }
     }
 
@@ -181,9 +180,9 @@ internal static class CanonicalEncoder
     /// <summary>Validates an RFC 8259 number lexeme (no NaN/Infinity, no leading plus or zeroes).</summary>
     public static void ValidateNumber(string lexeme)
     {
-        if (lexeme.Length is 0 or > PayloadBounds.MaxNumberLexemeBytes)
+        if (lexeme.Length == 0)
         {
-            throw new CanonicalEncodingException("number_lexeme_bounds", "Number lexeme is empty or too long.");
+            Invalid();
         }
 
         var i = 0;
@@ -253,87 +252,13 @@ internal static class CanonicalEncoder
             Invalid();
         }
 
-        static void Invalid() => throw new CanonicalEncodingException("invalid_number", "Not a JSON number lexeme.");
-    }
-
-    /// <summary>
-    /// Builds the canonical value of UTF-8 JSON text. Strings are decoded (escapes resolved),
-    /// duplicate decoded names and malformed Unicode are rejected, number lexemes are kept.
-    /// </summary>
-    public static CanonicalValue FromJson(ReadOnlySpan<byte> utf8Json)
-    {
-        var reader = new Utf8JsonReader(utf8Json, new JsonReaderOptions
+        // Grammar first, then length — the same order as the scanner and the Node encoder.
+        if (lexeme.Length > PayloadBounds.MaxNumberLexemeBytes)
         {
-            AllowTrailingCommas = false,
-            CommentHandling = JsonCommentHandling.Disallow,
-            MaxDepth = PayloadBounds.MaxDepth + 1,
-        });
-        try
-        {
-            if (!reader.Read())
-            {
-                throw new CanonicalEncodingException("invalid_json", "Empty JSON.");
-            }
-
-            var value = ReadValue(ref reader);
-            if (reader.Read())
-            {
-                throw new CanonicalEncodingException("invalid_json", "Trailing content after JSON value.");
-            }
-
-            return value;
+            throw new CanonicalEncodingException(RunwickErrorCodes.PayloadNumberTooLong, "Number lexeme is too long.");
         }
-        catch (JsonException ex)
-        {
-            throw new CanonicalEncodingException("invalid_json", ex.Message);
-        }
-        catch (InvalidOperationException ex)
-        {
-            throw new CanonicalEncodingException("malformed_unicode", ex.Message);
-        }
-    }
 
-    static CanonicalValue ReadValue(ref Utf8JsonReader reader)
-    {
-        switch (reader.TokenType)
-        {
-            case JsonTokenType.Null:
-                return CanonicalValue.Null;
-            case JsonTokenType.True:
-                return CanonicalValue.True;
-            case JsonTokenType.False:
-                return CanonicalValue.False;
-            case JsonTokenType.String:
-                return CanonicalValue.Str(reader.GetString()!);
-            case JsonTokenType.Number:
-                return CanonicalValue.Number(Encoding.ASCII.GetString(reader.ValueSpan));
-            case JsonTokenType.StartArray:
-                var items = new List<CanonicalValue>();
-                while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
-                {
-                    items.Add(ReadValue(ref reader));
-                }
-
-                return new CanonicalArray(items);
-            case JsonTokenType.StartObject:
-                var properties = new List<KeyValuePair<string, CanonicalValue>>();
-                var names = new HashSet<string>(StringComparer.Ordinal);
-                while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
-                {
-                    var name = reader.GetString()!;
-                    if (!names.Add(name))
-                    {
-                        throw new CanonicalEncodingException("duplicate_property", $"Duplicate decoded property name '{name}'.");
-                    }
-
-                    reader.Read();
-                    properties.Add(new(name, ReadValue(ref reader)));
-                }
-
-                return new CanonicalObject(properties);
-            default:
-                throw new CanonicalEncodingException("invalid_json", $"Unexpected token {reader.TokenType}.");
-        }
+        static void Invalid() => throw new CanonicalEncodingException(RunwickErrorCodes.PayloadInvalidNumber, "Not a JSON number lexeme.");
     }
 
     sealed class ByteOrder : IComparer<byte[]>

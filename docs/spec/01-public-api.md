@@ -43,6 +43,7 @@ Implementation choices (concrete shapes the sources left open):
 | I-20 | Worker registries are limited to 512 decoding tuples (the per-probe/Reserve capability-set bound; 03/04); more fails startup with `capability_set_too_large`. |
 | I-21 | `PreparedDispatch`/`PreparedBatch` export via `Export()` and import via `IPreparedJobDispatcher.ImportPrepared`/`ImportPreparedBatch`. |
 | I-22 | (2026-10-30, SP-002 implementation) §10.4/§13 named `payload_invalid`, `envelope_invalid` and `wrong_store`, while 02-serialization-and-wire §11 (and the WV-11 vectors) use the fine-grained `payload_*` and `prepared_envelope_*` codes. 02 wins: Prepare/import emit the fine-grained codes, which are added to `RunwickErrorCodes`; `payload_invalid`, `envelope_invalid` and `wrong_store` stay as reserved constants that M2 never emits. `envelope_too_large` remains the Prepare-time 2 MiB check. |
+| I-23 | (2026-10-30, SP-004 implementation) MaxExecutions and MaxUnstartedAbandonments are 1–100, timeout ≤ 30 days, retry delays ≤ 24 h, matching 03 I-6 and the 04 DDL CHECKs; the earlier 1–1,000 text is superseded. Registry compilation and prepared-envelope import both enforce these bounds. |
 
 ## 1. Conventions
 
@@ -363,12 +364,12 @@ Validation (all at startup, code `invalid_policy` unless stated):
 
 | Member | Rule |
 |---|---|
-| `WithMaxExecutions(n)` / `[MaxExecutions(n)]` | n ≥ 1. Counts committed Begins in a generation, including the first |
-| `WithExecutionTimeout(t)` | t > 0, whole milliseconds. Measures the local pipeline (§17) |
+| `WithMaxExecutions(n)` / `[MaxExecutions(n)]` | 1 ≤ n ≤ 100. Counts committed Begins in a generation, including the first |
+| `WithExecutionTimeout(t)` | 0 < t ≤ 30 days (2,592,000,000 ms), whole milliseconds. Measures the local pipeline (§17) |
 | `WithoutExecutionTimeout()` | Explicitly disables a timeout inherited from a lower layer. Conflicts with `WithExecutionTimeout` in the same layer (`same_layer_conflict`) |
-| `WithRetryDelay(i, m)` | Selects evaluator `exponential-v1` with equal jitter; 1 ms ≤ i ≤ m; whole milliseconds |
-| `WithMaxUnstartedAbandonments(k)` | k ≥ 1. Mandatory guard: there is no way to disable it |
-| `WithUnstartedRecoveryDelay(i, m)` | `exponential-v1`, equal jitter; 1 ms ≤ i ≤ m; whole milliseconds |
+| `WithRetryDelay(i, m)` | Selects evaluator `exponential-v1` with equal jitter; 1 ms ≤ i ≤ m ≤ 24 h (86,400,000 ms); whole milliseconds |
+| `WithMaxUnstartedAbandonments(k)` | 1 ≤ k ≤ 100. Mandatory guard: there is no way to disable it |
+| `WithUnstartedRecoveryDelay(i, m)` | `exponential-v1`, equal jitter; 1 ms ≤ i ≤ m ≤ 24 h (86,400,000 ms); whole milliseconds |
 | `MaxConcurrent(n)` (job or queue) | n ≥ 1 (`invalid_scope`) |
 | `PerResource(selector, n)` | selector non-null; n ≥ 1 (`invalid_scope`); selector output validated per §2.3 at Prepare |
 | scope count | queue + job-type + resource scopes resolved for one job ≤ 8 (`too_many_scopes`) |
