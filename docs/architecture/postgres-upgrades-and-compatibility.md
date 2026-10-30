@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # PostgreSQL migrations and mixed-version compatibility
 
 Status: concrete D-13 proposal, 2026-10-29. Uses the gates/version axes from the [consolidated PostgreSQL contract](postgres-schema-and-operations.md). No migration tool, live schema or compatibility test exists. The examples describe future upgrade classes, not released Runwick versions.

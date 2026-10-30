@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Scheduling and occurrence materialization
 
 Status: engineering proposal, 2026-10-29. Complements [capacity control](capacity-control.md), [worker internals](worker-engine-internals.md), and the [PostgreSQL design](postgres-storage-design.md). No runtime implementation, migration, or scheduler test has run.

@@ -1,3 +1,5 @@
+> History; see [docs/spec](spec/00-overview.md) for the normative specification.
+
 # Planning continuity and reconciliation
 
 > **Renamed 2026-10-30: Spindle → Runwick.** NuGet `Spindle`/`Spindle.Testing` belong to an unrelated workflow library, so every package ID, namespace, hash domain, instrument name, schema name and prefix was renamed before any release. No wire compatibility impact: nothing had been published. Normative specifications now live in [docs/spec](spec/00-overview.md).

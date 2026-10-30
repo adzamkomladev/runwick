@@ -1,3 +1,5 @@
+> History; see [docs/spec](spec/00-overview.md) for the normative specification.
+
 # Storage design inputs: review notes against the PostgreSQL design
 
 Status: review notes, 2026-10-28. Written after reading the original [Queue Library Design](https://chatgpt.com/share/6ae25a83-ff20-83e9-aadb-b4d731f0e2e0) conversation (messages 22–30, 36, 54, 60–62, 67) and the drafted [storage command protocol](architecture/storage-command-protocol.md) and [PostgreSQL storage design](architecture/postgres-storage-design.md).

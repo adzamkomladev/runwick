@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Provider dependencies and connection ownership
 
 Status: planning, researched 2026-10-29. The user selected the latest Npgsql driver. **Npgsql 10.0.3 is the selected planning baseline**, the latest stable release listed today, with a native net10.0 asset. Recheck the latest stable release when implementation starts and pin that exact version. Other selections below are engineering recommendations; no packages have been installed or provider tests run.

@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Execution defaults and timing relationships
 
 Status: concrete D-05 recommendation, 2026-10-29. Extends the [worker](worker-engine-internals.md), [storage protocol](storage-command-protocol.md) and [configuration contract](public-api-contract.md). Values below are proposed initial defaults for implementation and fault/load testing, not user-approved settings or measured production limits. No runtime tests ran.

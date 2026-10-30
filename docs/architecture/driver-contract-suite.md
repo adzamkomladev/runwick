@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Shared storage contract and fault-injection suite
 
 Status: test design, 2026-10-29. No test project or driver exists yet; nothing below is a passing test claim. This suite verifies the [driver capability profiles](driver-capabilities.md) against the execution, capacity, and scheduling proposals.

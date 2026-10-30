@@ -1,3 +1,5 @@
+> History; see [docs/spec](spec/00-overview.md) for the normative specification.
+
 # Architecture acceptance and decision register
 
 **Planning closure:** the [final baseline](architecture-baseline.md) supplies selections for D-01–D-14 and completes the six requested planning outputs. The register below now tracks review and executable evidence, not an expanding list of planning sessions.

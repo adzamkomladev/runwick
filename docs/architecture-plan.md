@@ -1,3 +1,5 @@
+> History; see [docs/spec](spec/00-overview.md) for the normative specification.
+
 # Runwick architecture plan
 
 **Planning complete:** all six remaining items are consolidated in the [architecture baseline](architecture-baseline.md). Start there for current decisions and the fixed implementation sequence. Earlier discussion below is design history; runtime evidence remains pending.

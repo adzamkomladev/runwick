@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Transactional outbox — planning closure 1 of 6
 
 Status: implementation baseline, 2026-10-29. Closes D-12's design choices; runtime evidence remains SP-017. This is an optional delivery integration, not an exactly-once handler or cross-database transaction guarantee.

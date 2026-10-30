@@ -1,3 +1,5 @@
+> History; see [docs/spec](spec/00-overview.md) for the normative specification.
+
 # Runwick, explained from the ground up
 
 This is the friendly tour. It assumes you know C# and have used a database, and nothing else. Every technical word is explained the first time it appears, and there is a glossary at the end if you forget one. The formal design lives in the other documents under `docs/`; this one tells you *what* they decided and *why*, in plain language, so that when you open them they make sense.

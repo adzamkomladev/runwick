@@ -1,3 +1,5 @@
+> History; see [docs/spec](spec/00-overview.md) for the normative specification.
+
 # Runwick public API proposal
 
 The current reconciled proposal is [Public API and configuration contract](architecture/public-api-contract.md), dated 2026-10-29. It preserves `IQueueJob`, `IJobDispatcher.DispatchAsync`, `HandleAsync(job, CancellationToken)`, and optional injected `IJobContext`, with attributes and fluent configuration both supported.

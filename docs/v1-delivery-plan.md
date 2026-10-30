@@ -1,3 +1,5 @@
+> History; see [docs/spec](spec/00-overview.md) for the normative specification.
+
 # Runwick v1 delivery plan — milestones, slices and tasks
 
 Status: consolidated 2026-10-30 from the [implementation backlog](implementation-backlog.md), the [acceptance gates](architecture-acceptance.md) and every decision in the [review](review-2026-10-30.md). This is the single list to track. Task IDs are the backlog's SP numbers; nothing is renumbered. Sizes are relative (S ≈ days, M ≈ 1–2 weeks, L ≈ 3–5 weeks for one experienced engineer) and are planning aids, not commitments.

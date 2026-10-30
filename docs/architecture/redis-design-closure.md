@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Redis design closure — planning closure 2 of 6
 
 Status: implementation baseline, 2026-10-29. Closes D-09's representation/profile choices, not the SP-018 proof gate. Retains the [BullMQ implementation review](bullmq-redis-review.md) and common driver semantics.

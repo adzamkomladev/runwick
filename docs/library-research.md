@@ -1,3 +1,5 @@
+> History; see [docs/spec](spec/00-overview.md) for the normative specification.
+
 # Existing-library research for Runwick
 
 Reviewed: 2026-10-28. Status: initial official-documentation comparison, not a source-code audit, benchmark, or exhaustive feature matrix. Missing evidence does not establish a missing feature. Version-specific guarantees must be checked against pinned releases before adopting algorithms.

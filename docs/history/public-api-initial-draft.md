@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 > Historical draft preserved on 2026-10-29. Superseded by the [consolidated public API proposal](../public-api-proposal.md). The alternatives below are not the current contract.
 
 # Runwick public API proposal

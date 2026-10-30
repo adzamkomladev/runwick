@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Storage driver capabilities and implementation boundaries
 
 Final selections: [Redis design closure](redis-design-closure.md) selects recoverable intent and direct-primary AOF-always; [transactional outbox](transactional-outbox.md) selects optional PostgreSQL/SQLite sources and ReceiveOutbox on every full destination driver. Certification is still pending.

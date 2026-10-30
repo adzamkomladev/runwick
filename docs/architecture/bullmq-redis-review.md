@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # BullMQ implementation review for Runwick Redis
 
 Reviewed 2026-10-29 at commit [f2fe2eff958267df9a9e7dea3fea66e14343563c](https://github.com/taskforcesh/bullmq/commit/f2fe2eff958267df9a9e7dea3fea66e14343563c). This pins inspected source, not a claimed released package version. Focus: Redis admission, lock renewal/finalization, stalled recovery, rate limiting, and deployment constraints. Source and selected test bodies were inspected; BullMQ tests were not executed. This is not an exhaustive audit.

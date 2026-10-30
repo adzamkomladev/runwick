@@ -1,3 +1,5 @@
+> History; see [docs/spec](spec/00-overview.md) for the normative specification.
+
 # Dependency-ordered implementation backlog
 
 Status: implementation plan following the [completed six-item architecture baseline](architecture-baseline.md), 2026-10-29. SP-001 has its planning deliverable ready for review; no runtime implementation item has started and no runtime gate has passed. The 30-item dependency graph below is unchanged. Read alongside the [architecture acceptance checklist](architecture-acceptance.md).

@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Observability and operational behavior
 
 Status: engineering proposal, 2026-10-29. Instrument names, timings and acceptance cases are proposed; no telemetry, health probes or benchmarks have run. Extends the [worker](worker-engine-internals.md), [capacity](capacity-control.md), [scheduling](scheduling-internals.md) and [management](management-and-dashboard.md) designs.

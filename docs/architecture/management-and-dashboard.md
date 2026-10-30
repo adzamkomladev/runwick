@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Management backend and dashboard internals
 
 Current selection: [dashboard integration closure](dashboard-integration-closure.md) chooses Inertia.Net 1.5.3 and its pinned React pairing; [management/retention defaults](management-retention-defaults.md) fixes permission names, query limits and lifetimes. The older InertiaCore review below is historical comparison, not the selected adapter.

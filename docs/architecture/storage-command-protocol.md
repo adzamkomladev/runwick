@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Internal storage command protocol
 
 Status: engineering proposal for review, 2026-10-28. Builds on [planning continuity](../planning-continuity.md). This specifies internal mechanics; it does not replace the earlier public dispatcher/handler design. No runtime code has been implemented or tested.

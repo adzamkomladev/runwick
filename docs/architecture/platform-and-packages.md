@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Platform, language and package foundation
 
 Status: planning decision/proposal, 2026-10-29. The user selected **.NET 10 and newer, with current/newer C#**. That platform floor is settled. Stable-release interpretation, build policy and package topology below are engineering proposals; no projects, SDK installation or runtime implementation were created.

@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # PostgreSQL execution storage design
 
 Status: proposed first implementation, 2026-10-28. Paired with the [internal command protocol](storage-command-protocol.md). This is a transaction and schema design, not an executed migration or validated performance claim.

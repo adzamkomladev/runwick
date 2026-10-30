@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Dispatch preparation, replay, and fingerprint contract
 
 Status: versioned encoding proposal, 2026-10-29. Supports the [consolidated public API](public-api-contract.md) and resolves the earlier storage draft's open fingerprint inputs. Exact implementation/compatibility test vectors still require review. No serializer, codec or cryptographic test implementation is included in this planning pass.

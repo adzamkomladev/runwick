@@ -1,3 +1,5 @@
+> History; see [docs/spec](spec/00-overview.md) for the normative specification.
+
 # Implementation lessons for Runwick
 
 Reviewed: 2026-10-28. This is a focused static review of selected production paths, tests, and upstream discussions. It is not an exhaustive audit of these libraries. Tests were inspected, not executed; upstream performance measurements were not reproduced.

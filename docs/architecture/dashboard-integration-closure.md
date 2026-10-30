@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Dashboard integration — planning closure 3 of 6
 
 Status: D-10 implementation baseline, 2026-10-29. Source inspected; no Runwick integration/browser tests run. Preserves embedded/standalone Inertia.NET and the [management authorization contract](management-and-dashboard.md).

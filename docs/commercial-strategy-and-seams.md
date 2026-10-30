@@ -1,3 +1,5 @@
+> History; see [docs/spec](spec/00-overview.md) for the normative specification.
+
 # Commercial strategy: hosted store ("Shape C") and what v1 must leave open
 
 Status: product decision recorded 2026-10-30. The user selected a **hosted job store and coordination service** (Hatchet-style) as the commercial product, with the self-hosted library remaining free and first-class. This document records the model, the billing units, the architectural consequences and the backlog additions. It does not change the first PostgreSQL milestone.

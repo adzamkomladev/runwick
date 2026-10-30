@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Management and retention defaults — planning closure 4 of 6
 
 Status: D-11 implementation baseline, 2026-10-29. Completes numerical/permission choices in the existing management, observability and timing contracts. Values are initial release candidates requiring the planned tests, not legal retention advice or measured safe limits for every host.

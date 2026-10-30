@@ -1,3 +1,5 @@
+> History; see [docs/spec](spec/00-overview.md) for the normative specification.
+
 # Runwick architecture baseline — planning closure 6 of 6
 
 **Review 2026-10-30:** the [v1 delivery plan](v1-delivery-plan.md) is the consolidated task/slice/milestone list to track. The [architecture review](review-2026-10-30.md) is the G-0 input for this baseline. It records two in-place corrections, five recommendations awaiting decision (R1–R5), and implementation observations. A plain-language walkthrough of the whole design is in [Runwick explained](runwick-explained.md).

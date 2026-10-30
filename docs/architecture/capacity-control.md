@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Fairness, distributed rate admission, and scaling
 
 Status: engineering proposal, 2026-10-29. Extends [worker internals](worker-engine-internals.md) and the [storage protocol](storage-command-protocol.md). No runtime or performance validation has been performed. Proposed policies and tuning values are not user-approved defaults.

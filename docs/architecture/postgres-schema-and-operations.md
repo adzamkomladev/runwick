@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Consolidated PostgreSQL schema and operation contract
 
 Planning reconciliation: the [final baseline](../architecture-baseline.md) and [outbox closure](transactional-outbox.md) add ReceiveOutbox/1 and delivery identities below. [Operational defaults](management-retention-defaults.md) supply receipt/retention floors. These are initial-schema requirements, not migrations claimed to exist.

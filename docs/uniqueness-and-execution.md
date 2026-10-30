@@ -1,3 +1,5 @@
+> History; see [docs/spec](spec/00-overview.md) for the normative specification.
+
 # Uniqueness and execution planning
 
 Status: planning draft. Confirmed: Runwick will support both active-job uniqueness and a fixed idempotency retention window. Detailed semantics and execution defaults below are proposals for review. No runtime implementation has started.

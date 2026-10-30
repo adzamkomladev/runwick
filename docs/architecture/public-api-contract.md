@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Consolidated public API and configuration contract
 
 Status: reconciled engineering proposal, 2026-10-29. Illustrative C# describes a proposed API, not a published or compilable package. It consolidates the original baseline with the storage/worker/scheduler designs; it does not approve runtime implementation. The [initial API draft](../history/public-api-initial-draft.md) is retained only as history.

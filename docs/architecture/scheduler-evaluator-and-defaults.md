@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Scheduler evaluator, time-zone data and defaults
 
 Status: concrete D-08 recommendation, researched 2026-10-29. Planning only; no scheduler, dependency installation or runtime conformance suite has been implemented. This packet refines [scheduling internals](scheduling-internals.md) and uses the [capacity/I/O budgets](capacity-defaults-and-budgets.md). Package selections and numerical defaults below are recommendations, not completed certification.

@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Performance acceptance — planning closure 5 of 6
 
 Status: D-14 workload and acceptance baseline, 2026-10-29. These are **targets to test**, not benchmark results. The numbers close the initial planning decision and may change only in a recorded benchmark-driven revision with the old/new result visible.

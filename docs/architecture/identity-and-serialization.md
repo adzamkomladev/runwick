@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Identity, configuration and serialization decisions
 
 Status: concrete recommendations for D-03/D-04, 2026-10-29. Refines the [public API](public-api-contract.md), [wire contract](dispatch-wire-contract.md) and [.NET 10+ foundation](platform-and-packages.md). These are reviewable engineering selections, not claims of user approval or working code. The platform floor and attribute/fluent support remain settled. No runtime code or codec tests were executed.

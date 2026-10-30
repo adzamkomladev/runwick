@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Capacity defaults, fairness and connection budgets
 
 Status: concrete D-07 recommendation, 2026-10-29. Planning only. These are initial implementation/test settings, not measured production limits or user-approved numerical defaults. This packet refines [capacity control](capacity-control.md), [worker ownership](worker-engine-internals.md), [execution timing](execution-defaults-and-timing.md) and [provider dependencies](provider-dependency-plan.md).

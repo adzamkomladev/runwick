@@ -1,3 +1,5 @@
+> History; see [docs/spec](../spec/00-overview.md) for the normative specification.
+
 # Worker-engine internals
 
 Status: engineering proposal, 2026-10-28. Planning only; no runtime implementation or executed tests. Read with the [storage protocol](storage-command-protocol.md), [PostgreSQL design](postgres-storage-design.md), and updated [storage review inputs](../storage-design-inputs.md).
