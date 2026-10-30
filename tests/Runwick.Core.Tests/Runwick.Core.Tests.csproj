@@ -1,6 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <!-- Run under VSTest (xunit.runner.visualstudio) so dotnet test filtering by trait works on the .NET 10 SDK;
+         the project stays a self-hosting xunit v3 executable. -->
+    <IsTestingPlatformApplication>false</IsTestingPlatformApplication>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Runwick.Harness\Runwick.Harness.csproj" />

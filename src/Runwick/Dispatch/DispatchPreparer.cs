@@ -240,7 +240,8 @@ internal sealed class DispatchPreparer(JobRegistry registry, ProducerOptions opt
         var business = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (key, value) in o?.Metadata ?? new Dictionary<string, string>())
         {
-            if (!Identifiers.IsName(key) || !Identifiers.IsMetadataValue(value))
+            // traceparent/tracestate are diagnostic-only keys and never business metadata (spec 02 §10).
+            if (!Identifiers.IsName(key) || !Identifiers.IsMetadataValue(value) || key is "traceparent" or "tracestate")
             {
                 throw new DispatchValidationException(RunwickErrorCodes.InvalidMetadata, $"Metadata entry '{key}' is invalid.");
             }

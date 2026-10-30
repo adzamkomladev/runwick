@@ -46,6 +46,8 @@ This specification is normative. "MUST", "MUST NOT" and "rejected" are binding. 
 | IC-18 | Reserve's `supportedContracts` are deduplicated and sorted (jobName bytes, payloadVersion numeric, profileId bytes, profileVersion numeric) before fingerprinting/submission. |
 | IC-19 | `JavaScriptEncoder.Default` is the profile's output escaper. Stored bytes are whatever the profile emits; digests are escape-independent. |
 | IC-20 | Prepare rejects a request whose export rendering (§9) would exceed 2 MiB, so every PreparedDispatch/PreparedBatch is exportable. |
+| IC-21 | (2026-10-30, SP-004 implementation) §11 names `metadata_invalid` and `identity_invalid`, while 01-public-api §2 and §14 (`RunwickErrorCodes`) use `invalid_metadata`, `invalid_key`, `invalid_job_name` (and the other `invalid_*` identity codes). The public-API names win: Prepare emits `invalid_metadata` / `metadata_too_large` and the `invalid_*` identity codes; `metadata_invalid` and `identity_invalid` are never emitted. |
+| IC-22 | (2026-10-30, SP-004 implementation) Prepared-envelope import validates metadata with the same rules and codes as Prepare (`invalid_metadata` for key/value/trace-format violations or a business key named `traceparent`/`tracestate`, `metadata_too_large` for > 32 entries or > 16 KiB combined), not with `prepared_envelope_invalid`, so a SER-03 bound is rejected identically at Prepare and import. Payload scanner bounds at import likewise use the `payload_*` codes. |
 
 ---
 

@@ -295,12 +295,14 @@ internal static partial class PreparedEnvelopeCodec
 
     public static PreparedDispatch ReadSingle(ReadOnlySpan<byte> envelope, Guid storeId, string application)
     {
+        // Spec 02 §9.3, in order: size, strict parse, versions, exact schema, payload, store/app, digests.
         using var doc = Parse(envelope);
         var root = doc.RootElement;
         CheckVersions(root, SingleFormat, "Dispatch");
         ExactMembers(root, SingleMembers);
-        var (store, app, opId, notAfter) = ReadHeader(root, storeId, application);
+        var (store, app, opId, notAfter) = ReadHeader(root);
         var intent = ReadItem(root);
+        CheckIdentity(store, app, storeId, application);
         var digests = Fingerprints.ForDispatch(store, app, opId, notAfter, intent);
         CheckDigest(root, "businessDigest", digests.Business);
         CheckDigest(root, "policyDigest", digests.Policy);
@@ -314,7 +316,7 @@ internal static partial class PreparedEnvelopeCodec
         var root = doc.RootElement;
         CheckVersions(root, BatchFormat, "DispatchMany");
         ExactMembers(root, BatchMembers);
-        var (store, app, opId, notAfter) = ReadHeader(root, storeId, application);
+        var (store, app, opId, notAfter) = ReadHeader(root);
         var continueOnConflict = root.GetProperty("continueOnConflict").ValueKind switch
         {
             JsonValueKind.True => true,
@@ -336,20 +338,22 @@ internal static partial class PreparedEnvelopeCodec
                 throw Invalid("Batch items must be objects.");
             }
 
+            if (item.TryGetProperty("payloadEncodingVersion", out var pev) && pev.ValueKind == JsonValueKind.Number
+                && pev.GetRawText() != PayloadEncodingVersion.ToString(CultureInfo.InvariantCulture))
+            {
+                throw Unsupported("payloadEncodingVersion");
+            }
+
             ExactMembers(item, ["ordinal", .. ItemMembers]);
             if (Int(item, "ordinal") != ordinal++)
             {
                 throw Invalid("Batch ordinals must be 0..n-1 in order.");
             }
 
-            if (Int(item, "payloadEncodingVersion") != PayloadEncodingVersion)
-            {
-                throw Unsupported("payloadEncodingVersion");
-            }
-
             intents.Add(ReadItem(item));
         }
 
+        CheckIdentity(store, app, storeId, application);
         var (digests, command) = Fingerprints.ForBatch(store, app, opId, notAfter, continueOnConflict, intents);
         var i = 0;
         foreach (var item in items.EnumerateArray())
@@ -371,9 +375,14 @@ internal static partial class PreparedEnvelopeCodec
                 $"Prepared envelope is {envelope.Length} bytes; the limit is {PayloadBounds.MaxEnvelopeBytes}.");
         }
 
-        if (envelope.StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF]))
+        // Strict §4.2 parse first: UTF-8, grammar, BOM, escapes, lone surrogates, decoded duplicates.
+        try
         {
-            throw Invalid("Prepared envelopes carry no BOM.");
+            JsonPayloadScanner.Scan(envelope, ScannerLimits.Envelope);
+        }
+        catch (PayloadValidationException ex)
+        {
+            throw Invalid($"Prepared envelope is not strict JSON ({ex.Code}).");
         }
 
         JsonDocument doc;
@@ -438,7 +447,7 @@ internal static partial class PreparedEnvelopeCodec
         }
     }
 
-    static (Guid Store, string Application, Guid OperationId, long NotAfter) ReadHeader(JsonElement root, Guid storeId, string application)
+    static (Guid Store, string Application, Guid OperationId, long NotAfter) ReadHeader(JsonElement root)
     {
         var store = Guid(root, "storeId");
         var app = Str(root, "application");
@@ -449,6 +458,11 @@ internal static partial class PreparedEnvelopeCodec
 
         var opId = Guid(root, "operationId");
         var notAfter = Int(root, "notAfter");
+        return (store, app, opId, notAfter);
+    }
+
+    static void CheckIdentity(Guid store, string app, Guid storeId, string application)
+    {
         if (store != storeId)
         {
             throw new DispatchValidationException(RunwickErrorCodes.PreparedEnvelopeStoreMismatch,
@@ -460,8 +474,6 @@ internal static partial class PreparedEnvelopeCodec
             throw new DispatchValidationException(RunwickErrorCodes.PreparedEnvelopeApplicationMismatch,
                 "The prepared envelope was made for a different application.");
         }
-
-        return (store, app, opId, notAfter);
     }
 
     static DispatchIntent ReadItem(JsonElement e)
@@ -472,9 +484,9 @@ internal static partial class PreparedEnvelopeCodec
             throw Invalid("jobName is not a valid job name.");
         }
 
-        var payloadVersion = checked((int)Int(e, "payloadVersion"));
+        var payloadVersion = Int32(e, "payloadVersion");
         var profileId = Str(e, "serializerProfileId");
-        var profileVersion = checked((int)Int(e, "serializerProfileVersion"));
+        var profileVersion = Int32(e, "serializerProfileVersion");
         if (payloadVersion < 1 || profileVersion < 1 || !Identifiers.IsName(profileId))
         {
             throw Invalid("Payload version and serializer profile must be valid.");
@@ -513,6 +525,11 @@ internal static partial class PreparedEnvelopeCodec
         }
 
         var eligibility = Obj(e, "eligibility");
+        if (!eligibility.TryGetProperty("mode", out _))
+        {
+            throw Invalid("eligibility.mode is missing.");
+        }
+
         long? notBefore = null;
         switch (Str(eligibility, "mode"))
         {
@@ -539,7 +556,7 @@ internal static partial class PreparedEnvelopeCodec
         var activeKey = StrOrNull(uniqueness, "activeKey");
         var windowKey = StrOrNull(uniqueness, "windowKey");
         var window = IntOrNull(uniqueness, "window");
-        if ((windowKey is null) != (window is null) || window is <= 0
+        if ((windowKey is null) != (window is null) || window is <= 0 or > PolicyBounds.MaxWindowMs
             || activeKey is not null && !Identifiers.IsKey(activeKey) || windowKey is not null && !Identifiers.IsKey(windowKey))
         {
             throw Invalid("uniqueness is inconsistent.");
@@ -552,17 +569,20 @@ internal static partial class PreparedEnvelopeCodec
             throw Invalid("diagnosticMetadata holds only traceparent/tracestate.");
         }
 
+        CheckMetadata(business, diagnostic);
+
+        // Historical policy is checked against current mandatory constraints, never re-defaulted (§9.3 step 8).
         var p = Obj(e, "policy");
         ExactMembers(p, ["maxExecutions", "executionTimeout", "retry", "maxConsecutiveUnstartedAbandonments", "unstartedRetry"]);
         var policy = new ExecutionPolicy(
-            checked((int)Int(p, "maxExecutions")),
+            Int32(p, "maxExecutions"),
             IntOrNull(p, "executionTimeout"),
             Retry(p, "retry"),
-            checked((int)Int(p, "maxConsecutiveUnstartedAbandonments")),
+            Int32(p, "maxConsecutiveUnstartedAbandonments"),
             Retry(p, "unstartedRetry"));
-        if (policy.MaxExecutions is < 1 or > 1000 || policy.MaxConsecutiveUnstartedAbandonments < 1 || policy.ExecutionTimeoutMs is <= 0)
+        if (PolicyBounds.Violation(policy) is { } violation)
         {
-            throw Invalid("policy values out of range.");
+            throw Invalid("policy: " + violation);
         }
 
         var proposed = Guid(e, "proposedJobId");
@@ -574,14 +594,8 @@ internal static partial class PreparedEnvelopeCodec
     {
         var r = Obj(parent, name);
         ExactMembers(r, ["backoff", "evaluatorVersion", "jitterKind", "initialDelay", "maximumDelay"]);
-        var policy = new RetryPolicy(Str(r, "backoff"), checked((int)Int(r, "evaluatorVersion")), Str(r, "jitterKind"),
+        return new RetryPolicy(Str(r, "backoff"), Int32(r, "evaluatorVersion"), Str(r, "jitterKind"),
             Int(r, "initialDelay"), Int(r, "maximumDelay"));
-        if (policy.InitialDelayMs <= 0 || policy.MaximumDelayMs < policy.InitialDelayMs)
-        {
-            throw Invalid($"{name} delays out of range.");
-        }
-
-        return policy;
     }
 
     static List<ScopeRef> Scopes(JsonElement parent, string name)
@@ -624,20 +638,41 @@ internal static partial class PreparedEnvelopeCodec
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var p in o.EnumerateObject())
         {
-            if (p.Value.ValueKind != JsonValueKind.String || !Identifiers.IsName(p.Name) || !Identifiers.IsMetadataValue(p.Value.GetString()!))
+            if (p.Value.ValueKind != JsonValueKind.String)
             {
-                throw Invalid($"{name} entry '{p.Name}' is invalid.");
+                throw Invalid($"{name} values must be strings.");
             }
 
             map[p.Name] = p.Value.GetString()!;
         }
 
-        if (map.Count > PayloadBounds.MaxMetadataEntries)
+        return map;
+    }
+
+    /// <summary>The same metadata rules and codes as Prepare (spec 01 §10.3, spec 02 §10, IC-08).</summary>
+    static void CheckMetadata(Dictionary<string, string> business, Dictionary<string, string> diagnostic)
+    {
+        foreach (var (key, value) in business)
         {
-            throw Invalid($"{name} has too many entries.");
+            if (!Identifiers.IsName(key) || !Identifiers.IsMetadataValue(value) || key is "traceparent" or "tracestate")
+            {
+                throw new DispatchValidationException(RunwickErrorCodes.InvalidMetadata, "A business metadata entry is invalid.");
+            }
         }
 
-        return map;
+        if ((diagnostic.TryGetValue("traceparent", out var traceparent) && !Identifiers.IsTraceParent(traceparent))
+            || (diagnostic.TryGetValue("tracestate", out var tracestate) && !Identifiers.IsTraceState(tracestate)))
+        {
+            throw new DispatchValidationException(RunwickErrorCodes.InvalidMetadata, "Diagnostic metadata is not valid W3C trace context.");
+        }
+
+        var entries = business.Count + diagnostic.Count;
+        var bytes = business.Concat(diagnostic).Sum(kv => Encoding.UTF8.GetByteCount(kv.Key) + Encoding.UTF8.GetByteCount(kv.Value));
+        if (entries > PayloadBounds.MaxMetadataEntries || bytes > PayloadBounds.MaxMetadataBytes)
+        {
+            throw new DispatchValidationException(RunwickErrorCodes.MetadataTooLarge,
+                $"Metadata holds {entries} entries / {bytes} bytes; limits are {PayloadBounds.MaxMetadataEntries} / {PayloadBounds.MaxMetadataBytes}.");
+        }
     }
 
     static void ExactMembers(JsonElement o, IReadOnlyList<string> members)
@@ -698,6 +733,12 @@ internal static partial class PreparedEnvelopeCodec
         }
 
         return value;
+    }
+
+    static int Int32(JsonElement o, string name)
+    {
+        var value = Int(o, name);
+        return value is >= int.MinValue and <= int.MaxValue ? (int)value : throw Invalid($"{name} is out of range.");
     }
 
     static long? IntOrNull(JsonElement o, string name) =>

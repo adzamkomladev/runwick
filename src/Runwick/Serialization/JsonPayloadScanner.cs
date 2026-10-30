@@ -9,11 +9,13 @@ namespace Runwick.Serialization;
 internal ref struct JsonPayloadScanner
 {
     readonly ReadOnlySpan<byte> _bytes;
+    readonly ScannerLimits _limits;
     int _pos;
 
-    JsonPayloadScanner(ReadOnlySpan<byte> bytes)
+    JsonPayloadScanner(ReadOnlySpan<byte> bytes, ScannerLimits limits)
     {
         _bytes = bytes;
+        _limits = limits;
         _pos = 0;
     }
 
@@ -29,15 +31,18 @@ internal ref struct JsonPayloadScanner
         return value is CanonicalObject ? value : throw Fail("payload_root_not_object", "The payload root must be a JSON object.");
     }
 
-    /// <summary>Validates any JSON document under the same rules (used for envelopes).</summary>
-    public static CanonicalValue Scan(ReadOnlySpan<byte> bytes)
+    /// <summary>Validates any JSON document (any root) under the payload rules and bounds.</summary>
+    public static CanonicalValue Scan(ReadOnlySpan<byte> bytes) => Scan(bytes, ScannerLimits.Payload);
+
+    /// <summary>Validates any JSON document under the §4.2 rules with the given structural bounds.</summary>
+    public static CanonicalValue Scan(ReadOnlySpan<byte> bytes, ScannerLimits limits)
     {
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
         {
             throw Fail("payload_invalid_json", "A byte order mark is not allowed.");
         }
 
-        var scanner = new JsonPayloadScanner(bytes);
+        var scanner = new JsonPayloadScanner(bytes, limits);
         var value = scanner.ReadValue(0);
         scanner.SkipWhitespace();
         if (scanner._pos != bytes.Length)
@@ -69,24 +74,24 @@ internal ref struct JsonPayloadScanner
         switch (b)
         {
             case (byte)'{':
-                if (depth + 1 > PayloadBounds.MaxDepth)
+                if (depth + 1 > _limits.MaxDepth)
                 {
-                    throw Fail("payload_depth_exceeded", $"Nesting deeper than {PayloadBounds.MaxDepth}.");
+                    throw Fail("payload_depth_exceeded", $"Nesting deeper than {_limits.MaxDepth} at byte {_pos}.");
                 }
 
                 return ReadObject(depth + 1);
             case (byte)'[':
-                if (depth + 1 > PayloadBounds.MaxDepth)
+                if (depth + 1 > _limits.MaxDepth)
                 {
-                    throw Fail("payload_depth_exceeded", $"Nesting deeper than {PayloadBounds.MaxDepth}.");
+                    throw Fail("payload_depth_exceeded", $"Nesting deeper than {_limits.MaxDepth} at byte {_pos}.");
                 }
 
                 return ReadArray(depth + 1);
             case (byte)'"':
                 var s = ReadString(out var byteLength);
-                if (byteLength > PayloadBounds.MaxStringBytes)
+                if (byteLength > _limits.MaxStringBytes)
                 {
-                    throw Fail("payload_string_too_long", $"String value of {byteLength} bytes exceeds {PayloadBounds.MaxStringBytes}.");
+                    throw Fail("payload_string_too_long", $"String value of {byteLength} bytes exceeds {_limits.MaxStringBytes}.");
                 }
 
                 return CanonicalValue.Str(s);
@@ -138,9 +143,9 @@ internal ref struct JsonPayloadScanner
             }
 
             var name = ReadString(out var nameBytes);
-            if (nameBytes > PayloadBounds.MaxPropertyNameBytes)
+            if (nameBytes > _limits.MaxPropertyNameBytes)
             {
-                throw Fail("payload_property_name_too_long", $"Property name of {nameBytes} bytes exceeds {PayloadBounds.MaxPropertyNameBytes}.");
+                throw Fail("payload_property_name_too_long", $"Property name of {nameBytes} bytes exceeds {_limits.MaxPropertyNameBytes}.");
             }
 
             SkipWhitespace();
@@ -152,13 +157,13 @@ internal ref struct JsonPayloadScanner
             _pos++;
             if (!names.Add(name))
             {
-                throw Fail("payload_duplicate_property", $"Duplicate property '{name}'.");
+                throw Fail("payload_duplicate_property", $"Duplicate decoded property name before byte {_pos}.");
             }
 
             properties.Add(new(name, ReadValue(depth)));
-            if (properties.Count > PayloadBounds.MaxPropertiesPerObject)
+            if (properties.Count > _limits.MaxProperties)
             {
-                throw Fail("payload_too_many_properties", $"More than {PayloadBounds.MaxPropertiesPerObject} properties in one object.");
+                throw Fail("payload_too_many_properties", $"More than {_limits.MaxProperties} properties in one object.");
             }
 
             SkipWhitespace();
@@ -193,9 +198,9 @@ internal ref struct JsonPayloadScanner
         while (true)
         {
             items.Add(ReadValue(depth));
-            if (items.Count > PayloadBounds.MaxArrayElements)
+            if (items.Count > _limits.MaxArrayElements)
             {
-                throw Fail("payload_array_too_long", $"More than {PayloadBounds.MaxArrayElements} array elements.");
+                throw Fail("payload_array_too_long", $"More than {_limits.MaxArrayElements} array elements.");
             }
 
             SkipWhitespace();
@@ -227,18 +232,16 @@ internal ref struct JsonPayloadScanner
         var lexeme = Encoding.ASCII.GetString(_bytes[start.._pos]);
         if (!IsNumberLexeme(lexeme))
         {
-            throw Fail("payload_invalid_number", $"'{Truncate(lexeme)}' is not a JSON number.");
+            throw Fail("payload_invalid_number", $"Invalid number lexeme at byte {start}.");
         }
 
-        if (lexeme.Length > PayloadBounds.MaxNumberLexemeBytes)
+        if (lexeme.Length > _limits.MaxNumberBytes)
         {
-            throw Fail("payload_number_too_long", $"Number lexeme of {lexeme.Length} bytes exceeds {PayloadBounds.MaxNumberLexemeBytes}.");
+            throw Fail("payload_number_too_long", $"Number lexeme of {lexeme.Length} bytes exceeds {_limits.MaxNumberBytes}.");
         }
 
         return CanonicalValue.Number(lexeme);
     }
-
-    static string Truncate(string s) => s.Length <= 32 ? s : s[..32] + "…";
 
     internal static bool IsNumberLexeme(string s)
     {
