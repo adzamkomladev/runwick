@@ -2,7 +2,7 @@ using System.Text.Json.Nodes;
 using Npgsql;
 using Runwick.Harness.Store;
 using Runwick.Internal;
-using Runwick.Postgres.Tests.Support;
+using Runwick.Harness.Jobs;
 
 namespace Runwick.Postgres.Tests;
 

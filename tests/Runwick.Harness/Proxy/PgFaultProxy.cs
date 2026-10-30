@@ -6,6 +6,8 @@ using System.Text;
 
 namespace Runwick.Harness.Proxy;
 
+public enum LatencyDirection { ClientToServer, ServerToClient, Both }
+
 /// <summary>
 /// A TCP relay that speaks enough of the PostgreSQL v3 wire protocol to find message boundaries.
 /// It can forward a client's COMMIT to the server, wait for the server to finish it, and then
@@ -19,8 +21,10 @@ public sealed class PgFaultProxy : IAsyncDisposable
     const int CancelRequestCode = 80877102;
 
     readonly TcpListener _listener;
-    readonly string _targetHost;
-    readonly int _targetPort;
+    string _targetHost;
+    int _targetPort;
+    Func<string?, bool> _latencyFilter = _ => true;
+    LatencyDirection _latencyDirection = LatencyDirection.Both;
     readonly CancellationTokenSource _stop = new();
     readonly ConcurrentDictionary<int, Relay> _relays = new();
     readonly Task _acceptLoop;
@@ -40,8 +44,52 @@ public sealed class PgFaultProxy : IAsyncDisposable
 
     public int Port => ((IPEndPoint)_listener.LocalEndpoint).Port;
 
-    /// <summary>Per-frame latency added in each direction.</summary>
+    /// <summary>Per-message latency (all connections, both directions unless set with <see cref="SetLatency"/>).</summary>
     public TimeSpan Latency { get; set; }
+
+    /// <summary>Latency(delay, direction, roleFilter) mode of 07 §2.5; a null filter matches every connection.</summary>
+    public void SetLatency(TimeSpan delay, LatencyDirection direction = LatencyDirection.Both, Func<string?, bool>? applicationNameFilter = null)
+    {
+        _latencyFilter = applicationNameFilter ?? (_ => true);
+        _latencyDirection = direction;
+        Latency = delay;
+    }
+
+    /// <summary>Filter matching the <c>rw:&lt;identity&gt;:&lt;role&gt;</c> application-name convention.</summary>
+    public static Func<string?, bool> Role(string role, string? identity = null) =>
+        name => name is not null && name.EndsWith(":" + role, StringComparison.Ordinal)
+            && (identity is null || name.StartsWith("rw:" + identity + ":", StringComparison.Ordinal));
+
+    /// <summary>CommandComplete tags of the COMMITs whose replies were dropped (<c>COMMIT</c> or <c>ROLLBACK</c>).</summary>
+    public IReadOnlyList<string> DroppedCommitTags => [.. _droppedTags];
+
+    readonly ConcurrentQueue<string> _droppedTags = new();
+
+    /// <summary>Sever(roleFilter): immediately closes matching client and server sockets.</summary>
+    public int Sever(Func<string?, bool>? applicationNameFilter = null)
+    {
+        var count = 0;
+        foreach (var relay in _relays.Values.Where(r => (applicationNameFilter ?? (_ => true))(r.ApplicationName)))
+        {
+            relay.Abort();
+            count++;
+        }
+
+        return count;
+    }
+
+    /// <summary>Re-points new connections at a restarted server; live relays are cut.</summary>
+    public void Retarget(string host, int port)
+    {
+        _targetHost = host;
+        _targetPort = port;
+        Sever();
+    }
+
+    bool DelayApplies(string? applicationName, bool clientToServer) =>
+        Latency > TimeSpan.Zero
+        && (_latencyDirection == LatencyDirection.Both || (_latencyDirection == LatencyDirection.ClientToServer) == clientToServer)
+        && _latencyFilter(applicationName);
 
     /// <summary>When true, new connections are closed at once and live ones are cut.</summary>
     public bool DropEverything
@@ -179,6 +227,8 @@ public sealed class PgFaultProxy : IAsyncDisposable
 
         public int Id => id;
 
+        public string? ApplicationName => _applicationName;
+
         public void Abort()
         {
             try
@@ -248,7 +298,7 @@ public sealed class PgFaultProxy : IAsyncDisposable
                 var header = await ReadExactAsync(from, 5).ConfigureAwait(false);
                 var length = BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(1));
                 var body = await ReadExactAsync(from, length - 4).ConfigureAwait(false);
-                if (owner.Latency > TimeSpan.Zero)
+                if (owner.DelayApplies(_applicationName, clientToServer: true))
                 {
                     await Task.Delay(owner.Latency, _abort.Token).ConfigureAwait(false);
                 }
@@ -284,6 +334,11 @@ public sealed class PgFaultProxy : IAsyncDisposable
                 if (_commitInFlightToDrop)
                 {
                     // Swallow everything up to ReadyForQuery: the server has finished the COMMIT.
+                    if (header[0] == (byte)'C')
+                    {
+                        owner._droppedTags.Enqueue(Encoding.ASCII.GetString(body, 0, Math.Max(0, body.Length - 1)));
+                    }
+
                     if (header[0] == (byte)'Z')
                     {
                         Interlocked.Increment(ref owner._commitRepliesDropped);
@@ -295,7 +350,7 @@ public sealed class PgFaultProxy : IAsyncDisposable
                     continue;
                 }
 
-                if (owner.Latency > TimeSpan.Zero)
+                if (owner.DelayApplies(_applicationName, clientToServer: false))
                 {
                     await Task.Delay(owner.Latency, _abort.Token).ConfigureAwait(false);
                 }

@@ -44,6 +44,8 @@ internal sealed class PgDataSources : IAsyncDisposable
 
     NpgsqlDataSource Build(string role, int max)
     {
+        var configured = new NpgsqlConnectionStringBuilder(_connectionString).ApplicationName;
+        var prefix = string.IsNullOrEmpty(configured) ? _applicationNamePrefix : configured;
         var csb = new NpgsqlConnectionStringBuilder(_connectionString)
         {
             Enlist = false,
@@ -52,7 +54,8 @@ internal sealed class PgDataSources : IAsyncDisposable
             MaxPoolSize = max,
             Multiplexing = false,
             MaxAutoPrepare = 0,
-            ApplicationName = $"{_applicationNamePrefix}:{role}",
+            ApplicationName = $"{prefix}:{role}",
+            IncludeErrorDetail = false,
             CommandTimeout = 0,
             CancellationTimeout = 2000,
             KeepAlive = 15,

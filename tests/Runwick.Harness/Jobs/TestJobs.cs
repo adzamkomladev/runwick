@@ -1,6 +1,6 @@
 using Runwick.Registration;
 
-namespace Runwick.Postgres.Tests.Support;
+namespace Runwick.Harness.Jobs;
 
 public sealed record PingJob(string Id) : IQueueJob;
 
@@ -8,7 +8,7 @@ public sealed record KeyedJob(string Id, string Key) : IQueueJob;
 
 public sealed record ResourceJob(string Id, string Resource) : IQueueJob;
 
-internal static class TestJobs
+public static class TestJobs
 {
     /// <summary>Registers the shared test contracts on queue <c>default</c>.</summary>
     public static void Register(RunwickBuilder r, int maxExecutions = 3)

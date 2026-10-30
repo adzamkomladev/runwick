@@ -56,6 +56,7 @@ Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retent
 | P-21 | `PublishPresence/1` with a non-increasing `presence_sequence` returns `PresenceAck(Accepted = false)` and commits nothing. |
 | P-22 | Store-side bound checks (03 I-6) run before any SQL: LeaseDuration 1 s–1 h and 1–512 contracts for Reserve/Renew/Probe; Dispatch item policy bounds and ≤ 8 scopes return `InvalidRequest` `invalid_request`; a negative `RequestedRetryDelay` returns `InvalidRequest` `requested_delay_invalid`. |
 | P-23 | Statement row-count violations inside a transaction (e.g. §7.10 "exactly one row") raise an internal invariant exception that the runner maps to `InvariantFault` `invalid_transition` with rollback and no receipt. |
+| P-24 | When the configured connection string sets `Application Name`, that value replaces the `runwick:<application>` prefix and the driver appends `:control` / `:work` (the harness uses `rw:<processIdentity>` so the wire proxy can filter by identity and role, 07 §2.5). |
 
 ---
 

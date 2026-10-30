@@ -1,7 +1,6 @@
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Npgsql;
 using Runwick.Harness.Faults;
+using Runwick.Harness.Peer;
 using Runwick.Harness.Proxy;
 using Runwick.Hosting;
 using Runwick.Postgres.Store;
@@ -16,6 +15,7 @@ internal enum StoreProfile { DirectPrimary, DirectPrimaryViaProxy }
 internal sealed class DriverFixture : IAsyncDisposable
 {
     readonly List<TestClient> _clients = [];
+    readonly List<PeerClient> _peers = [];
 
     DriverFixture(StoreServer server, string ns, string database, StoreProfile profile, PgFaultProxy? proxy)
     {
@@ -54,10 +54,10 @@ internal sealed class DriverFixture : IAsyncDisposable
         return new DriverFixture(server, isolatedNamespace, db, profile, proxy);
     }
 
-    /// <summary>Client connection string tagged <c>rw:&lt;identity&gt;:&lt;role&gt;</c>, routed through the proxy when the profile says so.</summary>
-    public string ClientConnectionString(string identity, string role = "work")
+    /// <summary>Client connection string tagged <c>rw:&lt;identity&gt;</c> (the driver appends <c>:control</c>/<c>:work</c>), routed through the proxy when the profile says so.</summary>
+    public string ClientConnectionString(string identity, string? role = null)
     {
-        var cs = new NpgsqlConnectionStringBuilder(Server.ConnectionStringFor(DatabaseName, $"rw:{identity}:{role}"))
+        var cs = new NpgsqlConnectionStringBuilder(Server.ConnectionStringFor(DatabaseName, role is null ? $"rw:{identity}" : $"rw:{identity}:{role}"))
         {
             IncludeErrorDetail = false,
         }.ConnectionString;
@@ -70,31 +70,12 @@ internal sealed class DriverFixture : IAsyncDisposable
     {
         if (processIdentity != "local")
         {
-            throw new NotSupportedException("Peer clients are opened with PeerClient.StartAsync.");
+            throw new NotSupportedException("Peer clients are opened with OpenPeer(processIdentity).");
         }
 
-        var services = new ServiceCollection();
-        services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
-        services.AddSingleton<IFaultInjector>(Faults);
-        if (time is not null)
-        {
-            services.AddSingleton(time);
-        }
-
-        var app = application ?? Application;
-        services.AddRunwick(r =>
-        {
-            r.Application(app).UsePostgres(ClientConnectionString(processIdentity));
-            configure?.Invoke(r);
-        });
-        var provider = services.BuildServiceProvider();
-        var client = new TestClient(provider, app);
+        var client = await TestClient.CreateAsync(ClientConnectionString(processIdentity), application ?? Application, Faults,
+            configure, time, ensureReady).ConfigureAwait(false);
         _clients.Add(client);
-        if (ensureReady)
-        {
-            await client.Runtime.EnsureReadyAsync(CancellationToken.None).ConfigureAwait(false);
-        }
-
         return client;
     }
 
@@ -108,8 +89,20 @@ internal sealed class DriverFixture : IAsyncDisposable
 
     public static void ReleaseBarrier(FaultHandle handle) => handle.Barrier.Release();
 
-    public async Task RestartStore(RestartMode mode, TimeSpan downtime = default) =>
+    public async Task RestartStore(RestartMode mode, TimeSpan downtime = default)
+    {
         await Server.Database.RestartAsync(mode, downtime).ConfigureAwait(false);
+        Proxy?.Retarget(Server.Database.Host, Server.Database.Port);
+    }
+
+    /// <summary>Starts a peer OS process (07 §2.4) connected to this store.</summary>
+    public async Task<PeerClient> OpenPeer(string processIdentity, int maxExecutions = 3, string? application = null)
+    {
+        var peer = await PeerClient.StartAsync(processIdentity).ConfigureAwait(false);
+        _peers.Add(peer);
+        await peer.OpenAsync(ClientConnectionString(processIdentity), application ?? Application, maxExecutions).ConfigureAwait(false);
+        return peer;
+    }
 
     /// <summary>Internal SetQueueState/1 through a store opened for the application.</summary>
     public async Task SetQueuePaused(string application, string queue, bool paused)
@@ -196,6 +189,12 @@ internal sealed class DriverFixture : IAsyncDisposable
         }
 
         _clients.Clear();
+        foreach (var p in _peers)
+        {
+            await p.DisposeAsync().ConfigureAwait(false);
+        }
+
+        _peers.Clear();
     }
 
     public async ValueTask DisposeAsync()

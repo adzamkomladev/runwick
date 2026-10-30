@@ -1,7 +1,7 @@
 using Npgsql;
 using Runwick.Harness.Faults;
 using Runwick.Harness.Store;
-using Runwick.Postgres.Tests.Support;
+using Runwick.Harness.Jobs;
 using Runwick.Protocol;
 using Runwick.ReferenceModel;
 
