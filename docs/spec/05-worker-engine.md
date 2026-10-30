@@ -634,6 +634,8 @@ Registered with `Microsoft.Extensions.Diagnostics.HealthChecks`; checks read rec
 
 During drain readiness is unhealthy while liveness stays healthy. Zero backlog, a paused queue, or unsupported backlog is not a failure. A worker unready due to store outage still renews, settles and recovers within the safety rules.
 
+**Change 2026-10-30 (SP-009, contradiction with the package graph).** The `Runwick` package may reference only DI.Abstractions, Hosting.Abstractions, Logging.Abstractions and Options (eng/package-graph.json). `Microsoft.Extensions.Diagnostics.HealthChecks` is therefore not referenced in M2. The engine exposes the two checks as an internal snapshot, `WorkerEngine.Health()`, which reports liveness, readiness (`Healthy`/`Degraded`/`Unhealthy`), a status and bounded diagnostics, using the rules of the table above. Registering a `HealthChecks` adapter is deferred until a package that may take that dependency exists (`Runwick.AspNetCore`, M5).
+
 ## 18. I/O class mapping
 
 | Operation | Data source / class | Limit |
@@ -697,7 +699,7 @@ All use default settings from 06-defaults unless stated. "Store" assertions are 
 
 | Item | Verifies |
 |---|---|
-| SP-009 (M2) | WRK-01–19; TIME-01–04, TIME-07–12 |
+| SP-009 (M2) | WRK-01–19; TIME-01–04, TIME-07–12 (WRK-02/15/19 deferred per 07 §10) |
 | SP-008 (M2) | TIME-05, TIME-06 (storage arithmetic); drain release behavior |
 | SP-010 (M2, G-1) | End-to-end: rollback, death before/after Begin, stale Finish, dropped replies, ignored cancellation, shutdown at every phase |
 | SP-012 (M3) | CAP-01–04 cost/shares/aging/cooldown evidence for §7–§8 |

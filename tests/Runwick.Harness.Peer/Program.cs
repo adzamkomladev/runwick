@@ -123,8 +123,9 @@ async Task<JsonObject> RunAsync(string cmd, JsonObject m)
             faults.Release(Enum.Parse<FaultPoint>(m["point"]!.GetValue<string>()));
             return [];
         case "startWorker":
+        case "releaseHeld":
         case "stopWorker":
-            return await PeerWorker.HandleAsync(cmd, m, () => C()).ConfigureAwait(false);
+            return await PeerWorker.HandleAsync(cmd, m, faults).ConfigureAwait(false);
         default:
             throw new InvalidOperationException($"unknown command '{cmd}'");
     }

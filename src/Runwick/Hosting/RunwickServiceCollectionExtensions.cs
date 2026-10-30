@@ -8,6 +8,7 @@ using Runwick.Dispatching;
 using Runwick.Hosting;
 using Runwick.Protocol;
 using Runwick.Registration;
+using Runwick.Worker;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
@@ -81,6 +82,23 @@ public static class RunwickServiceCollectionExtensions
         services.AddSingleton<JobDispatcher>();
         services.AddSingleton<IJobDispatcher>(sp => sp.GetRequiredService<JobDispatcher>());
         services.AddSingleton<IPreparedJobDispatcher>(sp => sp.GetRequiredService<JobDispatcher>());
+        if (isWorker)
+        {
+            // Worker settings validate with the registry (06 §3); the engine starts after the handshake.
+            services.AddSingleton(sp => WorkerSettings.Validate(builder.Workers[0], sp.GetRequiredService<JobRegistry>().Queues));
+            services.AddSingleton(sp => new WorkerEngine(
+                sp.GetRequiredService<RunwickRuntime>(),
+                sp.GetRequiredService<WorkerSettings>(),
+                sp.GetRequiredService<IServiceScopeFactory>(),
+                sp.GetRequiredService<TimeProvider>(),
+                sp.GetService<ILogger<WorkerEngine>>() ?? NullLogger<WorkerEngine>.Instance,
+                sp.GetService<IHostApplicationLifetime>()));
+            services.AddSingleton<IRunwickComponent>(sp => sp.GetRequiredService<WorkerEngine>());
+            services.AddScoped<JobContextHolder>();
+            services.AddScoped<IJobContext>(sp => sp.GetRequiredService<JobContextHolder>().Context
+                ?? throw new InvalidOperationException("IJobContext is available only inside a job execution scope."));
+        }
+
         services.AddHostedService<RunwickHostedService>();
         return services;
     }
