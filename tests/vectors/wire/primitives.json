@@ -1,0 +1,69 @@
+{
+  "spec": "docs/spec/02 §12.1",
+  "cases": [
+    {
+      "inputBase64": "bnVsbA==",
+      "canonicalHex": "00"
+    },
+    {
+      "inputBase64": "ZmFsc2U=",
+      "canonicalHex": "01"
+    },
+    {
+      "inputBase64": "dHJ1ZQ==",
+      "canonicalHex": "02"
+    },
+    {
+      "inputBase64": "ImEi",
+      "canonicalHex": "030000000161"
+    },
+    {
+      "inputBase64": "Ilx1MDA2MSI=",
+      "canonicalHex": "030000000161"
+    },
+    {
+      "inputBase64": "IsOpIg==",
+      "canonicalHex": "0300000002c3a9"
+    },
+    {
+      "inputBase64": "ImXMgSI=",
+      "canonicalHex": "030000000365cc81"
+    },
+    {
+      "inputBase64": "MQ==",
+      "canonicalHex": "040000000131"
+    },
+    {
+      "inputBase64": "MS4w",
+      "canonicalHex": "0400000003312e30"
+    },
+    {
+      "inputBase64": "MWUw",
+      "canonicalHex": "0400000003316530"
+    },
+    {
+      "inputBase64": "LTA=",
+      "canonicalHex": "04000000022d30"
+    },
+    {
+      "inputBase64": "WzEsMl0=",
+      "canonicalHex": "0500000002040000000131040000000132"
+    },
+    {
+      "inputBase64": "WzIsMV0=",
+      "canonicalHex": "0500000002040000000132040000000131"
+    },
+    {
+      "inputBase64": "eyJiIjoyLCJhIjoxfQ==",
+      "canonicalHex": "0600000002030000000161040000000131030000000162040000000132"
+    },
+    {
+      "inputBase64": "eyAiYSIgOiAxICwKICJiIiA6IDIgfQ==",
+      "canonicalHex": "0600000002030000000161040000000131030000000162040000000132"
+    },
+    {
+      "inputBase64": "e30=",
+      "canonicalHex": "0600000000"
+    }
+  ]
+}

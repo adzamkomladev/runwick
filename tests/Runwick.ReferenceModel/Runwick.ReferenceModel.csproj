@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Independent model of the storage protocol. References nothing under src/ on purpose. -->
+</Project>

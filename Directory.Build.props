@@ -1,0 +1,40 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>14.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
+    <PackageId>$(MSBuildProjectName)</PackageId>
+    <Version>0.1.0-m1</Version>
+    <Authors>Runwick contributors</Authors>
+    <Product>Runwick</Product>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryType>git</RepositoryType>
+    <IsSrcProject>$(MSBuildProjectDirectory.Contains('$([System.IO.Path]::DirectorySeparatorChar)src$([System.IO.Path]::DirectorySeparatorChar)'))</IsSrcProject>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(IsSrcProject)' == 'true'">
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Public XML docs are written per item; missing ones are tracked, not build-breaking, until SP-033. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsSrcProject)' == 'true'">
+    <InternalsVisibleTo Include="Runwick" />
+    <InternalsVisibleTo Include="Runwick.Postgres" />
+    <InternalsVisibleTo Include="Runwick.Testing" />
+    <InternalsVisibleTo Include="Runwick.Harness" />
+    <InternalsVisibleTo Include="Runwick.Harness.Peer" />
+    <InternalsVisibleTo Include="Runwick.Core.Tests" />
+    <InternalsVisibleTo Include="Runwick.Postgres.Tests" />
+    <InternalsVisibleTo Include="Runwick.Workloads" />
+  </ItemGroup>
+</Project>

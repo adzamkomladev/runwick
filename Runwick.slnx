@@ -1,0 +1,20 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Runwick.Contracts/Runwick.Contracts.csproj" />
+    <Project Path="src/Runwick/Runwick.csproj" />
+    <Project Path="src/Runwick.Postgres/Runwick.Postgres.csproj" />
+    <Project Path="src/Runwick.Testing/Runwick.Testing.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Runwick.ReferenceModel/Runwick.ReferenceModel.csproj" />
+    <Project Path="tests/Runwick.Harness/Runwick.Harness.csproj" />
+    <Project Path="tests/Runwick.Harness.Peer/Runwick.Harness.Peer.csproj" />
+    <Project Path="tests/Runwick.Core.Tests/Runwick.Core.Tests.csproj" />
+    <Project Path="tests/Runwick.Postgres.Tests/Runwick.Postgres.Tests.csproj" />
+    <Project Path="tests/Runwick.Workloads/Runwick.Workloads.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/Runwick.Samples.Contracts/Runwick.Samples.Contracts.csproj" />
+    <Project Path="samples/Runwick.Samples.Host/Runwick.Samples.Host.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Runwick</RootNamespace>
+    <Description>Runwick job contracts: IQueueJob, handler/middleware interfaces, attributes and dispatch types. No dependencies.</Description>
+  </PropertyGroup>
+</Project>

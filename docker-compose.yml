@@ -1,0 +1,9 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: pg
+      POSTGRES_DB: rw
+    ports:
+      - "5432:5432"
+    command: ["postgres", "-c", "fsync=on", "-c", "synchronous_commit=on"]

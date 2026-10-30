@@ -1,0 +1,48 @@
+name: ci
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 3 * * *"
+env:
+  CI: "true"
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - run: dotnet restore Runwick.slnx --locked-mode
+      - run: dotnet build Runwick.slnx -c Release --no-restore
+      - run: bash eng/check-package-graph.sh
+      - run: node tests/vectors/tools/canonical.mjs --verify
+      - run: dotnet test tests/Runwick.Core.Tests -c Release --no-build
+      - run: dotnet test tests/Runwick.Postgres.Tests -c Release --no-build
+      - run: dotnet pack Runwick.slnx -c Release --no-build -o artifacts/packages
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: artifacts/packages
+  pg-matrix:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["postgres:16", "postgres:17", "postgres:18"]
+    env:
+      RUNWICK_TEST_PG_IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet restore Runwick.slnx --locked-mode
+      - run: dotnet test tests/Runwick.Postgres.Tests -c Release

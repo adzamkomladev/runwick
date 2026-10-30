@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Runwick PostgreSQL store (PostgreSQL 16-18) built on Npgsql.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Runwick\Runwick.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Sql\**\*.sql" LogicalName="Runwick.Postgres.Sql.%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

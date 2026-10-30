@@ -1,0 +1,64 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+
+[*.{json,yml,yaml,xml,csproj,props,targets,slnx,config}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.cs]
+csharp_style_namespace_declarations = file_scoped:error
+csharp_using_directive_placement = outside_namespace
+dotnet_sort_system_directives_first = true
+# Library code never captures a synchronization context.
+dotnet_diagnostic.CA2007.severity = error
+# No blocking calls inside async methods.
+dotnet_diagnostic.CA1849.severity = error
+# Forward cancellation tokens.
+dotnet_diagnostic.CA2016.severity = error
+# Style rules that fight the codebase's idiom.
+dotnet_diagnostic.CA1716.severity = none
+dotnet_diagnostic.CA1711.severity = none
+dotnet_diagnostic.CA1062.severity = none
+dotnet_diagnostic.CA1303.severity = none
+dotnet_diagnostic.CA1848.severity = none
+dotnet_diagnostic.CA1305.severity = suggestion
+dotnet_diagnostic.CA1307.severity = suggestion
+dotnet_diagnostic.CA1308.severity = none
+dotnet_diagnostic.CA1515.severity = none
+dotnet_diagnostic.CA1859.severity = none
+dotnet_diagnostic.CA1822.severity = suggestion
+dotnet_diagnostic.CA1812.severity = none
+dotnet_diagnostic.CA1819.severity = none
+dotnet_diagnostic.CA1724.severity = none
+dotnet_diagnostic.CA1032.severity = none
+dotnet_diagnostic.CA1064.severity = none
+dotnet_diagnostic.CA1028.severity = none
+dotnet_diagnostic.CA1027.severity = none
+dotnet_diagnostic.CA1008.severity = none
+dotnet_diagnostic.CA2225.severity = none
+dotnet_diagnostic.CA1000.severity = none
+dotnet_diagnostic.CA1031.severity = none
+dotnet_diagnostic.CA5394.severity = none
+dotnet_diagnostic.CA1873.severity = none
+dotnet_diagnostic.IDE0005.severity = none
+
+[tests/**.cs]
+dotnet_diagnostic.CA2007.severity = none
+dotnet_diagnostic.CA1707.severity = none
+dotnet_diagnostic.CA1861.severity = none
+dotnet_diagnostic.CA2000.severity = none
+dotnet_diagnostic.CA1001.severity = none
+dotnet_diagnostic.CA1849.severity = none
+dotnet_diagnostic.CA2201.severity = none
+
+[samples/**.cs]
+dotnet_diagnostic.CA2007.severity = none

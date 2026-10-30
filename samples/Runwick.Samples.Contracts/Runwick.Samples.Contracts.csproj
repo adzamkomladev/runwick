@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Proves a producer contract assembly needs only Runwick.Contracts. -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Runwick.Contracts\Runwick.Contracts.csproj" />
+  </ItemGroup>
+</Project>
