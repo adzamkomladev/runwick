@@ -71,7 +71,8 @@ internal static class DispatchSupport
         return list;
     }
 
-    public static long Conflicts(TestClient c) => ((PgRunner)c.Services.GetService(typeof(PgRunner))!).TransientConflicts;
+    /// <summary>Deadlock-freedom evidence: 40P01 rollbacks the runner observed (07 I-15, I-18).</summary>
+    public static long Deadlocks(TestClient c) => ((PgRunner)c.Services.GetService(typeof(PgRunner))!).Deadlocks;
 
     /// <summary>Reserves and begins the next job; the queue must hold only the intended candidate first.</summary>
     public static async Task<LeaseHandle> RunAsync(TestClient c, Guid? expectJob = null)

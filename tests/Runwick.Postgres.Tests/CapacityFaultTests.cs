@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Runwick.Dispatching;
 using Runwick.Harness.Engine;
@@ -135,13 +136,60 @@ public sealed class CapacityFaultTests
         f.Proxy.SetCommitReplyLatency(TimeSpan.Zero);
         await sampler.DisposeAsync();
 
+        // A stop raised by the last slow Finishes resumes only after three healthy checks, so the events are read once
+        // admission has resumed (G-1 run 3 read them while the last stop was still in force).
+        await WorkerHost.WaitUntil(() => !w.Engine.PressureStopped, Wait, "admission resumed");
         var events = w.Events.ToList();
         Assert.InRange(maxRenewal, 1, 4);
         Assert.Equal(2, maxSettlement);
         Assert.True(maxControlWait > TimeSpan.Zero, "no renewal queued behind the lane");
-        var stops = events.Where(e => e.Name.StartsWith("pressureStop", StringComparison.Ordinal)).ToList();
-        Assert.NotEmpty(stops);
-        foreach (var stop in stops)
+        Assert.Contains(events, e => e.Name.StartsWith("pressureStop", StringComparison.Ordinal));
+        CheckStops(w, events);
+
+        // Without latency the gates do not flap: 16 handlers started together through two renewal waves. Their Finishes
+        // are 1 s apart: 16 simultaneous Finishes through two settlement lanes are the overload of the first phase, not
+        // ordinary jitter, and queue ≥ 5 s on a host whose Finish takes 0.6-1 s (G-1 run 3).
+        var renewP90 = await RenewRoundTripP90Async();
+        var calmFrom = w.Engine.Clock.Now;
+        for (var i = 0; i < 16; i++)
+        {
+            var hold = TimeSpan.FromSeconds(40 + i);
+            w.Script.On("calm" + i, (_, _, _) => Task.Delay(hold, CancellationToken.None));
+            await w.DispatchAsync("calm" + i);
+        }
+
+        await WaitCount(f, "SELECT count(*) FROM runwick.jobs WHERE state = 'succeeded'", 36, "all 36 succeeded");
+        await WorkerHost.WaitUntil(() => !w.Engine.PressureStopped, Wait, "admission resumed after the calm phase");
+        var calm = w.Events.Where(e => e.At > calmFrom).ToList();
+        Assert.True(calm.Count(e => e.Name == "renewed") >= 16, "calm renewals");
+        Assert.DoesNotContain(calm, e => e.Name.StartsWith("lost:", StringComparison.Ordinal));
+        var calmStops = calm.Where(e => e.Name.StartsWith("pressureStop", StringComparison.Ordinal)).ToList();
+
+        // 16 renewals due together through 4 renewal lanes: the last waits three Renew round trips. Where that stays well
+        // inside the 1 s controlWait stop (the reference host), no stop is allowed. Where the store's round trip alone
+        // carries the wave past it (07 C-9), every stop must be a lane-queueing stop that gates and resumes correctly.
+        var strict = 3 * renewP90 < TimeSpan.FromMilliseconds(500);
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"CAP-10 no-latency phase: Renew p90 {renewP90.TotalMilliseconds:F0} ms, {(strict ? "strict" : "store-bound")} branch, {calmStops.Count} stops");
+        if (strict)
+        {
+            Assert.Empty(calmStops);
+        }
+        else
+        {
+            Assert.All(calmStops, e => Assert.Equal("pressureStop:controlWait", e.Name));
+            CheckStops(w, calm);
+        }
+
+        await w.StopAsync();
+        Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM (SELECT job_id FROM runwick.job_attempts GROUP BY job_id HAVING count(*) > 1) x"));
+        Assert.Empty(SnapshotInvariants.Violations((await f.ReadCommittedSnapshot()).Model));
+    }
+
+    /// <summary>Each stop resumes after three healthy checks and is overtaken by at most the claim in flight; no lost attempt renews.</summary>
+    static void CheckStops(WorkerHost w, List<(string Name, Guid? AttemptId, TimeSpan At)> events)
+    {
+        foreach (var stop in events.Where(e => e.Name.StartsWith("pressureStop", StringComparison.Ordinal)))
         {
             var resume = events.FirstOrDefault(e => e.Name == "pressureResume" && e.At > stop.At);
             Assert.True(resume.Name is not null, $"no resume after {stop.Name} at {stop.At}");
@@ -159,22 +207,26 @@ public sealed class CapacityFaultTests
         {
             Assert.DoesNotContain(events, e => e.AttemptId == lost.AttemptId && e.At > lost.At && e.Name == "renewed");
         }
+    }
 
-        // Without latency the gates do not flap: 16 handlers through two renewal waves and no pressure stop.
-        await WorkerHost.WaitUntil(() => !w.Engine.PressureStopped, Wait, "admission resumed");
-        var calmFrom = w.Engine.Clock.Now;
-        for (var i = 0; i < 16; i++)
+    /// <summary>p90 of 20 sequential Renew round trips on a separate namespace of the same server, without injected latency.</summary>
+    static async Task<TimeSpan> RenewRoundTripP90Async()
+    {
+        await using var probe = await DriverFixture.StartAsync(Ns("cap10rtt"), StoreProfile.DirectPrimaryViaProxy);
+        var c = await probe.OpenClient(configure: r => TestJobs.Register(r));
+        await c.Dispatcher.DispatchAsync(new ResourceJob("rtt", "r"));
+        var lease = (await c.ReserveAsync(lease: TimeSpan.FromSeconds(60))).Value!.Lease.Handle;
+        await c.BeginAsync(lease);
+        var samples = new List<TimeSpan>();
+        for (var i = 0; i < 20; i++)
         {
-            w.Script.On("calm" + i, (_, _, _) => Task.Delay(TimeSpan.FromSeconds(40), CancellationToken.None));
-            await w.DispatchAsync("calm" + i);
+            var started = Stopwatch.GetTimestamp();
+            Assert.Equal(StoreStatus.Applied, (await c.RenewAsync(lease, TimeSpan.FromSeconds(60))).Status);
+            samples.Add(Stopwatch.GetElapsedTime(started));
         }
 
-        await WaitCount(f, "SELECT count(*) FROM runwick.jobs WHERE state = 'succeeded'", 36, "all 36 succeeded");
-        Assert.DoesNotContain(w.Events, e => e.At > calmFrom && e.Name.StartsWith("pressureStop", StringComparison.Ordinal));
-        Assert.True(w.Events.Count(e => e.At > calmFrom && e.Name == "renewed") >= 16, "calm renewals");
-        await w.StopAsync();
-        Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM (SELECT job_id FROM runwick.job_attempts GROUP BY job_id HAVING count(*) > 1) x"));
-        Assert.Empty(SnapshotInvariants.Violations((await f.ReadCommittedSnapshot()).Model));
+        samples.Sort();
+        return samples[17];
     }
 
     // ------------------------------------------------------------------ CAP-11 (subset)

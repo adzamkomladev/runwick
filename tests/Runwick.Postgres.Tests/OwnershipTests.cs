@@ -269,21 +269,23 @@ public sealed class OwnershipTests
         await using var f = await DriverFixture.StartAsync(Ns("own01"));
         var c = await f.OpenClient(configure: r => TestJobs.Register(r));
         await c.Dispatcher.DispatchAsync(new ResourceJob("j", "r"));
-        // Near expiry, with enough margin left for the Renew to commit on a loaded host.
-        var reserved = (await c.ReserveAsync(lease: TimeSpan.FromSeconds(4))).Value!;
+        // The discovery snapshot names A's original expiry. The Renew commits well inside that lease (a 1.5 s margin
+        // was too small on a loaded host: G-1 run 3), and the Recover is released only once the original expiry has
+        // passed, so its StaleLease comes from rechecking the fresh expiry under its locks.
+        var reserved = (await c.ReserveAsync(lease: TimeSpan.FromSeconds(10))).Value!;
         var lease = reserved.Lease.Handle;
         await c.BeginAsync(lease);
-        while (await f.StoreNow() < reserved.Lease.ExpiresAt - TimeSpan.FromMilliseconds(1500))
-        {
-            await Task.Delay(50);
-        }
-
         var stale = new ExpiredLease(lease.JobId, lease.AttemptId, lease.OwnershipToken, JobStates.Running, reserved.Lease.ExpiresAt);
         var h = f.ArmFault(FaultPoint.BeforeGateLock, FaultSpec.Barrier, FaultTarget.Op(Operations.Recover));
         var recover = c.RecoverAsync(stale);
         await DriverFixture.WaitAtBarrier(h, Wait);
         var renewed = await c.RenewAsync(lease, TimeSpan.FromSeconds(30));
         Assert.Equal(StoreStatus.Applied, renewed.Status);
+        while (await f.StoreNow() <= reserved.Lease.ExpiresAt + TimeSpan.FromMilliseconds(100))
+        {
+            await Task.Delay(50);
+        }
+
         DriverFixture.ReleaseBarrier(h);
         var result = await WithTimeout(recover);
         Assert.Equal((StoreStatus.StaleLease, StoreEffect.ObservedNoEffect), (result.Status, result.Effect));

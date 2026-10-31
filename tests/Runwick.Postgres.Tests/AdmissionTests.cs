@@ -25,7 +25,7 @@ public sealed class AdmissionTests
     static Task PeerRelease(PeerClient peer, FaultPoint point) =>
         peer.SendAsync("releaseBarrier", new JsonObject { ["point"] = point.ToString() });
 
-    static async Task<long> PeerConflicts(PeerClient peer) => (await peer.SendAsync("conflicts"))["count"]!.GetValue<long>();
+    static async Task<long> PeerDeadlocks(PeerClient peer) => (await peer.SendAsync("deadlocks"))["count"]!.GetValue<long>();
 
     /// <summary>
     /// One process holds its Reserve at <paramref name="point"/> (after its locks); the other reserves meanwhile.
@@ -147,7 +147,7 @@ public sealed class AdmissionTests
         var peer = await f.OpenPeer("peer-1");
         var x = await c.Dispatcher.DispatchAsync(new PairJob("x", "r-a", "r-b"));
         var y = await c.Dispatcher.DispatchAsync(new PairJob("y", "r-b", "r-a"));
-        var before = Conflicts(c) + await PeerConflicts(peer);
+        var before = Deadlocks(c) + await PeerDeadlocks(peer);
 
         for (var i = 0; i < 200; i++)
         {
@@ -171,7 +171,7 @@ public sealed class AdmissionTests
             }
         }
 
-        Assert.Equal(before, Conflicts(c) + await PeerConflicts(peer));
+        Assert.Equal(before, Deadlocks(c) + await PeerDeadlocks(peer));
     }
 
     [Fact]

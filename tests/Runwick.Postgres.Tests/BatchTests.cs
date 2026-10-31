@@ -147,7 +147,7 @@ public sealed class BatchTests
 
         // Concurrent batches sharing keys in opposite orders never deadlock.
         var b = await f.OpenClient(configure: r => TestJobs.Register(r));
-        var conflictsBefore = Conflicts(c) + Conflicts(b);
+        var deadlocksBefore = Deadlocks(c) + Deadlocks(b);
         const int iterations = 30;
         for (var i = 0; i < iterations; i++)
         {
@@ -157,7 +157,7 @@ public sealed class BatchTests
             Assert.All(both, batch => Assert.All(batch.Items, item => Assert.NotNull(item.Receipt)));
         }
 
-        Assert.Equal(conflictsBefore, Conflicts(c) + Conflicts(b));
+        Assert.Equal(deadlocksBefore, Deadlocks(c) + Deadlocks(b));
         Assert.Equal(2 + 2 * iterations, await Jobs(f));
     }
 }

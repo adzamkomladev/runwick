@@ -113,9 +113,9 @@ async Task<JsonObject> RunAsync(string cmd, JsonObject m)
             var expired = new ExpiredLease(Guid.Parse(m["jobId"]!.GetValue<string>()), Guid.Parse(m["attemptId"]!.GetValue<string>()),
                 Guid.Parse(m["ownershipToken"]!.GetValue<string>()), "", default);
             return PeerJson.Reply(await C().RecoverAsync(expired).ConfigureAwait(false));
-        case "conflicts":
-            // Transient conflicts (40P01/40001/55P03) this process's runner has observed: deadlock-freedom evidence.
-            return new JsonObject { ["count"] = ((Runwick.Postgres.Store.PgRunner)C().Services.GetService(typeof(Runwick.Postgres.Store.PgRunner))!).TransientConflicts };
+        case "deadlocks":
+            // 40P01 rollbacks this process's runner has observed: deadlock-freedom evidence (07 I-18).
+            return new JsonObject { ["count"] = ((Runwick.Postgres.Store.PgRunner)C().Services.GetService(typeof(Runwick.Postgres.Store.PgRunner))!).Deadlocks };
         case "armFault":
             faults.Arm(m);
             return [];

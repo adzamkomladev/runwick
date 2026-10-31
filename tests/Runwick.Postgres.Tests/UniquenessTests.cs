@@ -191,7 +191,7 @@ public sealed class UniquenessTests
         var j2 = await c.Dispatcher.DispatchAsync(new KeyedJob("j2", "k2"));
         var lease1 = await RunAsync(c, j1.JobId.Value);
         var lease2 = await RunAsync(c, j2.JobId.Value);
-        var conflictsBefore = Conflicts(c);
+        var deadlocksBefore = Deadlocks(c);
 
         // Finish first (holding job then key) → Dispatch waits, then Created.
         var finishBarrier = f.ArmFault(FaultPoint.BeforeCommit, FaultSpec.Barrier, FaultTarget.Op(Operations.Finish));
@@ -218,7 +218,7 @@ public sealed class UniquenessTests
         Assert.Equal((DispatchDisposition.Reused, j2.JobId), (reused.Disposition, reused.JobId));
         Assert.Equal(StoreStatus.Applied, (await WithTimeout(finish2)).Status);
         Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM runwick.dispatch_keys WHERE key = 'k2' AND bound_job_id IS NOT NULL"));
-        Assert.Equal(conflictsBefore, Conflicts(c));
+        Assert.Equal(deadlocksBefore, Deadlocks(c));
     }
 
     [Fact]
@@ -241,7 +241,7 @@ public sealed class UniquenessTests
             Assert.All(both, batch => Assert.All(batch.Items, item => Assert.NotNull(item.Receipt)));
         }
 
-        Assert.Equal(0, Conflicts(a) + Conflicts(b));
+        Assert.Equal(0, Deadlocks(a) + Deadlocks(b));
         Assert.Equal(2 * iterations, await f.CountAsync("SELECT count(*) FROM runwick.concurrency_scopes WHERE scope_kind = 'resource'"));
         Assert.Equal(4 * iterations, await Jobs(f));
     }

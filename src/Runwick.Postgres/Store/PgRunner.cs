@@ -17,11 +17,15 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
     static readonly TimeSpan DefaultBudget = TimeSpan.FromSeconds(5);
 
     long _transientConflicts;
+    long _deadlocks;
 
     public IFaultInjector Faults => faults;
 
     /// <summary>40P01/40001/55P03 rollbacks observed by this runner (each retried or surfaced); deadlock-freedom evidence for tests.</summary>
     public long TransientConflicts => Interlocked.Read(ref _transientConflicts);
+
+    /// <summary>40P01 rollbacks only; a 55P03 lock timeout or 40001 is not a deadlock (07 I-18).</summary>
+    public long Deadlocks => Interlocked.Read(ref _deadlocks);
 
     /// <summary>Known store identity (from Describe); gates compare against it.</summary>
     public Guid? StoreId { get; set; }
@@ -114,6 +118,11 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
             catch (PostgresException ex) when (ex.SqlState is "40P01" or "40001" or "55P03")
             {
                 Interlocked.Increment(ref _transientConflicts);
+                if (ex.SqlState == "40P01")
+                {
+                    Interlocked.Increment(ref _deadlocks);
+                }
+
                 throw new TransientConflictException(ex);
             }
             catch (InjectedFaultException ex) when (!commitSent && ex.Kind is "Deadlock40P01" or "Serialization40001")
