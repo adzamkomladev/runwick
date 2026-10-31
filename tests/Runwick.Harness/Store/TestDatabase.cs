@@ -165,6 +165,19 @@ public sealed class TestDatabase : IAsyncDisposable
         // the Docker CLI and readiness is a direct connection polled every 250 ms, so the outage is the requested
         // downtime plus server start and crash recovery only (the Testcontainers wait strategy adds seconds of exec
         // polling on a loaded host). The fixed host port keeps the address stable.
+        // A checkpoint first keeps crash recovery short: after minutes of suite traffic, WAL replay alone added ~20 s
+        // to a 20 s Kill outage (G-1 run 6). Committed data is durable either way; only the restart time changes.
+        if (mode == RestartMode.Kill)
+        {
+            var admin = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(_connectionString) { Pooling = false }.ConnectionString);
+            await using (admin.ConfigureAwait(false))
+            {
+                await admin.OpenAsync().ConfigureAwait(false);
+                using var checkpoint = new NpgsqlCommand("CHECKPOINT", admin) { CommandTimeout = 120 };
+                await checkpoint.ExecuteNonQueryAsync().ConfigureAwait(false);
+            }
+        }
+
         var down = System.Diagnostics.Stopwatch.StartNew();
         await DockerAsync(mode == RestartMode.Kill ? ["kill", "--signal", "KILL", _container.Id] : ["stop", "--time", "30", _container.Id]).ConfigureAwait(false);
         await DockerAsync(["wait", _container.Id]).ConfigureAwait(false);

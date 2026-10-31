@@ -177,7 +177,9 @@ public sealed class CapacityFaultTests
         }
         else
         {
-            Assert.All(calmStops, e => Assert.Equal("pressureStop:controlWait", e.Name));
+            // Lane queueing (controlWait) or runtime timer lag from the suite's own parallel load (lag): both are
+            // environment stops, and neither may admit work while stopped or skip the resume checks.
+            Assert.All(calmStops, e => Assert.Contains(e.Name, new[] { "pressureStop:controlWait", "pressureStop:lag" }));
             CheckStops(w, calm);
         }
 
