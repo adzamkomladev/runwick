@@ -190,15 +190,18 @@ public sealed class WorkerTests
         await w.StartAsync();
         await Task.Delay(TimeSpan.FromSeconds(6));
 
-        // Dispatched by another process-equivalent client: no local post-commit wake reaches the worker.
-        var sw = System.Diagnostics.Stopwatch.StartNew();
+        // Dispatched by another process-equivalent client: no local post-commit wake reaches the worker. Discovery is
+        // measured from the dispatch commit (reply) to the Reserve reply ("reserved"), on the engine clock.
         var job = (await producer.Dispatcher.DispatchAsync(new WorkJob("late"))).JobId.Value;
-        await WorkerHost.WaitUntil(() => w.Script.InvocationsOf("late") == 1, Wait, "discovery");
-        var discovered = sw.Elapsed;
+        var committed = w.Engine.Clock.Now;
+        var reservedBefore = w.EventCount("reserved");
+        await WorkerHost.WaitUntil(() => w.EventCount("reserved") > reservedBefore, Wait, "discovery");
+        var discovered = w.Events.Last(e => e.Name == "reserved").At - committed;
         await WaitState(f, job, JobStates.Succeeded);
         Assert.Equal(1, w.Script.InvocationsOf("late"));
 
-        // Idle backoff max (2 s + 20 %) + readiness hint age (2 s) + one claim; slack for this host's measured RTT.
+        // Idle backoff max (2 s + 20 %) + readiness hint age (2 s) + one probe and one claim; slack for this host's
+        // measured RTT and per-call parse/bind cost.
         Assert.True(discovered <= TimeSpan.FromSeconds(2.4 + 2 + 2), $"discovered after {discovered}");
     }
 

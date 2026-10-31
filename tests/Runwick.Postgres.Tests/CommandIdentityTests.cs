@@ -242,7 +242,8 @@ public sealed class CommandIdentityTests
         var c = await f.OpenClient(configure: r =>
         {
             TestJobs.Register(r);
-            r.Producer(o => o.CommandLifetime = TimeSpan.FromSeconds(2));
+            // Long enough for the first dispatch to apply on a loaded host; the test then waits past NotAfter.
+            r.Producer(o => o.CommandLifetime = TimeSpan.FromSeconds(10));
         });
         var p = c.Prepared.Prepare(new PingJob("x"));
         var receipt = await c.Prepared.DispatchAsync(p);

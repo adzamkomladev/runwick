@@ -167,10 +167,11 @@ public sealed class WorkerFaultTests
     /// The first <paramref name="operation"/> commits and its reply is lost (DropReply); every resubmission then fails
     /// before the gate lock (Throw Io from the second hit on) until the faults are disarmed.
     /// </summary>
-    static void LoseReplyThenFailResolution(DriverFixture f, string operation)
+    static FaultHandle LoseReplyThenFailResolution(DriverFixture f, string operation)
     {
-        f.ArmFault(FaultPoint.AfterCommitBeforeReply, FaultSpec.DropReply, FaultTarget.Op(operation));
+        var drop = f.ArmFault(FaultPoint.AfterCommitBeforeReply, FaultSpec.DropReply, FaultTarget.Op(operation));
         f.ArmFault(FaultPoint.BeforeGateLock, FaultSpec.Throw("Io"), FaultTarget.Op(operation) with { Occurrence = 2 }, times: 100_000);
+        return drop;
     }
 
     [Fact]
@@ -252,14 +253,17 @@ public sealed class WorkerFaultTests
     [Trait("Case", "TIME-12")]
     public async Task Finish_receipt_found_after_local_loss_and_after_receipt_expiry()
     {
+        // Unscaled timing (5 s request timeout): with ÷4 a loaded host can time the original Finish out before its
+        // COMMIT, so no reply is dropped and the case degenerates into a fresh apply.
         // Run 1: Finish(Succeeded) commits, its reply is lost and resolution fails until the local deadline has passed;
         // resolution then replays the receipt: historical success, never a failure or a second Finish.
         await using (var f = await DriverFixture.StartAsync(Ns("time12a")))
-        await using (var w = Host(f, concurrency: 1))
+        await using (var w = Host(f, concurrency: 1, divisor: 1))
         {
             var job = await Dispatch(w, "j");
-            LoseReplyThenFailResolution(f, Operations.Finish);
+            var drop = LoseReplyThenFailResolution(f, Operations.Finish);
             await w.StartAsync();
+            await WorkerHost.WaitUntil(() => drop.Fired == 1, Wait, "the original Finish committed and its reply dropped");
             await WorkerHost.WaitUntil(() => w.Events.Any(e => e.Name.StartsWith("lost:", StringComparison.Ordinal)) || Diagnosed(w, "unconfirmed outcome"),
                 Wait, "local loss");
             var entry = w.Engine.Entries.SingleOrDefault();
@@ -279,11 +283,12 @@ public sealed class WorkerFaultTests
         // Run 2: as run 1, and the receipt is pruned after NotAfter before resolution: explicit unknown durability
         // (CommandExpired, no receipt), the Finish is not reapplied, the stored state is the committed one.
         await using (var f = await DriverFixture.StartAsync(Ns("time12b")))
-        await using (var w = Host(f, concurrency: 1))
+        await using (var w = Host(f, concurrency: 1, divisor: 1))
         {
             var job = await Dispatch(w, "j");
-            LoseReplyThenFailResolution(f, Operations.Finish);
+            var drop = LoseReplyThenFailResolution(f, Operations.Finish);
             await w.StartAsync();
+            await WorkerHost.WaitUntil(() => drop.Fired == 1, Wait, "the original Finish committed and its reply dropped");
 
             // NotAfter = send instant + lifetime, and the receipt commits after the send: waiting a lifetime from the
             // observed receipt guarantees every resubmission after the prune is past NotAfter.
