@@ -18,7 +18,7 @@ public sealed class CapacityFaultTests
 
     static string Ns(string name) => name + "_" + Guid.NewGuid().ToString("N")[..8];
 
-    static async Task WaitCount(DriverFixture f, string sql, long expected, string what)
+    internal static async Task WaitCount(DriverFixture f, string sql, long expected, string what)
     {
         var deadline = DateTime.UtcNow + Wait;
         while (await f.CountAsync(sql) != expected)
@@ -29,7 +29,7 @@ public sealed class CapacityFaultTests
     }
 
     /// <summary>Samples <paramref name="sample"/> every few milliseconds until disposed.</summary>
-    sealed class Sampler : IAsyncDisposable
+    internal sealed class Sampler : IAsyncDisposable
     {
         readonly CancellationTokenSource _stop = new();
         readonly Task _loop;
@@ -146,7 +146,12 @@ public sealed class CapacityFaultTests
             var resume = events.FirstOrDefault(e => e.Name == "pressureResume" && e.At > stop.At);
             Assert.True(resume.Name is not null, $"no resume after {stop.Name} at {stop.At}");
             Assert.True(resume.At - stop.At >= TimeSpan.FromSeconds(3), $"resumed {(resume.At - stop.At).TotalSeconds:F1} s after {stop.Name}");
-            Assert.DoesNotContain(events, e => e.Name == "reserved" && e.At > stop.At && e.At < resume.At);
+            // The pool checks the gate before every Reserve and claims serially, so a stop can only be overtaken by the
+            // one claim already in flight; no Reserve is sent while stopped.
+            var late = events.Where(e => e.Name == "reserved" && e.At > stop.At && e.At < resume.At).ToList();
+            Assert.True(late.Count <= 1, $"{late.Count} reservations while stopped at {stop.At}");
+            Assert.All(late, e => Assert.True(e.At - stop.At <= w.Engine.Options.ControlRequestTimeout + w.Engine.Options.SchedulerAllowance,
+                $"reservation {(e.At - stop.At).TotalSeconds:F1} s into the stop"));
         }
 
         // A late Renew reply never revives an attempt whose authority was latched lost.
@@ -238,6 +243,15 @@ public sealed class CapacityFaultTests
         Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM runwick.storage_commands WHERE command_id = @id", ("id", overflow.OperationId.Value)));
         Assert.Equal(0, admission.Waiting);
     }
+}
+
+/// <summary>CAP-11 (c): restarts the shared server, so it runs alone (07 §2.3, collection StoreRestart).</summary>
+[Collection("StoreRestart")]
+public sealed class CapacityOutageTests
+{
+    static readonly TimeSpan Wait = TimeSpan.FromSeconds(180);
+
+    static string Ns(string name) => name + "_" + Guid.NewGuid().ToString("N")[..8];
 
     [Fact]
     [Trait("Category", "Fault")]
@@ -282,7 +296,7 @@ public sealed class CapacityFaultTests
         });
 
         int maxEntries = 0, maxCompletion = 0, maxFinishing = 0, maxWaiting = 0;
-        await using (new Sampler(() =>
+        await using (new CapacityFaultTests.Sampler(() =>
         {
             maxEntries = Math.Max(maxEntries, w.Engine.Entries.Count);
             maxCompletion = Math.Max(maxCompletion, w.Engine.Completion.Pending);
@@ -295,7 +309,7 @@ public sealed class CapacityFaultTests
             await Task.Delay(TimeSpan.FromSeconds(20));
             await producing.CancelAsync();
             await producer;
-            await WaitCount(f, "SELECT count(*) FROM runwick.jobs WHERE state NOT IN ('succeeded', 'failed')", 0, "drained after the outage");
+            await CapacityFaultTests.WaitCount(f, "SELECT count(*) FROM runwick.jobs WHERE state NOT IN ('succeeded', 'failed')", 0, "drained after the outage");
         }
 
         await w.StopAsync();
