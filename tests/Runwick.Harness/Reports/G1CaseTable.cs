@@ -13,7 +13,7 @@ public static class G1CaseTable
 {
     public sealed record Row(string Document, string Case, string Title, string Sp, string Host, string Category, string Result, string Reason);
 
-    sealed record TestResult(string Assembly, string Method, string Result, IReadOnlyDictionary<string, List<string>> Traits);
+    internal sealed record TestResult(string Assembly, string Method, string Result, IReadOnlyDictionary<string, List<string>> Traits);
 
     static readonly (string Prefix, string Document)[] Documents =
     [
@@ -111,7 +111,7 @@ public static class G1CaseTable
         return rows;
     }
 
-    static IEnumerable<TestResult> Parse(string path)
+    internal static IEnumerable<TestResult> Parse(string path)
     {
         var doc = XDocument.Load(path);
         foreach (var assembly in doc.Descendants("assembly"))
@@ -150,5 +150,5 @@ public static class G1CaseTable
         return sb.ToString();
     }
 
-    static string Escape(string s) => s.Replace("|", "\\|", StringComparison.Ordinal);
+    internal static string Escape(string s) => s.Replace("|", "\\|", StringComparison.Ordinal);
 }
