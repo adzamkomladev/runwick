@@ -10,6 +10,11 @@ namespace Runwick.Worker;
 internal sealed class JobContextHolder
 {
     public IJobContext? Context { get; set; }
+
+    /// <summary>The attempt and engine behind this scope; used by provider transactional completion (08 §8.1).</summary>
+    public AttemptEntry? Entry { get; set; }
+
+    public WorkerEngine? Engine { get; set; }
 }
 
 internal sealed class JobContext(AttemptEntry entry, string application, object payload, IReadOnlyList<ResourceFence> fences) : IJobContext
@@ -266,8 +271,9 @@ internal static class OutcomeClassifier
 
         if (o.Result is { Kind: JobExecutionResultKind.Completed })
         {
+            // Reached only when nothing was staged for this attempt (a staged attempt is observed by 08 §8.2 instead).
             return Finish(AttemptOutcome.PermanentFailure,
-                new AttemptError("pipeline_contract_fault", "", "Transactional completion is not available in this release.", null));
+                new AttemptError("pipeline_contract_fault", "", "The pipeline returned a staged completion this attempt never staged.", null));
         }
 
         // Row 5: explicit Failed; deterministic payload/upgrade failure; application-classified permanent failure.

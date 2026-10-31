@@ -220,6 +220,16 @@ internal sealed class LaneSelector
 
     public void CoolLane(string q, string p, TimeSpan now) => _laneCooldown[(q, p)] = Next(_laneCooldown.GetValueOrDefault((q, p)), now);
 
+    /// <summary>Clears the queue cooldown and every lane cooldown of <paramref name="q"/> (relevant control change).</summary>
+    public void ResetQueue(string q)
+    {
+        _queueCooldown.Remove(q);
+        foreach (var p in Priorities)
+        {
+            _laneCooldown.Remove((q, p));
+        }
+    }
+
     public void ResetCooldown(string q, string p)
     {
         _queueCooldown.Remove(q);

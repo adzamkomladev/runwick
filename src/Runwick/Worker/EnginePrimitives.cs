@@ -63,8 +63,26 @@ internal sealed class LocalCapacityGate(int target)
     /// <summary>Raised after a ticket is released (refill wake).</summary>
     public event Action? Released;
 
+    /// <summary>Raised with the new outstanding count after every acquire and release (occupancy integration, 11 §3.1).</summary>
+    public event Action<int>? OutstandingChanged;
+
+    /// <summary>
+    /// Changes the target (11 §3.5). A reduction only stops refill: outstanding tickets are never revoked and may
+    /// exceed the new target until their holders retire.
+    /// </summary>
+    public void SetTarget(int target)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(target);
+        lock (_lock)
+        {
+            Target = target;
+        }
+    }
+
     public CapacityTicket? TryAcquire()
     {
+        CapacityTicket ticket;
+        int outstanding;
         lock (_lock)
         {
             if (!_open || _outstanding >= Target)
@@ -73,8 +91,12 @@ internal sealed class LocalCapacityGate(int target)
             }
 
             _outstanding++;
-            return new CapacityTicket(this);
+            ticket = new CapacityTicket(this);
+            outstanding = _outstanding;
         }
+
+        OutstandingChanged?.Invoke(outstanding);
+        return ticket;
     }
 
     /// <summary>Closes acquisition (drain); outstanding tickets stay held until their holders retire.</summary>
@@ -88,11 +110,14 @@ internal sealed class LocalCapacityGate(int target)
 
     internal void Release(bool refill)
     {
+        int outstanding;
         lock (_lock)
         {
             _outstanding--;
+            outstanding = _outstanding;
         }
 
+        OutstandingChanged?.Invoke(outstanding);
         if (refill)
         {
             Released?.Invoke();
@@ -269,8 +294,19 @@ internal sealed class WakeSignal
     readonly Lock _lock = new();
     TaskCompletionSource _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    /// <summary>
+    /// Drops every signal (harness hook for driver-contract-suite:OBS-01): waiters then wake only by their timeouts,
+    /// i.e. by polling.
+    /// </summary>
+    public bool Suppressed { get; set; }
+
     public void Set()
     {
+        if (Suppressed)
+        {
+            return;
+        }
+
         lock (_lock)
         {
             _tcs.TrySetResult();

@@ -8,6 +8,15 @@ This specification is normative. "MUST", "MUST NOT" and "rejected" are binding. 
 
 ---
 
+## Changes (2026-10-31, SP-017)
+
+- Two hash domains for the outbox, normative in 14 §7: `runwick.outbox.delivery/1` (delivery fingerprint: destination binding, source identity, absolute AcceptUntil, business and policy digests, diagnostic metadata, proposed job ID; excludes the transport command) and `runwick.outbox.command/1` (the §8.3 command envelope for `ReceiveOutbox/1` with the delivery digest as body). The outbox reuses the §9 prepared envelope as its frozen intent codec; the envelope's own operation ID and NotAfter are ignored on that path (14 C-3).
+
+## Changes (2026-10-31, SP-011, SP-015)
+
+- §8.3 "other receipt-backed operations": the control bodies (Cancel/1, ManualRetry/1, RerunSucceeded/1, SetQueueState/1, EditScopePolicy/1) are fixed member-by-member in 08 §6. The actor is the object `{"display","reason","scheme","subject"}`, with absent optional members encoded as null.
+- Schedule definition fingerprints use this file's canonical encoder under the domain `runwick.schedule-definition.v1`. The envelope, members and vectors are normative in 12 §5. Occurrence keys stay with spec 13 (SP-016).
+
 ## Changes (2026-10-30)
 
 ### Contradictions resolved

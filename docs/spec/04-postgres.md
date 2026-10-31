@@ -6,6 +6,40 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-10-31, SP-016)
+
+- `0006_scheduler` (revision 6) adds `schedules`, `schedule_definitions`, `schedule_occurrences` and `schedule_audit_ranges` (13 §3). It widens `concurrency_scopes_kind_v2_ck` (`schedule`), `queue_events_kind_v4_ck` (nine schedule kinds), `management_audit_operation_v3_ck` (six schedule operations) and `management_audit_target_kind_v3_ck` (`schedule`). Jobs it creates carry `created_reason = 'scheduled'`.
+- The manifest for revision 6 adds the eight schedule operations. Lock order gains "schedule row (one per command)" after the receipt (and outbox delivery identities), before queue controls (13 §8).
+
+## Changes (2026-10-31, SP-014)
+
+- `0007_scaling` (revision 7) adds `pool_controls` (per incarnation and pool, revisioned, no foreign key) and `scaling_events` (11 §5–§6). It widens the event kinds (`queue_events_kind_v5_ck`: `pool_override_set`) and the audit checks (`management_audit_operation_v4_ck`: `SetPoolOverride`; `management_audit_target_kind_v4_ck`: `pool`), on top of 0006's lists.
+- The manifest for revision 7 adds `SetPoolOverride`, `EstimateDemand` and `RecordScalingEvent`. `EstimateDemand` is one read-only statement behind the gate, at most 2,000 due rows per lane (11 §4.1).
+
+## Changes (2026-10-31, SP-012)
+
+- `0005_readiness` (revision 5) adds `worker_subscriptions` and index `worker_subscriptions_queue` (09 §3.1). The manifest for revision 5 adds `ReadinessProbe` version 2 and `ListUnsupportedBacklog`; manifest additions may now name a version (`Name@v`).
+- §7.4 is superseded by 09 §2 (probe/2: lane, unsupported and queue rows in one statement). The §5.2 lock matrix gains a no-lock read of `concurrency_scopes` and `concurrency_permits` for the saturation count.
+- §7.12: PublishPresence inserts subscriptions in queue order with `ON CONFLICT DO NOTHING`.
+
+## Changes (2026-10-31, SP-017)
+
+- `0003_outbox` (revision 3) adds `outbox_deliveries` and `outbox_deliveries_cleanup` (14 §5.2). The manifest for revision 3 adds `ReceiveOutbox`.
+- §5.1 rank 3a: the outbox delivery identity, a transaction advisory lock `pg_advisory_xact_lock(hashtextextended('runwick.outbox/' || application || '/' || source_store_id || '/' || message_id, 0))`, then the mapping row `FOR UPDATE`. Cleanup takes the same lock.
+
+## Changes (2026-10-31, SP-013)
+
+- `0004_rates` (revision 4) adds `rate_scopes`, `job_rate_requirements` and `rate_grants` (10 §3). It widens the event kinds (`queue_events_kind_v3_ck`: `attempt_admission_deferred`, `rate_policy_edited`, `capabilities_activated`) and the audit checks (`management_audit_operation_v2_ck`, `management_audit_target_kind_v2_ck`).
+- Revision 3 is `0003_outbox` (SP-017). The manifest for revision 4 adds `ActivateCapabilities` and `EditRatePolicy`.
+- Lock order gains "rate scopes (UUID order)" after concurrency scopes in Begin. Dispatch inserts rate seeds in (kind, key) order after the concurrency requirements.
+
+## Changes (2026-10-31, SP-011)
+
+- Migrations are an ordered list (`0001_initial`, `0002_controls`), each with its own checksum, ledger rows and target revision. Validate installs the target revision and a cumulative manifest (§8.4–8.5). The validation catalog subtracts `DROP CONSTRAINT`s of later migrations.
+- `0002_controls` adds `management_audit` (08 §5), `queue_events.schema_version` and `tx_id` with index `events_cursor`, and widens the event kinds (`queue_events_kind_v2_ck`).
+- §7.14: SetQueueState is public (08 §3.4); the harness path remains and writes no audit.
+- Lock order is unchanged. Controls take queue control → jobs → dispatch keys → scopes as needed.
+
 ## Changes (2026-10-30)
 
 ### Contradictions resolved
@@ -107,7 +141,7 @@ Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retent
 | `worker_capabilities` | yes | Active capability revision tuples per worker instance |
 | `rate_scopes`, `job_rate_requirements`, `rate_grants` | **not in M2** | Rate admission (capacity-control §4) |
 | `management_audit` | **not in M2** | Administrative audit |
-| `outbox_deliveries` | **not in M2** | Outbox destination identities |
+| `outbox_deliveries` | `0003_outbox` (M3, 14 §5.2) | Outbox destination identities |
 | `schedules`, `schedule_definitions`, `schedule_occurrences`, `schedule_audit_ranges` | **not in M2** | Scheduler |
 | `worker_subscriptions`, `worker_pool_snapshots`, `pool_controls`, `scaling_events` | **not in M2** | Pool/presence detail beyond the M2 columns |
 | `retention_policies`, `cleanup_progress` | **not in M2** | Retention cleanup |
@@ -780,7 +814,8 @@ Every normal path acquires, in this order and never backwards:
 1  store_metadata             FOR SHARE            (FOR UPDATE only for a store-gate change)
 2  application_controls       FOR SHARE            (FOR UPDATE only for an application-gate change; INSERT … DO NOTHING by RegisterApplication)
 3  storage_commands receipt   INSERT … ON CONFLICT DO NOTHING, then SELECT … FOR UPDATE
-   [not in M2: outbox delivery identities; schedule rows]
+3a outbox delivery identity  pg_advisory_xact_lock(hash(application, source, message)), then outbox_deliveries FOR UPDATE (ReceiveOutbox only)
+   [schedule rows: spec 13]
 4  queue_controls             sorted by queue (C)  FOR SHARE (Reserve) | FOR UPDATE (SetQueueState)
 5  jobs (existing)            UUID order           FOR NO KEY UPDATE
 6  dispatch_keys              sorted (job_name, key_kind, key) bytewise   FOR UPDATE

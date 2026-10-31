@@ -12,15 +12,23 @@ namespace Runwick.Postgres.Tests;
 public sealed class MigrationTests
 {
     const string SpecManifest = """
-        {"manifestVersion":1,"schemaRevision":1,"protocolEpochs":[1],"receiptCodecs":[1],"commandFingerprintVersions":[1],
+        {"manifestVersion":1,"schemaRevision":7,"protocolEpochs":[1],"receiptCodecs":[1],"commandFingerprintVersions":[1],
          "windowFingerprintVersions":[1],"retryEvaluators":["exponential-v1"],
          "operations":{"Describe":[1],"RegisterApplication":[1],"RegisterQueue":[1],"RegisterScope":[1],"Dispatch":[1],
-           "DispatchMany":[1],"ResolveCommand":[1],"ReadinessProbe":[1],"PublishPresence":[1],"ListExpiredLeases":[1],
-           "Reserve":[1],"Begin":[1],"Renew":[1],"Finish":[1],"Recover":[1],"ReleaseReservation":[1],"SetQueueState":[1]},
+           "DispatchMany":[1],"ResolveCommand":[1],"ReadinessProbe":[1,2],"PublishPresence":[1],"ListExpiredLeases":[1],
+           "Reserve":[1],"Begin":[1],"Renew":[1],"Finish":[1],"Recover":[1],"ReleaseReservation":[1],"SetQueueState":[1],
+           "Cancel":[1],"ManualRetry":[1],"RerunSucceeded":[1],"EditScopePolicy":[1],"EventsSince":[1],
+           "ActivateCapabilities":[1],"EditRatePolicy":[1],"ListUnsupportedBacklog":[1],"ReceiveOutbox":[1],
+           "RegisterSchedule":[1],"MaterializeOccurrences":[1],"SetScheduleState":[1],"UpdateSchedule":[1],"TriggerSchedule":[1],
+           "ResolveCatchUp":[1],"RecordScheduleEvaluationFailure":[1],"RevalidateSchedule":[1],
+           "SetPoolOverride":[1],"EstimateDemand":[1],"RecordScalingEvent":[1]},
          "expandCompatibleBinaries":[]}
         """;
 
     static string Ns(string prefix) => prefix + "_" + Guid.NewGuid().ToString("N")[..8];
+
+    /// <summary>Every phase of every migration, in apply order (0001_initial, 0002_controls, 0003_outbox, 0004_rates, 0005_readiness, 0006_scheduler, 0007_scaling).</summary>
+    static readonly string[] AllPhases = [.. PgMigrator.Migrations.SelectMany(m => new[] { "expand", "validate", "activate" }.Select(p => m.Id + ":" + p))];
 
     static async Task<(long Revision, int Epoch, string Mode, string Manifest, byte[] Digest)> ReadMetadataAsync(string cs)
     {
@@ -45,11 +53,11 @@ public sealed class MigrationTests
         {
             var cs = server.ConnectionStringFor(db, pooling: false);
             var first = await RunwickPostgresMigrations.MigrateAsync(cs, TestContext.Current.CancellationToken);
-            Assert.Equal(["expand", "validate", "activate"], first.AppliedPhases);
-            Assert.Equal(1, first.SchemaRevision);
+            Assert.Equal(AllPhases, first.AppliedPhases);
+            Assert.Equal(PgMigrator.CurrentRevision, first.SchemaRevision);
 
             var meta = await ReadMetadataAsync(cs);
-            Assert.Equal((1L, 1, "normal"), (meta.Revision, meta.Epoch, meta.Mode));
+            Assert.Equal((PgMigrator.CurrentRevision, 1, "normal"), (meta.Revision, meta.Epoch, meta.Mode));
             Assert.True(JsonNode.DeepEquals(JsonNode.Parse(SpecManifest), JsonNode.Parse(meta.Manifest)));
             Assert.Equal(PgMigrator.Manifest().Digest, meta.Digest);
 
@@ -64,10 +72,28 @@ public sealed class MigrationTests
     }
 
     [Theory]
-    [InlineData("expand")]
-    [InlineData("validate")]
-    [InlineData("activate")]
-    public async Task Session_killed_after_a_phase_resumes_from_catalog_state(string killAfter)
+    [InlineData("0001_initial:expand", 0L)]
+    [InlineData("0001_initial:validate", 1L)]
+    [InlineData("0001_initial:activate", 1L)]
+    [InlineData("0002_controls:expand", 1L)]
+    [InlineData("0002_controls:validate", 2L)]
+    [InlineData("0002_controls:activate", 2L)]
+    [InlineData("0003_outbox:expand", 2L)]
+    [InlineData("0003_outbox:validate", 3L)]
+    [InlineData("0003_outbox:activate", 3L)]
+    [InlineData("0004_rates:expand", 3L)]
+    [InlineData("0004_rates:validate", 4L)]
+    [InlineData("0004_rates:activate", 4L)]
+    [InlineData("0005_readiness:expand", 4L)]
+    [InlineData("0005_readiness:validate", 5L)]
+    [InlineData("0005_readiness:activate", 5L)]
+    [InlineData("0006_scheduler:expand", 5L)]
+    [InlineData("0006_scheduler:validate", 6L)]
+    [InlineData("0006_scheduler:activate", 6L)]
+    [InlineData("0007_scaling:expand", 6L)]
+    [InlineData("0007_scaling:validate", 7L)]
+    [InlineData("0007_scaling:activate", 7L)]
+    public async Task Session_killed_after_a_phase_resumes_from_catalog_state(string killAfter, long revisionAfterKill)
     {
         var server = await StoreServer.SharedAsync();
         var ns = Ns("init_kill");
@@ -86,7 +112,7 @@ public sealed class MigrationTests
             await Assert.ThrowsAnyAsync<Exception>(() => migrator.RunAsync(TestContext.Current.CancellationToken));
 
             var meta = await ReadMetadataAsync(admin);
-            if (killAfter == "expand")
+            if (revisionAfterKill == 0)
             {
                 // Never marks readiness falsely: still maintenance at revision 0, and a client rejects the store.
                 Assert.Equal((0L, "maintenance"), (meta.Revision, meta.Mode));
@@ -95,14 +121,14 @@ public sealed class MigrationTests
             }
             else
             {
-                Assert.Equal((1L, "normal"), (meta.Revision, meta.Mode));
+                Assert.Equal((revisionAfterKill, "normal"), (meta.Revision, meta.Mode));
             }
 
             var resumed = await RunwickPostgresMigrations.MigrateAsync(cs, TestContext.Current.CancellationToken);
-            var expectedRemaining = new[] { "expand", "validate", "activate" }.SkipWhile(p => p != killAfter).Skip(1);
+            var expectedRemaining = AllPhases.SkipWhile(p => p != killAfter).Skip(1);
             Assert.Equal(expectedRemaining, resumed.AppliedPhases);
             meta = await ReadMetadataAsync(admin);
-            Assert.Equal((1L, 1, "normal"), (meta.Revision, meta.Epoch, meta.Mode));
+            Assert.Equal((PgMigrator.CurrentRevision, 1, "normal"), (meta.Revision, meta.Epoch, meta.Mode));
         }
         finally
         {
@@ -121,7 +147,7 @@ public sealed class MigrationTests
             var results = await Task.WhenAll(
                 RunwickPostgresMigrations.MigrateAsync(cs, TestContext.Current.CancellationToken),
                 RunwickPostgresMigrations.MigrateAsync(cs, TestContext.Current.CancellationToken));
-            Assert.Equal(3, results.Sum(r => r.AppliedPhases.Count));
+            Assert.Equal(AllPhases.Length, results.Sum(r => r.AppliedPhases.Count));
             Assert.Contains(results, r => r.AppliedPhases.Count == 0);
             Assert.Equal(results[0].StoreId, results[1].StoreId);
 
@@ -130,7 +156,7 @@ public sealed class MigrationTests
             {
                 await conn.OpenAsync();
                 using var cmd = new NpgsqlCommand("SELECT count(*) FROM runwick.schema_migrations WHERE state = 'applied'", conn);
-                Assert.Equal(4L, (long)(await cmd.ExecuteScalarAsync())!);
+                Assert.Equal(4L * PgMigrator.Migrations.Count, (long)(await cmd.ExecuteScalarAsync())!);
             }
         }
         finally
@@ -148,7 +174,7 @@ public sealed class MigrationTests
         {
             var cs = server.ConnectionStringFor(db, pooling: false);
             await RunwickPostgresMigrations.MigrateAsync(cs, TestContext.Current.CancellationToken);
-            await StoreServer.ExecAsync(cs, "UPDATE runwick.schema_migrations SET checksum = sha256('tampered') WHERE phase = 'expand'");
+            await StoreServer.ExecAsync(cs, "UPDATE runwick.schema_migrations SET checksum = sha256('tampered') WHERE phase = 'expand' AND migration_id = '0002_controls'");
             var ex = await Assert.ThrowsAsync<PostgresMigrationException>(() => RunwickPostgresMigrations.MigrateAsync(cs, TestContext.Current.CancellationToken));
             Assert.Equal("migration_checksum_mismatch", ex.Code);
         }

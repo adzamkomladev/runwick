@@ -43,6 +43,17 @@ internal sealed class ReadinessCoordinator(WorkerEngine engine, IReadOnlyList<La
         }
     }
 
+    /// <summary>Queues the current snapshot reports saturated (probe/2 evidence; empty without one).</summary>
+    public HashSet<string> SaturatedQueues()
+    {
+        lock (_lock)
+        {
+            return _current is { } c
+                ? new HashSet<string>(c.Snapshot.Queues.Where(q => q.Saturated && !q.Paused).Select(q => q.Queue), StringComparer.Ordinal)
+                : new HashSet<string>(StringComparer.Ordinal);
+        }
+    }
+
     /// <summary>Drops the cached snapshot (reconnect, control change); the next request probes again.</summary>
     public void Invalidate()
     {
@@ -57,6 +68,25 @@ internal sealed class ReadinessCoordinator(WorkerEngine engine, IReadOnlyList<La
         try
         {
             await Task.Yield();
+
+            // ≥ 50 ms between probe starts per group, whatever asked for it (09 §4.1, 06 §1.5): wakes and invalidations
+            // coalesce into the next spaced probe and never form a probe loop.
+            TimeSpan wait;
+            lock (_lock)
+            {
+                wait = _lastProbe == TimeSpan.MinValue ? TimeSpan.Zero : _lastProbe + WorkerSettings.ProbeSpacing - engine.Clock.Now;
+            }
+
+            if (wait > TimeSpan.Zero)
+            {
+                await engine.Clock.Delay(wait, ct).ConfigureAwait(false);
+            }
+
+            lock (_lock)
+            {
+                _lastProbe = engine.Clock.Now;
+            }
+
             Interlocked.Increment(ref Probes);
             var snapshot = await engine.CallAsync(engine.BackgroundIo, 0, engine.Options.ControlRequestTimeout,
                 t => engine.Store.ProbeAsync(engine.Application, lanes, engine.Contracts, t), ct).ConfigureAwait(false);
@@ -64,7 +94,6 @@ internal sealed class ReadinessCoordinator(WorkerEngine engine, IReadOnlyList<La
             lock (_lock)
             {
                 _current = view;
-                _lastProbe = view.ReceivedAt;
             }
 
             Healthy = true;
@@ -90,6 +119,10 @@ internal sealed class PresenceLoop(WorkerEngine engine)
 {
     long _sequence;
 
+    public long Publications;
+
+    public long Failures;
+
     public string Status { get; private set; } = "starting";
 
     public bool Failing { get; private set; }
@@ -100,17 +133,19 @@ internal sealed class PresenceLoop(WorkerEngine engine)
         var record = new PresenceRecord(engine.WorkerInstanceId, Interlocked.Increment(ref _sequence), 1, status, Environment.ProcessId,
             Environment.MachineName, typeof(PresenceLoop).Assembly.GetName().Version?.ToString() ?? "0",
             [.. engine.Settings.Pools.SelectMany(p => p.Queues.Select(q => q.Queue)).Distinct()],
-            engine.Settings.Pools.ToDictionary(p => p.Name, p => p.Target), engine.Contracts, WorkerSettings.PresenceExpiry);
+            engine.Pools.ToDictionary(p => p.Settings.Name, p => p.Gate.Target), engine.Contracts, WorkerSettings.PresenceExpiry);
         try
         {
             await engine.CallAsync(engine.BackgroundIo, 0, engine.Options.ControlRequestTimeout,
                 t => engine.Store.PublishPresenceAsync(engine.Application, record, t), ct).ConfigureAwait(false);
             Failing = false;
+            Interlocked.Increment(ref Publications);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            // Presence failures degrade observability only.
+            // Presence failures degrade observability only (readiness Degraded, 05 §17); never lease authority.
             Failing = true;
+            Interlocked.Increment(ref Failures);
             engine.Logger.LogDebug(ex, "Runwick presence publication failed.");
         }
     }

@@ -107,11 +107,14 @@ internal sealed record PgOp(
     public bool HasReceipt => Fingerprint is not null;
 
     public bool IsCreation => Operation is Operations.Dispatch or Operations.DispatchMany or Operations.Reserve
-        or Operations.Begin or Operations.RegisterQueue or Operations.RegisterScope;
+        or Operations.Begin or Operations.RegisterQueue or Operations.RegisterScope or OutboxOperations.ReceiveOutbox
+        || ScheduleOperations.IsCreation(Operation);
 
     public bool AllowedWhileDraining => Operation is Operations.Renew or Operations.Finish or Operations.Recover
         or Operations.ReleaseReservation or "PublishPresence" or "ReadinessProbe" or "ListExpiredLeases" or "ResolveCommand"
-        or Operations.RegisterApplication;
+        or Operations.RegisterApplication or Operations.EventsSince || Operations.IsAdministrative(Operation)
+        || Operation is ScheduleOperations.SetScheduleState or ScheduleOperations.UpdateSchedule or ScheduleOperations.ResolveCatchUp
+            or ScheduleOperations.RecordScheduleEvaluationFailure or ScheduleOperations.RevalidateSchedule;
 }
 
 /// <summary>Body result: commit (with the receipt result for receipt-bearing operations) or roll back.</summary>

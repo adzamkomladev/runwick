@@ -129,3 +129,7 @@ public sealed class TransactionValidationException(string code, string message)
 
 public sealed class JobOwnershipLostException(string message)
     : RunwickException(RunwickErrorCodes.OwnershipLost, ErrorDisposition.KnownNotApplied, message);
+
+/// <summary>Transactional completion misuse (01 §16): <c>no_active_attempt</c> or <c>completion_already_staged</c>.</summary>
+public sealed class JobCompletionException(string code, string message)
+    : RunwickException(code, ErrorDisposition.KnownNotApplied, message);

@@ -32,6 +32,13 @@ internal static class SnapshotReader
         ("concurrency_permits", "application, scope_id, attempt_id"),
         ("dispatch_keys", "application, job_name, key_kind, key"),
         ("storage_commands", "application, retention_class, command_id"),
+        ("outbox_deliveries", "application, source_store_id, message_id"),
+        ("schedules", "application, schedule_id"),
+        ("schedule_definitions", "application, schedule_id, revision"),
+        ("schedule_occurrences", "application, schedule_id, occurrence_key"),
+        ("schedule_audit_ranges", "application, audit_id"),
+        ("pool_controls", "application, instance_id, pool_name"),
+        ("scaling_events", "application, event_id"),
         ("queue_events", "event_id"),
     ];
 

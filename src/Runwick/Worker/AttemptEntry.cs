@@ -59,6 +59,9 @@ internal sealed class AttemptEntry : IDisposable
 
     public PoolCoordinator Pool { get; }
 
+    /// <summary>When the Reserve that created this entry was sent: the start of the full ticket-holding duration.</summary>
+    public TimeSpan AdmittedAt { get; init; }
+
     public CapacityTicket Ticket { get; }
 
     public ReservedJob Reserved { get; }
@@ -115,6 +118,12 @@ internal sealed class AttemptEntry : IDisposable
 
     /// <summary>True between Finish submission and its resolution: no Renew may be issued (05 §6 rule 5).</summary>
     public bool SettlementInFlight { get; set; }
+
+    /// <summary>A transactional completion was admitted for staging (08 §8.1); at most one per attempt.</summary>
+    public bool StagingStarted { get; set; }
+
+    /// <summary>The Finish staged on the caller's transaction, once applied there.</summary>
+    public StagedFinish? Staged { get; set; }
 
     public FinishRequest? FrozenFinish { get; set; }
 
@@ -245,6 +254,7 @@ internal sealed class AttemptEntry : IDisposable
         }
 
         Ticket.Release();
+        Pool.OnAttemptRetired(Reserved.Queue);
         _retired.TrySetResult();
         return true;
     }

@@ -2,6 +2,23 @@
 
 **Sources:** docs/architecture-baseline.md, docs/architecture-plan.md, docs/architecture-acceptance.md, docs/runwick-explained.md, docs/review-2026-10-30.md, docs/v1-delivery-plan.md, docs/architecture/platform-and-packages.md, docs/architecture/provider-dependency-plan.md.
 
+## Changes (2026-10-31, SP-016)
+
+- Schedules (registration, materialization, misfire and catch-up, pause/resume, edits, manual triggers) are specified in [13-scheduler.md](13-scheduler.md), built from schema revision 6. §10 index gains 13.
+
+## Changes (2026-10-31, SP-014)
+
+- The local autoscaler (`AutoConcurrency(min, max)`, shared demand estimate, `SetPoolOverride/1`, scaling history) is specified in [11-autoscaler.md](11-autoscaler.md), built from schema revision 7. §10 index gains 11.
+
+## Changes (2026-10-31, SP-013)
+
+- Rate admission (exact rolling window, rate-aware Begin/1, T20 deferral, `ActivateCapabilities/1`, `EditRatePolicy/1`, edit freeze) is specified in [10-rate-admission.md](10-rate-admission.md), built from schema revision 4. §10 index gains 10.
+
+## Changes (2026-10-31, SP-011)
+
+- M3 begins. Revisioned controls, management audit, the event cursor and transactional completion (R6) are specified in [08-controls-and-completion.md](08-controls-and-completion.md), and the evaluator in 12 (SP-015). §10 index gains 08, 12 and 15 (G-2 test plan).
+- "Not in M2" items that SP-011 delivers (Cancel/ManualRetry/RerunSucceeded, the public SetQueueState, scope capacity edits, audit, R6) are built from schema revision 2 on.
+
 ## Changes (2026-10-30)
 
 | # | Change | Kind |
@@ -64,11 +81,11 @@ G-1 passes when the SP-010 report shows that rollback, death before/after Begin,
 |---|---|---|
 | Cancel, ManualRetry, RerunSucceeded, queue pause/resume, scope policy edits, management audit | M3 / SP-011 | No public control API; schema columns/enums that need room are defined in 03/04 |
 | Transactional completion `CompleteInTransactionAsync` (R6) | M3 / SP-011 | Types specified in 01 §13; not registered in M2 |
-| Multi-lane readiness query, aging, cooldowns, presence/"no capable worker" diagnostic | M3 / SP-012 | Weighted lane selection only |
+| Probe saturation evidence, presence subscriptions, "no capable worker" diagnostic | M3 / SP-012 ([09](09-readiness-and-presence.md)) | Probe/1, aging and cooldowns from Reserve replies only (05 §7–§8; corrected 2026-10-31, 09 C-1) |
 | Rolling-window rate limits, rate-aware Begin/1 | M3 / SP-013 | A worker refuses to start against an application with rate policies enabled |
-| Automatic concurrency (autoscaler) | M3 / SP-014 | `AutoConcurrency` fails startup with `feature_not_available` |
-| Scheduler (cron, materialization, misfire) | M3 / SP-015–016 | `IJobContext.Schedule` is always null |
-| Transactional outbox | M3 / SP-017 | — |
+| Automatic concurrency (autoscaler) | M3 / SP-014 (delivered, 11) | — |
+| Scheduler (cron, materialization, misfire) | M3 / SP-015–016 (delivered, 12, 13) | `IJobContext.Schedule` is still always null (13, not done) |
+| Transactional outbox | M3 / SP-017 ([14](14-outbox.md)) | — |
 | SQLite, Redis providers | M4 / SP-019, SP-025 (spike SP-018) | — |
 | Management API, CLI, retention cleanup, telemetry package, dashboard | M4 / SP-020–024, SP-032 | — |
 | Hosted store (`Runwick.Cloud`) | v1.x / SP-031–034 | — |
@@ -202,5 +219,13 @@ These are invariants for code, API results, logs, telemetry and documentation. A
 | [05-worker-engine.md](05-worker-engine.md) | Hosted service, tickets, lane selection, attempt runner, middleware pipeline, lease safety, completion, recovery, shutdown, pressure gates | worker-engine-internals, execution-defaults-and-timing, capacity-defaults-and-budgets |
 | [06-defaults.md](06-defaults.md) | Every numeric default and validation bound with its inequality checks | execution-defaults-and-timing, capacity-defaults-and-budgets, management-retention-defaults, identity-and-serialization |
 | [07-test-plan-g1.md](07-test-plan-g1.md) | G-1 test cases (cited as `document:case`), harness, fault points, first measurements | driver-contract-suite, acceptance, SER/TIME/DEP/PGX cases, performance plan |
+| [08-controls-and-completion.md](08-controls-and-completion.md) | M3 SP-011: Cancel/ManualRetry/RerunSucceeded, public SetQueueState, EditScopePolicy, trusted actor, `management_audit`, event schema and cursor, R6 engine path, five deployments, preview control services | storage-command-protocol §6, management-and-dashboard, management-retention-defaults, review R6/R7 |
+| [09-readiness-and-presence.md](09-readiness-and-presence.md) | M3 SP-012: ReadinessProbe/2 (queue saturation, revisions, unsupported heads), evidence-scoped exclusion and early recheck, probe spacing, presence subscriptions, unsupported-backlog diagnostic, polling repair | worker-engine-internals §4–§5, capacity-defaults §2, postgres-schema-and-operations §3, §6 |
+| [10-rate-admission.md](10-rate-admission.md) | M3 SP-013: rolling-window rate scopes, records, rate step in Begin/1, T20 deferral, worker retirement, capability activation, policy edits and freeze | capacity-control §3–§4, §6; capacity-defaults §3, §7 |
+| [11-autoscaler.md](11-autoscaler.md) | M3 SP-014: `AutoConcurrency` controller (occupancy + shared due backlog, band, boundary waiver, evidence, cooldown, step, bootstrap), `EstimateDemand`, `SetPoolOverride/1`, `scaling_events` | capacity-control §5, capacity-defaults §4–§5, §7 |
+| [12-schedule-evaluator.md](12-schedule-evaluator.md) | M3 SP-015: cron grammar, normalization and fingerprint, Cronos adapter, NodaTime mapping, TZDB artifact, bounded planner and preview | scheduler-evaluator, scheduling-internals §6 |
+| [13-scheduler.md](13-scheduler.md) | M3 SP-016: schedule records, materialization, misfire plans, catch-up episodes, pause/resume, edits, manual triggers, overlap, lock order, lifetimes | scheduling-internals, scheduler-evaluator |
+| [14-outbox.md](14-outbox.md) | M3 SP-017: `IPostgresOutbox`/`ISqliteOutbox` Stage, source schema v1, relay state machine and budgets, `ReceiveOutbox/1`, `outbox_deliveries`, hash domains, horizon rules, OUTBOX/OUT/TX/CMD/ISO cases, P-09 | transactional-outbox, storage-command-protocol (outbox destination), driver-contract-suite |
+| [15-test-plan-g2.md](15-test-plan-g2.md) | G-2 case inventory for SP-011 … SP-017, inferred IDs (TXC, CTL, EVT, MODE, RDY, SCL), harness additions, measurements, pass rule | 07, driver-contract-suite, acceptance G-2, performance plan |
 
 Test-case citations use `document:case` wherever an ID is ambiguous; `OBS-01` in particular exists in both the driver contract suite and the telemetry plan and is always cited with its document.

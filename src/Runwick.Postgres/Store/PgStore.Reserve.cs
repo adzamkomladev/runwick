@@ -274,6 +274,7 @@ internal sealed partial class PgStore
     {
         var lease = command.Body.Lease;
         BeginClosed? closed = null;
+        RateDeferral? deferred = null;
         var fingerprint = CommandEnvelopes.Fingerprint(StoreId, command.Application, Operations.Begin, command.CommandId, command.NotAfter,
             CommandEnvelopes.Begin(command.Body));
         var reply = await runner.ExecuteAsync(
@@ -281,6 +282,7 @@ internal sealed partial class PgStore
             async tx =>
             {
                 closed = null;
+                deferred = null;
                 var job = await LockJobAsync(tx, lease.JobId).ConfigureAwait(false);
                 GenerationRow? gen = job is null ? null : await ReadGenerationAsync(tx, lease.JobId, job.Generation).ConfigureAwait(false);
                 var plan = job is null ? "none"
@@ -292,10 +294,15 @@ internal sealed partial class PgStore
                     await LockActiveKeyAsync(tx, job!).ConfigureAwait(false);
                 }
 
-                if (job is not null && plan != "authorize")
+                // Rate step (10 §4): concurrency scopes, then rate scopes, both in UUID order. Cancellation and an
+                // exhausted budget are decided before any charge, so their plans never lock rate scopes.
+                var rated = job is not null && plan == "authorize" && (await RateRequirementsAsync(tx, lease.JobId).ConfigureAwait(false)).Count > 0;
+                if (job is not null && (plan != "authorize" || rated))
                 {
                     await LockScopesAsync(tx, lease.JobId).ConfigureAwait(false);
                 }
+
+                List<RateScopeRow> rateScopes = rated ? await LockRateScopesAsync(tx, lease.JobId).ConfigureAwait(false) : [];
 
                 if (!await tx.DecideAsync().ConfigureAwait(false))
                 {
@@ -321,6 +328,19 @@ internal sealed partial class PgStore
                     return new PgOutcome<BegunExecution>.Commit(
                         new StoreReply<BegunExecution>(status, StoreEffect.Applied, false, null, new StoreError(code), tx.Now),
                         ReceiptCodec.BeginClosed(closed, code));
+                }
+
+                if (rateScopes.Count > 0)
+                {
+                    deferred = await ChargeRatesAsync(tx, job!, gen!, lease, rateScopes).ConfigureAwait(false);
+                    if (deferred is not null)
+                    {
+                        return new PgOutcome<BegunExecution>.Commit(
+                            new StoreReply<BegunExecution>(StoreStatus.RateLimited, StoreEffect.Applied, false, null,
+                                new StoreError("rate_limited", Detail: PgTime.Ms(deferred.EligibleAt).ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                                tx.Now),
+                            ReceiptCodec.BeginDeferred(deferred));
+                    }
                 }
 
                 int executionNumber;
@@ -380,6 +400,16 @@ internal sealed partial class PgStore
             (tx, row) =>
             {
                 var o = row.Result!;
+                if (o.ContainsKey("deferredUntil"))
+                {
+                    closed = null;
+                    deferred = ReceiptCodec.ReadBeginDeferred(o);
+                    return Task.FromResult(new StoreReply<BegunExecution>(StoreStatus.RateLimited, StoreEffect.Applied, true, null,
+                        new StoreError("rate_limited", Detail: PgTime.Ms(deferred.EligibleAt).ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                        row.DecidedAt!.Value));
+                }
+
+                deferred = null;
                 if (o.ContainsKey("attemptOutcome"))
                 {
                     var (c, code) = ReceiptCodec.ReadBeginClosed(o);
@@ -392,7 +422,10 @@ internal sealed partial class PgStore
                 return Task.FromResult(StoreReply<BegunExecution>.Applied(ReceiptCodec.ReadBegin(o), row.DecidedAt!.Value, replayed: true));
             },
             ct).ConfigureAwait(false);
-        return new BeginReply(reply, reply.Effect == StoreEffect.Applied ? closed : null);
+        return new BeginReply(reply, reply.Effect == StoreEffect.Applied ? closed : null)
+        {
+            Deferred = reply.Status == StoreStatus.RateLimited && reply.Effect == StoreEffect.Applied ? deferred : null,
+        };
     }
 
     // ------------------------------------------------------------------ Renew/1 (04 §7.6)

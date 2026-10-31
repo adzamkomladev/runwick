@@ -191,7 +191,18 @@ internal sealed partial class PgStore
 
     // ------------------------------------------------------------------ Finish/1 (04 §7.7)
 
-    public Task<StoreReply<FinishedAttempt>> FinishAsync(StoreCommand<FinishRequest> command, CancellationToken ct)
+    public Task<StoreReply<FinishedAttempt>> FinishAsync(StoreCommand<FinishRequest> command, CancellationToken ct) =>
+        FinishCoreAsync(command, null, ct);
+
+    /// <summary>R6 (08 §8.1): Finish/1 inside a savepoint on the caller's transaction; the caller commits.</summary>
+    public Task<StoreReply<FinishedAttempt>> StageFinishAsync(Npgsql.NpgsqlTransaction transaction, StoreCommand<FinishRequest> command, CancellationToken ct) =>
+        FinishCoreAsync(command, transaction, ct);
+
+    Task<StoreReply<T>> Run<T>(Npgsql.NpgsqlTransaction? transaction, PgOp op, Func<PgTx, Task<PgOutcome<T>>> body,
+        Func<PgTx, ReceiptRow, Task<StoreReply<T>>>? replay, CancellationToken ct) where T : class =>
+        transaction is null ? runner.ExecuteAsync(op, body, replay, ct) : runner.StageAsync(transaction, op, body, replay, ct);
+
+    Task<StoreReply<FinishedAttempt>> FinishCoreAsync(StoreCommand<FinishRequest> command, Npgsql.NpgsqlTransaction? transaction, CancellationToken ct)
     {
         var request = command.Body;
         var lease = request.Lease;
@@ -202,7 +213,7 @@ internal sealed partial class PgStore
 
         var fingerprint = CommandEnvelopes.Fingerprint(StoreId, command.Application, Operations.Finish, command.CommandId, command.NotAfter,
             CommandEnvelopes.Finish(request));
-        return runner.ExecuteAsync(
+        return Run(transaction,
             Op(command.Application, command.CommandId, Operations.Finish, command.NotAfter, fingerprint, PgLane.Settlement),
             async tx =>
             {

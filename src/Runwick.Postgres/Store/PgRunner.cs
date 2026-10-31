@@ -287,7 +287,7 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
                 return tx.Reject<T>(StoreStatus.AdmissionClosed, "store_maintenance");
             }
 
-            if (s.Revision != 1 || s.Epoch != 1)
+            if (s.Revision != Migrations.PgMigrator.CurrentRevision || s.Epoch != 1)
             {
                 return tx.Reject<T>(StoreStatus.UnsupportedVersion, "schema_incompatible");
             }

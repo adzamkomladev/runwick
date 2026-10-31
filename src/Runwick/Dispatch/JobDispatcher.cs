@@ -98,7 +98,7 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
 
     async Task<DispatchReceipt> SendAsync(PreparedDispatch prepared, CancellationToken ct)
     {
-        var item = new DispatchItem(prepared.Intent, prepared.Scopes, prepared.Digests);
+        var item = new DispatchItem(prepared.Intent, prepared.Scopes, prepared.Digests) { Rates = preparer.RatesFor(prepared.Intent) };
         var command = new StoreCommand<DispatchRequest>(prepared.Application, prepared.OperationId.Value, prepared.NotAfter,
             new DispatchRequest(item, prepared.StoreId, prepared.Digests.Command));
         StoreReply<DispatchResult> reply;
@@ -121,7 +121,10 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
 
     async Task<BatchDispatchReceipt> SendAsync(PreparedBatch prepared, CancellationToken ct)
     {
-        var items = prepared.Items.Select((intent, i) => new DispatchItem(intent, prepared.Scopes[i], prepared.ItemDigests[i])).ToList();
+        var items = prepared.Items.Select((intent, i) => new DispatchItem(intent, prepared.Scopes[i], prepared.ItemDigests[i])
+        {
+            Rates = preparer.RatesFor(intent),
+        }).ToList();
         var command = new StoreCommand<DispatchBatchRequest>(prepared.Application, prepared.OperationId.Value, prepared.NotAfter,
             new DispatchBatchRequest(items, prepared.ContinueOnConflict, prepared.StoreId, prepared.CommandDigest));
         StoreReply<DispatchBatchResult> reply;

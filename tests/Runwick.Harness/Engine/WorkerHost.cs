@@ -38,9 +38,14 @@ public sealed class HandlerScript
     }
 }
 
-internal sealed class ScriptedWorkHandler(HandlerScript script, IJobContext context) : IJobHandler<WorkJob>
+internal sealed class ScriptedWorkHandler(HandlerScript script, IJobContext context, IServiceProvider services) : IJobHandler<WorkJob>
 {
-    public Task HandleAsync(WorkJob job, CancellationToken cancellationToken) => script.RunAsync(job, context, cancellationToken);
+    public Task HandleAsync(WorkJob job, CancellationToken cancellationToken)
+    {
+        // Behaviours that need attempt-scoped services (e.g. IPostgresJobCompletion) read the scope from Items.
+        context.Items[typeof(IServiceProvider)] = services;
+        return script.RunAsync(job, context, cancellationToken);
+    }
 }
 
 /// <summary>A second job type for mixed-type lanes; recorded in the same script under <c>ping:&lt;id&gt;</c>.</summary>
@@ -83,7 +88,7 @@ internal sealed class WorkerHost : IAsyncDisposable
     /// </summary>
     public static WorkerHost Create(string connectionString, string application, IFaultInjector faults, int concurrency = 4,
         Action<JobBuilder<WorkJob>>? jobs = null, Action<WorkerOptions>? options = null, Action<RunwickBuilder>? configure = null,
-        Action<IServiceCollection>? services = null, int? divisor = null)
+        Action<IServiceCollection>? services = null, int? divisor = null, string queue = "default", Action<PoolBuilder>? pool = null)
     {
         var sc = new ServiceCollection();
         sc.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
@@ -93,12 +98,19 @@ internal sealed class WorkerHost : IAsyncDisposable
         sc.AddRunwick(r =>
         {
             r.Application(application).UsePostgres(connectionString);
-            TestJobs.Register(r);
-            var work = r.AddJob<WorkJob>().Named("test.work").ToQueue("default").WithMaxExecutions(3)
-                .WithRetryDelay(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(1));
-            jobs?.Invoke(work);
+            RegisterWork(r, queue, jobs);
             r.AddHandler<WorkJob, ScriptedWorkHandler>();
-            r.AddWorker(w => w.Pool("main", p => p.Queues("default").FixedConcurrency(concurrency)).Configure(o =>
+            r.AddWorker(w => w.Pool("main", p =>
+            {
+                // concurrency 0 leaves the pool's concurrency to the pool callback (an AutoConcurrency pool, 11 §2).
+                p.Queues(queue);
+                if (concurrency > 0)
+                {
+                    p.FixedConcurrency(concurrency);
+                }
+
+                pool?.Invoke(p);
+            }).Configure(o =>
             {
                 TestTiming.Scaled(o, divisor ?? TestTiming.RealStoreDivisor);
 
@@ -109,6 +121,18 @@ internal sealed class WorkerHost : IAsyncDisposable
         var host = new WorkerHost(sc.BuildServiceProvider());
         host.Engine.Hooks.Event = (name, entry) => host.Events.Enqueue((name, entry?.AttemptId, host.Engine.Clock.Now));
         return host;
+    }
+
+    /// <summary>
+    /// The contracts a <see cref="Create"/> host registers, without handler or worker: what a producer-only or
+    /// control-only process (08 §9) registers to dispatch <see cref="WorkJob"/> onto <paramref name="queue"/>.
+    /// </summary>
+    public static void RegisterWork(RunwickBuilder r, string queue = "default", Action<JobBuilder<WorkJob>>? jobs = null)
+    {
+        TestJobs.Register(r);
+        var work = r.AddJob<WorkJob>().Named("test.work").ToQueue(queue).WithMaxExecutions(3)
+            .WithRetryDelay(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(1));
+        jobs?.Invoke(work);
     }
 
     public async Task StartAsync()

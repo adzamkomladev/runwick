@@ -2,6 +2,27 @@
 
 **Sources:** docs/architecture/public-api-contract.md §2–§10 (primary), docs/architecture/identity-and-serialization.md, docs/uniqueness-and-execution.md, docs/review-2026-10-30.md, docs/runwick-explained.md (examples; superseded where it conflicts), docs/architecture/dispatch-wire-contract.md, docs/architecture/execution-defaults-and-timing.md, docs/architecture/worker-engine-internals.md, docs/architecture/capacity-defaults-and-budgets.md, docs/architecture/management-retention-defaults.md, docs/architecture/platform-and-packages.md.
 
+## Changes (2026-10-31, SP-016)
+
+- §18: `AddScheduler()`, `AddSchedule<TJob>(...)` and `IScheduleControl` (preview) leave the reserved list; they are specified in 13 §2. New codes in §14: the schedule codes of 13 (`scheduler_not_active`, `duplicate_schedule`, `episode_unresolved`, `plan_too_large`, …).
+
+## Changes (2026-10-31, SP-014)
+
+- §18: `PoolBuilder.AutoConcurrency(min, max)` is built (11 §2) and leaves the reserved list.
+
+## Changes (2026-10-31, SP-013)
+
+- §8: `JobBuilder.RollingWindow(maxExecutions, window)` and `RollingWindowPerResource(selector, maxExecutions, window)` are built (10 §2). The queue rate builder stays reserved.
+- §8: the M2 startup refusal `rate_policies_unsupported` applies only to a binary that does not know `rate_admission`. SP-013 builds know it. The application must still activate it (10 §6.1) before rate-scoped dispatch.
+- §14 new codes: `invalid_rate_policy`, `too_many_rate_scopes` (registration), `rate_admission_not_active` (Dispatch, `StoreIncompatibleException`).
+- §18: `RollingWindow` leaves the reserved list.
+
+## Changes (2026-10-31, SP-011)
+
+- §16 (R6) is no longer "not in M2": it is built in M3 on PostgreSQL, with the engine path normative in 08 §8. Misuse codes `no_active_attempt` / `completion_already_staged` surface as `JobCompletionException`. The SQLite twin is SP-019.
+- §18: `IJobControl`, `IQueueControl`, `ICapacityControl` and `ManagementActor` exist as preview services (08 §10). `IJobQueries`, `IScheduleControl` and `IManagementSession` stay reserved.
+- §14 new codes: `cancel_already_requested`, `no_change`, `scope_not_registered` (control results, 08 §10).
+
 ## Changes (2026-10-30)
 
 Contradictions resolved:
@@ -1330,7 +1351,7 @@ The pipeline clock starts at local invocation admission (including thread-pool d
 
 ## 18. Reserved surfaces (not in M2)
 
-These names are reserved so later milestones can add them without breaking the M2 surface: `RunwickBuilder.AddScheduler()`, `RunwickBuilder.AddSchedule(...)`, rate options (`RollingWindow(maxExecutions, window)`), `PoolBuilder.AutoConcurrency` behavior (present, rejected in M2), management services `IJobQueries`, `IJobControl`, `IQueueControl`, `IScheduleControl`, `ICapacityControl`, `IManagementSession`, SQLite `UseSqlite`/staging/completion twins, `UseRedis`, outbox `StagedOutboxMessage`/`ReceiveOutbox`. Their contracts are not specified here.
+These names are reserved so later milestones can add them without breaking the M2 surface: management services `IJobQueries`, `IJobControl`, `IQueueControl`, `ICapacityControl`, `IManagementSession`, SQLite `UseSqlite`/staging/completion twins, `UseRedis`, outbox `StagedOutboxMessage`/`ReceiveOutbox`. Their contracts are not specified here. Built in M3 and specified elsewhere: `RollingWindow` (10), `AutoConcurrency` (11), `AddScheduler`/`AddSchedule`/`IScheduleControl` (13).
 
 ## 19. Complete example
 

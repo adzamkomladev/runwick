@@ -76,7 +76,8 @@ internal sealed partial class PgStore
     sealed record DispatchOutcome(IReadOnlyList<DispatchBatchItemResult> Items, (StoreStatus Status, StoreError Error)? Rejection);
 
     /// <summary>Shared Dispatch/1 and DispatchMany/1 body (04 §7.2 steps 2–10).</summary>
-    async Task<DispatchOutcome> DispatchCoreAsync(PgTx tx, IReadOnlyList<DispatchItem> items, bool continueOnConflict)
+    async Task<DispatchOutcome> DispatchCoreAsync(PgTx tx, IReadOnlyList<DispatchItem> items, bool continueOnConflict,
+        string createdReason = "initial")
     {
         static DispatchOutcome Reject(StoreStatus status, string code, Guid? conflicting = null, string? detail = null) =>
             new([], (status, new StoreError(code, ConflictingJobId: conflicting, Detail: detail)));
@@ -86,11 +87,20 @@ internal sealed partial class PgStore
         {
             var p = item.Intent.Policy;
             if (p.MaxExecutions is < 1 or > 100 || p.MaxConsecutiveUnstartedAbandonments is < 1 or > 100
-                || p.ExecutionTimeoutMs is < 1 or > 2_592_000_000 || item.Scopes.Count > 8 || item.Intent.RateScopes.Count > 0
+                || p.ExecutionTimeoutMs is < 1 or > 2_592_000_000 || item.Scopes.Count > 8 || item.Intent.RateScopes.Count > 8
+                || item.Rates.Count != item.Intent.RateScopes.Count
+                || item.Rates.Any(r => r.Limit is < 1 or > 100_000 || r.WindowMs is < 1_000 or > 86_400_000)
                 || !ValidRetry(p.Retry) || !ValidRetry(p.UnstartedRetry))
             {
                 return Reject(StoreStatus.InvalidRequest, "invalid_request", detail: "policy or scope bounds");
             }
+        }
+
+        // Rate scopes are refused until the application activated rate_admission, so no binary without the Begin rate
+        // step can ever own a rate-limited job (10 §6.1).
+        if (items.Any(i => i.Rates.Count > 0) && !await RateAdmissionActiveAsync(tx).ConfigureAwait(false))
+        {
+            return Reject(StoreStatus.UnsupportedVersion, "rate_admission_not_active");
         }
 
         // 2. Queue registration (plain read).
@@ -314,12 +324,12 @@ internal sealed partial class PgStore
                 INSERT INTO runwick.job_generations (
                     application, job_id, generation, created_at, created_reason,
                     max_executions, max_unstarted_abandonments, execution_timeout_ms, retry_policy, unstarted_retry_policy)
-                SELECT @application, g.job_id, 1, @now, 'initial', g.max_executions, g.max_unstarted, g.timeout_ms, g.retry, g.unstarted_retry
+                SELECT @application, g.job_id, 1, @now, @created_reason, g.max_executions, g.max_unstarted, g.timeout_ms, g.retry, g.unstarted_retry
                 FROM unnest(@job_ids::uuid[], @max_executions::integer[], @max_unstarted::integer[], @timeouts::bigint[],
                             @retry::jsonb[], @unstarted::jsonb[])
                      AS g(job_id, max_executions, max_unstarted, timeout_ms, retry, unstarted_retry)
                 ORDER BY g.job_id
-                """).P("now", now).Arr("job_ids", jobIds, NpgsqlDbType.Uuid)
+                """).P("now", now).P("created_reason", createdReason).Arr("job_ids", jobIds, NpgsqlDbType.Uuid)
                     .Arr("max_executions", intents.Select(i => i.Policy.MaxExecutions).ToArray(), NpgsqlDbType.Integer)
                     .Arr("max_unstarted", intents.Select(i => i.Policy.MaxConsecutiveUnstartedAbandonments).ToArray(), NpgsqlDbType.Integer)
                     .Arr("timeouts", intents.Select(i => i.Policy.ExecutionTimeoutMs).ToArray(), NpgsqlDbType.Bigint)
@@ -347,6 +357,8 @@ internal sealed partial class PgStore
                         .Arr("scope_ids", requirements.Select(r => r.Scope).ToArray(), NpgsqlDbType.Uuid);
                 await tx.ExecAsync(req).ConfigureAwait(false);
             }
+
+            await ProvisionRatesAsync(tx, [.. ordered.SelectMany(c => c.Item.Rates.Select(r => (c.Item.Intent.ProposedJobId, r)))]).ConfigureAwait(false);
         }
 
         // 9. Events.

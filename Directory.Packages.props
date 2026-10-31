@@ -6,10 +6,13 @@
   </PropertyGroup>
   <ItemGroup Label="Runtime">
     <PackageVersion Include="Npgsql" Version="10.0.3" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.14" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.14" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.14" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.14" />
     <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.14" />
+    <PackageVersion Include="Cronos" Version="0.13.0" />
+    <PackageVersion Include="NodaTime" Version="3.3.7" />
   </ItemGroup>
   <ItemGroup Label="Hosts, tests and tools">
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.14" />
@@ -23,5 +26,5 @@
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.16.0" />
   </ItemGroup>
   <!-- Later milestones (recorded, not referenced yet):
-    Microsoft.Data.Sqlite 10.0.14, StackExchange.Redis 3.4.20, Cronos 0.13.0, NodaTime 3.3.7, Inertia.Net 1.5.3 -->
+    StackExchange.Redis 3.4.20, Inertia.Net 1.5.3 -->
 </Project>

@@ -105,7 +105,28 @@ internal sealed class DispatchPreparer(JobRegistry registry, ProducerOptions opt
         }))];
     }
 
-    (DispatchIntent Intent, IReadOnlyList<ScopeRequirement> Scopes) PrepareItem(IQueueJob job, DispatchOptions? o)
+    /// <summary>
+    /// Seed limits for the intent's rate scopes from this registry (10 §3.1). Seeds never overwrite a live policy. A
+    /// scope kind this registry does not declare for the job is seeded from the job's strictest declared rate.
+    /// </summary>
+    public IReadOnlyList<RateRequirement> RatesFor(DispatchIntent intent)
+    {
+        if (intent.RateScopes.Count == 0)
+        {
+            return [];
+        }
+
+        var declared = registry.ByName(intent.JobName)?.Rates ?? [];
+        return [.. intent.RateScopes.Select(s =>
+        {
+            var rate = declared.FirstOrDefault(r => r.Kind == s.Kind)
+                ?? declared.OrderBy(r => r.Limit).FirstOrDefault()
+                ?? throw new DispatchValidationException(RunwickErrorCodes.InvalidRatePolicy, $"Job {intent.JobName} declares no rate scope of kind {s.Kind}.");
+            return new RateRequirement(s.Kind, s.Key, rate.Limit, rate.WindowMs);
+        })];
+    }
+
+    internal (DispatchIntent Intent, IReadOnlyList<ScopeRequirement> Scopes) PrepareItem(IQueueJob job, DispatchOptions? o)
     {
         ArgumentNullException.ThrowIfNull(job);
         var compiled = registry.ByType(job.GetType())
@@ -234,6 +255,25 @@ internal sealed class DispatchPreparer(JobRegistry registry, ProducerOptions opt
         }
 
         var scopeRefs = ScopeRef.Normalize(requirements.Keys.Select(k => new ScopeRef(k.Kind, k.Key)));
+
+        // Rate scopes (10 §2): membership is business intent; limits are seeds read from this registry at send time.
+        var rateRefs = new List<ScopeRef>();
+        foreach (var rate in compiled.Rates)
+        {
+            var key = rate.Select is null ? compiled.Name : RunSelector(rate.Select, job, required: true)!;
+            if (!Identifiers.IsKey(key))
+            {
+                throw new DispatchValidationException(RunwickErrorCodes.InvalidKey, "Rate resource keys are 1–512 UTF-8 bytes of clean text.");
+            }
+
+            var reference = new ScopeRef(rate.Kind, key);
+            if (rateRefs.Contains(reference))
+            {
+                throw new DispatchValidationException(RunwickErrorCodes.ScopeCapacityConflict, "Two rate selectors produced the same scope.");
+            }
+
+            rateRefs.Add(reference);
+        }
         var scopes = scopeRefs.Select(s => new ScopeRequirement(s.Kind, s.Key, requirements[(s.Kind, s.Key)])).ToList();
 
         // Metadata.
@@ -273,7 +313,7 @@ internal sealed class DispatchPreparer(JobRegistry registry, ProducerOptions opt
 
         var intent = new DispatchIntent(
             compiled.Name, compiled.CurrentVersion, RunwickJsonProfile.ProfileId, RunwickJsonProfile.ProfileVersion,
-            payload.Utf8, queue, priority, notBefore, scopeRefs, [], activeKey, windowKey, windowMs,
+            payload.Utf8, queue, priority, notBefore, scopeRefs, ScopeRef.Normalize(rateRefs), activeKey, windowKey, windowMs,
             business, diagnostic, compiled.Policy, Guid.CreateVersion7());
         return (intent, scopes);
     }

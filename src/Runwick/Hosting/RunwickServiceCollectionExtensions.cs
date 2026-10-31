@@ -82,6 +82,16 @@ public static class RunwickServiceCollectionExtensions
         services.AddSingleton<JobDispatcher>();
         services.AddSingleton<IJobDispatcher>(sp => sp.GetRequiredService<JobDispatcher>());
         services.AddSingleton<IPreparedJobDispatcher>(sp => sp.GetRequiredService<JobDispatcher>());
+
+        // Preview control services (08 §10): resolvable in every role; they need a store with controls.
+        services.AddSingleton(sp => new global::Runwick.Management.ControlService(
+            sp.GetRequiredService<RunwickRuntime>(), sp.GetService<IJobControlStore>(), sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton<global::Runwick.Management.IJobControl>(sp => sp.GetRequiredService<global::Runwick.Management.ControlService>());
+        services.AddSingleton<global::Runwick.Management.IQueueControl>(sp => sp.GetRequiredService<global::Runwick.Management.ControlService>());
+        services.AddSingleton<global::Runwick.Management.ICapacityControl>(sp => sp.GetRequiredService<global::Runwick.Management.ControlService>());
+        services.AddSingleton(sp => new global::Runwick.Management.ScheduleControlService(
+            sp.GetRequiredService<RunwickRuntime>(), sp.GetService<IScheduleStore>(), sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton<global::Runwick.Management.IScheduleControl>(sp => sp.GetRequiredService<global::Runwick.Management.ScheduleControlService>());
         if (isWorker)
         {
             // Worker settings validate with the registry (06 §3); the engine starts after the handshake.

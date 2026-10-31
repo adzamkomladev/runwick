@@ -34,6 +34,9 @@ public static class RunwickErrorCodes
     public const string MiddlewareAliasConflict = "middleware_alias_conflict";
     public const string InvalidScope = "invalid_scope";
     public const string TooManyScopes = "too_many_scopes";
+    public const string InvalidRatePolicy = "invalid_rate_policy";
+    public const string TooManyRateScopes = "too_many_rate_scopes";
+    public const string RateAdmissionNotActive = "rate_admission_not_active";
     public const string DuplicateWorker = "duplicate_worker";
     public const string WorkerWithoutPool = "worker_without_pool";
     public const string PoolWithoutQueue = "pool_without_queue";
@@ -112,4 +115,22 @@ public static class RunwickErrorCodes
     public const string NoActiveAttempt = "no_active_attempt";
     public const string CompletionAlreadyStaged = "completion_already_staged";
     public const string OwnershipLost = "ownership_lost";
+
+    // Schedules (13)
+    public const string DuplicateScheduler = "duplicate_scheduler";
+    public const string DuplicateSchedule = "duplicate_schedule";
+    public const string ScheduleDefinitionMissing = "schedule_definition_missing";
+    public const string InvalidSchedulePolicy = "invalid_schedule_policy";
+    public const string ScheduleDelayUnsupported = "schedule_delay_unsupported";
+    public const string ScheduleWindowUnsupported = "schedule_window_unsupported";
+    public const string ScheduleOccurrenceReuseRequired = "schedule_occurrence_reuse_required";
+    public const string SchedulerNotActive = "scheduler_not_active";
+    public const string SchedulePaused = "schedule_paused";
+    public const string EpisodeUnresolved = "episode_unresolved";
+    public const string PlanTooLarge = "plan_too_large";
+    public const string OccurrenceBelowHighWater = "occurrence_below_high_water";
+    public const string CursorRewind = "cursor_rewind";
+    public const string CutoffInFuture = "cutoff_in_future";
+    public const string CatchUpLimit = "catch_up_limit";
+    public const string CatchUpTooOld = "catch_up_too_old";
 }

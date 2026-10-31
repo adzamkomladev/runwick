@@ -8,7 +8,12 @@ internal sealed record PoolSettings(
     IReadOnlyList<(string Queue, int Weight)> Queues,
     int Target,
     LaneSelectionMode Mode,
-    (int High, int Medium, int Low) LaneWeights);
+    (int High, int Medium, int Low) LaneWeights,
+    (int Min, int Max)? Auto = null)
+{
+    /// <summary>The pool's hard maximum: the fixed target, or the automatic maximum (11 §2).</summary>
+    public int Max => Auto?.Max ?? Target;
+}
 
 /// <summary>
 /// The validated worker configuration: timing (06 §3 V-01…V-13) plus pools (V-15, V-20). Validation never
@@ -25,6 +30,8 @@ internal sealed class WorkerSettings
     public const int SettlementLane = 2;
     public static readonly TimeSpan AgingThreshold = TimeSpan.FromSeconds(60);
     public static readonly TimeSpan HintMaxAge = TimeSpan.FromSeconds(2);
+    public static readonly TimeSpan ProbeSpacing = TimeSpan.FromMilliseconds(50);
+    public const int FirstPresenceAttempts = 3;
     public static readonly TimeSpan IdleBackoffBase = TimeSpan.FromMilliseconds(100);
     public static readonly TimeSpan IdleBackoffCap = TimeSpan.FromSeconds(2);
     public static readonly TimeSpan CooldownBase = TimeSpan.FromMilliseconds(250);
@@ -234,9 +241,18 @@ internal sealed class WorkerSettings
 
         foreach (var p in builder.Pools)
         {
-            if (p.Auto is not null)
+            if (p.Auto is { } auto)
             {
-                errors.Add(new(RunwickErrorCodes.FeatureNotAvailable, p.Name, "V-15: AutoConcurrency is not available in this release; use FixedConcurrency(n)."));
+                // SP-014 lifts the M2 refusal (11 §2): explicit bounds, and a pool is either fixed or automatic.
+                if (p.Fixed is not null)
+                {
+                    errors.Add(new(RunwickErrorCodes.InvalidPool, p.Name, "V-15: a pool is either FixedConcurrency or AutoConcurrency, not both."));
+                }
+
+                if (auto.Min < 0 || auto.Max < 1 || auto.Min > auto.Max)
+                {
+                    errors.Add(new(RunwickErrorCodes.InvalidPool, p.Name, $"V-15: AutoConcurrency({auto.Min}, {auto.Max}) needs 0 ≤ min ≤ max and max ≥ 1."));
+                }
             }
 
             if (p.Subscriptions.Count == 0)
@@ -262,7 +278,8 @@ internal sealed class WorkerSettings
                 errors.Add(new(RunwickErrorCodes.InvalidPool, p.Name, $"Queue '{dup.Key}' is subscribed twice."));
             }
 
-            var target = p.Fixed ?? DefaultPoolTarget;
+            // An automatic pool starts at its minimum, or at one bootstrap ticket when the minimum is zero (11 §3.4).
+            var target = p.Auto is { } a ? Math.Clamp(a.Min == 0 ? 1 : a.Min, 1, Math.Max(1, a.Max)) : p.Fixed ?? DefaultPoolTarget;
             if (target < 1)
             {
                 errors.Add(new(RunwickErrorCodes.InvalidPool, p.Name, $"V-15: FixedConcurrency({target}) must be at least 1."));
@@ -273,10 +290,10 @@ internal sealed class WorkerSettings
                 errors.Add(new(RunwickErrorCodes.InvalidPool, p.Name, "V-20: lane weights must be positive integers."));
             }
 
-            pools.Add(new PoolSettings(p.Name, [.. p.Subscriptions], target, p.Mode, p.Weights));
+            pools.Add(new PoolSettings(p.Name, [.. p.Subscriptions], target, p.Mode, p.Weights, p.Auto));
         }
 
-        var sum = pools.Sum(p => (long)p.Target);
+        var sum = pools.Sum(p => (long)p.Max);
         if (sum > groupMax)
         {
             errors.Add(new(RunwickErrorCodes.PoolBudgetExceeded, "worker", $"V-15: the sum of pool maxima ({sum}) exceeds the group maximum ({groupMax})."));

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Runwick transactional outbox: staging contracts and the relay that delivers through ReceiveOutbox/1.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Runwick\Runwick.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Runwick.Outbox.Postgres" />
+    <InternalsVisibleTo Include="Runwick.Outbox.Sqlite" />
+    <InternalsVisibleTo Include="Runwick.Outbox.Tests" />
+  </ItemGroup>
+</Project>

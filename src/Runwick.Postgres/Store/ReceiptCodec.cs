@@ -205,6 +205,58 @@ internal static class ReceiptCodec
         (new BeginClosed(new JobPosition(G(o["jobId"]), o["generation"]!.GetValue<int>(), o["revision"]!.GetValue<long>(), o["state"]!.GetValue<string>()),
             o["attemptOutcome"]!.GetValue<string>(), o["terminalReason"]!.GetValue<string>()), o["errorCode"]!.GetValue<string>());
 
+    // Begin rate deferral (T20, 10 §4)
+    public static JsonObject BeginDeferred(RateDeferral d) => new()
+    {
+        ["jobId"] = U(d.Position.JobId),
+        ["generation"] = d.Position.Generation,
+        ["revision"] = d.Position.Revision,
+        ["state"] = d.Position.State,
+        ["deferredUntil"] = Ms(d.EligibleAt),
+        ["blockingScopes"] = new JsonArray([.. d.BlockingScopes.Select(s => (JsonNode)U(s))]),
+    };
+
+    public static RateDeferral ReadBeginDeferred(JsonObject o) =>
+        new(new JobPosition(G(o["jobId"]), o["generation"]!.GetValue<int>(), o["revision"]!.GetValue<long>(), o["state"]!.GetValue<string>()),
+            T(o["deferredUntil"]), [.. o["blockingScopes"]!.AsArray().Select(G)]);
+
+    // Rate administration (10 §6)
+    public static JsonObject Rate(RatePolicy p) => new()
+    {
+        ["rateScopeId"] = U(p.RateScopeId), ["scopeKind"] = p.ScopeKind, ["scopeKey"] = p.ScopeKey, ["limit"] = p.Limit,
+        ["windowMs"] = p.WindowMs, ["policyRevision"] = p.PolicyRevision, ["notBefore"] = p.NotBefore is { } nb ? Ms(nb) : null,
+        ["retainedGrants"] = p.RetainedGrants,
+    };
+
+    public static RatePolicy ReadRate(JsonObject o) =>
+        new(G(o["rateScopeId"]), o["scopeKind"]!.GetValue<string>(), o["scopeKey"]!.GetValue<string>(), o["limit"]!.GetValue<int>(),
+            o["windowMs"]!.GetValue<long>(), o["policyRevision"]!.GetValue<long>(), Tn(o["notBefore"]), o["retainedGrants"]!.GetValue<int>());
+
+    // Pool overrides (11 §5)
+    public static JsonObject Override(PoolOverride p) => new()
+    {
+        ["instanceId"] = U(p.InstanceId), ["pool"] = p.Pool, ["target"] = p.Target, ["revision"] = p.Revision,
+        ["expiresAt"] = p.ExpiresAt is { } e ? Ms(e) : null,
+    };
+
+    public static PoolOverride ReadOverride(JsonObject o) =>
+        new(G(o["instanceId"]), o["pool"]!.GetValue<string>(), o["target"]?.GetValue<int>(), o["revision"]!.GetValue<long>(), Tn(o["expiresAt"]));
+
+    public static JsonObject Activated(ActivatedCapabilities a)
+    {
+        var required = new JsonObject();
+        foreach (var (name, version) in a.RequiredCapabilities.OrderBy(c => c.Key, StringComparer.Ordinal))
+        {
+            required[name] = version;
+        }
+
+        return new JsonObject { ["revision"] = a.Revision, ["requiredCapabilities"] = required };
+    }
+
+    public static ActivatedCapabilities ReadActivated(JsonObject o) =>
+        new(o["revision"]!.GetValue<long>(),
+            o["requiredCapabilities"]!.AsObject().ToDictionary(p => p.Key, p => p.Value!.GetValue<int>(), StringComparer.Ordinal));
+
     // Finish / Recover
     public static JsonObject Finished(FinishedAttempt f, Guid attemptId, long? retryDelayMs) => new()
     {
@@ -239,4 +291,31 @@ internal static class ReceiptCodec
     public static ReleasedReservation ReadReleased(JsonObject o) =>
         new(new JobPosition(G(o["jobId"]), o["generation"]!.GetValue<int>(), o["revision"]!.GetValue<long>(), o["state"]!.GetValue<string>()),
             o["disposition"]!.GetValue<string>(), Tn(o["eligibleAt"]));
+
+    // 08 §6 administrative receipts
+    public static JsonObject Controlled(ControlledJob c) => new()
+    {
+        ["jobId"] = U(c.Position.JobId), ["generation"] = c.Position.Generation, ["revision"] = c.Position.Revision,
+        ["state"] = c.Position.State, ["effect"] = c.Effect, ["terminalReason"] = c.TerminalReason,
+        ["cancelRequestedAt"] = c.CancelRequestedAt is { } at ? Ms(at) : null,
+    };
+
+    public static ControlledJob ReadControlled(JsonObject o) =>
+        new(new JobPosition(G(o["jobId"]), o["generation"]!.GetValue<int>(), o["revision"]!.GetValue<long>(), o["state"]!.GetValue<string>()),
+            o["effect"]!.GetValue<string>(), o["terminalReason"]?.GetValue<string>(), Tn(o["cancelRequestedAt"]));
+
+    public static JsonObject Queue(QueueState q) => new() { ["queue"] = q.Queue, ["paused"] = q.Paused, ["revision"] = q.Revision };
+
+    public static QueueState ReadQueue(JsonObject o) =>
+        new(o["queue"]!.GetValue<string>(), o["paused"]!.GetValue<bool>(), o["revision"]!.GetValue<long>());
+
+    public static JsonObject Scope(ScopePolicy p) => new()
+    {
+        ["scopeId"] = U(p.ScopeId), ["kind"] = p.ScopeKind, ["key"] = p.ScopeKey, ["capacity"] = p.Capacity,
+        ["policyRevision"] = p.PolicyRevision, ["livePermits"] = p.LivePermits,
+    };
+
+    public static ScopePolicy ReadScope(JsonObject o) =>
+        new(G(o["scopeId"]), o["kind"]!.GetValue<string>(), o["key"]!.GetValue<string>(), o["capacity"]!.GetValue<int>(),
+            o["policyRevision"]!.GetValue<long>(), o["livePermits"]!.GetValue<int>());
 }

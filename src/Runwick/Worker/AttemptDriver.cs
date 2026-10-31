@@ -15,7 +15,7 @@ internal sealed partial class WorkerEngine
     internal void Admit(PoolCoordinator pool, CapacityTicket ticket, ReservedJob reserved, TimeSpan? deadline, TimeSpan sentAt)
     {
         var job = Pipelines.ContainsKey(reserved.Contract.Name) ? Registry.ByName(reserved.Contract.Name) : null;
-        var entry = new AttemptEntry(pool, ticket, reserved, job, deadline);
+        var entry = new AttemptEntry(pool, ticket, reserved, job, deadline) { AdmittedAt = sentAt };
         Track(entry);
         if (deadline is null)
         {
@@ -97,6 +97,13 @@ internal sealed partial class WorkerEngine
         if (entry.Retire())
         {
             Emit("retired", entry);
+
+            // Healthy completed ticket durations feed the service estimate; loss or a pressure stop would teach an
+            // inflated cost (capacity-defaults §4).
+            if (entry.Begun is not null && entry.Loss is null && !PressureStopped)
+            {
+                Service.Completed(entry.Reserved.Contract.Name, Clock.Now - entry.AdmittedAt);
+            }
         }
 
         Untrack(entry);
@@ -191,6 +198,12 @@ internal sealed partial class WorkerEngine
         }
 
         var timeout = entry.Reserved.Policy.ExecutionTimeoutMs is { } ms ? TimeSpan.FromMilliseconds(ms) : (TimeSpan?)null;
+        if (entry.Staged is { } staged)
+        {
+            await ObserveStagedAsync(entry, observation, staged, timeout).ConfigureAwait(false);
+            return;
+        }
+
         var finish = OutcomeClassifier.Classify(entry.Lease, observation, entry.Causes, timeout);
         if (!entry.IsLost)
         {
@@ -320,6 +333,12 @@ internal sealed partial class WorkerEngine
                 }
 
                 Emit(r.Replayed ? "begunReplayed" : "begun", entry);
+                if (!r.Replayed)
+                {
+                    // One final admission outcome per cycle (capacity-defaults §5): the Begin, not its Reserve.
+                    entry.Pool.Outcomes.Record(Clock.Now, blocked: false);
+                }
+
                 return r.Replayed;
             case StoreStatus.InvalidState when r.Effect == StoreEffect.Applied:
             case StoreStatus.BudgetExhausted:
@@ -332,9 +351,16 @@ internal sealed partial class WorkerEngine
             case StoreStatus.InvalidState:
                 LoseAuthority(entry, LossCause.InvalidState);
                 return null;
+            case StoreStatus.RateLimited when r.Effect == StoreEffect.Applied:
+                // T20 (10 §4): storage closed the unstarted attempt and restored the waiting state until EligibleAt. No
+                // scope, no middleware, no unstarted-guard increment; the ticket returns to the pool now (10 §5).
+                Interlocked.Increment(ref RateDeferrals);
+                entry.Pool.Outcomes.Record(Clock.Now, blocked: true);
+                Emit("beginRateDeferred", entry);
+                return null;
             case StoreStatus.RateLimited:
-                // Not in M2: the store committed a closure this worker cannot account for.
-                CloseAdmission("invariant fault: Begin returned RateLimited");
+                Diagnose($"Begin of {entry} returned RateLimited without a committed effect");
+                LoseAuthority(entry, LossCause.InvariantFault);
                 return null;
             case StoreStatus.AdmissionClosed or StoreStatus.UnsupportedVersion:
                 CloseAdmission($"Begin returned {r.Status}");
@@ -568,7 +594,10 @@ internal sealed partial class WorkerEngine
                 var fences = entry.Reserved.Fences.Select(f => ScopeMap.TryGetValue(f.ScopeId, out var s)
                     ? new ResourceFence(s.Kind, s.Key, f.Value) : new ResourceFence("unknown", f.ScopeId.ToString("D"), f.Value)).ToList();
                 var context = new JobContext(entry, Application, payload, fences);
-                scope.Value.ServiceProvider.GetRequiredService<JobContextHolder>().Context = context;
+                var holder = scope.Value.ServiceProvider.GetRequiredService<JobContextHolder>();
+                holder.Context = context;
+                holder.Entry = entry;
+                holder.Engine = this;
                 Interlocked.Increment(ref Invocations);
                 Emit("handlerInvoked", entry);
                 var (value, error, misuse) = await pipeline.RunAsync(scope.Value.ServiceProvider, context, payload, entry.ExecutionToken).ConfigureAwait(false);

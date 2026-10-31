@@ -10,5 +10,11 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Cronos" />
+    <PackageReference Include="NodaTime" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The pinned TZDB artifact (spec 12 §6); TzdbArtifact verifies its SHA-256 on first use. -->
+    <EmbeddedResource Include="Scheduling\Evaluation\Tzdb\tzdb2026f.nzd" LogicalName="Runwick.Scheduling.Evaluation.Tzdb.tzdb2026f.nzd" />
   </ItemGroup>
 </Project>

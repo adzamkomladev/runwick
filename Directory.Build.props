@@ -36,5 +36,9 @@
     <InternalsVisibleTo Include="Runwick.Core.Tests" />
     <InternalsVisibleTo Include="Runwick.Postgres.Tests" />
     <InternalsVisibleTo Include="Runwick.Workloads" />
+    <InternalsVisibleTo Include="Runwick.Outbox" />
+    <InternalsVisibleTo Include="Runwick.Outbox.Postgres" />
+    <InternalsVisibleTo Include="Runwick.Outbox.Sqlite" />
+    <InternalsVisibleTo Include="Runwick.Outbox.Tests" />
   </ItemGroup>
 </Project>

@@ -3,12 +3,10 @@ using Runwick.Protocol;
 
 namespace Runwick.Postgres.Store;
 
-/// <summary>Harness-only operations (04 §7.14–7.16). Not reachable from the public API in M2.</summary>
+/// <summary>Harness-only operations (04 §7.14–7.16). Not reachable from the public API.</summary>
 internal sealed partial class PgStore
 {
-    internal sealed record QueueState(string Queue, bool Paused, long Revision);
-
-    /// <summary>SetQueueState/1 (04 §7.14).</summary>
+    /// <summary>SetQueueState/1 harness path (04 §7.14): no actor and no audit. The public path is 08 §3.4.</summary>
     internal Task<StoreReply<QueueState>> SetQueueStateAsync(string application, string queue, bool paused, long? expectedRevision,
         Guid commandId, DateTimeOffset notAfter, CancellationToken ct)
     {

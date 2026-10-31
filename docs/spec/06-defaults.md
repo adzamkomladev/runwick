@@ -4,6 +4,35 @@
 
 Every numeric default used by milestone M2 is in this file. Behavior that uses each value is specified in [05-worker-engine.md](05-worker-engine.md) (cited as `05 §n`) and the storage/protocol specs. A value listed here is the default; a host may change configurable values only within the startup inequalities of §3. Values marked *profile constant* are not host-configurable (raising them requires a new serializer profile/format version).
 
+## Changes (2026-10-31, SP-016)
+
+- §1.14 adds the scheduler defaults and bounds (13 §9–§10).
+
+## Changes (2026-10-31, SP-014)
+
+- §1.13 adds the scaler constants (11 §3). V-15 now accepts `AutoConcurrency(min, max)` with `0 ≤ min ≤ max`, `max ≥ 1`, and refuses a pool that sets both modes. The group sum uses each pool's maximum. The "AutoConcurrency rejected" row and *[choice]* are superseded.
+
+## Changes (2026-10-31, SP-012)
+
+- §1.5: probe spacing 50 ms is now enforced per polling group; first presence publication attempts 3; diagnostic sample 256 per lane (1 – 1,000) (09 §3–§5).
+
+## Changes (2026-10-31, SP-017)
+
+- §1.12 adds the outbox relay budgets and horizon bounds (14 §4.2, §6).
+
+## Changes (2026-10-31, SP-013)
+
+- §1.11 adds the rate policy bounds and deferral timing (10 §2, §4). V-24 now reads "the binary knows every capability the application requires".
+
+## Changes (2026-10-31, SP-015)
+
+- §1.10 adds the schedule evaluator bounds (12 §2.4, §8, §9). They are constants of the evaluator profile `runwick.cron.v1`, not options, so §3 gains no startup validation for them.
+
+## Changes (2026-10-31, SP-011)
+
+- Administrative commands: default NotAfter 5 min (`Operations.AdministrativeLifetime`), cap 10 min, receipts NotAfter + 24 h (§1.4 unchanged values, now in use).
+- Actor bounds: subject 1–256 bytes, display ≤ 256, scheme ≤ 64 ASCII, reason ≤ 512 (08 §2). Scope capacity edits 0–10,000. Event page size 1–1,000, default 100.
+
 ## Changes (2026-10-30)
 
 Contradictions resolved:
@@ -92,7 +121,7 @@ Implementation choices (marked *[choice]* below): whole-millisecond durations (V
 | Name | Value | Unit | Where used | Source | Validation |
 |---|---|---|---|---|---|
 | Default pool mode | fixed, 4 | tickets | Pool with no mode configured; `FixedConcurrency(n)` sets target = maximum = n | CDB §1, REV §2 | V-15 |
-| AutoConcurrency | not in M2 (rejected) | — | — | CDB §1, delivery plan SP-014 | V-15 |
+| AutoConcurrency | `(min, max)`, initial target min (1 when min = 0) | tickets | Automatic pool (11) | CDB §1, §4 | V-15 |
 | Worker/store group maximum | 16 | outstanding attempts | Σ pool maxima bound | CDB §1 | V-15 |
 | Per-pool claim concurrency | 1 | Reserve in flight (incl. resolution) | Pool coordinator | CDB §1 | — |
 | Prefetch beyond tickets | 0 | reservations | Pool coordinator | CDB §1 | — |
@@ -171,6 +200,81 @@ Implementation choices (marked *[choice]* below): whole-millisecond durations (V
 | Stored detailed exception | 16 KiB, explicit truncation marker | UTF-8 bytes | `AttemptError` in Finish | MRD |
 
 Not in M2 (listed so no M2 component invents them): rate-policy bounds (1–100,000 per window, window 1 s–24 h, ≤ 8 rate scopes per generation, 250 ms minimum defer + 0–100 ms jitter); automatic controller inputs (5 s samples, 3/6 evidence, 30 s cooldown, 25 % step, 80 % utilization, 30 s horizon); management limits and retention periods (7/30/90 days, cleanup batches); scheduler lifetimes.
+
+### 1.10 Schedule evaluator (SP-015; profile constants)
+
+| Name | Value | Unit | Where used | Source |
+|---|---|---|---|---|
+| Expression length | 256, printable ASCII; space/tab separate fields | characters | Grammar input check | 12 §2.4 |
+| List terms | 64 across all fields | terms | Grammar | 12 §2.4 |
+| Zone ID | 64, printable ASCII, exact artifact key | characters | Zone mapping | 12 §6.2 |
+| Lookup horizon | 8 calendar years + 2 days after the cursor | — | Planner | 12 §8.1 |
+| Supported instant range | 0001-01-02T00:00Z … 9999-12-30T00:00Z | — | Planner | 12 §8.1 |
+| Steps per plan | 4,096 | steps | Planner | 12 §8.2 |
+| Cooperative budget, materialization | 250 | ms | Planner | 12 §8.2 |
+| Cooperative budget, registration / edit / preview | 1,000 | ms | Planner | 12 §8.2 |
+| Preview length | 10 | occurrences | Preview | 12 §9 |
+| Evaluator slots | 1 per scheduler/store group | — | `EvaluatorSlot` | 12 §8.3 |
+
+### 1.11 Rate admission (SP-013)
+
+| Name | Value | Unit | Where used | Source |
+|---|---|---|---|---|
+| Rate limit | 1 – 100,000 | grants per window | Registration, Dispatch, EditRatePolicy | 10 §2 |
+| Rate window | 1,000 – 86,400,000, whole ms | ms | Same | 10 §2 |
+| Rate scopes per job | 8 (at most 1 job-type scope) | scopes | Registration, Dispatch | 10 §2 |
+| Minimum deferral | 250 | ms of logical time | Begin T20 | 10 §4 |
+| Deferral jitter | 0 – 100, drawn once per decision | ms | Begin T20 | 10 §4 |
+| Edit freeze | new window, from the scope's logical time | — | EditRatePolicy | 10 §6.3 |
+
+### 1.12 Outbox relay and horizon (SP-017)
+
+| Name | Value | Unit | Where used | Source |
+|---|---|---|---|---|
+| Acceptance horizon | 7 d default; (0, 30 d], whole ms | — | Stage | 14 §6.1 |
+| Mapping retention | ≥ AcceptUntil + 24 h | — | outbox_deliveries | 14 §6.4 |
+| Transport NotAfter | ≤ 30 s and ≤ AcceptUntil | — | ReceiveOutbox/1 | 14 §6.2 |
+| MaxInFlight / claim batch | 4 (1 – 64) | messages | Relay | 14 §4.2 |
+| Source lease / renewal | 60 s / 15 s (lease ≥ 5 s, ≥ 3 × renewal) | s | Relay | 14 §4.2 |
+| Provider call timeout | 5 s (< renewal) | s | Relay | 14 §4.2 |
+| Idle poll | 1 s | s | Relay | 14 §4.2 |
+| Retry | 1 s → 60 s, exponential, equal jitter | s | Relay | 14 §4.2 |
+| Source connections | 2 per relay group (claim lane, control lane) | connections | Relay | 14 §4.2 |
+
+### 1.13 Local autoscaler (SP-014)
+
+| Setting | Default | Unit | Note |
+|---|---|---|---|
+| Sample interval | 5 s ± 10 % | — | one shared estimate per sample |
+| Estimate deadline | 1 s | — | late = unknown |
+| Due rows counted per lane | 2,000 | rows | cap sets `Truncated` |
+| Occupancy window | 30 s | — | time-weighted mean |
+| Drain horizon / target utilization | 30 s / 0.80 | — | `desired = ceil((occ + work/30 s)/0.8)` |
+| Band / step | 20 % (≥ 1) / 25 % (≥ 1) | of current | boundary waiver at min and max |
+| Evidence | 3 grow, 6 shrink | samples | consecutive |
+| Change cooldown | 30 s | — | — |
+| Service EWMA | α 0.20, cold 1 s, confident at 20 | — | longest live ticket is a lower bound |
+| Blocked-ratio freeze | ≥ 75 % of ≥ 20 cycles in 30 s | — | growth only |
+| Override target / lifetime | 0 – 10,000 / ≤ 7 days | tickets / — | per instance and pool |
+
+These are benchmark inputs, not tuned release values.
+
+### 1.14 Scheduler (SP-016)
+
+| Setting | Default | Bound |
+|---|---|---|
+| Due read | 32 schedules per pass | — |
+| Polling | 1 s while due; idle back-off to 5 s, × (1 ± 0.10) | — |
+| Materializations in flight | 1 per scheduler/store group | — |
+| Local allowance | 100 jobs/s, burst 32 | — |
+| Request / resolution budget | 5 s / 30 s | — |
+| Plan | 32 jobs, 2 MiB payload | hard |
+| Misfire grace | 60 s | 0 – 24 h |
+| Catch-up episode limit | 1,000 | 1 – 10,000 |
+| Catch-up oldest age | 7 d | 1 min – 31 d |
+| Catch-up pacing | 250 ms | ≥ 250 ms |
+| `RegisterSchedule` NotAfter | 5 min | 10 min |
+| Other schedule operations NotAfter | 30 s | 60 s |
 
 ## 2. Formulas
 
@@ -254,7 +358,7 @@ Startup rejects any violation with an error naming the setting(s) and the inequa
 | V-12 | `ClaimResolutionBudget`, `BeginResolutionBudget`, `CompletionResolutionBudget`, `CancellationGrace`, `CleanupBudget` > 0; each resolution budget ≥ `ControlRequestTimeout` *[choice]* | 15/15/30/10/10 s; 15 ≥ 5 |
 | V-13 | `0 < RecoveryScanMin ≤ RecoveryScanNominal ≤ RecoveryScanMax` | 4 ≤ 5 ≤ 6 s |
 | V-14 | Per generation policy: `MaxExecutions ≥ 1`; `MaxConsecutiveUnstartedAbandonments ≥ 1`; `ExecutionTimeout` absent or > 0; for both retry policies `0 < InitialDelay ≤ MaximumDelay`, evaluator `exponential-v1` version 1, jitter `equal`; all within int32 counts / int64 ms | 3; 5; none; 5 s ≤ 60 s; 1 s ≤ 30 s |
-| V-15 | Each pool subscribes ≥ 1 queue; `FixedConcurrency(n)` with `n ≥ 1`; `AutoConcurrency` rejected in M2 *[choice]*; `Σ pool maxima ≤ GroupMaximum`; queue weights integers in [1, 1,000] | 4 ≤ 16 |
+| V-15 | Each pool subscribes ≥ 1 queue; `FixedConcurrency(n)` with `n ≥ 1`; `AutoConcurrency(min, max)` with `0 ≤ min ≤ max`, `max ≥ 1`, not both modes (SP-014); `Σ pool maxima ≤ GroupMaximum`; queue weights integers in [1, 1,000] | 4 ≤ 16 |
 | V-16 | `RenewalLane + SettlementLane ≤ ControlPoolMax`; `Admission + ProducerAdmin + Background ≤ WorkPoolMax`; `1 ≤ BackgroundHeavy ≤ Background − 1` *[choice]*; all > 0 | 4 + 2 ≤ 6; 4 + 2 + 2 ≤ 8; 1 ≤ 1 |
 | V-17 | Deduplicated capability tuples per polling group ≤ 512 *[choice]* | registry-dependent |
 | V-18 | `LocalAdmissionWaiters ≥ 1`; `0 < LocalAdmissionWait` | 64; 1 s |
@@ -263,6 +367,6 @@ Startup rejects any violation with an error naming the setting(s) and the inequa
 | V-21 | `BlockedCandidatesPerLaneVisit ≥ 1`; `ReservesPerRound ≥ BlockedCandidatesPerLaneVisit` *[choice]*; `RecoveryBatch ≥ 1` | 8 ≤ 32; 32 |
 | V-22 | For idle backoff and cooldown: `0 < base ≤ cap`; jitter fraction in [0, 1); hint max age > 0; probe spacing > 0 | 100 ms ≤ 2 s; 250 ms ≤ 2 s; 0.20; 2 s; 50 ms |
 | V-23 | `LeaseDuration` within the store's supported lease bounds (checked against the store compatibility manifest) | 60 s |
-| V-24 | Application is not rate-enabled (no configured rate policy; store required capabilities exclude rate admission) — M2 refusal | pass |
+| V-24 | The binary knows every capability the application requires (SP-013 builds know `rate_admission`; earlier binaries refuse a rate-enabled application) | pass |
 
 Worked failures (TIME-01): `LeaseDuration = 30 s` → V-04 (31 ≮ 20) and V-06 (StopMargin = −5 s); `ControlRequestTimeout = 10 s` → V-05 (15 ≱ 23) although V-04 holds (41 < 50); `ShutdownDrain = 20 s` → V-10 (30 > 25); `MinimumInvocationMargin = 12 s` → V-05; `LeaseWatchdogInterval = 2 s` → V-07. A host may scale leases and intervals together (e.g. lease 120 s, safety 20 s, renewal [24 s, 36 s]: 36 + 10 + 1 + 2 = 49 < 100; StopMargin = 100 − 36 − 5 − 2 = 57 s; ResumeMargin = 62 s). Static inequalities do not prove group-wide capacity, thread-pool health or store clock stability; runtime margin checks always override them.

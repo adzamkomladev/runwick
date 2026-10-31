@@ -4,16 +4,16 @@
   "packages": {
     "Runwick.Contracts":        { "exists": true,  "allowedProjectRefs": [], "allowedPackages": [] },
     "Runwick":                  { "exists": true,  "allowedProjectRefs": ["Runwick.Contracts"],
-                                  "allowedPackages": ["Microsoft.Extensions.DependencyInjection.Abstractions", "Microsoft.Extensions.Hosting.Abstractions", "Microsoft.Extensions.Logging.Abstractions", "Microsoft.Extensions.Options"] },
+                                  "allowedPackages": ["Microsoft.Extensions.DependencyInjection.Abstractions", "Microsoft.Extensions.Hosting.Abstractions", "Microsoft.Extensions.Logging.Abstractions", "Microsoft.Extensions.Options", "Cronos", "NodaTime"] },
     "Runwick.Postgres":         { "exists": true,  "allowedProjectRefs": ["Runwick"], "allowedPackages": ["Npgsql"] },
     "Runwick.Testing":          { "exists": true,  "allowedProjectRefs": ["Runwick"], "allowedPackages": [] },
     "Runwick.Sqlite":           { "exists": false, "milestone": "M4", "allowedProjectRefs": ["Runwick"], "allowedPackages": ["Microsoft.Data.Sqlite"] },
     "Runwick.Redis":            { "exists": false, "milestone": "M4", "allowedProjectRefs": ["Runwick"], "allowedPackages": ["StackExchange.Redis"] },
     "Runwick.AspNetCore":       { "exists": false, "milestone": "M5", "allowedProjectRefs": ["Runwick"], "allowedPackages": ["Microsoft.AspNetCore.App (framework)"] },
     "Runwick.Dashboard":        { "exists": false, "milestone": "M5", "allowedProjectRefs": ["Runwick.AspNetCore"], "allowedPackages": ["Inertia.Net"] },
-    "Runwick.Outbox":           { "exists": false, "milestone": "M5", "allowedProjectRefs": ["Runwick"], "allowedPackages": [] },
-    "Runwick.Outbox.Postgres":  { "exists": false, "milestone": "M5", "allowedProjectRefs": ["Runwick.Outbox"], "allowedPackages": ["Npgsql"] },
-    "Runwick.Outbox.Sqlite":    { "exists": false, "milestone": "M5", "allowedProjectRefs": ["Runwick.Outbox"], "allowedPackages": ["Microsoft.Data.Sqlite"] },
+    "Runwick.Outbox":           { "exists": true,  "milestone": "M3", "allowedProjectRefs": ["Runwick"], "allowedPackages": [] },
+    "Runwick.Outbox.Postgres":  { "exists": true,  "milestone": "M3", "allowedProjectRefs": ["Runwick.Outbox"], "allowedPackages": ["Npgsql"] },
+    "Runwick.Outbox.Sqlite":    { "exists": true,  "milestone": "M3", "allowedProjectRefs": ["Runwick.Outbox"], "allowedPackages": ["Microsoft.Data.Sqlite"] },
     "Runwick.OpenTelemetry":    { "exists": false, "milestone": "M5", "allowedProjectRefs": ["Runwick"], "allowedPackages": [] },
     "Runwick.Cli":              { "exists": false, "milestone": "M5", "allowedProjectRefs": ["Runwick", "Runwick.Postgres"], "allowedPackages": [] }
   },
@@ -26,7 +26,9 @@
     "Microsoft.Extensions.TimeProvider.Testing": "10.11.0",
     "xunit.v3": "4.0.2",
     "Testcontainers.PostgreSql": "4.16.0",
-    "deferred": { "Microsoft.Data.Sqlite": "10.0.14", "StackExchange.Redis": "3.4.20", "Cronos": "0.13.0", "NodaTime": "3.3.7", "Inertia.Net": "1.5.3" }
+    "Cronos": "0.13.0",
+    "NodaTime": "3.3.7",
+    "deferred": { "StackExchange.Redis": "3.4.20", "Inertia.Net": "1.5.3" }
   },
   "notes": [
     "Test runner: xunit.v3 on VSTest (Microsoft.NET.Test.Sdk + xunit.runner.visualstudio) so `dotnet test --filter Trait=Value` works; the test projects are also self-hosting executables."

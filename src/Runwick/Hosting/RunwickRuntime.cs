@@ -10,12 +10,15 @@ namespace Runwick.Hosting;
 /// </summary>
 internal sealed class RunwickRuntime(JobRegistry registry, IRunwickStore store, TimeProvider time, ILogger<RunwickRuntime> logger) : IDisposable
 {
-    /// <summary>Capabilities an M2 binary knows (spec 03 §10.3).</summary>
+    /// <summary>Capabilities this binary knows (spec 03 §10.3; M3 additions per item, 08 §1).</summary>
     public static readonly IReadOnlyDictionary<string, int> KnownCapabilities = new Dictionary<string, int>(StringComparer.Ordinal)
     {
         ["execution"] = 1,
         ["concurrency_permits"] = 1,
         ["dispatch_uniqueness"] = 1,
+        ["controls"] = 1,
+        ["transactional_completion"] = 1, ["rate_admission"] = 1, ["outbox_destination"] = 1,
+        ["scheduler"] = 1,
     };
 
     readonly SemaphoreSlim _gate = new(1, 1);

@@ -280,6 +280,27 @@ internal sealed class RegistryCompiler(RunwickBuilder builder, bool isWorker)
             Error(RunwickErrorCodes.TooManyScopes, name, $"{scopeCount} concurrency scopes exceed {MaxScopesPerJob}.");
         }
 
+        // Rate scopes (10 §2).
+        foreach (var r in d.Rates)
+        {
+            if (r.Limit is < RateBounds.MinLimit or > RateBounds.MaxLimit
+                || r.Window.Ticks % TimeSpan.TicksPerMillisecond != 0 || r.WindowMs is < RateBounds.MinWindowMs or > RateBounds.MaxWindowMs)
+            {
+                Error(RunwickErrorCodes.InvalidRatePolicy, name,
+                    $"RollingWindow needs 1–100,000 executions and a whole-millisecond window of 1 s–24 h (got {r.Limit} per {r.Window}).");
+            }
+        }
+
+        if (d.Rates.Count(r => r.Select is null) > 1)
+        {
+            Error(RunwickErrorCodes.SameLayerConflict, name, "RollingWindow declared more than once for the job type.");
+        }
+
+        if (d.Rates.Count > RateBounds.MaxScopesPerJob)
+        {
+            Error(RunwickErrorCodes.TooManyRateScopes, name, $"{d.Rates.Count} rate scopes exceed {RateBounds.MaxScopesPerJob}.");
+        }
+
         // Uniqueness selectors.
         if (d.ActiveSelector.HasConflict || d.WindowSelector.HasConflict)
         {
@@ -336,7 +357,10 @@ internal sealed class RegistryCompiler(RunwickBuilder builder, bool isWorker)
 
         return new CompiledJob(name, type, version, routes, queue.Value, priority.Value, policy, jobTypeCapacity,
             d.Resources, d.ActiveSelector.IsSet ? d.ActiveSelector.Value : null, window,
-            middleware, handlers.FirstOrDefault(), descriptor);
+            middleware, handlers.FirstOrDefault(), descriptor)
+        {
+            Rates = [.. d.Rates],
+        };
     }
 
     static (bool Set, T Value) Attr<T>(T? value) where T : class => (value is not null, value!);

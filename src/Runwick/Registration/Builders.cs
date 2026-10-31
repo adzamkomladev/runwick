@@ -219,6 +219,21 @@ public sealed class JobBuilder<TJob> where TJob : class, IQueueJob
         return this;
     }
 
+    /// <summary>
+    /// At most <paramref name="maxExecutions"/> Begin authorizations of this job type in any rolling <paramref name="window"/>,
+    /// across every worker (10 §2). Requires the application capability <c>rate_admission</c>.
+    /// </summary>
+    public JobBuilder<TJob> RollingWindow(int maxExecutions, TimeSpan window) =>
+        Do(() => _d.Rates.Add(new RateSelector(Serialization.ScopeRef.JobTypeKind, null, maxExecutions, window)));
+
+    /// <summary>As <see cref="RollingWindow(int, TimeSpan)"/>, one window per resource key the selector returns (10 §2).</summary>
+    public JobBuilder<TJob> RollingWindowPerResource(Func<TJob, string> resourceKey, int maxExecutions, TimeSpan window)
+    {
+        ArgumentNullException.ThrowIfNull(resourceKey);
+        _d.Rates.Add(new RateSelector(Serialization.ScopeRef.ResourceKind, o => resourceKey((TJob)o), maxExecutions, window));
+        return this;
+    }
+
     public JobBuilder<TJob> UniqueWhileActive(Func<TJob, string> activeKey)
     {
         ArgumentNullException.ThrowIfNull(activeKey);

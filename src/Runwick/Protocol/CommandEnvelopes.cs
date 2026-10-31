@@ -73,6 +73,70 @@ internal static class CommandEnvelopes
         .Add("queue", queue)
         .Build();
 
+    // ---- 08 §6 administrative bodies
+
+    public static CanonicalValue Actor(ControlActor a) => CanonicalValue.Object()
+        .Add("display", a.Display)
+        .Add("reason", a.Reason)
+        .Add("scheme", a.Scheme)
+        .Add("subject", a.Subject)
+        .Build();
+
+    public static CanonicalValue Cancel(CancelRequest r) => JobControl(r.Actor, r.ExpectedGeneration, r.ExpectedRevision, r.JobId);
+
+    public static CanonicalValue Retry(RetryRequest r) => JobControl(r.Actor, r.ExpectedGeneration, r.ExpectedRevision, r.JobId);
+
+    static CanonicalValue JobControl(ControlActor actor, int generation, long revision, Guid jobId) => CanonicalValue.Object()
+        .Add("actor", Actor(actor))
+        .Add("expectedGeneration", generation)
+        .Add("expectedRevision", revision)
+        .Add("jobId", Fingerprints.Uuid(jobId))
+        .Build();
+
+    public static CanonicalValue QueueState(QueueStateRequest r) => CanonicalValue.Object()
+        .Add("actor", Actor(r.Actor))
+        .Add("expectedRevision", r.ExpectedRevision)
+        .Add("paused", r.Paused)
+        .Add("queue", r.Queue)
+        .Build();
+
+    public static CanonicalValue RatePolicy(RatePolicyRequest r) => CanonicalValue.Object()
+        .Add("actor", Actor(r.Actor))
+        .Add("expectedPolicyRevision", r.ExpectedPolicyRevision)
+        .Add("limit", r.Limit)
+        .Add("scopeKey", r.ScopeKey)
+        .Add("scopeKind", r.ScopeKind)
+        .Add("windowMs", r.WindowMs)
+        .Build();
+
+    public static CanonicalValue PoolOverride(PoolOverrideRequest r) => CanonicalValue.Object()
+        .Add("actor", Actor(r.Actor))
+        .Add("expectedRevision", r.ExpectedRevision)
+        .Add("expiresAt", r.ExpiresAt is { } e ? CanonicalValue.Int(e.ToUnixTimeMilliseconds()) : CanonicalValue.Null)
+        .Add("instanceId", Fingerprints.Uuid(r.InstanceId))
+        .Add("pool", r.Pool)
+        .Add("target", r.Target is { } t ? CanonicalValue.Int(t) : CanonicalValue.Null)
+        .Build();
+
+    public static CanonicalValue ActivateCapabilities(ActivateCapabilitiesRequest r)
+    {
+        var capabilities = CanonicalValue.Object();
+        foreach (var (name, version) in r.Capabilities)
+        {
+            capabilities.Add(name, version);
+        }
+
+        return CanonicalValue.Object().Add("actor", Actor(r.Actor)).Add("capabilities", capabilities.Build()).Build();
+    }
+
+    public static CanonicalValue ScopePolicy(ScopePolicyRequest r) => CanonicalValue.Object()
+        .Add("actor", Actor(r.Actor))
+        .Add("capacity", r.Capacity)
+        .Add("expectedPolicyRevision", r.ExpectedPolicyRevision)
+        .Add("key", r.ScopeKey)
+        .Add("kind", r.ScopeKind)
+        .Build();
+
     /// <summary>Deduplicated, sorted by (name bytes, version, profile id bytes, profile version) — 02 IC-18.</summary>
     public static IReadOnlyList<JobContract> SortContracts(IEnumerable<JobContract> contracts) =>
         [.. contracts.Distinct()

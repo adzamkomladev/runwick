@@ -130,6 +130,12 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
 
     public long FinishesSent;
 
+    /// <summary>Staged completions observed committed by receipt resolution (08 §8.2); no engine Finish was sent for them.</summary>
+    public long StagedCompletionsObserved;
+
+    /// <summary>Begins that storage answered with a committed rate deferral (T20, 10 §5).</summary>
+    public long RateDeferrals;
+
     /// <summary>T0: first locally observed stop signal.</summary>
     public TimeSpan? StopSignalAt
     {
@@ -272,20 +278,36 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
         {
             throw new RunwickConfigurationException([new ConfigurationError(
                 unsupported.Contains("rate_admission") ? RunwickErrorCodes.RatePoliciesUnsupported : RunwickErrorCodes.UnsupportedCapability,
-                Application, $"V-24: the application requires capabilities this worker does not support: {string.Join(", ", unsupported)}. Rate-aware Begin is not in this release.")]);
+                Application, $"V-24: the application requires capabilities this worker does not support: {string.Join(", ", unsupported)}. Upgrade this worker before the application activates them.")]);
         }
 
         // Step 4 ran in the runtime handshake (seed-if-absent); keep its scope map for blocked-scope classification.
         ScopeMap = _runtime.Scopes.ToDictionary(s => s.ScopeId);
 
-        // Step 5: presence before admission.
-        await Presence.PublishAsync("starting", cancellationToken).ConfigureAwait(false);
+        // Step 5: presence before admission (05 §14). A few bounded retries; a worker whose presence still fails starts
+        // degraded (09 §3.2) because presence is observational and never gates ownership.
+        for (var attempt = 0; ; attempt++)
+        {
+            await Presence.PublishAsync("starting", cancellationToken).ConfigureAwait(false);
+            if (!Presence.Failing || attempt + 1 >= WorkerSettings.FirstPresenceAttempts)
+            {
+                break;
+            }
+
+            await Clock.Delay(Backoff(attempt), cancellationToken).ConfigureAwait(false);
+        }
+
+        if (Presence.Failing)
+        {
+            Diagnose("presence publication failing at startup; admission opens with readiness degraded");
+        }
 
         // Step 6.
         Lease.Start();
         Completion.Start();
         Supervise("recovery", RecoveryLoopAsync, critical: false);
         Supervise("presence", PresenceLoopAsync, critical: false);
+        Supervise("scaler", ScalerLoopAsync, critical: false);
         Supervise("supervisor", SupervisorLoopAsync, critical: true);
         foreach (var pool in Pools)
         {
@@ -310,7 +332,7 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
 
     PresenceLoop? _presence;
 
-    PresenceLoop Presence => _presence ??= new PresenceLoop(this);
+    public PresenceLoop Presence => _presence ??= new PresenceLoop(this);
 
     async Task SupervisorLoopAsync()
     {
@@ -398,7 +420,8 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
             {
                 (readiness, status) = (WorkerReadiness.Unhealthy, "pressure");
             }
-            else if (Pools.Any(p => p.Suspended) || _entries.Values.Any(e => e.Loss is LossCause.CleanupExpired or LossCause.GraceExpired))
+            else if (Pools.Any(p => p.Suspended) || Presence.Failing
+                || _entries.Values.Any(e => e.Loss is LossCause.CleanupExpired or LossCause.GraceExpired))
             {
                 (readiness, status) = (WorkerReadiness.Degraded, "degraded");
             }
@@ -444,7 +467,7 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
     {
         SignalStop();
         using var hostRegistration = cancellationToken.Register(() => _controlStop.Cancel());
-        _ = Presence.PublishAsync("draining", CancellationToken.None);
+        var drainingPresence = Presence.PublishAsync("draining", CancellationToken.None);
         try
         {
             // Wait for every attempt to retire, bounded by the absolute ControlStopCutoff (or the host token).
@@ -487,11 +510,11 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
                 _stopped = true;
             }
 
-            // Coordinator loops end promptly on the cancelled tokens; user code is never awaited here.
+            // Coordinator loops and the draining publication end promptly; user code is never awaited here.
             using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             try
             {
-                await Task.WhenAll(tasks).WaitAsync(bound.Token).ConfigureAwait(false);
+                await Task.WhenAll([.. tasks, drainingPresence]).WaitAsync(bound.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {

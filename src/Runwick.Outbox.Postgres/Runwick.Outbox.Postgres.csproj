@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Runwick outbox source adapter for PostgreSQL (Npgsql): stage on the caller's transaction, relay to any Runwick destination.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Runwick.Outbox\Runwick.Outbox.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Sql\*.sql" LogicalName="Runwick.Outbox.Postgres.Sql.%(Filename)%(Extension)" />
+    <InternalsVisibleTo Include="Runwick.Outbox.Tests" />
+  </ItemGroup>
+</Project>

@@ -4,6 +4,34 @@
 
 Numeric values are restated here where the engine behavior depends on them; [06-defaults.md](06-defaults.md) is the single table of defaults, derived formulas and startup inequalities. Where the two disagree, 06 is authoritative for the number and this file for the behavior.
 
+## Changes (2026-10-31, SP-012)
+
+- §7.2: probe starts are ≥ 50 ms apart per group, enforced in the coordinator (it was a stated rule only).
+- §8.6: probe/2 queue evidence excludes a saturated queue's lanes for the snapshot's life; a changed queue control revision clears that queue's cooldowns; a retiring local attempt lifts its queue's exclusion (09 §4.2).
+- §14 / §17: the first presence publication is retried 3 times; failing publication makes readiness `Degraded` (09 §3.2).
+- A rate deferral sets no cooldown (09 C-5).
+
+## Changes (2026-10-31, SP-016)
+
+- The scheduler role (`AddScheduler`) is a separate hosted service, independent of workers. It holds no lease and never uses the renewal lane (13 §4.1). Scheduled jobs reach workers as ordinary jobs.
+
+## Changes (2026-10-31, SP-014)
+
+- §3.3 (startup): `AutoConcurrency(min, max)` is accepted; the M2 refusal is lifted (11 §2). Note 3 and the *[choice]* "AutoConcurrency" below are superseded.
+- §4: a pool's ticket target can change at run time (11 §3.5). A reduction stops refill only; tickets are never revoked. The gate reports every outstanding change to the occupancy integrator.
+- New non-critical loop `scaler` (every 5 s ± 10 %). Presence publishes each pool's current target. Health is unchanged by the scaler.
+
+## Changes (2026-10-31, SP-013)
+
+- §3.3 / §9.4 (C-2): a committed `RateLimited` Begin retires the entry with no scope, middleware or unstarted-guard charge, and returns the ticket at once (10 §5). The engine counts it (`RateDeferrals`). A `RateLimited` reply without a committed effect stays an invariant fault.
+- §3.3 startup: the rate-enabled refusal (V-24) applies only to binaries that do not know `rate_admission`.
+
+## Changes (2026-10-31, SP-011)
+
+- §3.3: `JobExecutionResult.Completed` is no longer refused. A staged attempt is settled by receipt observation (08 §8.2), and a `Completed` token for an attempt that staged nothing is a pipeline contract fault.
+- §11.3: renewal pauses while a staged completion holds the caller's transaction (08 §8.1 step 3).
+- Durable cancellation from Cancel/1 T22 is observed through Renew as before. Nothing in the engine assumes the handler stopped.
+
 ## Changes (2026-10-30)
 
 Contradictions resolved (later document wins):

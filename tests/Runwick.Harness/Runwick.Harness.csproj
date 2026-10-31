@@ -4,6 +4,7 @@
     <InternalsVisibleTo Include="Runwick.Postgres.Tests" />
     <InternalsVisibleTo Include="Runwick.Harness.Peer" />
     <InternalsVisibleTo Include="Runwick.Workloads" />
+    <InternalsVisibleTo Include="Runwick.Outbox.Tests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Runwick.Postgres\Runwick.Postgres.csproj" />

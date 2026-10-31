@@ -14,6 +14,9 @@ internal sealed class PoolCoordinator
     readonly Dictionary<LaneKey, CandidateCursor?> _cursors = [];
     readonly HashSet<LaneKey> _excluded = [];
     ReadyView? _excludedFor;
+    readonly HashSet<string> _saturated = new(StringComparer.Ordinal);
+    readonly Dictionary<string, long> _queueRevisions = new(StringComparer.Ordinal);
+    readonly System.Collections.Concurrent.ConcurrentQueue<string> _released = new();
     int _suspensions;
     int _idleStep;
     int _roundReserves;
@@ -26,7 +29,19 @@ internal sealed class PoolCoordinator
         Gate = new LocalCapacityGate(settings.Target);
         Selector = new LaneSelector(settings);
         Gate.Released += () => Wake.Set();
+        Scaler = settings.Auto is { } auto ? new Scaling.PoolScaler(auto.Min, auto.Max) : null;
+        Gate.OutstandingChanged += n => Occupancy.Record(_engine.Clock.Now, n);
     }
+
+    /// <summary>The automatic controller of an <c>AutoConcurrency</c> pool; null for a fixed pool (11 §3).</summary>
+    public Scaling.PoolScaler? Scaler { get; }
+
+    public Scaling.OccupancyIntegrator Occupancy { get; } = new();
+
+    public Scaling.AdmissionOutcomes Outcomes { get; } = new();
+
+    /// <summary>The last scaler decision, for diagnostics and tests.</summary>
+    public Scaling.ScalerDecision? LastDecision { get; set; }
 
     public PoolSettings Settings { get; }
 
@@ -46,7 +61,16 @@ internal sealed class PoolCoordinator
 
     public bool ClaimUnresolved => _claimUnresolved;
 
+    /// <summary>Saturated-queue Reserves skipped because probe/2 evidence excluded the queue (09 §4.2).</summary>
+    public long SaturationSkips;
+
     public void Suspend() => Interlocked.Increment(ref _suspensions);
+
+    /// <summary>
+    /// A local attempt of <paramref name="queue"/> retired: a known release, the one local event that may recheck a
+    /// saturated queue before the next probe (capacity-defaults §2). Drained by the opportunity loop.
+    /// </summary>
+    public void OnAttemptRetired(string queue) => _released.Enqueue(queue);
 
     public void Resume()
     {
@@ -86,17 +110,29 @@ internal sealed class PoolCoordinator
                 continue;
             }
 
+            var now = _engine.Clock.Now;
             if (!ReferenceEquals(view, _excludedFor))
             {
                 _excluded.Clear();
                 _excludedFor = view;
+                ApplyQueueEvidence(view.Snapshot);
             }
 
-            var now = _engine.Clock.Now;
+            while (_released.TryDequeue(out var releasedQueue))
+            {
+                _saturated.Remove(releasedQueue);
+            }
+
             var ages = view.Ages(now);
             foreach (var lane in _excluded)
             {
                 ages.Remove(lane);
+            }
+
+            foreach (var lane in ages.Keys.Where(l => _saturated.Contains(l.Queue)).ToList())
+            {
+                ages.Remove(lane);
+                Interlocked.Increment(ref SaturationSkips);
             }
 
             var choice = Selector.Choose(ages, now);
@@ -122,6 +158,30 @@ internal sealed class PoolCoordinator
             {
                 _roundReserves = 0;
                 await Task.Yield();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Probe/2 queue evidence (09 §4.2), applied once per snapshot. A saturated queue scope excludes that queue's lanes
+    /// for the snapshot's life (no Reserve is sent for them), without touching cooldown steps; unrelated queues are
+    /// unaffected. A changed control revision is a relevant control change: the queue's cooldowns reset at once. A
+    /// snapshot without queue rows (probe/1 or scripted stores) is no evidence and changes nothing.
+    /// </summary>
+    void ApplyQueueEvidence(ReadySnapshot snapshot)
+    {
+        _saturated.Clear();
+        foreach (var q in snapshot.Queues)
+        {
+            if (_queueRevisions.TryGetValue(q.Queue, out var seen) && seen != q.ControlRevision)
+            {
+                Selector.ResetQueue(q.Queue);
+            }
+
+            _queueRevisions[q.Queue] = q.ControlRevision;
+            if (q.Saturated && !q.Paused)
+            {
+                _saturated.Add(q.Queue);
             }
         }
     }
@@ -176,6 +236,7 @@ internal sealed class PoolCoordinator
                     Selector.CoolQueue(choice.Queue, now);
                     return false;
                 case StoreStatus.CapacityBlocked:
+                    Outcomes.Record(now, blocked: true);
                     _cursors[lane] = reply.Error?.ResumeAfter;
                     switch (Classify(reply.Error?.BlockedScopeId, lane))
                     {

@@ -33,7 +33,21 @@ internal sealed record CompiledJob(
     CompiledWindow? WindowSelector,
     IReadOnlyList<Type> MiddlewareChain,
     Type? HandlerType,
-    JobDescriptor Descriptor);
+    JobDescriptor Descriptor)
+{
+    /// <summary>Rolling-window rate scopes (10 §2); empty for jobs without rate policy.</summary>
+    public IReadOnlyList<RateSelector> Rates { get; init; } = [];
+}
+
+/// <summary>Rate policy validation bounds (06 §1.11, capacity-defaults §3).</summary>
+internal static class RateBounds
+{
+    public const int MinLimit = 1;
+    public const int MaxLimit = 100_000;
+    public const long MinWindowMs = 1_000;
+    public const long MaxWindowMs = 86_400_000;
+    public const int MaxScopesPerJob = 8;
+}
 
 /// <summary>Immutable compiled registry: built once, validated, never mutated.</summary>
 internal sealed class JobRegistry : IRunwickJobRegistry

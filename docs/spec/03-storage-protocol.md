@@ -6,6 +6,45 @@ This file defines the driver-neutral storage contract: internal records and inte
 
 Scope is M1 + M2 (PostgreSQL execution through gate G-1). Items marked **not in M2** are named only so that interfaces and records leave room for them; an M2 driver rejects them (§11).
 
+## Changes (2026-10-31, SP-016)
+
+- §4: the eight schedule operations (13 §6) and the due read. `RegisterSchedule`, `MaterializeOccurrences` and `TriggerSchedule` are creation paths for the gate and need capability `scheduler`.
+- §8.4: `RegisterSchedule` 5 min / 10 min; every other schedule operation 30 s / 60 s; all `durable`.
+
+## Changes (2026-10-31, SP-014)
+
+- §4: `SetPoolOverride/1` (administrative, 5 min / 10 min, durable; 11 §5). `EstimateDemand` (query) and `RecordScalingEvent` (no receipt) are worker-internal, like `PublishPresence`.
+
+## Changes (2026-10-31, SP-012)
+
+- §3.5: `ReadySnapshot` gains `Queues` (saturation, control revision) and `UnsupportedLanes` (09 §2); `ReadinessProbe/2` is a query with no receipt. New internal `IReadinessDiagnostics` with `ListUnsupportedBacklog/1` (09 §5).
+- `PublishPresence/1` also writes the instance's queue subscriptions (09 §3.1). Its contract is otherwise unchanged.
+
+## Changes (2026-10-31, SP-017)
+
+- `ReceiveOutbox/1` (14 §5): durable receipts, deadline cap 30 s, a creation path for the gate, capability `outbox_destination`. It checks a durable delivery identity before ordinary dispatch and stores the job mapping with the receipt. After its transport command expires, a new command is permitted only under the same delivery identity and AcceptUntil (14 §6.2); ordinary Dispatch keeps the rule that an expired unknown operation is never replaced.
+
+## Changes (2026-10-31, SP-013)
+
+- §3.1: `DispatchItem.Rates` carries the seed policy of each rate scope in `Intent.RateScopes`, outside the fingerprint (10 §3.1). `BeginReply.Deferred` reports a committed deferral.
+- §3.4: new internal `IRateControlStore` with `ActivateCapabilities/1` and `EditRatePolicy/1` (10 §6). The reserved name `UpdateRatePolicy/1` becomes `EditRatePolicy/1`.
+- §4 status table: `RateLimited` / `Applied` is in use (`EligibleAt` epoch ms in Detail).
+- §5.2: T20 loses "not in M2". `admission_deferred` is in use.
+- §6.3 is replaced by 10 §4. Lock rank "rate scopes" follows concurrency scopes.
+- §8.4: `EditRatePolicy` and `ActivateCapabilities` are `durable` class, 5 min default NotAfter, 10 min cap.
+- §10.3: an SP-013 binary advertises `rate_admission: 1`. The application requires it only after `ActivateCapabilities/1`. Until then Dispatch with rate scopes is `UnsupportedVersion` `rate_admission_not_active`.
+
+## Changes (2026-10-31, SP-011)
+
+- §3.4: the reserved `RequestCancellationAsync`/`RetryAsync` are replaced by the separate internal `IJobControlStore` (08 §3). `CancelRequest`/`RetryRequest` carry a `ControlActor` instead of `ActorId`/`Reason`.
+- §5.2: T17, T18, T19 and T22 lose "not in M2" (08 §3.2–3.3). T20 stays reserved for SP-013.
+- §8.4: Cancel, ManualRetry, RerunSucceeded, SetQueueState and EditScopePolicy are `durable` class, 5 min default NotAfter, 10 min cap (unchanged class table).
+- §8.5: receipt members for the control operations are in 08 §6.
+- §9.3 new codes: `cancel_already_requested`, `no_change`, `scope_not_registered`. `revision_conflict` is now used.
+- §10.1: the writable schema revision is the binary's own (2 for SP-011 builds).
+- §10.2: control operations and EventsSince are allowed in `drain`.
+- §11 now lists only what is still reserved after SP-011.
+
 ## Changes (2026-10-30)
 
 ### Contradictions resolved
@@ -492,7 +531,17 @@ All three are observational: no receipt, no ownership authority. The probe retur
 | `Cancel/1` | RequestCancellationAsync | administrative | durable | 5 min / 10 min | not in M2 |
 | `ManualRetry/1` | RetryAsync | administrative | durable | 5 min / 10 min | not in M2 |
 | `SetQueueState/1` | (internal; harness only in M2) | administrative | durable | 5 min / 10 min | harness only |
-| `RerunSucceeded/1`, `UpdateConcurrencyPolicy/1`, `UpdateRatePolicy/1`, `SetApplicationMode/1`, `ActivateCapabilities/1`, `ReceiveOutbox/1`, schedule operations, `CleanupBatch/1`, `RecordDisclosure/1`, `SetPoolOverride/1` | — | — | durable | per family | not in M2 |
+| `ActivateCapabilities/1`, `EditRatePolicy/1` | IRateControlStore | administrative | durable | 5 min / 10 min | M3 (10 §6) |
+| `ReceiveOutbox/1` | IOutboxDestinationStore | creation | durable | 30 s / 30 s | M3 (14 §5) |
+| `ReadinessProbe/2` | IWorkReadinessStore.ProbeAsync | query | — | — | M3 (09 §2) |
+| `ListUnsupportedBacklog/1` | IReadinessDiagnostics | query | — | — | M3 (09 §5) |
+| `RegisterSchedule/1` | IScheduleStore | creation | durable | 5 min / 10 min | M3 (13 §6) |
+| `MaterializeOccurrences/1`, `TriggerSchedule/1` | IScheduleStore | creation | durable | 30 s / 60 s | M3 (13 §6) |
+| `SetScheduleState/1`, `UpdateSchedule/1`, `ResolveCatchUp/1`, `RecordScheduleEvaluationFailure/1`, `RevalidateSchedule/1` | IScheduleStore | scheduler mutation | durable | 30 s / 60 s | M3 (13 §6) |
+| `SetPoolOverride/1` | IScalingStore | administrative | durable | 5 min / 10 min | M3 (11 §5) |
+| `EstimateDemand/1` | IScalingStore | query | — | — | M3 (11 §4) |
+| `RecordScalingEvent/1` | IScalingStore | history append, no receipt | — | 10 s | M3 (11 §6) |
+| `RerunSucceeded/1`, `UpdateConcurrencyPolicy/1`, `SetApplicationMode/1`, `CleanupBatch/1`, `RecordDisclosure/1` | — | — | durable | per family | not in M2 (RerunSucceeded: 08) |
 
 Effects and preconditions:
 

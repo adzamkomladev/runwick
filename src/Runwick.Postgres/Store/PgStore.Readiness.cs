@@ -4,10 +4,15 @@ using Runwick.Protocol;
 
 namespace Runwick.Postgres.Store;
 
-internal sealed partial class PgStore
+internal sealed partial class PgStore : IReadinessDiagnostics
 {
-    // ------------------------------------------------------------------ ReadinessProbe/1 (04 §7.4)
+    // ------------------------------------------------------------------ ReadinessProbe/2 (09 §2, 04 §7.4)
 
+    /// <summary>
+    /// One round trip, no locks, no payload, no unbounded counting. Row kinds: <c>lane</c> (oldest due supported job of
+    /// an unpaused registered lane), <c>unsupported</c> (the lane's oldest due job has a tuple outside the request) and
+    /// <c>queue</c> (control revision, pause flag, queue-scope live permits counted up to the capacity).
+    /// </summary>
     public Task<ReadySnapshot> ProbeAsync(string application, IReadOnlyList<LaneKey> lanes, IReadOnlyList<JobContract> supportedContracts, CancellationToken ct)
     {
         var contracts = supportedContracts.Distinct().ToArray();
@@ -24,15 +29,26 @@ internal sealed partial class PgStore
                     FROM runwick.store_metadata AS s
                     WHERE s.singleton_id = 1
                     FOR SHARE
-                )
-                SELECT g.store_id, g.schema_revision, g.protocol_epoch, g.migration_mode, g.observed_at,
-                       r.queue, r.priority, r.oldest_eligible_at
-                FROM gate AS g
-                LEFT JOIN LATERAL (
-                    SELECT l.queue, l.priority, c.eligible_at AS oldest_eligible_at
+                ),
+                lanes AS (
+                    SELECT l.queue, l.priority
                     FROM unnest(@lane_queues::text[], @lane_priorities::text[]) AS l(queue, priority)
                     JOIN runwick.queue_controls AS q
                       ON q.application = @application AND q.queue = l.queue AND NOT q.paused
+                ),
+                tuples AS (
+                    SELECT t.name, t.version, t.profile_id, t.profile_version
+                    FROM unnest(@names::text[], @versions::integer[], @profile_ids::text[], @profile_versions::integer[])
+                         AS t(name, version, profile_id, profile_version)
+                )
+                SELECT g.store_id, g.schema_revision, g.protocol_epoch, g.migration_mode, g.observed_at,
+                       r.kind, r.queue, r.priority, r.at, r.revision, r.paused, r.scope_id, r.capacity, r.live
+                FROM gate AS g
+                LEFT JOIN LATERAL (
+                    SELECT 'lane'::text AS kind, l.queue, l.priority, c.eligible_at AS at,
+                           NULL::bigint AS revision, NULL::boolean AS paused, NULL::uuid AS scope_id, NULL::integer AS capacity,
+                           NULL::integer AS live
+                    FROM lanes AS l
                     CROSS JOIN LATERAL (
                         SELECT j.eligible_at
                         FROM runwick.jobs AS j
@@ -42,15 +58,46 @@ internal sealed partial class PgStore
                           AND j.state IN ('pending', 'retrying')
                           AND j.eligible_at <= g.observed_at
                           AND EXISTS (
-                              SELECT 1
-                              FROM unnest(@names::text[], @versions::integer[], @profile_ids::text[], @profile_versions::integer[])
-                                   AS t(name, version, profile_id, profile_version)
+                              SELECT 1 FROM tuples AS t
                               WHERE t.name = j.job_name AND t.version = j.payload_version
                                 AND t.profile_id = j.serializer_profile_id
                                 AND t.profile_version = j.serializer_profile_version)
                         ORDER BY j.eligible_at, j.job_id
                         LIMIT 1
                     ) AS c
+                    UNION ALL
+                    SELECT 'unsupported', l.queue, l.priority, h.eligible_at, NULL, NULL, NULL, NULL, NULL
+                    FROM lanes AS l
+                    CROSS JOIN LATERAL (
+                        SELECT j.eligible_at, j.job_name, j.payload_version, j.serializer_profile_id, j.serializer_profile_version
+                        FROM runwick.jobs AS j
+                        WHERE j.application = @application
+                          AND j.queue = l.queue
+                          AND j.priority = l.priority
+                          AND j.state IN ('pending', 'retrying')
+                          AND j.eligible_at <= g.observed_at
+                        ORDER BY j.eligible_at, j.job_id
+                        LIMIT 1
+                    ) AS h
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM tuples AS t
+                        WHERE t.name = h.job_name AND t.version = h.payload_version
+                          AND t.profile_id = h.serializer_profile_id
+                          AND t.profile_version = h.serializer_profile_version)
+                    UNION ALL
+                    SELECT 'queue', q.queue, NULL, NULL, q.revision, q.paused, qs.scope_id, qs.capacity, qs.live
+                    FROM (SELECT DISTINCT u.queue FROM unnest(@lane_queues::text[]) AS u(queue)) AS d
+                    JOIN runwick.queue_controls AS q ON q.application = @application AND q.queue = d.queue
+                    LEFT JOIN LATERAL (
+                        SELECT s.scope_id, s.capacity,
+                               (SELECT count(*)::integer
+                                FROM (SELECT 1 FROM runwick.concurrency_permits AS p
+                                      WHERE p.application = @application AND p.scope_id = s.scope_id
+                                        AND p.lease_expires_at > g.observed_at
+                                      LIMIT s.capacity) AS x) AS live
+                        FROM runwick.concurrency_scopes AS s
+                        WHERE s.application = @application AND s.scope_kind = 'queue' AND s.scope_key = q.queue
+                    ) AS qs ON true
                 ) AS r ON true
                 """, conn);
             cmd.P("application", application)
@@ -61,6 +108,8 @@ internal sealed partial class PgStore
                 .Arr("profile_ids", [.. contracts.Select(x => x.SerializerProfileId)], NpgsqlDbType.Text)
                 .Arr("profile_versions", [.. contracts.Select(x => x.SerializerProfileVersion)], NpgsqlDbType.Integer);
             var ready = new List<ReadyLane>();
+            var unsupported = new List<LaneKey>();
+            var queues = new List<QueueReadiness>();
             DateTimeOffset observed = default;
             var open = true;
             var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
@@ -70,14 +119,145 @@ internal sealed partial class PgStore
                 {
                     open = CheckGate(reader.GetGuid(0), reader.GetInt64(1), reader.GetInt32(2), reader.GetString(3));
                     observed = PgTime.Floor(PgTime.Read(reader, 4));
-                    if (!await reader.IsDBNullAsync(5, ct).ConfigureAwait(false))
+                    if (await reader.IsDBNullAsync(5, ct).ConfigureAwait(false))
                     {
-                        ready.Add(new ReadyLane(new LaneKey(reader.GetString(5), reader.GetString(6)), PgTime.Read(reader, 7)));
+                        continue;
+                    }
+
+                    switch (reader.GetString(5))
+                    {
+                        case "lane":
+                            ready.Add(new ReadyLane(new LaneKey(reader.GetString(6), reader.GetString(7)), PgTime.Read(reader, 8)));
+                            break;
+                        case "unsupported":
+                            unsupported.Add(new LaneKey(reader.GetString(6), reader.GetString(7)));
+                            break;
+                        default:
+                            queues.Add(new QueueReadiness(reader.GetString(6), reader.GetBoolean(10), reader.GetInt64(9),
+                                await reader.IsDBNullAsync(11, ct).ConfigureAwait(false) ? null : reader.GetGuid(11),
+                                await reader.IsDBNullAsync(12, ct).ConfigureAwait(false) ? null : reader.GetInt32(12),
+                                await reader.IsDBNullAsync(13, ct).ConfigureAwait(false) ? null : reader.GetInt32(13)));
+                            break;
                     }
                 }
             }
 
-            return new ReadySnapshot(observed, open ? ready : []);
+            return open
+                ? new ReadySnapshot(observed, ready) { Queues = queues, UnsupportedLanes = unsupported }
+                : new ReadySnapshot(observed, []);
+        }, ct);
+    }
+
+    // ------------------------------------------------------------------ ListUnsupportedBacklog/1 (09 §5)
+
+    /// <summary>
+    /// Samples up to <paramref name="samplePerLane"/> due jobs per registered lane (index <c>jobs_ready</c>, no locks) and
+    /// reports tuples that no unexpired, non-stopping worker both advertises at its active capability revision and
+    /// subscribes to on that queue.
+    /// </summary>
+    public Task<UnsupportedBacklog> ListUnsupportedBacklogAsync(string application, int samplePerLane, CancellationToken ct)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(samplePerLane, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(samplePerLane, 1_000);
+        return ReadOnlyAsync(PgLane.Background, async conn =>
+        {
+            using var cmd = new NpgsqlCommand("""
+                WITH gate AS (
+                    SELECT s.store_id, s.schema_revision, s.protocol_epoch, s.migration_mode, clock_timestamp() AS observed_at
+                    FROM runwick.store_metadata AS s
+                    WHERE s.singleton_id = 1
+                    FOR SHARE
+                ),
+                live AS (
+                    SELECT w.instance_id, w.capability_revision
+                    FROM runwick.worker_instances AS w, gate AS g
+                    WHERE w.application = @application AND w.expires_at > g.observed_at
+                      AND w.status IN ('starting', 'ready', 'degraded')
+                ),
+                sample AS (
+                    SELECT q.queue, p.priority, j.job_name, j.payload_version, j.serializer_profile_id, j.serializer_profile_version,
+                           j.eligible_at
+                    FROM runwick.queue_controls AS q
+                    CROSS JOIN gate AS g
+                    CROSS JOIN unnest(ARRAY['high', 'medium', 'low']::text[]) AS p(priority)
+                    CROSS JOIN LATERAL (
+                        SELECT j.job_name, j.payload_version, j.serializer_profile_id, j.serializer_profile_version, j.eligible_at
+                        FROM runwick.jobs AS j
+                        WHERE j.application = @application AND j.queue = q.queue AND j.priority = p.priority
+                          AND j.state IN ('pending', 'retrying') AND j.eligible_at <= g.observed_at
+                        ORDER BY j.eligible_at, j.job_id
+                        LIMIT @per_lane
+                    ) AS j
+                    WHERE q.application = @application
+                ),
+                grouped AS (
+                    SELECT s.queue, s.priority, s.job_name, s.payload_version, s.serializer_profile_id, s.serializer_profile_version,
+                           min(s.eligible_at) AS oldest, count(*)::integer AS sampled,
+                           EXISTS (
+                               SELECT 1 FROM live AS l
+                               JOIN runwick.worker_capabilities AS c
+                                 ON c.application = @application AND c.instance_id = l.instance_id
+                                AND c.capability_revision = l.capability_revision
+                               WHERE c.job_name = s.job_name AND c.payload_version = s.payload_version
+                                 AND c.serializer_profile_id = s.serializer_profile_id
+                                 AND c.serializer_profile_version = s.serializer_profile_version) AS advertised,
+                           EXISTS (
+                               SELECT 1 FROM live AS l
+                               JOIN runwick.worker_capabilities AS c
+                                 ON c.application = @application AND c.instance_id = l.instance_id
+                                AND c.capability_revision = l.capability_revision
+                               JOIN runwick.worker_subscriptions AS ws
+                                 ON ws.application = @application AND ws.instance_id = l.instance_id AND ws.queue = s.queue
+                               WHERE c.job_name = s.job_name AND c.payload_version = s.payload_version
+                                 AND c.serializer_profile_id = s.serializer_profile_id
+                                 AND c.serializer_profile_version = s.serializer_profile_version) AS capable
+                    FROM sample AS s
+                    GROUP BY s.queue, s.priority, s.job_name, s.payload_version, s.serializer_profile_id, s.serializer_profile_version
+                ),
+                lane_counts AS (
+                    SELECT queue, priority, count(*)::integer AS lane_sampled FROM sample GROUP BY queue, priority
+                )
+                SELECT g.store_id, g.schema_revision, g.protocol_epoch, g.migration_mode, g.observed_at,
+                       (SELECT count(*)::integer FROM live) AS live_workers,
+                       x.queue, x.priority, x.job_name, x.payload_version, x.serializer_profile_id, x.serializer_profile_version,
+                       x.oldest, x.sampled, x.truncated, x.advertised
+                FROM gate AS g
+                LEFT JOIN LATERAL (
+                    SELECT gr.queue, gr.priority, gr.job_name, gr.payload_version, gr.serializer_profile_id,
+                           gr.serializer_profile_version, gr.oldest, gr.sampled, gr.advertised,
+                           lc.lane_sampled = @per_lane AS truncated
+                    FROM grouped AS gr
+                    JOIN lane_counts AS lc ON lc.queue = gr.queue AND lc.priority = gr.priority
+                    WHERE NOT gr.capable
+                    ORDER BY gr.queue, gr.priority, gr.oldest
+                ) AS x ON true
+                """, conn);
+            cmd.P("application", application).P("per_lane", samplePerLane);
+            var entries = new List<UnsupportedBacklogEntry>();
+            DateTimeOffset observed = default;
+            var liveWorkers = 0;
+            var open = true;
+            var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            await using (reader.ConfigureAwait(false))
+            {
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                {
+                    open = CheckGate(reader.GetGuid(0), reader.GetInt64(1), reader.GetInt32(2), reader.GetString(3));
+                    observed = PgTime.Floor(PgTime.Read(reader, 4));
+                    liveWorkers = reader.GetInt32(5);
+                    if (await reader.IsDBNullAsync(6, ct).ConfigureAwait(false))
+                    {
+                        continue;
+                    }
+
+                    entries.Add(new UnsupportedBacklogEntry(reader.GetString(6), reader.GetString(7),
+                        new JobContract(reader.GetString(8), reader.GetInt32(9), reader.GetString(10), reader.GetInt32(11)),
+                        PgTime.Read(reader, 12), reader.GetInt32(13), reader.GetBoolean(14),
+                        reader.GetBoolean(15) ? "advertised_but_not_subscribed" : "no_live_worker_advertises_tuple"));
+                }
+            }
+
+            return new UnsupportedBacklog(observed, liveWorkers, samplePerLane, open ? entries : []);
         }, ct);
     }
 
@@ -94,7 +274,7 @@ internal sealed partial class PgStore
             return false;
         }
 
-        return revision == 1 && epoch == 1 ? true : throw new StoreIncompatibleException("schema_incompatible");
+        return revision == Migrations.PgMigrator.CurrentRevision && epoch == 1 ? true : throw new StoreIncompatibleException("schema_incompatible");
     }
 
     async Task<T> ReadOnlyAsync<T>(PgLane lane, Func<NpgsqlConnection, Task<T>> body, CancellationToken ct)
@@ -241,6 +421,21 @@ internal sealed partial class PgStore
                             .Arr("profile_ids", [.. capabilities.Select(x => x.SerializerProfileId)], NpgsqlDbType.Text)
                             .Arr("profile_versions", [.. capabilities.Select(x => x.SerializerProfileVersion)], NpgsqlDbType.Integer);
                     await tx.ExecAsync(c).ConfigureAwait(false);
+                }
+
+                // 09 §3: queue subscriptions as join rows (the jsonb column stays for display). Instance IDs are never
+                // reused and subscriptions are fixed for a process lifetime, so insert-if-absent is complete.
+                if (presence.SubscribedQueues.Count > 0)
+                {
+                    using var q = tx.Sql("""
+                        INSERT INTO runwick.worker_subscriptions (application, instance_id, queue)
+                        SELECT @application, @instance_id, q.queue
+                        FROM unnest(@queues::text[]) AS q(queue)
+                        ORDER BY q.queue COLLATE "C"
+                        ON CONFLICT DO NOTHING
+                        """).P("instance_id", presence.InstanceId)
+                            .Arr("queues", [.. presence.SubscribedQueues.Distinct().Order(StringComparer.Ordinal)], NpgsqlDbType.Text);
+                    await tx.ExecAsync(q).ConfigureAwait(false);
                 }
 
                 ack = new PresenceAck(rows[0], true);

@@ -65,7 +65,7 @@ internal sealed class PostgresJobDispatcher(RunwickRuntime runtime, DispatchPrep
     async Task<StagedDispatch> SendAsync(PreparedDispatch prepared, NpgsqlTransaction transaction, CancellationToken ct)
     {
         var command = new StoreCommand<DispatchRequest>(prepared.Application, prepared.OperationId.Value, prepared.NotAfter,
-            new DispatchRequest(new DispatchItem(prepared.Intent, prepared.Scopes, prepared.Digests), prepared.StoreId, prepared.Digests.Command));
+            new DispatchRequest(new DispatchItem(prepared.Intent, prepared.Scopes, prepared.Digests) { Rates = preparer.RatesFor(prepared.Intent) }, prepared.StoreId, prepared.Digests.Command));
         var reply = await Guard(() => store.StageDispatchAsync(transaction, command, ct)).ConfigureAwait(false);
         if (reply.Status == StoreStatus.Applied && reply.Value is { } r)
         {
@@ -77,7 +77,10 @@ internal sealed class PostgresJobDispatcher(RunwickRuntime runtime, DispatchPrep
 
     async Task<StagedBatch> SendAsync(PreparedBatch prepared, NpgsqlTransaction transaction, CancellationToken ct)
     {
-        var items = prepared.Items.Select((intent, i) => new DispatchItem(intent, prepared.Scopes[i], prepared.ItemDigests[i])).ToList();
+        var items = prepared.Items.Select((intent, i) => new DispatchItem(intent, prepared.Scopes[i], prepared.ItemDigests[i])
+        {
+            Rates = preparer.RatesFor(intent),
+        }).ToList();
         var command = new StoreCommand<DispatchBatchRequest>(prepared.Application, prepared.OperationId.Value, prepared.NotAfter,
             new DispatchBatchRequest(items, prepared.ContinueOnConflict, prepared.StoreId, prepared.CommandDigest));
         var reply = await Guard(() => store.StageDispatchManyAsync(transaction, command, ct)).ConfigureAwait(false);

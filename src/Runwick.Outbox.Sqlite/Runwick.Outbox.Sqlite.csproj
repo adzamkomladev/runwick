@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Runwick outbox source adapter for same-host SQLite (Microsoft.Data.Sqlite). A source only: not a queue provider.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Runwick.Outbox\Runwick.Outbox.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Sql\*.sql" LogicalName="Runwick.Outbox.Sqlite.Sql.%(Filename)%(Extension)" />
+    <InternalsVisibleTo Include="Runwick.Outbox.Tests" />
+  </ItemGroup>
+</Project>
