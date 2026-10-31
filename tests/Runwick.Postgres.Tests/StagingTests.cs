@@ -120,7 +120,7 @@ public sealed class StagingTests
         await using var _ = f;
         var p1 = c.Prepared.Prepare(new KeyedJob("one", "k"));
         var p2 = c.Prepared.Prepare(new KeyedJob("two", "k"));
-        var conflictsBefore = Conflicts(c);
+        var deadlocksBefore = Deadlocks(c);
 
         await using var conn1 = await OpenBusinessAsync(f, "app1");
         await using var conn2 = await OpenBusinessAsync(f, "app2");
@@ -143,7 +143,7 @@ public sealed class StagingTests
         await winnerTx.CommitAsync();
         await tx1.DisposeAsync();
         await tx2.DisposeAsync();
-        Assert.Equal(conflictsBefore, Conflicts(c));
+        Assert.Equal(deadlocksBefore, Deadlocks(c));
 
         // The caller retries its whole transaction with the same PreparedDispatch.
         var retryPrepared = loserIsTx1 ? p1 : p2;

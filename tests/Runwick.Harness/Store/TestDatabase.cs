@@ -102,9 +102,17 @@ public sealed class TestDatabase : IAsyncDisposable
     }
 
     /// <summary>Sets the store clock to real time + <paramref name="offset"/> (faketime image only).</summary>
-    public async Task StepClockAsync(TimeSpan offset)
+    public Task StepClockAsync(TimeSpan offset) =>
+        SetClockAsync((offset < TimeSpan.Zero ? "-" : "+") + ((long)Math.Abs(offset.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture) + "s");
+
+    /// <summary>Stops the store clock at the whole-second instant <paramref name="at"/> (libfaketime absolute form; faketime image only).</summary>
+    public Task FreezeClockAsync(DateTimeOffset at) =>
+        at.UtcTicks % TimeSpan.TicksPerSecond != 0
+            ? throw new ArgumentException("libfaketime freezes at whole seconds.", nameof(at))
+            : SetClockAsync(at.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture));
+
+    async Task SetClockAsync(string spec)
     {
-        var spec = (offset < TimeSpan.Zero ? "-" : "+") + ((long)Math.Abs(offset.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture) + "s";
         var result = await (_container ?? throw new InvalidOperationException("no container"))
             .ExecAsync(["sh", "-c", $"echo '{spec}' > /etc/faketimerc"]).ConfigureAwait(false);
         if (result.ExitCode != 0)
@@ -157,6 +165,19 @@ public sealed class TestDatabase : IAsyncDisposable
         // the Docker CLI and readiness is a direct connection polled every 250 ms, so the outage is the requested
         // downtime plus server start and crash recovery only (the Testcontainers wait strategy adds seconds of exec
         // polling on a loaded host). The fixed host port keeps the address stable.
+        // A checkpoint first keeps crash recovery short: after minutes of suite traffic, WAL replay alone added ~20 s
+        // to a 20 s Kill outage (G-1 run 6). Committed data is durable either way; only the restart time changes.
+        if (mode == RestartMode.Kill)
+        {
+            var admin = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(_connectionString) { Pooling = false }.ConnectionString);
+            await using (admin.ConfigureAwait(false))
+            {
+                await admin.OpenAsync().ConfigureAwait(false);
+                using var checkpoint = new NpgsqlCommand("CHECKPOINT", admin) { CommandTimeout = 120 };
+                await checkpoint.ExecuteNonQueryAsync().ConfigureAwait(false);
+            }
+        }
+
         var down = System.Diagnostics.Stopwatch.StartNew();
         await DockerAsync(mode == RestartMode.Kill ? ["kill", "--signal", "KILL", _container.Id] : ["stop", "--time", "30", _container.Id]).ConfigureAwait(false);
         await DockerAsync(["wait", _container.Id]).ConfigureAwait(false);

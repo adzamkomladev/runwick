@@ -6,6 +6,9 @@ internal sealed class LocalAdmission(int concurrency, int maxWaiting, TimeSpan w
     readonly SemaphoreSlim _slots = new(concurrency, concurrency);
     int _waiting;
 
+    /// <summary>Operations currently waiting for a slot (bounded by MaxWaitingOperations).</summary>
+    public int Waiting => Volatile.Read(ref _waiting);
+
     /// <summary>Returns a lease, or null when the gate refused (full queue or wait elapsed).</summary>
     public async Task<IDisposable?> TryEnterAsync(CancellationToken ct)
     {

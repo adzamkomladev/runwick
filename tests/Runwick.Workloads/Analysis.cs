@@ -341,10 +341,13 @@ internal static class Analysis
             violations.Add($"{invocations} handler invocations > {executions} begun executions");
         }
 
+        // Outcome-unknown dispatches are resolved by the producer (resent with the same command); one it could not
+        // resolve may or may not have applied, so it widens the bound by one and nothing more.
         var accepted = producer?["accepted"]?.GetValue<long>();
-        if (accepted is { } n && n != jobs)
+        var unresolved = producer?["outcomeUnresolved"]?.GetValue<long>() ?? 0;
+        if (accepted is { } n && (jobs < n || jobs > n + unresolved))
         {
-            violations.Add($"producer accepted {n} dispatches but the store holds {jobs} jobs");
+            violations.Add($"producer accepted {n} dispatches ({unresolved} unresolved outcomes) but the store holds {jobs} jobs");
         }
 
         var open = model.Jobs.Count(j => j.State is "pending" or "retrying" or "reserved" or "running");

@@ -269,21 +269,24 @@ public sealed class OwnershipTests
         await using var f = await DriverFixture.StartAsync(Ns("own01"));
         var c = await f.OpenClient(configure: r => TestJobs.Register(r));
         await c.Dispatcher.DispatchAsync(new ResourceJob("j", "r"));
-        // Near expiry, with enough margin left for the Renew to commit on a loaded host.
-        var reserved = (await c.ReserveAsync(lease: TimeSpan.FromSeconds(4))).Value!;
+        // The discovery snapshot names A's original expiry. The Renew commits well inside that lease (a 1.5 s margin
+        // was too small on a loaded host: G-1 run 3), and the Recover is released only once the original expiry has
+        // passed, so its StaleLease comes from rechecking the fresh expiry under its locks. The held Recover has an open
+        // transaction, so the lease stays below the 10 s idle_in_transaction_session_timeout (G-1 run 4 used 10 s).
+        var reserved = (await c.ReserveAsync(lease: TimeSpan.FromSeconds(6))).Value!;
         var lease = reserved.Lease.Handle;
         await c.BeginAsync(lease);
-        while (await f.StoreNow() < reserved.Lease.ExpiresAt - TimeSpan.FromMilliseconds(1500))
-        {
-            await Task.Delay(50);
-        }
-
         var stale = new ExpiredLease(lease.JobId, lease.AttemptId, lease.OwnershipToken, JobStates.Running, reserved.Lease.ExpiresAt);
         var h = f.ArmFault(FaultPoint.BeforeGateLock, FaultSpec.Barrier, FaultTarget.Op(Operations.Recover));
         var recover = c.RecoverAsync(stale);
         await DriverFixture.WaitAtBarrier(h, Wait);
         var renewed = await c.RenewAsync(lease, TimeSpan.FromSeconds(30));
         Assert.Equal(StoreStatus.Applied, renewed.Status);
+        while (await f.StoreNow() <= reserved.Lease.ExpiresAt + TimeSpan.FromMilliseconds(100))
+        {
+            await Task.Delay(50);
+        }
+
         DriverFixture.ReleaseBarrier(h);
         var result = await WithTimeout(recover);
         Assert.Equal((StoreStatus.StaleLease, StoreEffect.ObservedNoEffect), (result.Status, result.Effect));
@@ -306,8 +309,10 @@ public sealed class OwnershipTests
         var a = await f.OpenClient(configure: r => TestJobs.Register(r));
         var b = await f.OpenClient(configure: r => TestJobs.Register(r));
         await a.Dispatcher.DispatchAsync(new ResourceJob("j", "r"));
-        var aLease = (await a.ReserveAsync(lease: TimeSpan.FromSeconds(1))).Value!.Lease.Handle;
-        await a.BeginAsync(aLease);
+        // A must have begun before its lease expires, or its attempt is abandoned before start (1 s was too short for
+        // Reserve then Begin on a loaded host; 07 I-18).
+        var aLease = (await a.ReserveAsync(lease: TimeSpan.FromSeconds(3))).Value!.Lease.Handle;
+        Assert.Equal(StoreStatus.Applied, (await a.BeginAsync(aLease)).Reply.Status);
 
         ExpiredLease? expired = null;
         while (expired is null)
@@ -530,21 +535,24 @@ public sealed class OwnershipTests
         Assert.IsType<ReceiptResolution.Recorded>(await ResolveAsync(aId));
         await AssertOneEffect(a);
 
-        // (b) Caller cancels while COMMIT is in flight (reply delayed 2 s): outcome unknown, never rollback evidence.
+        // (b) Caller cancels while the COMMIT reply is in flight: outcome unknown, never rollback evidence. The reply is
+        // held 10 s and the cancel waits until the commit is visible. A cancel that reaches the server before it runs
+        // the COMMIT cancels it (a rollback, correctly reported as not applied), which a fixed 300 ms pause allowed on a
+        // loaded host (G-1 run 4).
         var (b, bId) = await RunningFinishAsync("b");
         var hb = f.ArmFault(FaultPoint.BeforeCommit, FaultSpec.Barrier, FaultTarget.Command(b.CommandId));
         using (var cts = new CancellationTokenSource())
         {
             var pending = c.Store.FinishAsync(b, cts.Token);
             await DriverFixture.WaitAtBarrier(hb, Wait);
-            proxy.SetLatency(TimeSpan.FromSeconds(2), LatencyDirection.ServerToClient, control);
+            proxy.SetCommitReplyLatency(TimeSpan.FromSeconds(10), control);
             DriverFixture.ReleaseBarrier(hb);
-            await Task.Delay(300);
+            await CommittedAsync(f, b.CommandId);
             await cts.CancelAsync();
             await Assert.ThrowsAsync<StoreOutcomeUnknownException>(() => pending);
         }
 
-        proxy.SetLatency(TimeSpan.Zero);
+        proxy.SetCommitReplyLatency(TimeSpan.Zero);
         Assert.IsType<ReceiptResolution.Recorded>(await ResolveAsync(bId));
         await AssertOneEffect(b);
 
@@ -571,13 +579,24 @@ public sealed class OwnershipTests
         var hd = f.ArmFault(FaultPoint.BeforeCommit, FaultSpec.Barrier, FaultTarget.Command(d.CommandId));
         var lost = c.Store.FinishAsync(d, CancellationToken.None);
         await DriverFixture.WaitAtBarrier(hd, Wait);
-        proxy.SetLatency(TimeSpan.FromSeconds(2), LatencyDirection.ServerToClient, control);
+        proxy.SetCommitReplyLatency(TimeSpan.FromSeconds(10), control);
         DriverFixture.ReleaseBarrier(hd);
-        await Task.Delay(500);
+        await CommittedAsync(f, d.CommandId);
         proxy.Sever(control);
         await Assert.ThrowsAsync<StoreOutcomeUnknownException>(() => lost);
-        proxy.SetLatency(TimeSpan.Zero);
+        proxy.SetCommitReplyLatency(TimeSpan.Zero);
         Assert.IsType<ReceiptResolution.Recorded>(await ResolveAsync(dId));
         await AssertOneEffect(d);
+    }
+
+    /// <summary>Waits until the command's receipt is visible to another session: the server has committed.</summary>
+    static async Task CommittedAsync(DriverFixture f, Guid commandId)
+    {
+        var deadline = DateTime.UtcNow + Wait;
+        while (await Receipts(f, commandId) == 0)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "the COMMIT never became visible");
+            await Task.Delay(5);
+        }
     }
 }
