@@ -102,9 +102,17 @@ public sealed class TestDatabase : IAsyncDisposable
     }
 
     /// <summary>Sets the store clock to real time + <paramref name="offset"/> (faketime image only).</summary>
-    public async Task StepClockAsync(TimeSpan offset)
+    public Task StepClockAsync(TimeSpan offset) =>
+        SetClockAsync((offset < TimeSpan.Zero ? "-" : "+") + ((long)Math.Abs(offset.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture) + "s");
+
+    /// <summary>Stops the store clock at the whole-second instant <paramref name="at"/> (libfaketime absolute form; faketime image only).</summary>
+    public Task FreezeClockAsync(DateTimeOffset at) =>
+        at.UtcTicks % TimeSpan.TicksPerSecond != 0
+            ? throw new ArgumentException("libfaketime freezes at whole seconds.", nameof(at))
+            : SetClockAsync(at.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture));
+
+    async Task SetClockAsync(string spec)
     {
-        var spec = (offset < TimeSpan.Zero ? "-" : "+") + ((long)Math.Abs(offset.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture) + "s";
         var result = await (_container ?? throw new InvalidOperationException("no container"))
             .ExecAsync(["sh", "-c", $"echo '{spec}' > /etc/faketimerc"]).ConfigureAwait(false);
         if (result.ExitCode != 0)

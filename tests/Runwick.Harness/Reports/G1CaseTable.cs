@@ -46,7 +46,7 @@ public static class G1CaseTable
         ("PGX-04", "manual retry; materialization/scope edits", "SP-011, SP-016"),
         ("PGX-09", "cross-driver comparison", "SP-019, SP-025"),
         ("SER-06", "cross-driver identity", "SP-019, SP-025"),
-        ("CAP-01", "automatic-mode runtime behaviour and target reductions", "SP-014"),
+        ("CAP-01", "automatic-mode runtime behaviour, target 0 and target reductions (07 C-8)", "SP-014"),
         ("CAP-10", "autoscaler growth-freeze interaction", "SP-014"),
         ("CAP-11", "dashboard/management lanes", "SP-020, SP-024"),
     ];

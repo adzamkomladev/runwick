@@ -37,6 +37,7 @@ internal static class ProducerMode
         }
 
         var dispatcher = provider.GetRequiredService<IJobDispatcher>();
+        var prepared = provider.GetRequiredService<IPreparedJobDispatcher>();
         var payload = a.Int("payload", 1024);
         var rate = a.Double("rate", 100);
         var random = new Random(a.Int("seed", 20261030));
@@ -83,6 +84,7 @@ internal static class ProducerMode
                         ["offered"] = metrics.Counter("offered"),
                         ["accepted"] = metrics.Counter("accepted"),
                         ["failed"] = metrics.Counter("failed"),
+            ["outcomeUnresolved"] = metrics.Counter("outcomeUnresolved"),
                         ["inFlight"] = Interlocked.Read(ref inFlight),
                     }.ToJsonString()).ConfigureAwait(false);
                 }
@@ -99,7 +101,7 @@ internal static class ProducerMode
             {
                 metrics.Count("offered");
                 Interlocked.Increment(ref inFlight);
-                await DispatchOne(dispatcher, LoadJob.Create(Interlocked.Increment(ref sequence), payload), metrics,
+                await DispatchOne(dispatcher, prepared, LoadJob.Create(Interlocked.Increment(ref sequence), payload), metrics,
                     () => Interlocked.Decrement(ref inFlight)).ConfigureAwait(false);
             }
         }
@@ -147,7 +149,7 @@ internal static class ProducerMode
             }
 
             var job = LoadJob.Create(Interlocked.Increment(ref sequence), payload);
-            var task = DispatchOne(dispatcher, job, metrics, () => Interlocked.Decrement(ref inFlight));
+            var task = DispatchOne(dispatcher, prepared, job, metrics, () => Interlocked.Decrement(ref inFlight));
             metrics.Max("inFlight", Interlocked.Increment(ref inFlight));
             lock (gate)
             {
@@ -185,7 +187,7 @@ internal static class ProducerMode
         return 0;
     }
 
-    static async Task DispatchOne(IJobDispatcher dispatcher, LoadJob job, Metrics metrics, Action done)
+    static async Task DispatchOne(IJobDispatcher dispatcher, IPreparedJobDispatcher prepared, LoadJob job, Metrics metrics, Action done)
     {
         var started = Stopwatch.GetTimestamp();
         try
@@ -193,6 +195,11 @@ internal static class ProducerMode
             await dispatcher.DispatchAsync(job).ConfigureAwait(false);
             metrics.Observe("dispatchCall", Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             metrics.Count("accepted");
+        }
+        catch (DispatchOutcomeUnknownException ex) when (ex.Prepared is not null)
+        {
+            metrics.Count("outcomeUnknown");
+            await RecoverAsync(prepared, ex.Prepared, metrics).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -202,6 +209,41 @@ internal static class ProducerMode
         finally
         {
             done();
+        }
+    }
+
+    /// <summary>
+    /// An outcome-unknown Dispatch may have committed (07 §3, CMD-02): resend the same prepared command until its
+    /// outcome is known, so an applied original counts as accepted exactly once (Replayed) and never as a second job.
+    /// </summary>
+    static async Task RecoverAsync(IPreparedJobDispatcher dispatcher, PreparedDispatch prepared, Metrics metrics)
+    {
+        var giveUp = Stopwatch.StartNew();
+        while (true)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+            try
+            {
+                await dispatcher.DispatchAsync(prepared).ConfigureAwait(false);
+                metrics.Count("accepted");
+                metrics.Count("accepted:recovered");
+                return;
+            }
+            catch (RunwickException ex) when (ex.Disposition == ErrorDisposition.KnownNotApplied
+                && ex is not (StoreUnavailableException or LocalCapacityExceededException))
+            {
+                metrics.Count("failed");
+                metrics.Count("failed:recovered_" + ex.Code);
+                return;
+            }
+            catch (Exception) when (giveUp.Elapsed < TimeSpan.FromMinutes(15))
+            {
+            }
+            catch (Exception)
+            {
+                metrics.Count("outcomeUnresolved");
+                return;
+            }
         }
     }
 }
