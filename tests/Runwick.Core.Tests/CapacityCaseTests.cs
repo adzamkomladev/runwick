@@ -88,6 +88,38 @@ public sealed class CapacityCaseTests
         Assert.Equal(8, e.Store.Jobs.Count(j => j.State == JobStates.Pending));
     }
 
+    // ------------------------------------------------------------------ CAP-10 (pressure gate input)
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    [Trait("Item", "SP-009")]
+    [Trait("Case", "CAP-10")]
+    public async Task Control_wait_is_read_safely_while_waiters_come_and_go()
+    {
+        // The supervisor tick reads the oldest control wait while renewals enter and leave their lanes; the last
+        // waiter leaving mid-read once faulted the critical supervisor (G-1 run 2026-10-31, G1-M3).
+        await using var e = EngineFixture.Create();
+        var lease = e.Engine.Lease;
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var churn = Task.Run(() =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                lease.TrackWait().Dispose();
+            }
+        });
+        var reads = 0L;
+        while (!stop.IsCancellationRequested)
+        {
+            Assert.True(lease.OldestWait(e.Engine.Clock.Now) >= TimeSpan.Zero);
+            reads++;
+        }
+
+        await churn;
+        Assert.True(reads > 1000, $"{reads} reads");
+        Assert.Equal(TimeSpan.Zero, lease.OldestWait(e.Engine.Clock.Now));
+    }
+
     // ------------------------------------------------------------------ CAP-03
 
     static LaneSelector Selector(LaneSelectionMode mode) => new(new PoolSettings("p", [("default", 1)], 4, mode, (6, 3, 1)));

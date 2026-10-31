@@ -343,6 +343,12 @@ internal static class Orchestrator
         }
 
         context.Mark("workersStopped");
+        if (failure is null && stopExit.Any(code => code?.GetValue<int>() != 0))
+        {
+            // A worker that crashed (or was killed) lost its samples and summary: the run proves nothing.
+            failure = "worker exit codes " + string.Join(", ", stopExit);
+        }
+
         await Task.Delay(TimeSpan.FromSeconds(6)).ConfigureAwait(false);
         await sampler.DisposeAsync().ConfigureAwait(false);
         foreach (var w in workers)

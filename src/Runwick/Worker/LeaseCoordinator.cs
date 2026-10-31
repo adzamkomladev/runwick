@@ -32,8 +32,20 @@ internal sealed class LeaseCoordinator(WorkerEngine engine) : IDisposable
 
     public void Dispose() => _watchdog?.Dispose();
 
-    /// <summary>The longest current wait of a renewal or settlement item for its I/O class (pressure gate input).</summary>
-    public TimeSpan OldestWait(TimeSpan now) => _waiting.IsEmpty ? TimeSpan.Zero : _waiting.Values.Select(v => now - v).Max();
+    /// <summary>
+    /// The longest current wait of a renewal or settlement item for its I/O class (pressure gate input). One pass over
+    /// a snapshot: the last waiter can leave between an emptiness check and the read, so an empty view is zero wait.
+    /// </summary>
+    public TimeSpan OldestWait(TimeSpan now)
+    {
+        var oldest = TimeSpan.Zero;
+        foreach (var since in _waiting.Values)
+        {
+            oldest = now - since > oldest ? now - since : oldest;
+        }
+
+        return oldest;
+    }
 
     public IDisposable TrackWait()
     {

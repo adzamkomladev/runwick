@@ -38,12 +38,12 @@ def lat(o, name):
 
 
 def worker_sum(run, key):
-    return sum(g(w, "counters", key, default=0) for w in run.get("workers") or [])
+    return sum(g(w, "counters", key, default=0) for w in (w for w in run.get("workers") or [] if w))
 
 
 def events(run, prefix):
     out = {}
-    for w in run.get("workers") or []:
+    for w in (w for w in run.get("workers") or [] if w):
         for k, v in (w.get("counters") or {}).items():
             if k.startswith("event:" + prefix):
                 out[k[len("event:"):]] = out.get(k[len("event:"):], 0) + v
@@ -52,7 +52,7 @@ def events(run, prefix):
 
 def worker_lat_merged(run, name):
     """Worst (max over workers) p99 and min over workers of min, with the summed count."""
-    ws = [g(w, "latencies", name) for w in run.get("workers") or []]
+    ws = [g(w, "latencies", name) for w in (w for w in run.get("workers") or [] if w)]
     ws = [l for l in ws if l and l.get("count")]
     if not ws:
         return None
@@ -107,7 +107,7 @@ def run_rows(name, run):
         ("t_reserve / t_begin / t_finish mean (p99) ms", f"{fmt(c.get('tReserveMeanMs'), 0)} ({fmt(c.get('tReserveP99Ms'), 0)}) / {fmt(c.get('tBeginMeanMs'), 0)} ({fmt(c.get('tBeginP99Ms'), 0)}) / {fmt(c.get('tFinishMeanMs'), 0)} ({fmt(c.get('tFinishP99Ms'), 0)})"),
         ("store-time floor; slot-bound ceiling; C_claim", f"{fmt(c.get('storeTimeFloorMs'), 0)} ms; {fmt(c.get('slotBoundCeilingPerSec'), 1)}/s; {fmt(c.get('serialClaimCeilingPerSec'), 2)}/s"),
     ]
-    for i, wk in enumerate(run.get("workers") or [], 1):
+    for i, wk in enumerate((w for w in run.get("workers") or [] if w), 1):
         p = wk.get("process") or {}
         rows.append((f"worker{i} CPU s, GC pause %, alloc/job KiB, RSS MiB, timer lag max ms",
                      f"{fmt((p.get('cpuMs') or 0) / 1000, 0)}, {fmt(p.get('gcPausePercent'), 2)}, "
@@ -141,12 +141,12 @@ def run_rows(name, run):
     if name in ("P-01", "P-02", "G1-M2"):
         thresholds += [("zero lease-safety losses", verdict(sum(losses.values()) == 0))]
     if name.startswith("P-08"):
-        ready = [g(wk, "admission", "secondsFromRestorationToReady") for wk in run.get("workers") or []]
+        ready = [g(wk, "admission", "secondsFromRestorationToReady") for wk in (w for w in run.get("workers") or [] if w)]
         ready = [r for r in ready if r is not None]
         conn_ok = all(v <= (6 if k.endswith(":control") else 8) for k, v in (run.get("connectionsMax") or {}).items() if k.startswith("wl-worker"))
         thresholds += [
             ("resource counts within declared caps (connections control 6 / work 8; entries ≤ 16)",
-             verdict(conn_ok and all((g(wk, "maxima", "entries") or 0) <= 16 for wk in run.get("workers") or []))),
+             verdict(conn_ok and all((g(wk, "maxima", "entries") or 0) <= 16 for wk in (w for w in run.get("workers") or [] if w)))),
             ("admission pauses", verdict(sum(stops.values()) > 0)),
         ]
         if name == "P-08c":
