@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Npgsql;
 using NpgsqlTypes;
+using Runwick.Internal;
 using Runwick.Protocol;
 
 namespace Runwick.Postgres.Store;
@@ -37,7 +38,9 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         CancellationToken ct) where T : class
     {
         var gate = sources.Gate(op.Lane);
+        var lap = PhaseTimings.Start();
         await gate.WaitAsync(ct).ConfigureAwait(false);
+        PhaseTimings.Lap(lap, op.Operation, "driverLane");
         try
         {
             for (var attempt = 0; ; attempt++)
@@ -81,9 +84,11 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         CancellationToken ct) where T : class
     {
         NpgsqlConnection connection;
+        var lap = PhaseTimings.Start();
         try
         {
             connection = await sources.For(op.Lane).OpenConnectionAsync(ct).ConfigureAwait(false);
+            lap = PhaseTimings.Lap(lap, op.Operation, "open");
         }
         catch (Exception ex) when (ex is NpgsqlException or TimeoutException or OperationCanceledException or IOException)
         {
@@ -102,6 +107,7 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
                 await tx.Fault(FaultPoint.BeforeGateLock).ConfigureAwait(false);
 
                 var outcome = await ProtocolAsync(tx, body, replay).ConfigureAwait(false);
+                lap = PhaseTimings.Lap(lap, op.Operation, "statements");
                 if (outcome is PgOutcome<T>.Rollback rollback)
                 {
                     await transaction.RollbackAsync(ct).ConfigureAwait(false);
@@ -112,6 +118,7 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
                 await tx.Fault(FaultPoint.BeforeCommit).ConfigureAwait(false);
                 commitSent = true;
                 await transaction.CommitAsync(ct).ConfigureAwait(false);
+                PhaseTimings.Lap(lap, op.Operation, "commit");
                 await tx.Fault(FaultPoint.AfterCommitBeforeReply).ConfigureAwait(false);
                 return commit.Reply;
             }
