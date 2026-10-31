@@ -256,7 +256,11 @@ public sealed class StagingTests
     {
         var (f, c) = await StartAsync("dep02");
         await using var _ = f;
-        const string DriverBackends = "SELECT pid::text FROM pg_stat_activity WHERE application_name IN ('rw:local:work', 'rw:local:control')";
+        // This test's database only: other tests' databases on the shared server have pool backends of the same name.
+        const string DriverBackends = """
+            SELECT pid::text FROM pg_stat_activity
+            WHERE application_name IN ('rw:local:work', 'rw:local:control') AND datname = current_database()
+            """;
         var poolBefore = await TextAsync(f, DriverBackends);
 
         // (a) The staged rows carry the caller transaction's xid.

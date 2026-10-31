@@ -68,9 +68,13 @@ internal sealed class PoolCoordinator
 
     /// <summary>
     /// A local attempt of <paramref name="queue"/> retired: a known release, the one local event that may recheck a
-    /// saturated queue before the next probe (capacity-defaults §2). Drained by the opportunity loop.
+    /// saturated queue before the next probe (capacity-defaults §2). Drained by the opportunity loop, which it wakes.
     /// </summary>
-    public void OnAttemptRetired(string queue) => _released.Enqueue(queue);
+    public void OnAttemptRetired(string queue)
+    {
+        _released.Enqueue(queue);
+        Wake.Set();
+    }
 
     public void Resume()
     {
@@ -118,9 +122,11 @@ internal sealed class PoolCoordinator
                 ApplyQueueEvidence(view.Snapshot);
             }
 
+            // A known release lifts both the probe exclusion and the queue-scope cooldown at once (09 §4.2).
             while (_released.TryDequeue(out var releasedQueue))
             {
                 _saturated.Remove(releasedQueue);
+                Selector.ReleaseQueue(releasedQueue);
             }
 
             var ages = view.Ages(now);

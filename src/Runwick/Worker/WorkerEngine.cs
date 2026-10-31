@@ -494,6 +494,16 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
         }
         finally
         {
+            // The draining publication runs under control stop, so it gets its 2 s bound before the stop cancels it.
+            try
+            {
+                await drainingPresence.WaitAsync(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
+            {
+                Diagnose("the draining presence publication did not finish within 2 s");
+            }
+
             // Step 6: stop renewal, recovery and presence; cancel remaining I/O; report unresolved work.
             await _controlStop.CancelAsync().ConfigureAwait(false);
             await _loops.CancelAsync().ConfigureAwait(false);
@@ -510,11 +520,11 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
                 _stopped = true;
             }
 
-            // Coordinator loops and the draining publication end promptly; user code is never awaited here.
+            // Coordinator loops end promptly; user code is never awaited here.
             using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             try
             {
-                await Task.WhenAll([.. tasks, drainingPresence]).WaitAsync(bound.Token).ConfigureAwait(false);
+                await Task.WhenAll(tasks).WaitAsync(bound.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {

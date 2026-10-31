@@ -230,6 +230,9 @@ internal sealed class LaneSelector
         }
     }
 
+    /// <summary>A local attempt of <paramref name="q"/> retired: the queue-scope cooldown ends; lane cooldowns stay.</summary>
+    public void ReleaseQueue(string q) => _queueCooldown.Remove(q);
+
     public void ResetCooldown(string q, string p)
     {
         _queueCooldown.Remove(q);

@@ -313,8 +313,14 @@ public sealed class DeploymentModeTests
         }
 
         Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM public.ledger WHERE job_id = ANY(@v)", ("v", victims.Select(v => v.Value).ToArray())));
-        Assert.Equal(all.Count - victims.Count, Interlocked.Read(ref w.Engine.StagedCompletionsObserved));
-        Assert.Equal(0, Interlocked.Read(ref w.Engine.FinishesSent));
+        // The caller's commit makes the job succeeded before the engine settles the attempt (as TXC-02). Each attempt is
+        // settled by observing its staged receipt or, when the lookup stays unresolved under load, by the normal-path
+        // Finish that storage rejects because the staged Finish already closed the attempt (08 §8.2); either way the
+        // ledger and state checks above hold.
+        await WorkerHost.WaitUntil(
+            () => Interlocked.Read(ref w.Engine.StagedCompletionsObserved) + Interlocked.Read(ref w.Engine.FinishesSent) == all.Count - victims.Count,
+            TimeSpan.FromSeconds(10), "every committed stage settled by the engine");
+        Assert.True(Interlocked.Read(ref w.Engine.StagedCompletionsObserved) > 0);
         await w.StopAsync();
         await AssertInvariants(f);
     }

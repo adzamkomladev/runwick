@@ -51,14 +51,13 @@ public sealed class CapacityCaseTests
         Assert.Equal(WorkerSettings.DefaultPoolTarget, Assert.Single(defaults!.Pools).Target);
         Assert.Equal(4, defaults.Pools[0].Target);
 
-        // V-15 (06): n ≥ 1, and AutoConcurrency (including min > max and max > 16) is rejected in M2 (07 C-8).
+        // V-15 (06): n ≥ 1; AutoConcurrency needs 0 ≤ min ≤ max and max ≥ 1 (SP-014), and its maximum counts toward the group sum.
         var (_, zero) = Validate(w => w.Pool("p", p => p.Queues("default").FixedConcurrency(0)));
         Assert.Contains(zero, e => e.Code == RunwickErrorCodes.InvalidPool && e.Message.StartsWith("V-15", StringComparison.Ordinal));
-        foreach (var (min, max) in new[] { (5, 3), (1, 17) })
-        {
-            var (_, auto) = Validate(w => w.Pool("p", p => p.Queues("default").AutoConcurrency(min, max)));
-            Assert.Contains(auto, e => e.Code == RunwickErrorCodes.FeatureNotAvailable);
-        }
+        var (_, inverted) = Validate(w => w.Pool("p", p => p.Queues("default").AutoConcurrency(5, 3)));
+        Assert.Contains(inverted, e => e.Code == RunwickErrorCodes.InvalidPool && e.Message.StartsWith("V-15", StringComparison.Ordinal));
+        var (_, autoOver) = Validate(w => w.Pool("p", p => p.Queues("default").AutoConcurrency(1, 17)));
+        Assert.Contains(autoOver, e => e.Code == RunwickErrorCodes.PoolBudgetExceeded);
     }
 
     [Fact]
