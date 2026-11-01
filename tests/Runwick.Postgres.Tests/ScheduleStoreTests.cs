@@ -467,6 +467,8 @@ public sealed class ScheduleStoreTests
     [Trait("Category", "Contract")]
     [Trait("Item", "SP-016")]
     [Trait("Case", "CMD-01")]
+    [Trait("Case", "CMD-02")]
+    [Trait("Case", "CMD-03")]
     public async Task Schedule_controls_follow_the_receipt_protocol()
     {
         await using var f = await DriverFixture.StartAsync(Ns("schcmd"));

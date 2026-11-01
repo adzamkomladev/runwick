@@ -131,7 +131,7 @@ public sealed class ScheduleCaseTests
     {
         var definition = Definition(c, key, job, configure);
         var cutoff = await c.Store.StoreNowAsync(CancellationToken.None);
-        var first = ScheduleRecurrence.For(definition, TzdbArtifact.Pinned, TimeProvider.System)(cutoff)?.At;
+        var first = ScheduleRecurrence.For(definition, TzdbArtifact.Pinned, FrozenBudgetClock.Instance)(cutoff)?.At;
         return await c.Store.RegisterScheduleAsync(c.Command(new RegisterScheduleRequest(key, definition, cutoff, first)), CancellationToken.None);
     }
 
@@ -151,7 +151,7 @@ public sealed class ScheduleCaseTests
     {
         var s = await ReadAsync(c, key);
         var t = await c.Store.StoreNowAsync(CancellationToken.None);
-        return SchedulePlanner.Plan(s, t, ScheduleRecurrence.For(s.Definition, TzdbArtifact.Pinned, TimeProvider.System), Guid.CreateVersion7)
+        return SchedulePlanner.Plan(s, t, ScheduleRecurrence.For(s.Definition, TzdbArtifact.Pinned, FrozenBudgetClock.Instance), Guid.CreateVersion7)
             ?? throw new InvalidOperationException("nothing to plan");
     }
 
@@ -478,7 +478,7 @@ public sealed class ScheduleCaseTests
         var s = await ReadAsync(b, "m1");
         var edited = Definition(b, "m1", new PairJob("m1", "x1", "x2"), d => { d.Overlap = ScheduleOverlap.Serialize; d.Cron = "*/5 * * * *"; });
         var cutoff = await b.Store.StoreNowAsync(CancellationToken.None);
-        var first = ScheduleRecurrence.For(edited, TzdbArtifact.Pinned, TimeProvider.System)(cutoff)!.Value.At;
+        var first = ScheduleRecurrence.For(edited, TzdbArtifact.Pinned, FrozenBudgetClock.Instance)(cutoff)!.Value.At;
         var edit = b.Store.UpdateScheduleAsync(b.Command(new UpdateScheduleRequest("m1", edited, s.DefinitionRevision, cutoff, first, Actor)),
             CancellationToken.None);
         await Task.Delay(500);
@@ -626,7 +626,7 @@ public sealed class ScheduleCaseTests
         await RewindAsync(f, "tick", 2);
         var before = await ReadAsync(c, "tick");
         var ahead = await c.Store.StoreNowAsync(CancellationToken.None) + TimeSpan.FromMinutes(5);
-        var plan = SchedulePlanner.Plan(before, ahead, ScheduleRecurrence.For(before.Definition, TzdbArtifact.Pinned, TimeProvider.System),
+        var plan = SchedulePlanner.Plan(before, ahead, ScheduleRecurrence.For(before.Definition, TzdbArtifact.Pinned, FrozenBudgetClock.Instance),
             Guid.CreateVersion7)!;
 
         var reply = await c.Store.MaterializeOccurrencesAsync(c.Command(plan), CancellationToken.None);
@@ -723,5 +723,16 @@ public sealed class ScheduleCaseTests
         Assert.Equal(["created", .. Enumerable.Repeat("linked_existing", dispositions.Count - 1)], dispositions);
         Assert.Single(reply.Value.Occurrences.Select(o => o.JobId).Distinct());
         Assert.Equal(1, await Jobs(f));
+    }
+
+    /// <summary>
+    /// The planner's 250 ms cooperative budget (12 §8) is wall-clock; these store cases are not about it (the SCHED-14
+    /// case drives the budget through its own clock), so their plans run on a timestamp that never advances.
+    /// </summary>
+    sealed class FrozenBudgetClock : TimeProvider
+    {
+        public static readonly FrozenBudgetClock Instance = new();
+
+        public override long GetTimestamp() => 0;
     }
 }

@@ -214,9 +214,10 @@ public sealed class CommandIdentityTests
         Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM runwick.dispatch_keys"));
         Assert.Equal(0, await Receipts(f, d.OperationId.Value));
 
-        // (c) An applied command replayed after its NotAfter returns the recorded receipt.
+        // (c) An applied command replayed after its NotAfter returns the recorded receipt. The first send needs headroom
+        // to apply before NotAfter on a loaded host (G-2 run 1: 1 s expired it); the replay still comes after NotAfter.
         var e = c.Prepared.Prepare(new PingJob("e"));
-        var eNotAfter = DateTimeOffset.FromUnixTimeMilliseconds((DateTimeOffset.UtcNow + TimeSpan.FromSeconds(1)).ToUnixTimeMilliseconds());
+        var eNotAfter = DateTimeOffset.FromUnixTimeMilliseconds((DateTimeOffset.UtcNow + TimeSpan.FromSeconds(6)).ToUnixTimeMilliseconds());
         var first = await SendAsync(c, e, notAfter: eNotAfter);
         Assert.Equal(StoreStatus.Applied, first.Status);
         while (await f.StoreNow() <= eNotAfter)
