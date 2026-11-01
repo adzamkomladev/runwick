@@ -6,6 +6,17 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-01, PF-04)
+
+§6.1's batching rule applied to the operation bodies of Dispatch/1 and DispatchMany/1 (driver-owned and staged), Reserve/1, Begin/1, Renew/1, Finish/1 (and `StageFinishAsync`) and the §7.10 close statements. The SQL text of every statement, the lock order (§5), fresh time after the last blocking lock (03 §1.3), the receipt replay branch and `synchronous_commit` are unchanged. Rules:
+
+1. **Locks first, in order, then the clock.** Statements that need only the request or the already-locked row are batched behind the locking statement in lock order (Reserve: Q then the claim; then G, the payload read, S and the clock. Begin: J, G and the clock; K, S, R and a fresh clock when the plan locks more. Renew: J, S, clock. Finish: J, G, K, S, clock when the outcome is terminal regardless of the job; otherwise J and G first). The decision clock read is a separate statement after the last blocking lock in that batch, never in a locking statement's target list, where it could be evaluated before the lock wait. A clock read in a batch that is followed by further locks is discarded and read again after them.
+2. **Reads behind a lock are separate statements.** G is not joined into J's `FOR NO KEY UPDATE`: under READ COMMITTED a joined, unlocked generation row would be re-checked from the pre-wait snapshot. G is a statement after J in the same batch and reads the generation the locked row names. Begin's `job_rate_requirements` check is an `EXISTS` in G's target list (requirements are immutable), which removes the separate requirements read for unrated jobs. K for Finish and Begin's closed plans is found through the locked job row.
+3. **Effects and R4 in one batch, checked before COMMIT.** After the decision every effect's inputs are known. Values a `RETURNING` clause used to supply are predicted from locked rows (the job's new revision, execution number and total; each fence = scope counter + 1) and compared with the returned values; every row count is checked. Any mismatch rolls back with the reply the sequential code gave. Dispatch's step-10 deadline read is the last statement before R4 in the batch. Dispatch items that provision concurrency or rate scopes, the rate deferral's hint reads, and Reserve's live-permit count (scoped jobs) keep their own round trips.
+4. **Never a decision ahead of its lock.** No batch contains a statement whose inputs depend on an earlier statement's result in the same batch. A claim batched behind Q (Reserve) is rolled back when Q says paused or unregistered.
+
+PERF-01 after PF-04 (commands; round trips = + COMMIT): Dispatch 4, Reserve 5, Begin 4, Begin rated 6, Renew 3, Finish 4, `StageFinishAsync` 5 (+ `RELEASE`). Per job 17 commands, 21 round trips (64 before PF-02). Fault points: 07 "Changes (2026-11-01, PF-04)".
+
 ## Changes (2026-11-01, PF-02)
 
 The §6.1 batching rule ("statements whose inputs do not depend on prior results may be sent together") is now applied to the protocol frame. Statements, their order on the server and every decision are unchanged:

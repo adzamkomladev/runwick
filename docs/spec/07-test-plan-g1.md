@@ -4,6 +4,21 @@
 
 This document defines the test harness built in SP-003, the exact case list that gate **G-1** (milestone M2, PostgreSQL execution) requires, the first performance measurements recorded by SP-010, and the G-1 pass rule. Every case listed in §4–§13 is mandatory for G-1 unless this document marks a named sub-part as deferred to a later SP item.
 
+## Changes (2026-11-01, PF-04)
+
+Performance plan PF-04 batches the operation bodies of Dispatch/DispatchMany (and staging), Reserve, Begin, Renew, Finish (and `StageFinishAsync`) and every caller of the shared close statements (Recover, ReleaseReservation, Begin's closed plans, the rate deferral), within 04 §6.1 (see 04 "Changes (2026-11-01, PF-04)"). Which fault points stay per statement and which become per batch:
+
+| `FaultPoint` | After PF-04 |
+|---|---|
+| `BeforeGateLock` | Unchanged (PF-02 note applies). |
+| `AfterLocksBeforeFreshTime` | Per batch. It fires after the batch that takes the operation's last blocking lock. Where the decision clock read is appended to that batch, the point fires after the server read the clock, still with every lock held and before any decision is made. A `Barrier` there holds the same locks as before; a `Delay` there no longer moves the decision time past `NotAfter` (no G-1 or G-2 case uses `Delay` at this point). Operations that still read the clock in its own statement (controls, rate policy, schedules, outbox, Dispatch with key rows) are unchanged. |
+| `BeforeFirstMutation` | Before the first batch that holds a mutation; that batch is the effects batch. Unchanged in meaning. |
+| `AfterMutation` | **Per batch.** It fires once after each batch that holds a mutation statement, and `Step = n` selects the n-th such batch. For the batched operations the effects and R4 are one batch, so the operation has fewer steps: Finish, Begin, Renew, Reserve and an unprovisioned Dispatch have one, Recover two (the generation update, then the close batch). PGX-05 and BATCH-01 probe steps until none is left, so they cover the new boundary unchanged. ADM-03's barrier at step 1 of Reserve now holds after the permits, the job update and R4 are written, with both scope rows locked as before. TX-* and RUN-01 were re-run against the new boundary. |
+| `BeforeCommit` | Unchanged: R4 and the row-count checks have run, COMMIT not yet sent. |
+| `AfterCommitBeforeReply`, `DuringReceiptLookup` | Unchanged. |
+
+A wrong row count inside a batch is now detected after the whole batch ran rather than after the statement, and rolls back with the same reply (`invalid_transition`, `permit_set_mismatch`, `lease_expired`). If a later statement of the same batch fails on a constraint because an earlier one affected no row, the reply is the constraint's `InvariantFault` instead; both are invariant faults with nothing committed.
+
 ## Changes (2026-11-01, PF-02)
 
 Performance plan PF-02 batches the protocol frame within 04 §6.1 (see 04 "Changes (2026-11-01, PF-02)"). Effects on this plan:
