@@ -6,6 +6,8 @@
 # G2_REASONS for the human-added reasons file (CASE<TAB>reason or "CASE ITEM"<TAB>reason).
 set -uo pipefail
 cd "$(dirname "$0")/.."
+# node runs the independent vector encoder (tests/vectors/tools/canonical.mjs); a missing node skips WireVectorTests.
+command -v node >/dev/null || export PATH="$HOME/.local/share/vite-plus/bin:$PATH"
 export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="${DOTNET_ROOT:-$HOME/.dotnet}" DOTNET_NOLOGO=1
 unset RUNWICK_TEST_PG
 
