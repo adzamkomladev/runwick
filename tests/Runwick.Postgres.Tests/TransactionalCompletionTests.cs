@@ -251,8 +251,11 @@ public sealed class TransactionalCompletionTests
             await WaitTerminal(f, job);
             Assert.Equal("failed", await State(f, job));
             Assert.Equal(0, await Ledger(f, job));
-            Assert.Equal([RunwickErrorCodes.StagedCompletionNotCommitted],
-                await TextAsync(f, "SELECT error->>'code' FROM runwick.job_attempts WHERE job_id = @j", ("j", job)));
+            var attempts = await TextAsync(f, """
+                SELECT coalesce(outcome, '?') || ' ' || coalesce(error::text, 'null') FROM runwick.job_attempts WHERE job_id = @j ORDER BY reserved_at
+                """, ("j", job));
+            var codes = await TextAsync(f, "SELECT coalesce(error->>'code', '') FROM runwick.job_attempts WHERE job_id = @j ORDER BY reserved_at", ("j", job));
+            Assert.True(codes.SequenceEqual([RunwickErrorCodes.StagedCompletionNotCommitted]), "attempts: " + string.Join(" | ", attempts));
             await w.StopAsync();
             await AssertInvariants(f);
         }

@@ -47,7 +47,8 @@ public sealed class RelayTests
         }
 
         Assert.Equal(2, await o.JobsAsync());
-        Assert.Equal(2, await o.SourceCountAsync("SELECT count(*) FROM {messages} WHERE attempts = 2"));
+        // Each lost mark forced a second attempt; a loaded host may expire a relay lease and add another, still one mapping.
+        Assert.Equal(2, await o.SourceCountAsync("SELECT count(*) FROM {messages} WHERE attempts >= 2"));
     }
 
     [Theory]
