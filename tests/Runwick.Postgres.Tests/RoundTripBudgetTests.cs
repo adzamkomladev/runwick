@@ -35,7 +35,7 @@ public sealed class RoundTripBudgetTests
     /// <summary>Expected Npgsql commands per operation (COMMIT excluded). Baseline: docs/reports/pf-01.md.</summary>
     static readonly Dictionary<string, int> Expected = new()
     {
-        ["Dispatch"] = 10,
+        ["Dispatch"] = 4,
         ["Reserve"] = 5,
         ["Begin"] = 4,
         ["Begin rated 1"] = 6,
@@ -46,13 +46,13 @@ public sealed class RoundTripBudgetTests
         ["ReleaseReservation"] = 8,
         ["ReadinessProbe"] = 1,
         ["PublishPresence"] = 5,
-        ["StageAsync"] = 11,
+        ["StageAsync"] = 5,
         ["StageFinishAsync"] = 5,
         ["Cancel"] = 8,
         ["SetQueueState"] = 8,
         ["EditRatePolicy"] = 9,
-        ["MaterializeOccurrences"] = 15,
-        ["ReceiveOutbox"] = 14,
+        ["MaterializeOccurrences"] = 14,
+        ["ReceiveOutbox"] = 13,
     };
 
     static readonly AsyncLocal<List<string>?> Current = new();
