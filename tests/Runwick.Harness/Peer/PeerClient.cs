@@ -128,6 +128,17 @@ internal sealed class PeerClient : IAsyncDisposable
     public Task OpenAsync(string connectionString, string application, int maxExecutions) =>
         SendAsync("open", new JsonObject { ["cs"] = connectionString, ["app"] = application, ["maxExecutions"] = maxExecutions });
 
+    /// <summary>As <see cref="OpenAsync"/>, with the rated contracts registered (SP-013).</summary>
+    public Task OpenRatedAsync(string connectionString, string application) =>
+        SendAsync("openRated", new JsonObject { ["cs"] = connectionString, ["app"] = application });
+
+    /// <summary>Opens as an older binary that does not know the given capabilities (SP-013 UPG-02/UPG-06).</summary>
+    public Task OpenOldBinaryAsync(string connectionString, string application, params string[] without) =>
+        SendAsync("openOldBinary", new JsonObject
+        {
+            ["cs"] = connectionString, ["app"] = application, ["without"] = new JsonArray([.. without.Select(w => (JsonNode)w)]),
+        });
+
     /// <summary>Waits for the next event of a type (default 30 s, then a test failure).</summary>
     public async Task<PeerEvent> WaitForEventAsync(string type, Func<PeerEvent, bool>? match = null, TimeSpan? timeout = null)
     {

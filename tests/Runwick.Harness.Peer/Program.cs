@@ -122,6 +122,27 @@ async Task<JsonObject> RunAsync(string cmd, JsonObject m)
         case "releaseBarrier":
             faults.Release(Enum.Parse<FaultPoint>(m["point"]!.GetValue<string>()));
             return [];
+        case "openRated":
+            // SP-013: as 'open', plus the rated contracts (RateJobs) so this process can reserve and begin them.
+            var ratedMax = m["maxExecutions"]?.GetValue<int>() ?? 3;
+            client = await TestClient.CreateAsync(m["cs"]!.GetValue<string>(), m["app"]!.GetValue<string>(), faults,
+                r =>
+                {
+                    TestJobs.Register(r, ratedMax);
+                    RateJobs.Register(r);
+                    r.Producer(o => o.AdmissionWait = TimeSpan.FromSeconds(20));
+                }).ConfigureAwait(false);
+            return new JsonObject { ["identity"] = identity, ["pid"] = Environment.ProcessId, ["workerInstanceId"] = client.WorkerInstanceId.ToString("D") };
+        case "openOldBinary":
+            // SP-013 UPG-02/UPG-06: an older binary, simulated by removing capabilities from this process's known set
+            // before 'open' (the gate and V-24 read only this set). Process-wide, so it is a peer-only command.
+            var known = (Dictionary<string, int>)Runwick.Hosting.RunwickRuntime.KnownCapabilities;
+            foreach (var name in m["without"]!.AsArray())
+            {
+                known.Remove(name!.GetValue<string>());
+            }
+
+            return await RunAsync("open", m).ConfigureAwait(false);
         case "startWorker":
         case "releaseHeld":
         case "stopWorker":
