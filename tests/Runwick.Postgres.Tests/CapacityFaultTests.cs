@@ -84,7 +84,11 @@ public sealed class CapacityFaultTests
         release.SetResult();
         await WaitCount(f, "SELECT count(*) FROM runwick.jobs WHERE state = 'succeeded'", 24, "all 24 succeeded");
         await w.StopAsync();
-        Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM (SELECT job_id FROM runwick.job_attempts GROUP BY job_id HAVING count(*) > 1) x"));
+        // Each job executed once. Under host load the worker may give a reservation up before Begin (05 §9.3,
+        // lost:SafetyDeadline) and the job runs on a later attempt, so unstarted attempt rows are not replacements.
+        Assert.Equal(0, await f.CountAsync("""
+            SELECT count(*) FROM (SELECT job_id FROM runwick.job_attempts WHERE authorized_at IS NOT NULL GROUP BY job_id HAVING count(*) > 1) x
+            """));
         Assert.Empty(SnapshotInvariants.Violations((await f.ReadCommittedSnapshot()).Model));
     }
 
@@ -249,6 +253,9 @@ public sealed class CapacityFaultTests
 
         f.Proxy!.SetLatency(TimeSpan.FromSeconds(10), LatencyDirection.Both, PgFaultProxy.Role("control"));
         await WorkerHost.WaitUntil(() => w.Engine.RenewalIo.Held == 1, Wait, "a Renew in flight");
+        // A Renew that started before the latency applied finishes in milliseconds; wait for one that is slowed.
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        await WorkerHost.WaitUntil(() => w.Engine.RenewalIo.Held == 1, Wait, "a slowed Renew in flight");
         var held = System.Diagnostics.Stopwatch.StartNew();
         var maxHeld = 0;
         await using (new Sampler(() => maxHeld = Math.Max(maxHeld, w.Engine.RenewalIo.Held)))
