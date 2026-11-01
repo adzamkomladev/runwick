@@ -185,7 +185,23 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         }
 
         var outcome = await body(tx).ConfigureAwait(false);
-        if (outcome is PgOutcome<T>.Commit commit && tx.Op.HasReceipt)
+        if (outcome is PgOutcome<T>.Commit { Effects: { } effects } batched)
+        {
+            // Effects and R4 in one round trip (PF-04): every input is known after the decision. The row counts are
+            // checked before COMMIT; a wrong count rolls everything back, R4 included, as before.
+            var r4 = tx.Op.HasReceipt ? effects.Exec(FinalizeCommand(tx, batched), mutation: false) : null;
+            await tx.RunAsync(effects).ConfigureAwait(false);
+            if (batched.Verify?.Invoke() is { } verdict)
+            {
+                return verdict;
+            }
+
+            if (r4 is not null && r4.Affected != 1)
+            {
+                throw new InvalidOperationException("Receipt finalization updated no row.");
+            }
+        }
+        else if (outcome is PgOutcome<T>.Commit commit && tx.Op.HasReceipt)
         {
             await FinalizeReceiptAsync(tx, commit).ConfigureAwait(false);
         }
@@ -482,14 +498,17 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         return rows.Count == 0 ? null : rows[0];
     }
 
-    static async Task FinalizeReceiptAsync<T>(PgTx tx, PgOutcome<T>.Commit commit) where T : class
-    {
-        using var r4 = tx.Sql("""
+    static NpgsqlCommand FinalizeCommand<T>(PgTx tx, PgOutcome<T>.Commit commit) where T : class =>
+        tx.Sql("""
             UPDATE runwick.storage_commands
             SET status = @status, result = @result, decided_at = @decided_at
             WHERE application = @application AND retention_class = @class AND command_id = @command_id AND result IS NULL
             """).P("status", commit.Reply.Status.ToString()).Json("result", commit.Result ?? [])
                 .P("decided_at", commit.Reply.DecidedAt).P("class", Operations.RetentionClass(tx.Op.Operation)).P("command_id", tx.Op.CommandId);
+
+    static async Task FinalizeReceiptAsync<T>(PgTx tx, PgOutcome<T>.Commit commit) where T : class
+    {
+        using var r4 = FinalizeCommand(tx, commit);
         if (await tx.ExecAsync(r4, mutation: false).ConfigureAwait(false) != 1)
         {
             throw new InvalidOperationException("Receipt finalization updated no row.");

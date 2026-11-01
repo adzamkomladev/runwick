@@ -241,32 +241,41 @@ internal sealed partial class PgStore
         return rows.Count == 1 ? rows[0] : throw new InvalidOperationException("generation row missing");
     }
 
-    sealed record ScopeRow(Guid ScopeId, int Capacity, bool Fencing);
+    sealed record ScopeRow(Guid ScopeId, int Capacity, bool Fencing, long FencingCounter);
 
     /// <summary>S: the job's required scopes, locked in UUID order.</summary>
     static async Task<List<ScopeRow>> LockScopesAsync(PgTx tx, Guid jobId)
     {
-        using var s = tx.Sql("""
-            SELECT s.scope_id, s.capacity, s.fencing_enabled
-            FROM runwick.concurrency_scopes AS s
-            WHERE s.application = @application
-              AND s.scope_id IN (SELECT r.scope_id FROM runwick.job_concurrency_requirements AS r
-                                 WHERE r.application = @application AND r.job_id = @job_id)
-            ORDER BY s.scope_id
-            FOR UPDATE OF s
-            """).P("job_id", jobId);
-        return await tx.QueryAsync(s, r => new ScopeRow(r.GetGuid(0), r.GetInt32(1), r.GetBoolean(2))).ConfigureAwait(false);
+        using var s = LockScopesSql(tx, jobId);
+        return await tx.QueryAsync(s, MapScope).ConfigureAwait(false);
     }
+
+    static Npgsql.NpgsqlCommand LockScopesSql(PgTx tx, Guid jobId) => tx.Sql("""
+        SELECT s.scope_id, s.capacity, s.fencing_enabled, s.fencing_counter
+        FROM runwick.concurrency_scopes AS s
+        WHERE s.application = @application
+          AND s.scope_id IN (SELECT r.scope_id FROM runwick.job_concurrency_requirements AS r
+                             WHERE r.application = @application AND r.job_id = @job_id)
+        ORDER BY s.scope_id
+        FOR UPDATE OF s
+        """).P("job_id", jobId);
+
+    static ScopeRow MapScope(Npgsql.NpgsqlDataReader r) => new(r.GetGuid(0), r.GetInt32(1), r.GetBoolean(2), r.GetInt64(3));
 
     static async Task EventAsync(PgTx tx, Guid jobId, Guid? attemptId, string kind, JsonObject details)
     {
-        using var e = tx.Sql("""
-            INSERT INTO runwick.queue_events (application, job_id, attempt_id, command_id, event_kind, occurred_at, details)
-            VALUES (@application, @job_id, @attempt_id, @command_id, @kind, @now, @details)
-            """).P("job_id", jobId).P("attempt_id", attemptId, NpgsqlDbType.Uuid).P("command_id", tx.Op.CommandId)
-                .P("kind", kind).P("now", tx.Now).Json("details", details);
+        using var e = EventSql(tx, jobId, attemptId, kind, details);
         await tx.ExecAsync(e).ConfigureAwait(false);
     }
+
+    static void EventInto(PgBatch batch, PgTx tx, Guid jobId, Guid? attemptId, string kind, JsonObject details) =>
+        batch.Exec(EventSql(tx, jobId, attemptId, kind, details));
+
+    static Npgsql.NpgsqlCommand EventSql(PgTx tx, Guid jobId, Guid? attemptId, string kind, JsonObject details) => tx.Sql("""
+        INSERT INTO runwick.queue_events (application, job_id, attempt_id, command_id, event_kind, occurred_at, details)
+        VALUES (@application, @job_id, @attempt_id, @command_id, @kind, @now, @details)
+        """).P("job_id", jobId).P("attempt_id", attemptId, NpgsqlDbType.Uuid).P("command_id", tx.Op.CommandId)
+            .P("kind", kind).P("now", tx.Now).Json("details", details);
 
     // ------------------------------------------------------------------ Begin/1 (04 §7.5)
 

@@ -15,20 +15,55 @@ internal sealed partial class PgStore
     /// <summary>J: the job row under FOR NO KEY UPDATE (04 §7.5).</summary>
     static async Task<JobRow?> LockJobAsync(PgTx tx, Guid jobId)
     {
-        using var j = tx.Sql("""
-            SELECT state, generation, revision, current_attempt_id, worker_instance_id, ownership_token,
-                   lease_expires_at, cancel_requested_at, active_unique_key, job_name, eligible_at
-            FROM runwick.jobs
-            WHERE application = @application AND job_id = @job_id
-            FOR NO KEY UPDATE
-            """).P("job_id", jobId);
-        var rows = await tx.QueryAsync(j, r => new JobRow(
-            r.GetString(0), r.GetInt32(1), r.GetInt64(2),
-            r.IsDBNull(3) ? null : r.GetGuid(3), r.IsDBNull(4) ? null : r.GetGuid(4), r.IsDBNull(5) ? null : r.GetGuid(5),
-            PgTime.ReadNullable(r, 6), PgTime.ReadNullable(r, 7), r.IsDBNull(8) ? null : r.GetString(8), r.GetString(9), PgTime.Read(r, 10)))
-            .ConfigureAwait(false);
+        using var j = LockJobSql(tx, jobId);
+        var rows = await tx.QueryAsync(j, MapJob).ConfigureAwait(false);
         return rows.Count == 1 ? rows[0] : null;
     }
+
+    static Npgsql.NpgsqlCommand LockJobSql(PgTx tx, Guid jobId) => tx.Sql("""
+        SELECT state, generation, revision, current_attempt_id, worker_instance_id, ownership_token,
+               lease_expires_at, cancel_requested_at, active_unique_key, job_name, eligible_at
+        FROM runwick.jobs
+        WHERE application = @application AND job_id = @job_id
+        FOR NO KEY UPDATE
+        """).P("job_id", jobId);
+
+    static JobRow MapJob(Npgsql.NpgsqlDataReader r) => new(
+        r.GetString(0), r.GetInt32(1), r.GetInt64(2),
+        r.IsDBNull(3) ? null : r.GetGuid(3), r.IsDBNull(4) ? null : r.GetGuid(4), r.IsDBNull(5) ? null : r.GetGuid(5),
+        PgTime.ReadNullable(r, 6), PgTime.ReadNullable(r, 7), r.IsDBNull(8) ? null : r.GetString(8), r.GetString(9), PgTime.Read(r, 10));
+
+    /// <summary>The locked job's current generation row, its execution count and whether it has rate requirements.</summary>
+    sealed record GenerationRead(GenerationRow Gen, long ExecutionCount, bool Rated);
+
+    /// <summary>
+    /// G behind J in the same batch (PF-04): a separate statement after the job lock, so it reads the generation the
+    /// locked row names with a snapshot taken after the lock was granted (a join inside the locking statement would
+    /// re-check a stale generation row). The rate-requirement EXISTS is safe anywhere: requirements are immutable.
+    /// </summary>
+    static Npgsql.NpgsqlCommand GenerationOfLockedJobSql(PgTx tx, Guid jobId) => tx.Sql("""
+        SELECT g.max_executions, g.max_unstarted_abandonments, g.execution_timeout_ms,
+               g.retry_policy::text, g.unstarted_retry_policy::text, g.started_count, g.consecutive_unstarted_count,
+               j.execution_count,
+               EXISTS (SELECT 1 FROM runwick.job_rate_requirements AS rr WHERE rr.application = j.application AND rr.job_id = j.job_id)
+        FROM runwick.jobs AS j
+        JOIN runwick.job_generations AS g ON g.application = j.application AND g.job_id = j.job_id AND g.generation = j.generation
+        WHERE j.application = @application AND j.job_id = @job_id
+        """).P("job_id", jobId);
+
+    static GenerationRead MapGenerationRead(Npgsql.NpgsqlDataReader r) => new(
+        new GenerationRow(new ExecutionPolicy(r.GetInt32(0), r.IsDBNull(2) ? null : r.GetInt64(2), ReadRetry(r.GetString(3)), r.GetInt32(1), ReadRetry(r.GetString(4))),
+            r.GetInt32(5), r.GetInt32(6)),
+        r.GetInt64(7), r.GetBoolean(8));
+
+    /// <summary>K for the locked job, found through its row (the job is locked, so its key cannot change underneath).</summary>
+    static Npgsql.NpgsqlCommand ActiveKeyOfLockedJobSql(PgTx tx, Guid jobId) => tx.Sql("""
+        SELECT k.bound_job_id
+        FROM runwick.dispatch_keys AS k
+        JOIN runwick.jobs AS j ON j.application = k.application AND j.job_name = k.job_name AND j.active_unique_key = k.key
+        WHERE j.application = @application AND j.job_id = @job_id AND k.key_kind = 'active'
+        FOR UPDATE OF k
+        """).P("job_id", jobId);
 
     /// <summary>K: the active key row, locked only when the transition may release it.</summary>
     static async Task LockActiveKeyAsync(PgTx tx, JobRow job)
@@ -86,11 +121,25 @@ internal sealed partial class PgStore
         public JsonObject? EventDetails { get; init; }
     }
 
-    /// <summary>A → P → J' → K' → E (04 §7.10). Returns the job's new revision.</summary>
+    /// <summary>A → P → J' → K' → E (04 §7.10), sent as one batch. Returns the job's new revision.</summary>
     static async Task<long> CloseAsync(PgTx tx, Close c)
     {
+        var batch = tx.Batch();
+        var verify = CloseInto(batch, tx, c);
+        await tx.RunAsync(batch).ConfigureAwait(false);
+        verify();
+        return c.Job.Revision + 1;
+    }
+
+    /// <summary>
+    /// Adds A → P → J' → K' → E (04 §7.10) to <paramref name="batch"/> in that order (PF-04). The job's new revision is
+    /// <c>Job.Revision + 1</c>: the job row is locked, so it is known before the batch is sent. The returned check runs
+    /// after the batch and throws <see cref="InvariantViolationException"/> when a row count or the revision differs.
+    /// </summary>
+    static Action CloseInto(PgBatch batch, PgTx tx, Close c)
+    {
         var now = tx.Now;
-        using (var a = tx.Sql("""
+        var attempt = batch.Exec(tx.Sql("""
             UPDATE runwick.job_attempts
             SET finished_at = @now, outcome = @outcome, disposition = @disposition, applied_reason = @reason,
                 execution_elapsed_ms = @elapsed_ms, retry_delay_ms = @retry_delay_ms, next_eligible_at = @next_eligible_at,
@@ -99,21 +148,14 @@ internal sealed partial class PgStore
             """).P("now", now).P("outcome", c.Outcome).P("disposition", c.NewState).P("reason", c.TerminalReason)
                 .P("elapsed_ms", c.ElapsedMs, NpgsqlDbType.Bigint).P("retry_delay_ms", c.RetryDelayMs, NpgsqlDbType.Bigint)
                 .P("next_eligible_at", c.NextEligibleAt).Json("error", c.Error).P("command_id", tx.Op.CommandId)
-                .P("attempt_id", c.AttemptId).P("job_id", c.JobId))
-        {
-            Expect(await tx.ExecAsync(a).ConfigureAwait(false), 1);
-        }
+                .P("attempt_id", c.AttemptId).P("job_id", c.JobId));
 
-        using (var p = tx.Sql("""
+        batch.Exec(tx.Sql("""
             DELETE FROM runwick.concurrency_permits
             WHERE application = @application AND job_id = @job_id AND attempt_id = @attempt_id AND ownership_token = @token
-            """).P("job_id", c.JobId).P("attempt_id", c.AttemptId).P("token", c.Token))
-        {
-            await tx.ExecAsync(p).ConfigureAwait(false);
-        }
+            """).P("job_id", c.JobId).P("attempt_id", c.AttemptId).P("token", c.Token));
 
-        long revision;
-        using (var j = tx.Sql("""
+        var job = batch.Query(tx.Sql("""
             UPDATE runwick.jobs
             SET state = @new_state,
                 eligible_at = COALESCE(@new_eligible_at, eligible_at),
@@ -125,21 +167,15 @@ internal sealed partial class PgStore
             WHERE application = @application AND job_id = @job_id AND current_attempt_id = @attempt_id AND ownership_token = @token
             RETURNING revision
             """).P("new_state", c.NewState).P("new_eligible_at", c.NextEligibleAt).P("now", now).P("reason", c.TerminalReason)
-                .P("job_id", c.JobId).P("attempt_id", c.AttemptId).P("token", c.Token))
-        {
-            var rows = await tx.QueryAsync(j, r => r.GetInt64(0), mutation: true).ConfigureAwait(false);
-            Expect(rows.Count, 1);
-            revision = rows[0];
-        }
+                .P("job_id", c.JobId).P("attempt_id", c.AttemptId).P("token", c.Token), r => r.GetInt64(0), mutation: true);
 
         if (JobStates.IsTerminal(c.NewState) && c.Job.ActiveKey is not null)
         {
-            using var k = tx.Sql("""
+            batch.Exec(tx.Sql("""
                 UPDATE runwick.dispatch_keys
                 SET bound_job_id = NULL, updated_at = @now
                 WHERE application = @application AND job_name = @job_name AND key_kind = 'active' AND key = @key AND bound_job_id = @job_id
-                """).P("now", now).P("job_name", c.Job.JobName).P("key", c.Job.ActiveKey).P("job_id", c.JobId);
-            await tx.ExecAsync(k).ConfigureAwait(false);
+                """).P("now", now).P("job_name", c.Job.JobName).P("key", c.Job.ActiveKey).P("job_id", c.JobId));
         }
 
         var details = c.EventDetails ?? [];
@@ -156,8 +192,14 @@ internal sealed partial class PgStore
             details["eligibleAt"] = PgTime.Ms(eligible);
         }
 
-        await EventAsync(tx, c.JobId, c.AttemptId, c.EventKind, details).ConfigureAwait(false);
-        return revision;
+        EventInto(batch, tx, c.JobId, c.AttemptId, c.EventKind, details);
+        var expected = c.Job.Revision + 1;
+        return () =>
+        {
+            Expect(attempt.Affected, 1);
+            Expect(job.Items.Count, 1);
+            Expect(job.Items[0] == expected ? 1 : 0, 1);
+        };
     }
 
     static void Expect(int actual, int expected)
@@ -217,8 +259,24 @@ internal sealed partial class PgStore
             Op(command.Application, command.CommandId, Operations.Finish, command.NotAfter, fingerprint, PgLane.Settlement),
             async tx =>
             {
-                var job = await LockJobAsync(tx, lease.JobId).ConfigureAwait(false);
-                var gen = job is null ? null : await ReadGenerationAsync(tx, lease.JobId, job.Generation).ConfigureAwait(false);
+                // J, G, K, S and the decision clock in one round trip when the outcome is terminal whatever the job
+                // says (success, user cancel, permanent failure): K precedes S as in 04 §5, and K is found through the
+                // locked job row. Otherwise J and G go first, and K (if terminal), S and the clock follow (PF-04).
+                var terminalAnyway = request.Outcome is AttemptOutcome.Succeeded or AttemptOutcome.UserCancelled or AttemptOutcome.PermanentFailure;
+                var locks = tx.Batch();
+                var jq = locks.Query(LockJobSql(tx, lease.JobId), MapJob);
+                var gq = locks.Query(GenerationOfLockedJobSql(tx, lease.JobId), MapGenerationRead);
+                PgBatch.Rows<DateTimeOffset>? clock = null;
+                if (terminalAnyway)
+                {
+                    locks.Query(ActiveKeyOfLockedJobSql(tx, lease.JobId), _ => 0);
+                    locks.Query(LockScopesSql(tx, lease.JobId), MapScope);
+                    clock = locks.Query(PgTx.ClockSql(tx), PgTx.ReadClock);
+                }
+
+                await tx.RunAsync(locks).ConfigureAwait(false);
+                var job = jq.Items.Count == 1 ? jq.Items[0] : null;
+                var gen = job is null ? null : gq.Items.Count == 1 ? gq.Items[0].Gen : throw new InvalidOperationException("generation row missing");
                 var cancel = job?.CancelRequestedAt is not null;
                 var budget = gen is not null && gen.StartedCount < gen.Policy.MaxExecutions;
                 var (state, reason) = request.Outcome switch
@@ -230,17 +288,24 @@ internal sealed partial class PgStore
                     _ when budget => (JobStates.Retrying, null),
                     _ => (JobStates.Failed, "execution_budget_exhausted"),
                 };
-                if (job is not null && JobStates.IsTerminal(state))
+                if (clock is null)
                 {
-                    await LockActiveKeyAsync(tx, job).ConfigureAwait(false);
+                    var rest = tx.Batch();
+                    if (job is not null && JobStates.IsTerminal(state) && job.ActiveKey is not null)
+                    {
+                        rest.Query(ActiveKeyOfLockedJobSql(tx, lease.JobId), _ => 0);
+                    }
+
+                    if (job is not null)
+                    {
+                        rest.Query(LockScopesSql(tx, lease.JobId), MapScope);
+                    }
+
+                    clock = rest.Query(PgTx.ClockSql(tx), PgTx.ReadClock);
+                    await tx.RunAsync(rest).ConfigureAwait(false);
                 }
 
-                if (job is not null)
-                {
-                    await LockScopesAsync(tx, lease.JobId).ConfigureAwait(false);
-                }
-
-                if (!await tx.DecideAsync().ConfigureAwait(false))
+                if (!await tx.DecideAtAsync(clock.Items[0]).ConfigureAwait(false))
                 {
                     return new PgOutcome<FinishedAttempt>.Rollback(tx.Reject<FinishedAttempt>(StoreStatus.CommandExpired, "command_expired"));
                 }
@@ -261,17 +326,27 @@ internal sealed partial class PgStore
                     eligible = PgTime.Ceil(tx.Now + TimeSpan.FromMilliseconds(delay.Value));
                 }
 
+                // The close statements and R4 in one round trip; the counts are checked before COMMIT (PF-04).
                 var outcome = Snake(request.Outcome);
-                var revision = await CloseAsync(tx, new Close(job!, lease.JobId, lease.AttemptId, lease.OwnershipToken, outcome, state, reason, "attempt_finished")
+                var effects = tx.Batch();
+                var verify = CloseInto(effects, tx, new Close(job!, lease.JobId, lease.AttemptId, lease.OwnershipToken, outcome, state, reason, "attempt_finished")
                 {
                     ElapsedMs = (long)Math.Max(0, request.ExecutionElapsed.TotalMilliseconds),
                     RetryDelayMs = delay,
                     NextEligibleAt = eligible,
                     Error = ErrorJson(request.Error),
-                }).ConfigureAwait(false);
-                var finished = new FinishedAttempt(new JobPosition(lease.JobId, job!.Generation, revision, state), outcome, state, reason, eligible);
+                });
+                var finished = new FinishedAttempt(new JobPosition(lease.JobId, job!.Generation, job.Revision + 1, state), outcome, state, reason, eligible);
                 return new PgOutcome<FinishedAttempt>.Commit(StoreReply<FinishedAttempt>.Applied(finished, tx.Now),
-                    ReceiptCodec.Finished(finished, lease.AttemptId, delay));
+                    ReceiptCodec.Finished(finished, lease.AttemptId, delay))
+                {
+                    Effects = effects,
+                    Verify = () =>
+                    {
+                        verify();
+                        return null;
+                    },
+                };
             },
             (tx, row) => Task.FromResult(StoreReply<FinishedAttempt>.Applied(ReceiptCodec.ReadFinished(row.Result!), row.DecidedAt!.Value, replayed: true)),
             ct);
