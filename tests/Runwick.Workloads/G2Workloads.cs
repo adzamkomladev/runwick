@@ -384,8 +384,9 @@ internal static class G2Workloads
     /// <summary>
     /// P-06 rate half (SP-013): <c>--rate-limit</c> authorizations per <c>--rate-window-ms</c> rolling window (default 100/1 s).
     /// Runs: <c>scopes1</c> (job-type scope) and <c>scopes8</c> (job type + 7 resource scopes) offered <c>--rate</c>
-    /// (default 100/s); <c>churn</c> (1 scope) offered <c>--churn-rate</c> against <c>--churn-limit</c> (default auto:
-    /// half the authorizations/s scopes1 achieved, so offered Begins exceed the limit on any host). Records Begin
+    /// (default 100/s); <c>churn</c> (1 scope) offered <c>--churn-rate</c> (default twice the churn limit) against
+    /// <c>--churn-limit</c> (default auto: half the authorizations/s scopes1 achieved, so offered Begins exceed the limit on any
+    /// host). Every run drains its backlog within <c>--drain-min</c> (60). Records Begin
     /// latency with the rate step (Applied and RateLimited), grant rows per authorized job, WAL bytes per grant, and checks
     /// the exact rolling-window bound on every scope.
     /// </summary>
@@ -405,7 +406,7 @@ internal static class G2Workloads
                     : Math.Clamp((int)Math.Floor(achieved / 2), 1, limit);
             }
 
-            var offered = churn ? a.Double("churn-rate", 2.0 * limit) : a.Double("rate", 100);
+            var offered = churn ? a.Double("churn-rate", 2.0 * runLimit) : a.Double("rate", 100);
             var job = label == "scopes8" ? "rated8" : "rated1";
             var spec = new G2Spec("P-06r", label, ["--rate-limit", I(runLimit), "--rate-window-ms", I(windowMs)],
                 [["--queues", "pr:1", "--concurrency", I(a.Int("concurrency", 16)), "--handler-ms", "0", "--handlers", "rated1,rated8"]],
@@ -472,7 +473,7 @@ internal static class G2Workloads
                 {
                     achieved = authorized / seconds;
                 }
-            }).ConfigureAwait(false);
+            }, a.Double("drain-min", 60)).ConfigureAwait(false);
             runs.Add(run);
             summary[label] = new JsonObject
             {
