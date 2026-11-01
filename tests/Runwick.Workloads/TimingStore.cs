@@ -10,7 +10,7 @@ namespace Runwick.Workloads;
 /// (<c>controlWait</c>, from the engine's own tracking). Also derives the renewal margin (previous expiry − Renew decision,
 /// both store instants) and due-to-Begin (<c>eligible_at</c> from the Reserve cursor → Begin decision).
 /// </summary>
-internal sealed class TimingStore(IRunwickStore inner, Metrics metrics) : IRunwickStore
+internal sealed class TimingStore(IRunwickStore inner, Metrics metrics, bool detailed = false) : IRunwickStore
 {
     readonly ConcurrentDictionary<Guid, DateTimeOffset> _expiry = new();
     readonly ConcurrentDictionary<Guid, DateTimeOffset> _eligible = new();
@@ -25,8 +25,14 @@ internal sealed class TimingStore(IRunwickStore inner, Metrics metrics) : IRunwi
         try
         {
             var result = await call().ConfigureAwait(false);
-            metrics.Observe(op, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            var elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            metrics.Observe(op, elapsed);
             metrics.Count($"{op}:{status(result)}");
+            if (detailed)
+            {
+                // G-2 only: latency per reply status (P-06 rate decision latency, Begin Applied vs RateLimited).
+                metrics.Observe($"{op}@{status(result)}", elapsed);
+            }
             return result;
         }
         catch (Exception ex)

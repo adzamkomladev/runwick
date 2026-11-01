@@ -19,16 +19,18 @@ public sealed class Metrics
 
     public long Counter(string name) => _counters.TryGetValue(name, out var v) ? v : 0;
 
-    public JsonObject CountersJson() => new(_counters.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+    // ConcurrentDictionary.ToArray() is a consistent snapshot; LINQ over the dictionary itself can throw when a key is
+    // added concurrently (ICollection.CopyTo race), which crashed a P-05 worker's sampler.
+    public JsonObject CountersJson() => new(_counters.ToArray().OrderBy(kv => kv.Key, StringComparer.Ordinal)
         .Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)kv.Value)));
 
-    public JsonObject MaximaJson() => new(_maxima.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+    public JsonObject MaximaJson() => new(_maxima.ToArray().OrderBy(kv => kv.Key, StringComparer.Ordinal)
         .Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)kv.Value)));
 
     public JsonObject LatenciesJson()
     {
         var o = new JsonObject();
-        foreach (var (name, reservoir) in _latencies.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        foreach (var (name, reservoir) in _latencies.ToArray().OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
             var s = reservoir.Summarize();
             o[name] = new JsonObject

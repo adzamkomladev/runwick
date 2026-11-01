@@ -23,12 +23,22 @@ internal static class WorkerMode
         var metrics = new Metrics();
         var invocations = new ConcurrentDictionary<Guid, int>();
         var concurrency = a.Int("concurrency", 16);
+        var g2 = a.Has("g2");
         var sc = new ServiceCollection();
         sc.AddLogging(b => b.AddSimpleConsole(o => o.SingleLine = true).SetMinimumLevel(LogLevel.Warning));
         sc.AddSingleton(new LoadBehaviour(TimeSpan.FromMilliseconds(a.Int("handler-ms", 0))));
         sc.AddRunwick(r =>
         {
             r.Application(a.Str("app")).UsePostgres(a.Str("conn"));
+            if (g2)
+            {
+                // G-2 workloads (G2Jobs): every G-2 contract registered; handlers and pool from the arguments.
+                G2Jobs.Register(r, a);
+                G2Jobs.AddHandlers(r, a);
+                r.AddWorker(w => w.Pool("main", p => G2Jobs.Pool(p, a, concurrency)));
+                return;
+            }
+
             LoadRegistration.Register(r, a.OptInt("type-ceiling"));
             r.AddHandler<LoadJob, LoadHandler>();
             r.AddWorker(w => w.Pool("main", p => p.Queues(LoadRegistration.Queue).FixedConcurrency(concurrency)).Configure(o =>
@@ -39,7 +49,7 @@ internal static class WorkerMode
                 }
             }));
         });
-        sc.AddSingleton<IRunwickStore>(sp => new TimingStore(sp.GetRequiredService<PgStore>(), metrics));
+        sc.AddSingleton<IRunwickStore>(sp => new TimingStore(sp.GetRequiredService<PgStore>(), metrics, detailed: g2));
         await using var provider = sc.BuildServiceProvider();
         var engine = provider.GetRequiredService<WorkerEngine>();
         engine.Hooks.Event = (name, entry) =>
@@ -101,6 +111,11 @@ internal static class WorkerMode
             ["diagnostics"] = new JsonArray([.. engine.Health().Diagnostics.Select(x => (JsonNode?)x)]),
             ["process"] = ProcessStats(lag),
         };
+        if (g2)
+        {
+            summary["rateDeferrals"] = Interlocked.Read(ref engine.RateDeferrals);
+        }
+
         await File.WriteAllTextAsync(outPrefix + ".summary.json", summary.ToJsonString(Json.Indented)).ConfigureAwait(false);
         Console.WriteLine("stopped");
         return 0;

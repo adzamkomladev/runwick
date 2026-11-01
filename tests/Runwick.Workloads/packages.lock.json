@@ -335,6 +335,19 @@
           "xunit.v3.extensibility.core": "[4.0.2, )"
         }
       },
+      "runwick.outbox": {
+        "type": "Project",
+        "dependencies": {
+          "Runwick": "[0.1.0-m1, )"
+        }
+      },
+      "runwick.outbox.postgres": {
+        "type": "Project",
+        "dependencies": {
+          "Npgsql": "[10.0.3, )",
+          "Runwick.Outbox": "[0.1.0-m1, )"
+        }
+      },
       "runwick.postgres": {
         "type": "Project",
         "dependencies": {
