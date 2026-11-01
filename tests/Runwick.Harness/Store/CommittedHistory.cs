@@ -19,9 +19,8 @@ namespace Runwick.Harness.Store;
 /// earlier generation must have ended terminal.</para>
 /// <para>Limit: renewals are not durable, so a Reserve carries a synthetic lease that ends at the closing instant
 /// when the attempt was recovered and after it otherwise. Lease liveness is therefore not rechecked by the model;
-/// the ordering, the state machine, budgets and cancellation precedence are. Rate deferrals
-/// (<c>admission_deferred</c>) are not in the model and are reported as violations, so a test that produces them must
-/// not use this check until the model has them.</para>
+/// the ordering, the state machine, budgets and cancellation precedence are. A rate deferral
+/// (<c>admission_deferred</c>, T20) is the model's <see cref="ModelOp.BeginDeferred"/>.</para>
 /// </remarks>
 internal static class CommittedHistory
 {
@@ -169,16 +168,18 @@ internal static class CommittedHistory
             "Finish" => ModelOp.Finish,
             "Recover" => ModelOp.Recover,
             "ReleaseReservation" => ModelOp.Release,
+            "Begin" when a.Outcome == "admission_deferred" => ModelOp.BeginDeferred,
             "Begin" => ModelOp.Begin,
             _ => a.Outcome switch
             {
                 "released" or "cancelled_before_start" => ModelOp.Release,
+                "admission_deferred" => ModelOp.BeginDeferred,
                 "abandoned_before_start" or "abandoned_running" => ModelOp.Recover,
                 _ when Executed() is not null => ModelOp.Finish,
                 _ => (ModelOp?)null,
             },
         };
-        if (op is null || a.Outcome == "admission_deferred")
+        if (op is null)
         {
             errors.Add($"{name} attempt {a.AttemptId:N}: outcome {a.Outcome} closed by {a.ClosedBy ?? "<pruned>"} is not in the ReferenceModel");
             return null;

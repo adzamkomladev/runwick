@@ -79,6 +79,8 @@ public sealed class RateAdmissionTests
 
         await c.Dispatcher.DispatchAsync(new RatedJob("after"));
         Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM runwick.job_rate_requirements"));
+
+        Assert.Empty(await f.HistoryViolations());
     }
 
     [Fact]
@@ -144,6 +146,8 @@ public sealed class RateAdmissionTests
                    WHERE b.rate_scope_id = a.rate_scope_id AND b.authorized_at > a.authorized_at - interval '3 seconds'
                      AND b.authorized_at <= a.authorized_at) > 2
             """));
+
+        Assert.Empty(await f.HistoryViolations());
     }
 
     [Fact]
@@ -174,6 +178,8 @@ public sealed class RateAdmissionTests
             WHERE j.job_id = @j
             """, ("j", second))).Single());
         Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM runwick.queue_events WHERE event_kind = 'attempt_admission_deferred'"));
+
+        Assert.Empty(await f.HistoryViolations());
     }
 
     [Fact]
@@ -200,6 +206,8 @@ public sealed class RateAdmissionTests
         Assert.Equal(first.Reply.DecidedAt, replay.Reply.DecidedAt);
         Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM runwick.job_attempts WHERE outcome = 'admission_deferred'"));
         Assert.Equal(2, await Grants(f));
+
+        Assert.Empty(await f.HistoryViolations());
     }
 
     [Fact]
@@ -234,6 +242,8 @@ public sealed class RateAdmissionTests
         Assert.Equal(JobStates.Retrying, retry.Deferred!.Position.State);
         Assert.Equal(2, await Grants(f));
         Assert.Equal(1, await f.CountAsync("SELECT execution_count FROM runwick.jobs WHERE job_id = @j", ("j", job)));
+
+        Assert.Empty(await f.HistoryViolations());
     }
 
     [Fact]
@@ -269,6 +279,8 @@ public sealed class RateAdmissionTests
             && c.BeginAsync(r.Value!.Lease.Handle).GetAwaiter().GetResult().Reply.Status == StoreStatus.Applied, TimeSpan.FromSeconds(10), "admitted");
         Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM runwick.rate_grants WHERE authorized_at >= @t", ("t", ahead)));
         Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM runwick.rate_scopes WHERE last_decision_at >= @t", ("t", ahead)));
+
+        Assert.Empty(await f.HistoryViolations());
     }
 
     [Fact]
@@ -291,6 +303,8 @@ public sealed class RateAdmissionTests
 
         var missing = await c.Store.EditRatePolicyAsync(c.Command(new RatePolicyRequest("resource", "nobody", 1, 3_000, 1, Actor)), CancellationToken.None);
         Assert.Equal((StoreStatus.NotFound, "scope_not_registered"), (missing.Status, missing.Error!.Code));
+
+        Assert.Empty(await f.HistoryViolations());
     }
 
     [Fact]
@@ -325,5 +339,7 @@ public sealed class RateAdmissionTests
         Assert.All(ms.Zip(ms.Skip(1)), p => Assert.True(p.Second - p.First >= 2_000, $"grants {p.First} and {p.Second} share a window"));
         Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM runwick.job_generations WHERE consecutive_unstarted_count > 0"));
         await w.StopAsync();
+
+        Assert.Empty(await f.HistoryViolations());
     }
 }

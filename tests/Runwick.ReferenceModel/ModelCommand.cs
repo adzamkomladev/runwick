@@ -1,6 +1,6 @@
 namespace Runwick.ReferenceModel;
 
-public enum ModelOp { Dispatch, Reserve, Begin, Renew, Finish, Recover, Release, RequestCancel }
+public enum ModelOp { Dispatch, Reserve, Begin, Renew, Finish, Recover, Release, RequestCancel, BeginDeferred }
 
 public enum ModelOutcome { Succeeded, RetryableFailure, PermanentFailure, UserCancelled, Interrupted, TimedOut }
 

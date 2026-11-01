@@ -54,8 +54,11 @@ internal static class RateSupport
 
     public static async Task<long> PeerDeadlocks(PeerClient peer) => (await peer.SendAsync("deadlocks"))["count"]!.GetValue<long>();
 
-    public static async Task NoInvariantViolations(DriverFixture f) =>
+    public static async Task NoInvariantViolations(DriverFixture f)
+    {
         Assert.Empty(SnapshotInvariants.Violations((await f.ReadCommittedSnapshot()).Model));
+        Assert.Empty(await f.HistoryViolations());
+    }
 
     /// <summary>Waits until a backend of this database waits on a heavyweight lock (the arranged blocking happened).</summary>
     public static async Task WaitForLockWaiter(DriverFixture f, string applicationPrefix = "", string? blockedBy = null)

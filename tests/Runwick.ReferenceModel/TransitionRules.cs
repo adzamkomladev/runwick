@@ -76,6 +76,22 @@ public static class TransitionRules
                     ConsecutiveUnstarted = 0,
                 });
 
+            case ModelOp.BeginDeferred:
+                // T20 (10 §5): a committed rate deferral closes the attempt and returns the job to its waiting state.
+                // Cancellation and an exhausted budget are decided before any charge, so neither can defer; nothing is
+                // charged (no execution, abandonment or unstarted-guard count).
+                if (!OwnsLive() || job.State is not States.Reserved)
+                {
+                    return Reject("stale_lease");
+                }
+
+                if (job.CancelRequested || job.StartedCount >= job.MaxExecutions)
+                {
+                    return Reject("invalid_state");
+                }
+
+                return Ok(Release(job) with { State = WaitingState(job) });
+
             case ModelOp.Renew:
                 if (!OwnsLive() || !States.OwnedStates.Contains(job.State))
                 {
