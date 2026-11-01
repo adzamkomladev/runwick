@@ -58,6 +58,9 @@ public sealed class EventCursorTests
 
         var tail = await DrainAsync(c, first[4].Cursor, 2);
         Assert.Equal(first.Skip(5).Select(e => e.EventId), tail.Select(e => e.EventId));
+
+        // 15 §12.2 rule 4: every committed job history is accepted by the ReferenceModel.
+        Assert.Empty(await f.HistoryViolations());
     }
 
     [Fact]
@@ -95,5 +98,8 @@ public sealed class EventCursorTests
         await tx.CommitAsync();
         var events = await DrainAsync(c, start, 1);
         Assert.Equal(["queue_paused", "dispatched"], events.Select(e => e.Kind));
+
+        // 15 §12.2 rule 4: every committed job history is accepted by the ReferenceModel.
+        Assert.Empty(await f.HistoryViolations());
     }
 }

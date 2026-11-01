@@ -74,8 +74,12 @@ public sealed class DeploymentModeTests
         throw new TimeoutException($"event {kind} not observed through the cursor");
     }
 
-    static async Task AssertInvariants(DriverFixture f) =>
+    /// <summary>Committed-snapshot invariants and the ReferenceModel's acceptance of every committed job history (15 §12.2 rule 4).</summary>
+    static async Task AssertInvariants(DriverFixture f)
+    {
         Assert.Empty(SnapshotInvariants.Violations((await f.ReadCommittedSnapshot()).Model));
+        Assert.Empty(await f.HistoryViolations());
+    }
 
     /// <summary>Pauses <paramref name="queue"/> from <paramref name="control"/> and checks the pause is observed.</summary>
     static async Task<QueueControlResult> PauseAsync(DriverFixture f, IServiceProvider control, IServiceProvider reader, string queue = "default")

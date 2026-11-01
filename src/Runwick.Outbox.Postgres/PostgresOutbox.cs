@@ -49,9 +49,10 @@ internal sealed class PostgresOutbox(OutboxStager stager) : IPostgresOutbox
             await transaction.ReleaseAsync(Savepoint, cancellationToken).ConfigureAwait(false);
             return result;
         }
-        catch (Exception ex) when (ex is PostgresException or OutboxMessageConflictException or OutboxStagingException)
+        catch (Exception ex)
         {
-            await transaction.RollbackAsync(Savepoint, cancellationToken).ConfigureAwait(false);
+            // Any failure, cancellation included, leaves the caller's transaction as it was before Stage (14 §2.1).
+            await OutboxStager.RollBackToSavepointAsync(transaction, Savepoint).ConfigureAwait(false);
             if (ex is PostgresException { SqlState: "42P01" or "3F000" })
             {
                 throw new OutboxStagingException("outbox_not_installed", "The outbox source schema is not installed (PostgresOutboxSchema.InstallAsync).", ex);

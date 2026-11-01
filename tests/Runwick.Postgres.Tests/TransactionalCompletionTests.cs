@@ -44,8 +44,12 @@ public sealed class TransactionalCompletionTests
     static Task WaitTerminal(DriverFixture f, Guid job) =>
         WorkerHost.WaitUntil(() => State(f, job).GetAwaiter().GetResult() is "succeeded" or "failed" or "cancelled", Long, $"job {job} terminal");
 
-    static async Task AssertInvariants(DriverFixture f) =>
+    /// <summary>Committed-snapshot invariants and the ReferenceModel's acceptance of every committed job history (15 §12.2 rule 4).</summary>
+    static async Task AssertInvariants(DriverFixture f)
+    {
         Assert.Empty(SnapshotInvariants.Violations((await f.ReadCommittedSnapshot()).Model));
+        Assert.Empty(await f.HistoryViolations());
+    }
 
     [Fact]
     [Trait("Category", "Contract")]
@@ -201,6 +205,7 @@ public sealed class TransactionalCompletionTests
             Assert.Equal(RunwickErrorCodes.OwnershipLost, code);
             Assert.Equal(0, await Ledger(f, job));
             Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM runwick.job_attempts WHERE job_id = @j AND outcome = 'succeeded'", ("j", job)));
+            await AssertInvariants(f);
             await w.StopAsync();
         }
     }
