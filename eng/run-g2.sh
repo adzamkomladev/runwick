@@ -3,7 +3,7 @@
 # RequiresDocker test executes), then the 15 §11 workloads, then the G-2 case table and checklist from the results.
 # Usage: eng/run-g2.sh [out-dir]   (default artifacts/g2/<utc timestamp>)
 # Environment: G2_SKIP_TESTS=1 or G2_SKIP_WORKLOADS=1 to run one half; G2_WORKLOADS to choose workloads; G2_DRAIN_MIN (90)
-# for P-06r's drain bound;
+# for P-06r's drain bound; G2_P09_RATE (4) for P-09's offered rate;
 # G2_REASONS for the human-added reasons file (CASE<TAB>reason or "CASE ITEM"<TAB>reason).
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -39,6 +39,9 @@ if [[ -z "${G2_SKIP_WORKLOADS:-}" ]]; then
       G1-M3) args+=(--rate "${G2_G1M3_RATE:-1}") ;;
       # A shared host drains the rate-limited backlog slowly; G-1 capped P-01's drain at 90 min the same way.
       P-06r) args+=(--drain-min "${G2_DRAIN_MIN:-90}") ;;
+      # The relay delivers at the store's Dispatch rate; on a shared host that is far below the 100/s target, so the
+      # gate run offers what the relay can keep up with (G2_P09_RATE) and a full-rate run records the throughput.
+      P-09) args+=(--rate "${G2_P09_RATE:-4}") ;;
     esac
     start=$(date +%s)
     "$wl" run "$name" --out "$out/perf/$(date -u +%Y%m%d-%H%M%S)-$name" "${args[@]}" > "$out/perf/$name.log" 2>&1
