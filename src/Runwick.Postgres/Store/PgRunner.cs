@@ -28,6 +28,11 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
     /// <summary>40P01 rollbacks only; a 55P03 lock timeout or 40001 is not a deadlock (07 I-18).</summary>
     public long Deadlocks => Interlocked.Read(ref _deadlocks);
 
+    long _stalePlans;
+
+    /// <summary>0A000 stale prepared plans retried by this runner (04 §9.2, PF-03).</summary>
+    public long StalePlans => Interlocked.Read(ref _stalePlans);
+
     /// <summary>Known store identity (from Describe); gates compare against it.</summary>
     public Guid? StoreId { get; set; }
 
@@ -133,6 +138,17 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
             }
             catch (InjectedFaultException ex) when (!commitSent && ex.Kind is "Deadlock40P01" or "Serialization40001")
             {
+                throw new TransientConflictException(ex);
+            }
+            catch (PostgresException ex) when (!commitSent && IsStalePlan(ex))
+            {
+                // 0A000 "cached plan must not change result type": a migration changed a table under a statement
+                // this connection prepared. Nothing was applied; drop the connection's prepared statements and
+                // retry the same command (04 §9.2, PF-03). The pool is cleared too: every pooled connection prepared
+                // the same statements, and the retry budget must not be spent one connection at a time.
+                Interlocked.Increment(ref _stalePlans);
+                await ForgetPreparedAsync(connection, transaction).ConfigureAwait(false);
+                sources.For(op.Lane).Clear();
                 throw new TransientConflictException(ex);
             }
             catch (PostgresException ex) when (ex.SqlState == "40003")
@@ -264,6 +280,26 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
 
         await transaction.ReleaseAsync(Savepoint, ct).ConfigureAwait(false);
         return ((PgOutcome<T>.Commit)outcome).Reply;
+    }
+
+    internal static bool IsStalePlan(PostgresException ex) =>
+        ex.SqlState == "0A000" && ex.MessageText.Contains("cached plan", StringComparison.Ordinal);
+
+    static async Task ForgetPreparedAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        try
+        {
+            if (transaction is not null)
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+
+            connection.UnprepareAll();
+        }
+        catch (Exception ex) when (ex is NpgsqlException or IOException or InvalidOperationException)
+        {
+            // The connection is broken or closing; the pool discards it and its statements with it.
+        }
     }
 
     static StoreReply<T> Classify<T>(PgOp op, PostgresException ex) where T : class

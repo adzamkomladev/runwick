@@ -283,10 +283,22 @@ internal sealed partial class PgStore : IReadinessDiagnostics
         await gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var conn = await sources.For(lane).OpenConnectionAsync(ct).ConfigureAwait(false);
-            await using (conn.ConfigureAwait(false))
+            for (var attempt = 1; ; attempt++)
             {
-                return await body(conn).ConfigureAwait(false);
+                var conn = await sources.For(lane).OpenConnectionAsync(ct).ConfigureAwait(false);
+                await using (conn.ConfigureAwait(false))
+                {
+                    try
+                    {
+                        return await body(conn).ConfigureAwait(false);
+                    }
+                    catch (PostgresException ex) when (attempt == 1 && PgRunner.IsStalePlan(ex))
+                    {
+                        // 0A000 after a migration: a read-only call applied nothing, so it is retried once on a
+                        // cleared pool (04 §9.2, PF-03).
+                        sources.For(lane).Clear();
+                    }
+                }
             }
         }
         catch (PostgresException ex) when (ex.SqlState is "42P01" or "42703" or "3F000")

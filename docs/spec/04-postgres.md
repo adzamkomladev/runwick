@@ -6,6 +6,16 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-01, PF-03)
+
+Performance plan PF-03: automatic statement preparation and a warm control pool, in §9.2. Round trips are unchanged (PERF-01).
+
+1. **Preparation and plan stability.** The control and work data sources prepare up to 64 statements per physical connection, each after its second use, which saves parse and analysis on every later call. Every driver-owned connection starts with `plan_cache_mode = force_custom_plan` (a startup option, so it covers the transaction frame and the bare-connection readiness probe alike): a prepared statement is planned for each bind's values and never runs a cached generic plan. The Reserve candidate query and the readiness probe are therefore planned exactly as without preparation, whatever their arrays and the data distribution; no generic-plan guarantee is needed. PGX-11 checks the setting and that the control connection holds prepared statements.
+2. **`0A000` `cached plan must not change result type`.** A schema change under a prepared statement makes PostgreSQL refuse the statement, before anything is applied. The runner rolls back, runs `UnprepareAll` on that connection, clears the data source's pool (every pooled connection prepared the same statements, and the retry budget is not spent one connection at a time) and retries the same command as a §10 transient conflict (same command ID and `NotAfter`; exhausted → `transient_conflict_exhausted`). A read-only call (probe, schedule and readiness reads) is retried once on the cleared pool. `RunwickPostgresMigrations.MigrateAsync` clears the pools of every store in its process on the migrated database (host, port, database) when it ends. DEP-08 changes a column type the gate statements return while three loops run the job path, and asserts no failed call, at least one `0A000` retry and no history violation.
+3. **Staged paths unchanged.** `StageAsync` and `StageFinishAsync` run on the caller's connection with the caller's preparation settings; Runwick sets neither `Max Auto Prepare` nor `plan_cache_mode` there, and a `0A000` there propagates to the caller like any other PostgreSQL error (§6.1).
+4. **Rolling upgrade.** An old binary with warm prepared statements meeting a newer schema gets `0A000` on its next call and retries it on fresh connections; the retry then gives either a correct result or, when the gate row's revision is no longer one it supports, `schema_incompatible`. Never a wrong answer: a prepared statement either runs against the schema it was prepared for, or is refused. The UPG-02 variant with an old binary is owed with UPG-02 itself.
+5. **Warm control pool.** The control pool keeps 2 idle connections (the settlement lane width) past `Connection Idle Lifetime`, so the first Renew or Finish after a long idle does not pay a physical open (0.1–1 s, lease-critical). The work pool stays at 0. PGX-12 renews after the idle lifetime (shortened in the test) and asserts the same backends serve it.
+
 ## Changes (2026-11-01, PF-04)
 
 §6.1's batching rule applied to the operation bodies of Dispatch/1 and DispatchMany/1 (driver-owned and staged), Reserve/1, Begin/1, Renew/1, Finish/1 (and `StageFinishAsync`) and the §7.10 close statements. The SQL text of every statement, the lock order (§5), fresh time after the last blocking lock (03 §1.3), the receipt replay branch and `synchronous_commit` are unchanged. Rules:
@@ -1752,9 +1762,10 @@ Class ceilings are partitions of the data-source maximum, not additions. No borr
 |---|---|
 | `Enlist` | `false` (ambient `TransactionScope` never captures worker transitions) |
 | `Pooling` | `true` (control/work); `false` (migration) |
-| `Minimum Pool Size` / `Maximum Pool Size` | 0 / 6 (control), 0 / 8 (work) |
+| `Minimum Pool Size` / `Maximum Pool Size` | 2 / 6 (control; 2 is the settlement lane width), 0 / 8 (work) (2026-11-01, PF-03) |
 | `Multiplexing` | `false` |
-| `Max Auto Prepare` | `0` (no automatic preparation in M2) |
+| `Max Auto Prepare` | `64`, at Npgsql's default of 2 usages (2026-11-01, PF-03; `0` until then). The migration connection stays at `0`. |
+| `Options` | `-c plan_cache_mode=force_custom_plan` appended to any configured options (2026-11-01, PF-03) |
 | `Include Error Detail` | `false`; parameter logging disabled |
 | `Application Name` | `runwick:<application>:control` / `:work` / `:migrate` |
 | `Timeout` (connect) | ≤ remaining operation budget, default 5 s |

@@ -4,6 +4,18 @@
 
 This document defines the test harness built in SP-003, the exact case list that gate **G-1** (milestone M2, PostgreSQL execution) requires, the first performance measurements recorded by SP-010, and the G-1 pass rule. Every case listed in §4–§13 is mandatory for G-1 unless this document marks a named sub-part as deferred to a later SP item.
 
+## Changes (2026-11-01, PF-03)
+
+Performance plan PF-03 (04 "Changes (2026-11-01, PF-03)") adds three Postgres cases in `PreparedStatementTests`; no fault point moves and no existing case changes.
+
+| Case | Test | Asserts |
+|---|---|---|
+| PGX-11 | `Driver_connections_prepare_statements_and_plan_each_bind` | Control and work connections run with `plan_cache_mode = force_custom_plan`; after three job cycles the control connection holds prepared statements |
+| DEP-08 | `A_schema_change_under_load_is_a_transient_retry_never_a_failure` | A column type the gate statements return changes while three loops run Dispatch–Reserve–Begin–Renew–Finish: no call fails, at least one `0A000` is retried, the load keeps progressing, no history violation |
+| PGX-12 | `The_control_pool_keeps_two_warm_connections_after_idle` | After the (shortened) idle lifetime the control pool keeps min(opened, 2) of the same backends, and the next Renew opens none |
+
+Owed: the UPG-02 variant with an old binary (04 PF-03 item 4) and a TXC variant whose caller enables auto-prepare.
+
 ## Changes (2026-11-01, PF-04)
 
 Performance plan PF-04 batches the operation bodies of Dispatch/DispatchMany (and staging), Reserve, Begin, Renew, Finish (and `StageFinishAsync`) and every caller of the shared close statements (Recover, ReleaseReservation, Begin's closed plans, the rate deferral), within 04 §6.1 (see 04 "Changes (2026-11-01, PF-04)"). Which fault points stay per statement and which become per batch:
