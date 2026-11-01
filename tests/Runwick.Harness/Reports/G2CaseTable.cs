@@ -36,7 +36,7 @@ public static class G2CaseTable
 
         // SP-013 (15 §6)
         .. For("SP-013", "CMD-06", "CAP-05", "PGX-01", "PGX-03", "TIME-06", "UPG-02", "UPG-06"),
-        .. For("SP-013", [.. Range("RATE", 1, 4)]),
+        .. For("SP-013", [.. Range("RATE", 1, 10)]),
 
         // SP-014 (15 §7)
         .. For("SP-014", "SCL-01", "CAP-01", "CAP-06", "CAP-07", "CAP-08", "CAP-10", "CAP-11", "CAP-12", "WRK-02"),
