@@ -292,28 +292,43 @@ internal sealed partial class PgStore
             {
                 closed = null;
                 deferred = null;
-                var job = await LockJobAsync(tx, lease.JobId).ConfigureAwait(false);
-                GenerationRow? gen = job is null ? null : await ReadGenerationAsync(tx, lease.JobId, job.Generation).ConfigureAwait(false);
+
+                // J, then G with the rate-requirement EXISTS and the clock, in one round trip (PF-04). For an unrated
+                // authorize plan J is the last blocking lock, so that clock is the decision time; any other plan locks
+                // more rows and reads the clock again behind them.
+                var first = tx.Batch();
+                var jq = first.Query(LockJobSql(tx, lease.JobId), MapJob);
+                var gq = first.Query(GenerationOfLockedJobSql(tx, lease.JobId), MapGenerationRead);
+                var clock = first.Query(PgTx.ClockSql(tx), PgTx.ReadClock);
+                await tx.RunAsync(first).ConfigureAwait(false);
+                var job = jq.Items.Count == 1 ? jq.Items[0] : null;
+                var read = job is null ? null : gq.Items.Count == 1 ? gq.Items[0] : throw new InvalidOperationException("generation row missing");
+                var gen = read?.Gen;
                 var plan = job is null ? "none"
                     : job.CancelRequestedAt is not null ? "cancel"
                     : gen!.StartedCount >= gen.Policy.MaxExecutions ? "exhausted"
                     : "authorize";
-                if (plan is "cancel" or "exhausted")
-                {
-                    await LockActiveKeyAsync(tx, job!).ConfigureAwait(false);
-                }
-
                 // Rate step (10 §4): concurrency scopes, then rate scopes, both in UUID order. Cancellation and an
-                // exhausted budget are decided before any charge, so their plans never lock rate scopes.
-                var rated = job is not null && plan == "authorize" && (await RateRequirementsAsync(tx, lease.JobId).ConfigureAwait(false)).Count > 0;
+                // exhausted budget are decided before any charge, so their plans never lock rate scopes. K, S, R and
+                // the fresh clock go in one batch, in lock order.
+                var rated = job is not null && plan == "authorize" && read!.Rated;
+                List<RateScopeRow> rateScopes = [];
                 if (job is not null && (plan != "authorize" || rated))
                 {
-                    await LockScopesAsync(tx, lease.JobId).ConfigureAwait(false);
+                    var more = tx.Batch();
+                    if (plan is "cancel" or "exhausted" && job.ActiveKey is not null)
+                    {
+                        more.Query(ActiveKeyOfLockedJobSql(tx, lease.JobId), _ => 0);
+                    }
+
+                    more.Query(LockScopesSql(tx, lease.JobId), MapScope);
+                    var rq = rated ? more.Query(LockRateScopesSql(tx, lease.JobId), MapRateScope) : null;
+                    clock = more.Query(PgTx.ClockSql(tx), PgTx.ReadClock);
+                    await tx.RunAsync(more).ConfigureAwait(false);
+                    rateScopes = rq?.Items ?? [];
                 }
 
-                List<RateScopeRow> rateScopes = rated ? await LockRateScopesAsync(tx, lease.JobId).ConfigureAwait(false) : [];
-
-                if (!await tx.DecideAsync().ConfigureAwait(false))
+                if (!await tx.DecideAtAsync(clock.Items[0]).ConfigureAwait(false))
                 {
                     return new PgOutcome<BegunExecution>.Rollback(tx.Reject<BegunExecution>(StoreStatus.CommandExpired, "command_expired"));
                 }
@@ -339,9 +354,11 @@ internal sealed partial class PgStore
                         ReceiptCodec.BeginClosed(closed, code));
                 }
 
+                var effects = tx.Batch();
+                Action? charged = null;
                 if (rateScopes.Count > 0)
                 {
-                    deferred = await ChargeRatesAsync(tx, job!, gen!, lease, rateScopes).ConfigureAwait(false);
+                    (deferred, charged) = await ChargeRatesAsync(tx, job!, gen!, lease, rateScopes, effects).ConfigureAwait(false);
                     if (deferred is not null)
                     {
                         return new PgOutcome<BegunExecution>.Commit(
@@ -352,59 +369,49 @@ internal sealed partial class PgStore
                     }
                 }
 
-                int executionNumber;
-                using (var g = tx.Sql("""
+                // The effects and R4 in one round trip (PF-04). The job row is locked, so the execution number, total and
+                // new revision are known now; the returned values are checked against them before COMMIT.
+                var executionNumber = gen!.StartedCount + 1;
+                var total = read!.ExecutionCount + 1;
+                var newRevision = job!.Revision + 1;
+                var gu = effects.Query(tx.Sql("""
                     UPDATE runwick.job_generations
                     SET started_count = started_count + 1, consecutive_unstarted_count = 0
                     WHERE application = @application AND job_id = @job_id AND generation = @generation AND started_count < max_executions
                     RETURNING started_count
-                    """).P("job_id", lease.JobId).P("generation", lease.Generation))
-                {
-                    var rows = await tx.QueryAsync(g, r => r.GetInt32(0), mutation: true).ConfigureAwait(false);
-                    if (rows.Count != 1)
-                    {
-                        return new PgOutcome<BegunExecution>.Rollback(tx.Reject<BegunExecution>(StoreStatus.InvariantFault, "invalid_transition"));
-                    }
-
-                    executionNumber = rows[0];
-                }
-
-                (long Total, long Revision, DateTimeOffset Expires) updated;
-                using (var j = tx.Sql("""
+                    """).P("job_id", lease.JobId).P("generation", lease.Generation), r => r.GetInt32(0), mutation: true);
+                var ju = effects.Query(tx.Sql("""
                     UPDATE runwick.jobs
                     SET state = 'running', execution_count = execution_count + 1, revision = revision + 1, updated_at = @now
                     WHERE application = @application AND job_id = @job_id AND state = 'reserved'
                       AND current_attempt_id = @attempt_id AND ownership_token = @token
                     RETURNING execution_count, revision, lease_expires_at
-                    """).P("now", tx.Now).P("job_id", lease.JobId).P("attempt_id", lease.AttemptId).P("token", lease.OwnershipToken))
-                {
-                    var rows = await tx.QueryAsync(j, r => (r.GetInt64(0), r.GetInt64(1), PgTime.Read(r, 2)), mutation: true).ConfigureAwait(false);
-                    if (rows.Count != 1)
-                    {
-                        return new PgOutcome<BegunExecution>.Rollback(tx.Reject<BegunExecution>(StoreStatus.InvariantFault, "invalid_transition"));
-                    }
-
-                    updated = rows[0];
-                }
-
-                using (var a = tx.Sql("""
+                    """).P("now", tx.Now).P("job_id", lease.JobId).P("attempt_id", lease.AttemptId).P("token", lease.OwnershipToken),
+                    r => (r.GetInt64(0), r.GetInt64(1), PgTime.Read(r, 2)), mutation: true);
+                var au = effects.Exec(tx.Sql("""
                     UPDATE runwick.job_attempts
                     SET execution_number = @execution_number, authorized_at = @now
                     WHERE application = @application AND attempt_id = @attempt_id AND finished_at IS NULL AND execution_number IS NULL
-                    """).P("execution_number", executionNumber).P("now", tx.Now).P("attempt_id", lease.AttemptId))
-                {
-                    if (await tx.ExecAsync(a).ConfigureAwait(false) != 1)
-                    {
-                        return new PgOutcome<BegunExecution>.Rollback(tx.Reject<BegunExecution>(StoreStatus.InvariantFault, "invalid_transition"));
-                    }
-                }
-
-                await EventAsync(tx, lease.JobId, lease.AttemptId, "attempt_started",
-                    new JsonObject { ["generation"] = lease.Generation, ["executionNumber"] = executionNumber }).ConfigureAwait(false);
+                    """).P("execution_number", executionNumber).P("now", tx.Now).P("attempt_id", lease.AttemptId));
+                EventInto(effects, tx, lease.JobId, lease.AttemptId, "attempt_started",
+                    new JsonObject { ["generation"] = lease.Generation, ["executionNumber"] = executionNumber });
                 var begun = new BegunExecution(
-                    new JobPosition(lease.JobId, lease.Generation, updated.Revision, JobStates.Running),
-                    new LeaseGrant(lease, updated.Expires), executionNumber, updated.Total, tx.Now);
-                return new PgOutcome<BegunExecution>.Commit(StoreReply<BegunExecution>.Applied(begun, tx.Now), ReceiptCodec.Begin(begun));
+                    new JobPosition(lease.JobId, lease.Generation, newRevision, JobStates.Running),
+                    new LeaseGrant(lease, job.LeaseExpiresAt!.Value), executionNumber, total, tx.Now);
+                var invalid = new PgOutcome<BegunExecution>.Rollback(tx.Reject<BegunExecution>(StoreStatus.InvariantFault, "invalid_transition"));
+                return new PgOutcome<BegunExecution>.Commit(StoreReply<BegunExecution>.Applied(begun, tx.Now), ReceiptCodec.Begin(begun))
+                {
+                    Effects = effects,
+                    Verify = () =>
+                    {
+                        charged?.Invoke();
+                        return gu.Items is [var n] && n == executionNumber
+                            && ju.Items is [var u] && u == (total, newRevision, job.LeaseExpiresAt.Value)
+                            && au.Affected == 1
+                            ? null
+                            : invalid;
+                    },
+                };
             },
             (tx, row) =>
             {
