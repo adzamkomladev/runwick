@@ -108,26 +108,26 @@ internal sealed partial class PgStore : IRateControlStore
     }
 
     /// <summary>R: the job's rate scopes, locked in UUID order after every concurrency scope (04 §5).</summary>
-    static async Task<List<RateScopeRow>> LockRateScopesAsync(PgTx tx, Guid jobId)
-    {
-        using var q = tx.Sql("""
-            SELECT s.rate_scope_id, s.limit_count, s.window_ms, s.policy_revision, s.last_decision_at, s.not_before
-            FROM runwick.rate_scopes AS s
-            WHERE s.application = @application
-              AND s.rate_scope_id IN (SELECT r.rate_scope_id FROM runwick.job_rate_requirements AS r
-                                      WHERE r.application = @application AND r.job_id = @job_id)
-            ORDER BY s.rate_scope_id
-            FOR UPDATE OF s
-            """).P("job_id", jobId);
-        return await tx.QueryAsync(q, r => new RateScopeRow(r.GetGuid(0), r.GetInt32(1), r.GetInt64(2), r.GetInt64(3),
-            PgTime.ReadNullable(r, 4), PgTime.ReadNullable(r, 5))).ConfigureAwait(false);
-    }
+    static Npgsql.NpgsqlCommand LockRateScopesSql(PgTx tx, Guid jobId) => tx.Sql("""
+        SELECT s.rate_scope_id, s.limit_count, s.window_ms, s.policy_revision, s.last_decision_at, s.not_before
+        FROM runwick.rate_scopes AS s
+        WHERE s.application = @application
+          AND s.rate_scope_id IN (SELECT r.rate_scope_id FROM runwick.job_rate_requirements AS r
+                                  WHERE r.application = @application AND r.job_id = @job_id)
+        ORDER BY s.rate_scope_id
+        FOR UPDATE OF s
+        """).P("job_id", jobId);
+
+    static RateScopeRow MapRateScope(Npgsql.NpgsqlDataReader r) =>
+        new(r.GetGuid(0), r.GetInt32(1), r.GetInt64(2), r.GetInt64(3), PgTime.ReadNullable(r, 4), PgTime.ReadNullable(r, 5));
 
     /// <summary>
     /// Charges one grant per scope at logical time t = max(now, last decisions), or charges nothing and closes the
-    /// attempt as <c>admission_deferred</c> (T20). Returns null when every scope admitted.
+    /// attempt as <c>admission_deferred</c> (T20). Returns a null deferral when every scope admitted: the charge writes
+    /// are then added to <paramref name="effects"/> (PF-04) and the returned check verifies the grant count after it ran.
     /// </summary>
-    static async Task<RateDeferral?> ChargeRatesAsync(PgTx tx, JobRow job, GenerationRow gen, LeaseHandle lease, IReadOnlyList<RateScopeRow> scopes)
+    static async Task<(RateDeferral? Deferral, Action? Check)> ChargeRatesAsync(PgTx tx, JobRow job, GenerationRow gen, LeaseHandle lease,
+        IReadOnlyList<RateScopeRow> scopes, PgBatch effects)
     {
         var now = tx.Now;
         var t = scopes.Select(s => s.LastDecisionAt ?? now).Append(now).Max();
@@ -150,26 +150,28 @@ internal sealed partial class PgStore : IRateControlStore
         var blocked = scopes.Where(s => counts[s.Id] >= s.Limit || (s.NotBefore is { } nb && t < nb)).ToList();
 
         // The scopes' logical time never goes backward, whichever way the decision goes.
-        using (var u = tx.Sql("""
+        Npgsql.NpgsqlCommand LogicalTime() => tx.Sql("""
             UPDATE runwick.rate_scopes SET last_decision_at = @t
             WHERE application = @application AND rate_scope_id = ANY (@ids::uuid[])
               AND (last_decision_at IS NULL OR last_decision_at < @t)
-            """).P("t", t).Arr("ids", ids, NpgsqlDbType.Uuid))
-        {
-            await tx.ExecAsync(u).ConfigureAwait(false);
-        }
+            """).P("t", t).Arr("ids", ids, NpgsqlDbType.Uuid);
 
         if (blocked.Count == 0)
         {
-            using var g = tx.Sql("""
+            effects.Exec(LogicalTime());
+            var g = effects.Exec(tx.Sql("""
                 INSERT INTO runwick.rate_grants (application, rate_scope_id, attempt_id, job_id, authorized_at, policy_revision)
                 SELECT @application, s.id, @attempt_id, @job_id, @t, s.revision
                 FROM unnest(@ids::uuid[], @revisions::bigint[]) AS s(id, revision)
                 ORDER BY s.id
                 """).P("attempt_id", lease.AttemptId).P("job_id", lease.JobId).P("t", t)
-                    .Arr("ids", ids, NpgsqlDbType.Uuid).Arr("revisions", scopes.Select(s => s.Revision).ToArray(), NpgsqlDbType.Bigint);
-            Expect(await tx.ExecAsync(g).ConfigureAwait(false), scopes.Count);
-            return null;
+                    .Arr("ids", ids, NpgsqlDbType.Uuid).Arr("revisions", scopes.Select(s => s.Revision).ToArray(), NpgsqlDbType.Bigint));
+            return (null, () => Expect(g.Affected, scopes.Count));
+        }
+
+        using (var u = LogicalTime())
+        {
+            await tx.ExecAsync(u).ConfigureAwait(false);
         }
 
         // Earliest logical instant at which every blocked scope could admit: the (count - N + 1)th oldest retained grant
@@ -217,7 +219,7 @@ internal sealed partial class PgStore : IRateControlStore
                 ["rateTime"] = PgTime.Ms(t),
             },
         }).ConfigureAwait(false);
-        return new RateDeferral(new JobPosition(lease.JobId, job.Generation, revision, state), eligible, blocking);
+        return (new RateDeferral(new JobPosition(lease.JobId, job.Generation, revision, state), eligible, blocking), null);
     }
 
     // ------------------------------------------------------------------ EditRatePolicy/1 (10 §6.2)

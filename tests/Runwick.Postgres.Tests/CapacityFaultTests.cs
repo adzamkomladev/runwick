@@ -156,7 +156,6 @@ public sealed class CapacityFaultTests
         // Without latency the gates do not flap: 16 handlers started together through two renewal waves. Their Finishes
         // are 1 s apart: 16 simultaneous Finishes through two settlement lanes are the overload of the first phase, not
         // ordinary jitter, and queue ≥ 5 s on a host whose Finish takes 0.6-1 s (G-1 run 3).
-        var renewP90 = await RenewRoundTripP90Async();
         var calmFrom = w.Engine.Clock.Now;
         for (var i = 0; i < 16; i++)
         {
@@ -165,17 +164,22 @@ public sealed class CapacityFaultTests
             await w.DispatchAsync("calm" + i);
         }
 
+        // The calibration runs while the calm phase does, under the same suite and wave load (07 C-9, 2026-11-01).
+        var calibration = RenewRoundTripP90Async();
+
         await WaitCount(f, "SELECT count(*) FROM runwick.jobs WHERE state = 'succeeded'", 36, "all 36 succeeded");
         await WorkerHost.WaitUntil(() => !w.Engine.PressureStopped, Wait, "admission resumed after the calm phase");
         var calm = w.Events.Where(e => e.At > calmFrom).ToList();
         Assert.True(calm.Count(e => e.Name == "renewed") >= 16, "calm renewals");
         Assert.DoesNotContain(calm, e => e.Name.StartsWith("lost:", StringComparison.Ordinal));
         var calmStops = calm.Where(e => e.Name.StartsWith("pressureStop", StringComparison.Ordinal)).ToList();
+        var renewP90 = await calibration;
 
         // 16 renewals due together through 4 renewal lanes: the last waits three Renew round trips. Where that stays well
-        // inside the 1 s controlWait stop (the reference host), no stop is allowed. Where the store's round trip alone
-        // carries the wave past it (07 C-9), every stop must be a lane-queueing stop that gates and resumes correctly.
-        var strict = 3 * renewP90 < TimeSpan.FromMilliseconds(500);
+        // inside the 1 s controlWait stop (the reference host), no stop is allowed; "well inside" is 3 x p90 < 350 ms,
+        // leaving headroom for the wave's own queueing. Where the store's round trip carries the wave past it (07 C-9),
+        // every stop must be a lane-queueing stop that gates and resumes correctly.
+        var strict = 3 * renewP90 < TimeSpan.FromMilliseconds(350);
         TestContext.Current.TestOutputHelper?.WriteLine(
             $"CAP-10 no-latency phase: Renew p90 {renewP90.TotalMilliseconds:F0} ms, {(strict ? "strict" : "store-bound")} branch, {calmStops.Count} stops");
         if (strict)
@@ -218,7 +222,7 @@ public sealed class CapacityFaultTests
         }
     }
 
-    /// <summary>p90 of 20 sequential Renew round trips on a separate namespace of the same server, without injected latency.</summary>
+    /// <summary>p90 of 20 sequential Renew round trips on a separate namespace of the same server, without injected latency, measured while the calm phase runs.</summary>
     static async Task<TimeSpan> RenewRoundTripP90Async()
     {
         await using var probe = await DriverFixture.StartAsync(Ns("cap10rtt"), StoreProfile.DirectPrimaryViaProxy);

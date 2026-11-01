@@ -98,6 +98,10 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
             }
             finally
             {
+                // The schema may have changed under statements this process's stores prepared: drop their idle
+                // connections so no prepared statement outlives a migration here (04 §9.2, PF-03). Other processes
+                // meet the change as a 0A000 transient retry.
+                Store.PgDataSources.ClearAll(connectionString);
                 if (conn.State == System.Data.ConnectionState.Open)
                 {
                     using var unlock = new NpgsqlCommand($"SELECT pg_advisory_unlock({AdvisoryLock})", conn);

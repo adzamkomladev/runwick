@@ -34,27 +34,37 @@ internal sealed partial class PgStore
     Func<PgTx, Task<PgOutcome<DispatchResult>>> DispatchBody(StoreCommand<DispatchRequest> command) =>
         async tx =>
         {
-            var outcome = await DispatchCoreAsync(tx, [command.Body.Item], continueOnConflict: false).ConfigureAwait(false);
+            var effects = tx.Batch();
+            var outcome = await DispatchCoreAsync(tx, [command.Body.Item], continueOnConflict: false, effects: effects).ConfigureAwait(false);
             if (outcome.Rejection is { } rejection)
             {
                 return new PgOutcome<DispatchResult>.Rollback(StoreReply<DispatchResult>.NoEffect(rejection.Status, rejection.Error, tx.Now));
             }
 
             var result = outcome.Items[0].Result!;
-            return new PgOutcome<DispatchResult>.Commit(StoreReply<DispatchResult>.Applied(result, tx.Now), ReceiptCodec.Dispatch(result));
+            return new PgOutcome<DispatchResult>.Commit(StoreReply<DispatchResult>.Applied(result, tx.Now), ReceiptCodec.Dispatch(result))
+            {
+                Effects = outcome.Guard is null ? null : effects,
+                Verify = () => Expired<DispatchResult>(tx, outcome.Guard),
+            };
         };
 
     Func<PgTx, Task<PgOutcome<DispatchBatchResult>>> DispatchManyBody(StoreCommand<DispatchBatchRequest> command) =>
         async tx =>
         {
-            var outcome = await DispatchCoreAsync(tx, command.Body.Items, command.Body.ContinueOnConflict).ConfigureAwait(false);
+            var effects = tx.Batch();
+            var outcome = await DispatchCoreAsync(tx, command.Body.Items, command.Body.ContinueOnConflict, effects: effects).ConfigureAwait(false);
             if (outcome.Rejection is { } rejection)
             {
                 return new PgOutcome<DispatchBatchResult>.Rollback(StoreReply<DispatchBatchResult>.NoEffect(rejection.Status, rejection.Error, tx.Now));
             }
 
             var result = new DispatchBatchResult(outcome.Items);
-            return new PgOutcome<DispatchBatchResult>.Commit(StoreReply<DispatchBatchResult>.Applied(result, tx.Now), ReceiptCodec.DispatchMany(result));
+            return new PgOutcome<DispatchBatchResult>.Commit(StoreReply<DispatchBatchResult>.Applied(result, tx.Now), ReceiptCodec.DispatchMany(result))
+            {
+                Effects = outcome.Guard is null ? null : effects,
+                Verify = () => Expired<DispatchBatchResult>(tx, outcome.Guard),
+            };
         };
 
     static Task<StoreReply<DispatchResult>> DispatchReplay(PgTx tx, ReceiptRow row) =>
@@ -73,11 +83,24 @@ internal sealed partial class PgStore
         public bool Dirty { get; set; }
     }
 
-    sealed record DispatchOutcome(IReadOnlyList<DispatchBatchItemResult> Items, (StoreStatus Status, StoreError Error)? Rejection);
+    /// <summary>
+    /// <see cref="Guard"/> is set when the effect statements were added to the caller's batch instead of being sent
+    /// (PF-04): it is the step 10 clock read at the end of that batch, checked after it ran.
+    /// </summary>
+    sealed record DispatchOutcome(IReadOnlyList<DispatchBatchItemResult> Items, (StoreStatus Status, StoreError Error)? Rejection)
+    {
+        public PgBatch.Rows<DateTimeOffset>? Guard { get; init; }
+    }
+
+    /// <summary>Step 10 for a batched dispatch: the clock read just before R4 is at or past NotAfter.</summary>
+    static PgOutcome<T>? Expired<T>(PgTx tx, PgBatch.Rows<DateTimeOffset>? guard) where T : class =>
+        guard is not null && guard.Items[0] >= tx.Op.NotAfter
+            ? new PgOutcome<T>.Rollback(StoreReply<T>.NoEffect(StoreStatus.CommandExpired, new StoreError("command_expired"), tx.Now))
+            : null;
 
     /// <summary>Shared Dispatch/1 and DispatchMany/1 body (04 §7.2 steps 2–10).</summary>
     async Task<DispatchOutcome> DispatchCoreAsync(PgTx tx, IReadOnlyList<DispatchItem> items, bool continueOnConflict,
-        string createdReason = "initial")
+        string createdReason = "initial", PgBatch? effects = null)
     {
         static DispatchOutcome Reject(StoreStatus status, string code, Guid? conflicting = null, string? detail = null) =>
             new([], (status, new StoreError(code, ConflictingJobId: conflicting, Detail: detail)));
@@ -103,19 +126,7 @@ internal sealed partial class PgStore
             return Reject(StoreStatus.UnsupportedVersion, "rate_admission_not_active");
         }
 
-        // 2. Queue registration (plain read).
-        var queues = items.Select(i => i.Intent.Queue).Distinct().ToArray();
-        using (var q = tx.Sql("SELECT queue FROM runwick.queue_controls WHERE application = @application AND queue = ANY (@queues::text[])")
-            .Arr("queues", queues, NpgsqlDbType.Text))
-        {
-            var registered = (await tx.QueryAsync(q, r => r.GetString(0)).ConfigureAwait(false)).ToHashSet(StringComparer.Ordinal);
-            if (queues.Any(x => !registered.Contains(x)))
-            {
-                return Reject(StoreStatus.InvalidRequest, "queue_not_registered");
-            }
-        }
-
-        // 3. Key rows, sorted once over the whole batch.
+        // 3 (computed first). Key rows, sorted once over the whole batch.
         var keyIds = items.SelectMany(i => new[]
             {
                 i.Intent.ActiveKey is { } a ? (i.Intent.JobName, ActiveKind, a) : default,
@@ -124,6 +135,21 @@ internal sealed partial class PgStore
             .Where(k => k.JobName is not null).Distinct()
             .OrderBy(k => k.JobName, Internal.Utf8Order.Instance).ThenBy(k => k.Item2, Internal.Utf8Order.Instance).ThenBy(k => k.Item3, Internal.Utf8Order.Instance)
             .ToList();
+
+        // 2. Queue registration (plain read). With no key rows to lock, the receipt is the last blocking lock, so the
+        // decision clock goes in the same round trip (PF-04).
+        var queues = items.Select(i => i.Intent.Queue).Distinct().ToArray();
+        var queueBatch = tx.Batch();
+        var qq = queueBatch.Query(tx.Sql("SELECT queue FROM runwick.queue_controls WHERE application = @application AND queue = ANY (@queues::text[])")
+            .Arr("queues", queues, NpgsqlDbType.Text), r => r.GetString(0));
+        var decisionClock = keyIds.Count == 0 ? queueBatch.Query(PgTx.ClockSql(tx), PgTx.ReadClock) : null;
+        await tx.RunAsync(queueBatch).ConfigureAwait(false);
+        var registered = qq.Items.ToHashSet(StringComparer.Ordinal);
+        if (queues.Any(x => !registered.Contains(x)))
+        {
+            return Reject(StoreStatus.InvalidRequest, "queue_not_registered");
+        }
+
         var keys = new Dictionary<(string, string, string), KeyState>();
         if (keyIds.Count > 0)
         {
@@ -161,7 +187,7 @@ internal sealed partial class PgStore
         }
 
         // 4. Decide.
-        if (!await tx.DecideAsync().ConfigureAwait(false))
+        if (!await (decisionClock is null ? tx.DecideAsync() : tx.DecideAtAsync(decisionClock.Items[0])).ConfigureAwait(false))
         {
             return Reject(StoreStatus.CommandExpired, "command_expired");
         }
@@ -253,6 +279,23 @@ internal sealed partial class PgStore
             return Reject(StoreStatus.UniquenessConflict, first.Code, first.Job, detail);
         }
 
+        // Steps 6-10 go into the caller's batch (one round trip with R4, PF-04) unless an item provisions concurrency or
+        // rate scopes: provisioning reads and locks rows, so those writes are sent one by one as before.
+        var batched = effects is not null && created.All(c => c.Item.Scopes.Count == 0 && c.Item.Rates.Count == 0);
+        async Task WriteAsync(Npgsql.NpgsqlCommand cmd)
+        {
+            if (batched)
+            {
+                effects!.Exec(cmd);
+                return;
+            }
+
+            using (cmd)
+            {
+                await tx.ExecAsync(cmd).ConfigureAwait(false);
+            }
+        }
+
         // 6. Key writes (rows already locked), in sorted order.
         foreach (var id in keyIds)
         {
@@ -262,15 +305,14 @@ internal sealed partial class PgStore
                 continue;
             }
 
-            using var update = tx.Sql("""
+            await WriteAsync(tx.Sql("""
                 UPDATE runwick.dispatch_keys
                 SET bound_job_id = @bound, business_fingerprint = @business, policy_fingerprint = @policy,
                     fingerprint_version = @version, expires_at = @expires, updated_at = @now
                 WHERE application = @application AND job_name = @job_name AND key_kind = @kind AND key = @key
                 """).P("bound", state.Bound, NpgsqlDbType.Uuid).P("business", state.Business, NpgsqlDbType.Bytea)
                     .P("policy", state.Policy, NpgsqlDbType.Bytea).P("version", state.Version, NpgsqlDbType.Integer)
-                    .P("expires", state.Expires).P("now", now).P("job_name", id.JobName).P("kind", id.Item2).P("key", id.Item3);
-            await tx.ExecAsync(update).ConfigureAwait(false);
+                    .P("expires", state.Expires).P("now", now).P("job_name", id.JobName).P("kind", id.Item2).P("key", id.Item3)).ConfigureAwait(false);
         }
 
         // 7. New jobs, payloads, generations in ascending job_id.
@@ -279,7 +321,7 @@ internal sealed partial class PgStore
             var ordered = created.OrderBy(c => c.Item.Intent.ProposedJobId, Internal.UuidOrder.Instance).ToList();
             var jobIds = ordered.Select(c => c.Item.Intent.ProposedJobId).ToArray();
             var intents = ordered.Select(c => c.Item.Intent).ToList();
-            using (var jobs = tx.Sql("""
+            await WriteAsync(tx.Sql("""
                 INSERT INTO runwick.jobs (
                     application, job_id, job_name, payload_version, serializer_profile_id, serializer_profile_version,
                     queue, priority, state, eligible_at, created_at, updated_at, active_unique_key)
@@ -299,12 +341,9 @@ internal sealed partial class PgStore
                     .Arr("job_queues", intents.Select(i => i.Queue).ToArray(), NpgsqlDbType.Text)
                     .Arr("priorities", intents.Select(i => i.Priority).ToArray(), NpgsqlDbType.Text)
                     .Arr("not_befores", intents.Select(i => i.NotBeforeMs is { } nb ? (DateTime?)PgTime.FromMs(nb).UtcDateTime : null).ToArray(), NpgsqlDbType.TimestampTz)
-                    .Arr("active_keys", intents.Select(i => i.ActiveKey).ToArray(), NpgsqlDbType.Text))
-            {
-                await tx.ExecAsync(jobs).ConfigureAwait(false);
-            }
+                    .Arr("active_keys", intents.Select(i => i.ActiveKey).ToArray(), NpgsqlDbType.Text)).ConfigureAwait(false);
 
-            using (var payloads = tx.Sql("""
+            await WriteAsync(tx.Sql("""
                 INSERT INTO runwick.job_payloads (
                     application, job_id, payload_utf8, payload_encoding_version, serializer_profile_id, serializer_profile_version, headers)
                 SELECT @application, p.job_id, p.payload, 1, p.profile_id, p.profile_version, p.headers
@@ -315,12 +354,9 @@ internal sealed partial class PgStore
                     .Arr("payloads", intents.Select(i => i.PayloadUtf8).ToArray(), NpgsqlDbType.Bytea)
                     .Arr("profile_ids", intents.Select(i => i.SerializerProfileId).ToArray(), NpgsqlDbType.Text)
                     .Arr("profile_versions", intents.Select(i => i.SerializerProfileVersion).ToArray(), NpgsqlDbType.Integer)
-                    .Arr("headers", ordered.Select(c => Headers(c.Item, tx.Now)).ToArray(), NpgsqlDbType.Jsonb))
-            {
-                await tx.ExecAsync(payloads).ConfigureAwait(false);
-            }
+                    .Arr("headers", ordered.Select(c => Headers(c.Item, tx.Now)).ToArray(), NpgsqlDbType.Jsonb)).ConfigureAwait(false);
 
-            using (var generations = tx.Sql("""
+            await WriteAsync(tx.Sql("""
                 INSERT INTO runwick.job_generations (
                     application, job_id, generation, created_at, created_reason,
                     max_executions, max_unstarted_abandonments, execution_timeout_ms, retry_policy, unstarted_retry_policy)
@@ -334,10 +370,7 @@ internal sealed partial class PgStore
                     .Arr("max_unstarted", intents.Select(i => i.Policy.MaxConsecutiveUnstartedAbandonments).ToArray(), NpgsqlDbType.Integer)
                     .Arr("timeouts", intents.Select(i => i.Policy.ExecutionTimeoutMs).ToArray(), NpgsqlDbType.Bigint)
                     .Arr("retry", intents.Select(i => PolicyJson(i.Policy.Retry).ToJsonString()).ToArray(), NpgsqlDbType.Jsonb)
-                    .Arr("unstarted", intents.Select(i => PolicyJson(i.Policy.UnstartedRetry).ToJsonString()).ToArray(), NpgsqlDbType.Jsonb))
-            {
-                await tx.ExecAsync(generations).ConfigureAwait(false);
-            }
+                    .Arr("unstarted", intents.Select(i => PolicyJson(i.Policy.UnstartedRetry).ToJsonString()).ToArray(), NpgsqlDbType.Jsonb)).ConfigureAwait(false);
 
             // 8. Scope provisioning, then requirements in ascending scope_id.
             var scopes = await ProvisionScopesAsync(tx, [.. ordered.SelectMany(c => c.Item.Scopes)]).ConfigureAwait(false);
@@ -370,18 +403,23 @@ internal sealed partial class PgStore
             .ToList();
         if (events.Count > 0)
         {
-            using var ev = tx.Sql("""
+            await WriteAsync(tx.Sql("""
                 INSERT INTO runwick.queue_events (application, job_id, command_id, event_kind, occurred_at, details)
                 SELECT @application, e.job_id, @command_id, e.kind, @now, e.details
                 FROM unnest(@job_ids::uuid[], @kinds::text[], @details::jsonb[]) AS e(job_id, kind, details)
                 """).P("command_id", tx.Op.CommandId).P("now", now)
                     .Arr("job_ids", events.Select(e => e.Job).ToArray(), NpgsqlDbType.Uuid)
                     .Arr("kinds", events.Select(e => e.Kind).ToArray(), NpgsqlDbType.Text)
-                    .Arr("details", events.Select(e => e.Details.ToJsonString()).ToArray(), NpgsqlDbType.Jsonb);
-            await tx.ExecAsync(ev).ConfigureAwait(false);
+                    .Arr("details", events.Select(e => e.Details.ToJsonString()).ToArray(), NpgsqlDbType.Jsonb)).ConfigureAwait(false);
         }
 
-        // 10. Final deadline guard: provisioning may have waited after the decision.
+        // 10. Final deadline guard: provisioning may have waited after the decision. Batched, the clock is read in the
+        // batch just before R4 and checked after it ran, before COMMIT.
+        if (batched)
+        {
+            return new DispatchOutcome(results, null) { Guard = effects!.Query(PgTx.ClockSql(tx), PgTx.ReadClock) };
+        }
+
         if (await tx.ClockAsync().ConfigureAwait(false) >= tx.Op.NotAfter)
         {
             return Reject(StoreStatus.CommandExpired, "command_expired");

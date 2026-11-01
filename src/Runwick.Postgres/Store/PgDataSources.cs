@@ -15,6 +15,14 @@ internal enum PgLane
 /// <summary>Runwick-owned data sources (control 6, work 8) and their call-class gates (04 §9).</summary>
 internal sealed class PgDataSources : IAsyncDisposable
 {
+    /// <summary>Settlement lane width: the control pool keeps this many idle connections open (04 §9.2, PF-03).</summary>
+    internal const int ControlWarm = 2;
+
+    /// <summary>Statements prepared automatically per physical connection (04 §9.2, PF-03).</summary>
+    internal const int AutoPrepare = 64;
+
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<PgDataSources, byte> Live = new();
+
     readonly string _connectionString;
     readonly string _applicationNamePrefix;
     readonly Lazy<NpgsqlDataSource> _control;
@@ -34,6 +42,43 @@ internal sealed class PgDataSources : IAsyncDisposable
         _applicationNamePrefix = applicationNamePrefix;
         _control = new(() => Build("control", 6));
         _work = new(() => Build("work", 8));
+        Live.TryAdd(this, 0);
+    }
+
+    /// <summary>
+    /// Drops every idle pooled connection of every live store in this process on the migrated database, and with them their prepared
+    /// statements; busy connections are dropped when returned. Called after a migration (04 §9.2, PF-03).
+    /// </summary>
+    internal static void ClearAll(string migratedConnectionString)
+    {
+        var target = Database(migratedConnectionString);
+        foreach (var sources in Live.Keys)
+        {
+            if (Database(sources._connectionString) == target)
+            {
+                sources.Clear();
+            }
+        }
+    }
+
+    /// <summary>The server and database a connection string names; stores of other databases keep their pools.</summary>
+    static (string?, int, string?) Database(string connectionString)
+    {
+        var csb = new NpgsqlConnectionStringBuilder(connectionString);
+        return (csb.Host?.ToUpperInvariant(), csb.Port, csb.Database);
+    }
+
+    internal void Clear()
+    {
+        if (_control.IsValueCreated)
+        {
+            _control.Value.Clear();
+        }
+
+        if (_work.IsValueCreated)
+        {
+            _work.Value.Clear();
+        }
     }
 
     public string ConnectionString => _connectionString;
@@ -50,16 +95,19 @@ internal sealed class PgDataSources : IAsyncDisposable
         {
             Enlist = false,
             Pooling = true,
-            MinPoolSize = 0,
+            MinPoolSize = role == "control" ? ControlWarm : 0,
             MaxPoolSize = max,
             Multiplexing = false,
-            MaxAutoPrepare = 0,
+            MaxAutoPrepare = AutoPrepare,
+            AutoPrepareMinUsages = 2,
             ApplicationName = $"{prefix}:{role}",
             IncludeErrorDetail = false,
             CommandTimeout = 0,
             CancellationTimeout = 2000,
             KeepAlive = 15,
         };
+        // A prepared statement is planned for each bind's values, never from a cached generic plan (04 §9.2, PF-03).
+        csb.Options = string.IsNullOrWhiteSpace(csb.Options) ? PlanMode : csb.Options + " " + PlanMode;
         if (csb.Timeout is 0 or > 5)
         {
             csb.Timeout = 5;
@@ -68,8 +116,11 @@ internal sealed class PgDataSources : IAsyncDisposable
         return new NpgsqlDataSourceBuilder(csb.ConnectionString).Build();
     }
 
+    internal const string PlanMode = "-c plan_cache_mode=force_custom_plan";
+
     public async ValueTask DisposeAsync()
     {
+        Live.TryRemove(this, out _);
         if (_control.IsValueCreated)
         {
             await _control.Value.DisposeAsync().ConfigureAwait(false);

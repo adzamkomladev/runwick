@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Npgsql;
 using NpgsqlTypes;
+using Runwick.Internal;
 using Runwick.Protocol;
 
 namespace Runwick.Postgres.Store;
@@ -27,6 +28,11 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
     /// <summary>40P01 rollbacks only; a 55P03 lock timeout or 40001 is not a deadlock (07 I-18).</summary>
     public long Deadlocks => Interlocked.Read(ref _deadlocks);
 
+    long _stalePlans;
+
+    /// <summary>0A000 stale prepared plans retried by this runner (04 §9.2, PF-03).</summary>
+    public long StalePlans => Interlocked.Read(ref _stalePlans);
+
     /// <summary>Known store identity (from Describe); gates compare against it.</summary>
     public Guid? StoreId { get; set; }
 
@@ -37,7 +43,9 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         CancellationToken ct) where T : class
     {
         var gate = sources.Gate(op.Lane);
+        var lap = PhaseTimings.Start();
         await gate.WaitAsync(ct).ConfigureAwait(false);
+        PhaseTimings.Lap(lap, op.Operation, "driverLane");
         try
         {
             for (var attempt = 0; ; attempt++)
@@ -81,9 +89,11 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         CancellationToken ct) where T : class
     {
         NpgsqlConnection connection;
+        var lap = PhaseTimings.Start();
         try
         {
             connection = await sources.For(op.Lane).OpenConnectionAsync(ct).ConfigureAwait(false);
+            lap = PhaseTimings.Lap(lap, op.Operation, "open");
         }
         catch (Exception ex) when (ex is NpgsqlException or TimeoutException or OperationCanceledException or IOException)
         {
@@ -98,10 +108,10 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
             {
                 transaction = await connection.BeginTransactionAsync(PgParams.ReadCommitted, ct).ConfigureAwait(false);
                 var tx = new PgTx(connection, transaction, op, faults, ct);
-                await SetTimeoutsAsync(tx, op).ConfigureAwait(false);
                 await tx.Fault(FaultPoint.BeforeGateLock).ConfigureAwait(false);
 
-                var outcome = await ProtocolAsync(tx, body, replay).ConfigureAwait(false);
+                var outcome = await ProtocolAsync(tx, body, replay, Timeouts(op)).ConfigureAwait(false);
+                lap = PhaseTimings.Lap(lap, op.Operation, "statements");
                 if (outcome is PgOutcome<T>.Rollback rollback)
                 {
                     await transaction.RollbackAsync(ct).ConfigureAwait(false);
@@ -112,6 +122,7 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
                 await tx.Fault(FaultPoint.BeforeCommit).ConfigureAwait(false);
                 commitSent = true;
                 await transaction.CommitAsync(ct).ConfigureAwait(false);
+                PhaseTimings.Lap(lap, op.Operation, "commit");
                 await tx.Fault(FaultPoint.AfterCommitBeforeReply).ConfigureAwait(false);
                 return commit.Reply;
             }
@@ -127,6 +138,17 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
             }
             catch (InjectedFaultException ex) when (!commitSent && ex.Kind is "Deadlock40P01" or "Serialization40001")
             {
+                throw new TransientConflictException(ex);
+            }
+            catch (PostgresException ex) when (!commitSent && IsStalePlan(ex))
+            {
+                // 0A000 "cached plan must not change result type": a migration changed a table under a statement
+                // this connection prepared. Nothing was applied; drop the connection's prepared statements and
+                // retry the same command (04 §9.2, PF-03). The pool is cleared too: every pooled connection prepared
+                // the same statements, and the retry budget must not be spent one connection at a time.
+                Interlocked.Increment(ref _stalePlans);
+                await ForgetPreparedAsync(connection, transaction).ConfigureAwait(false);
+                sources.For(op.Lane).Clear();
                 throw new TransientConflictException(ex);
             }
             catch (PostgresException ex) when (ex.SqlState == "40003")
@@ -165,9 +187,10 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
     async Task<PgOutcome<T>> ProtocolAsync<T>(
         PgTx tx,
         Func<PgTx, Task<PgOutcome<T>>> body,
-        Func<PgTx, ReceiptRow, Task<StoreReply<T>>>? replay) where T : class
+        Func<PgTx, ReceiptRow, Task<StoreReply<T>>>? replay,
+        (long LockMs, long StatementMs)? timeouts = null) where T : class
     {
-        if (await CheckGatesAsync<T>(tx).ConfigureAwait(false) is { } gateReply)
+        if (await CheckGatesAsync<T>(tx, timeouts).ConfigureAwait(false) is { } gateReply)
         {
             return new PgOutcome<T>.Rollback(gateReply);
         }
@@ -178,7 +201,23 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         }
 
         var outcome = await body(tx).ConfigureAwait(false);
-        if (outcome is PgOutcome<T>.Commit commit && tx.Op.HasReceipt)
+        if (outcome is PgOutcome<T>.Commit { Effects: { } effects } batched)
+        {
+            // Effects and R4 in one round trip (PF-04): every input is known after the decision. The row counts are
+            // checked before COMMIT; a wrong count rolls everything back, R4 included, as before.
+            var r4 = tx.Op.HasReceipt ? effects.Exec(FinalizeCommand(tx, batched), mutation: false) : null;
+            await tx.RunAsync(effects).ConfigureAwait(false);
+            if (batched.Verify?.Invoke() is { } verdict)
+            {
+                return verdict;
+            }
+
+            if (r4 is not null && r4.Affected != 1)
+            {
+                throw new InvalidOperationException("Receipt finalization updated no row.");
+            }
+        }
+        else if (outcome is PgOutcome<T>.Commit commit && tx.Op.HasReceipt)
         {
             await FinalizeReceiptAsync(tx, commit).ConfigureAwait(false);
         }
@@ -204,8 +243,11 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         string? readOnly;
         try
         {
-            using var ro = tx.Sql("SELECT current_setting('transaction_read_only')");
-            readOnly = (string?)await ro.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            // The read-only check and the savepoint in one round trip (04 §6.1, PF-02): the savepoint does not depend
+            // on the check's result, and a read-only caller transaction gets its savepoint released before the
+            // rejection, so it is left as it was.
+            using var ro = tx.Sql($"SELECT current_setting('transaction_read_only');\nSAVEPOINT {Savepoint}");
+            readOnly = (string?)(await tx.QueryBatchAsync(ro).ConfigureAwait(false))[0][0][0];
         }
         catch (InvalidOperationException ex)
         {
@@ -215,10 +257,10 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
 
         if (readOnly == "on")
         {
+            await transaction.ReleaseAsync(Savepoint, ct).ConfigureAwait(false);
             throw new StagingValidationException("transaction_invalid", "The transaction is read-only.");
         }
 
-        await transaction.SaveAsync(Savepoint, ct).ConfigureAwait(false);
         PgOutcome<T> outcome;
         try
         {
@@ -240,6 +282,26 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         return ((PgOutcome<T>.Commit)outcome).Reply;
     }
 
+    internal static bool IsStalePlan(PostgresException ex) =>
+        ex.SqlState == "0A000" && ex.MessageText.Contains("cached plan", StringComparison.Ordinal);
+
+    static async Task ForgetPreparedAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        try
+        {
+            if (transaction is not null)
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+
+            connection.UnprepareAll();
+        }
+        catch (Exception ex) when (ex is NpgsqlException or IOException or InvalidOperationException)
+        {
+            // The connection is broken or closing; the pool discards it and its statements with it.
+        }
+    }
+
     static StoreReply<T> Classify<T>(PgOp op, PostgresException ex) where T : class
     {
         var (status, code) = ex.SqlState switch
@@ -255,36 +317,62 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         return StoreReply<T>.NoEffect(status, new StoreError(code, Detail: ex.ConstraintName), DateTimeOffset.UtcNow);
     }
 
-    async Task SetTimeoutsAsync(PgTx tx, PgOp op)
+    /// <summary>Session timeouts of 04 §6.1, sent in the gate batch (driver-owned runs only).</summary>
+    (long LockMs, long StatementMs) Timeouts(PgOp op)
     {
         var remaining = op.NotAfter == DateTimeOffset.MaxValue ? DefaultBudget : op.NotAfter - time.GetUtcNow();
         var statementMs = (long)Math.Clamp(remaining.TotalMilliseconds, 100, 600_000);
-        var lockMs = Math.Min(2000, statementMs);
-        using var cmd = tx.Sql("""
-            SELECT set_config('lock_timeout', @lock || 'ms', true),
-                   set_config('statement_timeout', @stmt || 'ms', true),
-                   set_config('idle_in_transaction_session_timeout', '10000ms', true)
-            """).P("lock", lockMs.ToString(System.Globalization.CultureInfo.InvariantCulture))
-                .P("stmt", statementMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        await cmd.ExecuteNonQueryAsync(tx.Ct).ConfigureAwait(false);
+        return (Math.Min(2000, statementMs), statementMs);
     }
 
-    /// <summary>G1/G2 with the checks of 03 §10.1; returns a rejection or null.</summary>
-    async Task<StoreReply<T>?> CheckGatesAsync<T>(PgTx tx) where T : class
+    const string TimeoutsSql = """
+        SELECT set_config('lock_timeout', @lock || 'ms', true),
+               set_config('statement_timeout', @stmt || 'ms', true),
+               set_config('idle_in_transaction_session_timeout', '10000ms', true);
+
+        """;
+
+    const string G1Sql = """
+        SELECT store_id, schema_revision, protocol_epoch, migration_mode
+        FROM runwick.store_metadata WHERE singleton_id = 1 FOR SHARE
+        """;
+
+    const string G2Sql = """
+        SELECT revision, required_protocol_epoch, required_capabilities::text, admission_mode
+        FROM runwick.application_controls WHERE application = @application FOR SHARE
+        """;
+
+    /// <summary>
+    /// G1/G2 with the checks of 03 §10.1; returns a rejection or null. The timeouts, G1 and G2 go in one round trip
+    /// (04 §6.1: their inputs do not depend on prior results; G2 runs after G1's lock and no decision precedes it).
+    /// RegisterApplication seeds its G2 row after G1's checks, so it sends G2 separately.
+    /// </summary>
+    async Task<StoreReply<T>?> CheckGatesAsync<T>(PgTx tx, (long LockMs, long StatementMs)? timeouts) where T : class
     {
         var op = tx.Op;
-        using (var g1 = tx.Sql("""
-            SELECT store_id, schema_revision, protocol_epoch, migration_mode
-            FROM runwick.store_metadata WHERE singleton_id = 1 FOR SHARE
-            """))
+        var seeds = op.Operation == Operations.RegisterApplication;
+        List<object?[]>? apps = null;
+        using (var g1 = tx.Sql((timeouts is null ? "" : TimeoutsSql) + G1Sql + (seeds ? "" : ";\n" + G2Sql)))
         {
-            var rows = await tx.QueryAsync(g1, r => (StoreId: r.GetGuid(0), Revision: r.GetInt64(1), Epoch: r.GetInt32(2), Mode: r.GetString(3))).ConfigureAwait(false);
+            if (timeouts is { } t)
+            {
+                g1.P("lock", t.LockMs.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                  .P("stmt", t.StatementMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            var sets = await tx.QueryBatchAsync(g1).ConfigureAwait(false);
+            var rows = sets[timeouts is null ? 0 : 1];
+            if (!seeds)
+            {
+                apps = sets[^1];
+            }
+
             if (rows.Count == 0)
             {
                 return tx.Reject<T>(StoreStatus.UnsupportedVersion, "schema_incompatible");
             }
 
-            var s = rows[0];
+            var s = (StoreId: (Guid)rows[0][0]!, Revision: (long)rows[0][1]!, Epoch: (int)rows[0][2]!, Mode: (string)rows[0][3]!);
             var expected = op.ExpectedStoreId ?? StoreId;
             if (expected is { } id && id != s.StoreId)
             {
@@ -302,7 +390,7 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
             }
         }
 
-        if (op.Operation == Operations.RegisterApplication)
+        if (seeds)
         {
             using var seed = tx.Sql("""
                 INSERT INTO runwick.application_controls (application, created_at, updated_at)
@@ -310,19 +398,16 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
                 ON CONFLICT DO NOTHING
                 """);
             await seed.ExecuteNonQueryAsync(tx.Ct).ConfigureAwait(false);
+            using var g2 = tx.Sql(G2Sql);
+            apps = (await tx.QueryBatchAsync(g2).ConfigureAwait(false))[0];
         }
 
-        using var g2 = tx.Sql("""
-            SELECT revision, required_protocol_epoch, required_capabilities::text, admission_mode
-            FROM runwick.application_controls WHERE application = @application FOR SHARE
-            """);
-        var apps = await tx.QueryAsync(g2, r => (Revision: r.GetInt64(0), Epoch: r.GetInt32(1), Caps: r.GetString(2), Mode: r.GetString(3))).ConfigureAwait(false);
-        if (apps.Count == 0)
+        if (apps!.Count == 0)
         {
             return tx.Reject<T>(StoreStatus.AdmissionClosed, "application_not_registered");
         }
 
-        var app = apps[0];
+        var app = (Epoch: (int)apps[0][1]!, Caps: (string)apps[0][2]!, Mode: (string)apps[0][3]!);
         if (op.IsCreation && (app.Epoch > 1 || UnknownCapabilities(app.Caps)))
         {
             return tx.Reject<T>(StoreStatus.UnsupportedVersion, "capability_unsupported");
@@ -358,6 +443,11 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         var op = tx.Op;
         var retentionClass = Operations.RetentionClass(op.Operation);
         bool inserted;
+        bool crossClass;
+        DateTimeOffset now;
+
+        // R1, R3 and the clock read in one round trip (04 §6.1): R3 and the clock run after R1's insert or wait, and
+        // their results are used only when R1 inserted; otherwise R2 follows as before.
         using (var r1 = tx.Sql("""
             INSERT INTO runwick.storage_commands (
                 application, retention_class, command_id, operation, operation_version, protocol_epoch,
@@ -365,21 +455,25 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
             VALUES (@application, @class, @command_id, @operation, 1, 1, @fingerprint, 1, @not_after, 1,
                     @not_after + CASE @class WHEN 'ownership' THEN interval '10 minutes' ELSE interval '24 hours' END)
             ON CONFLICT DO NOTHING
-            RETURNING true
+            RETURNING true;
+
+            SELECT 1 FROM runwick.storage_commands
+            WHERE application = @application AND command_id = @command_id AND retention_class <> @class
+            LIMIT 1;
+
+            SELECT clock_timestamp()
             """).P("class", retentionClass).P("command_id", op.CommandId).P("operation", op.Operation)
                 .P("fingerprint", op.Fingerprint, NpgsqlDbType.Bytea).P("not_after", op.NotAfter))
         {
-            inserted = (await tx.QueryAsync(r1, _ => true).ConfigureAwait(false)).Count == 1;
+            var sets = await tx.QueryBatchAsync(r1).ConfigureAwait(false);
+            inserted = sets[0].Count == 1;
+            crossClass = sets[1].Count > 0;
+            now = new DateTimeOffset(DateTime.SpecifyKind((DateTime)sets[2][0][0]!, DateTimeKind.Utc));
         }
 
         if (inserted)
         {
-            using var r3 = tx.Sql("""
-                SELECT 1 FROM runwick.storage_commands
-                WHERE application = @application AND command_id = @command_id AND retention_class <> @class
-                LIMIT 1
-                """).P("command_id", op.CommandId).P("class", retentionClass);
-            if ((await tx.QueryAsync(r3, _ => 1).ConfigureAwait(false)).Count > 0)
+            if (crossClass)
             {
                 return tx.Reject<T>(StoreStatus.CommandConflict, "command_conflict");
             }
@@ -411,7 +505,6 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
             return await replay(tx, row).ConfigureAwait(false);
         }
 
-        var now = await tx.ClockAsync().ConfigureAwait(false);
         if (now >= op.NotAfter)
         {
             return StoreReply<T>.NoEffect(StoreStatus.CommandExpired, new StoreError("command_expired"), PgTime.Floor(now));
@@ -441,14 +534,17 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         return rows.Count == 0 ? null : rows[0];
     }
 
-    static async Task FinalizeReceiptAsync<T>(PgTx tx, PgOutcome<T>.Commit commit) where T : class
-    {
-        using var r4 = tx.Sql("""
+    static NpgsqlCommand FinalizeCommand<T>(PgTx tx, PgOutcome<T>.Commit commit) where T : class =>
+        tx.Sql("""
             UPDATE runwick.storage_commands
             SET status = @status, result = @result, decided_at = @decided_at
             WHERE application = @application AND retention_class = @class AND command_id = @command_id AND result IS NULL
             """).P("status", commit.Reply.Status.ToString()).Json("result", commit.Result ?? [])
                 .P("decided_at", commit.Reply.DecidedAt).P("class", Operations.RetentionClass(tx.Op.Operation)).P("command_id", tx.Op.CommandId);
+
+    static async Task FinalizeReceiptAsync<T>(PgTx tx, PgOutcome<T>.Commit commit) where T : class
+    {
+        using var r4 = FinalizeCommand(tx, commit);
         if (await tx.ExecAsync(r4, mutation: false).ConfigureAwait(false) != 1)
         {
             throw new InvalidOperationException("Receipt finalization updated no row.");

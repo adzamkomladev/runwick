@@ -73,6 +73,72 @@ internal sealed class PgTx(NpgsqlConnection connection, NpgsqlTransaction transa
         return list;
     }
 
+    /// <summary>
+    /// Runs a multi-statement command (statements joined with <c>;</c>) in one round trip and returns every result
+    /// set's rows. The statements run in order on the server, so each runs after the locks of the ones before it (04 §6.1).
+    /// </summary>
+    /// <summary>A new statement batch on this transaction (04 §6.1, PF-04); run it with <see cref="RunAsync"/>.</summary>
+    public PgBatch Batch() => new(connection, transaction);
+
+    /// <summary>
+    /// Sends every statement of <paramref name="batch"/> in one round trip; the server runs them in order, so each runs
+    /// after the locks of the ones before it. Row counts and returned rows are read before anything else is sent. The
+    /// mutation fault points fire per batch (07 "Changes (2026-11-01, PF-04)"): <c>BeforeFirstMutation</c> before the
+    /// first batch that holds a mutation, <c>AfterMutation</c> once after each such batch.
+    /// </summary>
+    public async Task RunAsync(PgBatch batch)
+    {
+        if (batch.IsEmpty)
+        {
+            return;
+        }
+
+        await BeforeMutation(batch.HasMutation).ConfigureAwait(false);
+        await batch.ExecuteAsync(ct).ConfigureAwait(false);
+        await AfterMutation(batch.HasMutation).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Decision time from a clock read the caller sent in the batch that took the last blocking lock (PF-04): the server
+    /// read it after every lock of that batch was granted, so it is the fresh time of 03 §1.3. Returns false when the
+    /// command expired.
+    /// </summary>
+    public async Task<bool> DecideAtAsync(DateTimeOffset clock)
+    {
+        await Fault(FaultPoint.AfterLocksBeforeFreshTime).ConfigureAwait(false);
+        Now = PgTime.Floor(clock);
+        return clock < op.NotAfter;
+    }
+
+    /// <summary>The clock read appended to a lock batch.</summary>
+    public static NpgsqlCommand ClockSql(PgTx tx) => tx.Sql("SELECT clock_timestamp()");
+
+    public static DateTimeOffset ReadClock(NpgsqlDataReader r) => new(DateTime.SpecifyKind(r.GetDateTime(0), DateTimeKind.Utc));
+
+    public async Task<List<List<object?[]>>> QueryBatchAsync(NpgsqlCommand cmd)
+    {
+        var sets = new List<List<object?[]>>();
+        var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        await using (reader.ConfigureAwait(false))
+        {
+            do
+            {
+                var rows = new List<object?[]>();
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                {
+                    var row = new object?[reader.FieldCount];
+                    reader.GetValues(row!);
+                    rows.Add(row);
+                }
+
+                sets.Add(rows);
+            }
+            while (await reader.NextResultAsync(ct).ConfigureAwait(false));
+        }
+
+        return sets;
+    }
+
     async ValueTask BeforeMutation(bool mutation)
     {
         if (mutation && _mutations == 0)
@@ -120,7 +186,16 @@ internal sealed record PgOp(
 /// <summary>Body result: commit (with the receipt result for receipt-bearing operations) or roll back.</summary>
 internal abstract record PgOutcome<T> where T : class
 {
-    public sealed record Commit(StoreReply<T> Reply, JsonObject? Result) : PgOutcome<T>;
+    public sealed record Commit(StoreReply<T> Reply, JsonObject? Result) : PgOutcome<T>
+    {
+        /// <summary>
+        /// Effect statements not yet sent (PF-04). The runner appends R4 and sends them in one round trip, then runs
+        /// <see cref="Verify"/> on the row counts before COMMIT; a non-null verdict rolls everything back.
+        /// </summary>
+        public PgBatch? Effects { get; init; }
+
+        public Func<PgOutcome<T>?>? Verify { get; init; }
+    }
 
     public sealed record Rollback(StoreReply<T> Reply) : PgOutcome<T>;
 }
@@ -128,6 +203,110 @@ internal abstract record PgOutcome<T> where T : class
 /// <summary>A committed receipt row read by R2.</summary>
 internal sealed record ReceiptRow(string Operation, int OperationVersion, byte[] Fingerprint, DateTimeOffset NotAfter,
     string? Status, JsonObject? Result, DateTimeOffset? DecidedAt);
+
+/// <summary>
+/// Statements sent together as one <see cref="NpgsqlBatch"/> (04 §6.1: inputs that do not depend on prior results). Each
+/// statement is built as a normal command and keeps its own parameters; results are read into its step after the batch.
+/// </summary>
+internal sealed class PgBatch(NpgsqlConnection connection, NpgsqlTransaction transaction)
+{
+    readonly List<Step> _steps = [];
+
+    public bool IsEmpty => _steps.Count == 0;
+
+    public bool HasMutation => _steps.Exists(s => s.Mutation);
+
+    /// <summary>A statement whose rows are read (a SELECT, or DML with RETURNING).</summary>
+    public Rows<T> Query<T>(NpgsqlCommand cmd, Func<NpgsqlDataReader, T> map, bool mutation = false) => Add(new Rows<T>(map), cmd, mutation);
+
+    /// <summary>A statement whose row count is read.</summary>
+    public Count Exec(NpgsqlCommand cmd, bool mutation = true) => Add(new Count(), cmd, mutation);
+
+    TStep Add<TStep>(TStep step, NpgsqlCommand cmd, bool mutation) where TStep : Step
+    {
+        using (cmd)
+        {
+            var bc = new NpgsqlBatchCommand(cmd.CommandText);
+            foreach (NpgsqlParameter p in cmd.Parameters)
+            {
+                bc.Parameters.Add(p.Clone());
+            }
+
+            step.Command = bc;
+        }
+
+        step.Mutation = mutation;
+        _steps.Add(step);
+        return step;
+    }
+
+    internal async Task ExecuteAsync(CancellationToken ct)
+    {
+        using var batch = new NpgsqlBatch(connection, transaction);
+        foreach (var s in _steps)
+        {
+            batch.BatchCommands.Add(s.Command);
+        }
+
+        var reader = await batch.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        await using (reader.ConfigureAwait(false))
+        {
+            // Npgsql skips statements without a result set, so the result sets are those of the row steps, in order.
+            var first = true;
+            foreach (var s in _steps)
+            {
+                if (s is not IReads reads)
+                {
+                    continue;
+                }
+
+                if (!first && !await reader.NextResultAsync(ct).ConfigureAwait(false))
+                {
+                    throw new InvalidOperationException("batch returned fewer result sets than row statements");
+                }
+
+                first = false;
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                {
+                    reads.Read(reader);
+                }
+            }
+
+            while (await reader.NextResultAsync(ct).ConfigureAwait(false))
+            {
+            }
+        }
+
+        foreach (var s in _steps)
+        {
+            s.Affected = s.Command.RecordsAffected;
+        }
+    }
+
+    internal interface IReads
+    {
+        void Read(NpgsqlDataReader reader);
+    }
+
+    internal abstract class Step
+    {
+        internal NpgsqlBatchCommand Command { get; set; } = null!;
+
+        internal bool Mutation { get; set; }
+
+        /// <summary>Rows inserted, updated, deleted or returned.</summary>
+        public int Affected { get; internal set; }
+    }
+
+    public sealed class Rows<T>(Func<NpgsqlDataReader, T> map) : Step, IReads
+    {
+        public List<T> Items { get; } = [];
+
+        void IReads.Read(NpgsqlDataReader reader) => Items.Add(map(reader));
+    }
+
+    public sealed class Count : Step;
+}
 
 internal static class PgTime
 {

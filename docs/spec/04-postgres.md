@@ -6,6 +6,36 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-01, PF-03)
+
+Performance plan PF-03: automatic statement preparation and a warm control pool, in §9.2. Round trips are unchanged (PERF-01).
+
+1. **Preparation and plan stability.** The control and work data sources prepare up to 64 statements per physical connection, each after its second use, which saves parse and analysis on every later call. Every driver-owned connection starts with `plan_cache_mode = force_custom_plan` (a startup option, so it covers the transaction frame and the bare-connection readiness probe alike): a prepared statement is planned for each bind's values and never runs a cached generic plan. The Reserve candidate query and the readiness probe are therefore planned exactly as without preparation, whatever their arrays and the data distribution; no generic-plan guarantee is needed. PGX-11 checks the setting and that the control connection holds prepared statements.
+2. **`0A000` `cached plan must not change result type`.** A schema change under a prepared statement makes PostgreSQL refuse the statement, before anything is applied. The runner rolls back, runs `UnprepareAll` on that connection, clears the data source's pool (every pooled connection prepared the same statements, and the retry budget is not spent one connection at a time) and retries the same command as a §10 transient conflict (same command ID and `NotAfter`; exhausted → `transient_conflict_exhausted`). A read-only call (probe, schedule and readiness reads) is retried once on the cleared pool. `RunwickPostgresMigrations.MigrateAsync` clears the pools of every store in its process on the migrated database (host, port, database) when it ends. DEP-08 changes a column type the gate statements return while three loops run the job path, and asserts no failed call, at least one `0A000` retry and no history violation.
+3. **Staged paths unchanged.** `StageAsync` and `StageFinishAsync` run on the caller's connection with the caller's preparation settings; Runwick sets neither `Max Auto Prepare` nor `plan_cache_mode` there, and a `0A000` there propagates to the caller like any other PostgreSQL error (§6.1).
+4. **Rolling upgrade.** An old binary with warm prepared statements meeting a newer schema gets `0A000` on its next call and retries it on fresh connections; the retry then gives either a correct result or, when the gate row's revision is no longer one it supports, `schema_incompatible`. Never a wrong answer: a prepared statement either runs against the schema it was prepared for, or is refused. The UPG-02 variant with an old binary is owed with UPG-02 itself.
+5. **Warm control pool.** The control pool keeps 2 idle connections (the settlement lane width) past `Connection Idle Lifetime`, so the first Renew or Finish after a long idle does not pay a physical open (0.1–1 s, lease-critical). The work pool stays at 0. PGX-12 renews after the idle lifetime (shortened in the test) and asserts the same backends serve it.
+
+## Changes (2026-11-01, PF-04)
+
+§6.1's batching rule applied to the operation bodies of Dispatch/1 and DispatchMany/1 (driver-owned and staged), Reserve/1, Begin/1, Renew/1, Finish/1 (and `StageFinishAsync`) and the §7.10 close statements. The SQL text of every statement, the lock order (§5), fresh time after the last blocking lock (03 §1.3), the receipt replay branch and `synchronous_commit` are unchanged. Rules:
+
+1. **Locks first, in order, then the clock.** Statements that need only the request or the already-locked row are batched behind the locking statement in lock order (Reserve: Q then the claim; then G, the payload read, S and the clock. Begin: J, G and the clock; K, S, R and a fresh clock when the plan locks more. Renew: J, S, clock. Finish: J, G, K, S, clock when the outcome is terminal regardless of the job; otherwise J and G first). The decision clock read is a separate statement after the last blocking lock in that batch, never in a locking statement's target list, where it could be evaluated before the lock wait. A clock read in a batch that is followed by further locks is discarded and read again after them.
+2. **Reads behind a lock are separate statements.** G is not joined into J's `FOR NO KEY UPDATE`: under READ COMMITTED a joined, unlocked generation row would be re-checked from the pre-wait snapshot. G is a statement after J in the same batch and reads the generation the locked row names. Begin's `job_rate_requirements` check is an `EXISTS` in G's target list (requirements are immutable), which removes the separate requirements read for unrated jobs. K for Finish and Begin's closed plans is found through the locked job row.
+3. **Effects and R4 in one batch, checked before COMMIT.** After the decision every effect's inputs are known. Values a `RETURNING` clause used to supply are predicted from locked rows (the job's new revision, execution number and total; each fence = scope counter + 1) and compared with the returned values; every row count is checked. Any mismatch rolls back with the reply the sequential code gave. Dispatch's step-10 deadline read is the last statement before R4 in the batch. Dispatch items that provision concurrency or rate scopes, the rate deferral's hint reads, and Reserve's live-permit count (scoped jobs) keep their own round trips.
+4. **Never a decision ahead of its lock.** No batch contains a statement whose inputs depend on an earlier statement's result in the same batch. A claim batched behind Q (Reserve) is rolled back when Q says paused or unregistered.
+
+PERF-01 after PF-04 (commands; round trips = + COMMIT): Dispatch 4, Reserve 5, Begin 4, Begin rated 6, Renew 3, Finish 4, `StageFinishAsync` 5 (+ `RELEASE`). Per job 17 commands, 21 round trips (64 before PF-02). Fault points: 07 "Changes (2026-11-01, PF-04)".
+
+## Changes (2026-11-01, PF-02)
+
+The §6.1 batching rule ("statements whose inputs do not depend on prior results may be sent together") is now applied to the protocol frame. Statements, their order on the server and every decision are unchanged:
+
+- **Gate batch:** the §6.1 `set_config`, G1 and G2 go in one round trip. The server runs them in order, so G2's `FOR SHARE` follows G1's, and every gate check runs on the results before anything else is sent. RegisterApplication keeps a separate G2 after its seed insert, because the insert follows G1's checks. Staging sends G1 and G2 together (it has no `set_config`).
+- **Receipt batch:** R1, R3 and the §6.3 clock read go in one round trip. R3 and the clock run after R1's insert, or after R1's wait on an in-flight holder. Their results are used only when R1 inserted; when it did not, R2 follows as before and both results are discarded. The only difference from the written sequence is that R3, a plain read with no lock, also runs when its result is not needed.
+- **Staging:** the caller transaction's read-only check and `SAVEPOINT runwick_stage` go in one round trip. A read-only transaction has the savepoint released before the `transaction_invalid` rejection, so the caller's transaction is left as it was. `RELEASE` stays separate, after the checks.
+- Saving: 4 round trips per receipted driver-owned call, 2 per Renew and PublishPresence, 4 per staged call. Per job (Dispatch + Reserve + Begin + Finish): 64 → 48. Fault-point effects are in 07 "Changes (2026-11-01, PF-02)".
+
 ## Changes (2026-10-31, SP-016)
 
 - `0006_scheduler` (revision 6) adds `schedules`, `schedule_definitions`, `schedule_occurrences` and `schedule_audit_ranges` (13 §3). It widens `concurrency_scopes_kind_v2_ck` (`schedule`), `queue_events_kind_v4_ck` (nine schedule kinds), `management_audit_operation_v3_ck` (six schedule operations) and `management_audit_target_kind_v3_ck` (`schedule`). Jobs it creates carry `created_reason = 'scheduled'`.
@@ -1732,9 +1762,10 @@ Class ceilings are partitions of the data-source maximum, not additions. No borr
 |---|---|
 | `Enlist` | `false` (ambient `TransactionScope` never captures worker transitions) |
 | `Pooling` | `true` (control/work); `false` (migration) |
-| `Minimum Pool Size` / `Maximum Pool Size` | 0 / 6 (control), 0 / 8 (work) |
+| `Minimum Pool Size` / `Maximum Pool Size` | 2 / 6 (control; 2 is the settlement lane width), 0 / 8 (work) (2026-11-01, PF-03) |
 | `Multiplexing` | `false` |
-| `Max Auto Prepare` | `0` (no automatic preparation in M2) |
+| `Max Auto Prepare` | `64`, at Npgsql's default of 2 usages (2026-11-01, PF-03; `0` until then). The migration connection stays at `0`. |
+| `Options` | `-c plan_cache_mode=force_custom_plan` appended to any configured options (2026-11-01, PF-03) |
 | `Include Error Detail` | `false`; parameter logging disabled |
 | `Application Name` | `runwick:<application>:control` / `:work` / `:migrate` |
 | `Timeout` (connect) | ≤ remaining operation budget, default 5 s |

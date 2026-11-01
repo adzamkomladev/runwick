@@ -17,6 +17,7 @@ internal static class ProducerMode
     public static async Task<int> RunAsync(Args a)
     {
         var metrics = new Metrics();
+        using var phases = PhaseListener.Attach(metrics);
         var sc = new ServiceCollection();
         sc.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
         sc.AddRunwick(r =>

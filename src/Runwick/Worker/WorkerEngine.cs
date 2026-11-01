@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Runwick.Hosting;
+using Runwick.Internal;
 using Runwick.Protocol;
 using Runwick.Registration;
 
@@ -565,7 +566,9 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
     {
         using var deadline = Clock.After(timeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, _controlStop.Token, extra);
+        var lap = PhaseTimings.Start();
         using var slot = await io.AcquireAsync(priority, linked.Token).ConfigureAwait(false);
+        PhaseTimings.Lap(lap, io == RenewalIo ? "Renew" : io == SettlementIo ? "Finish" : "Admission", "engineLane");
         return await call(linked.Token).ConfigureAwait(false);
     }
 

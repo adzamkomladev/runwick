@@ -21,6 +21,7 @@ internal static class WorkerMode
     public static async Task<int> RunAsync(Args a)
     {
         var metrics = new Metrics();
+        using var phases = PhaseListener.Attach(metrics);
         var invocations = new ConcurrentDictionary<Guid, int>();
         var concurrency = a.Int("concurrency", 16);
         var g2 = a.Has("g2");
