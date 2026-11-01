@@ -30,6 +30,16 @@ Implementation choices *[choice]*:
 4. Resume stores a pending policy (§5.4) instead of evaluating in the store; the scheduler applies it at the next materialization. An edit needs no pending policy: the caller sends the new first due instant, and the store records the skipped interval directly (§6.4).
 5. Capability `scheduler` (version 1) gates RegisterSchedule, MaterializeOccurrences and TriggerSchedule (`UnsupportedVersion` / `scheduler_not_active`) until `ActivateCapabilities/1` raises it (10 §6.1). Control operations on existing schedules are not gated.
 
+## Changes (2026-11-01, SP-016 owed cases)
+
+- `IJobContext.Schedule` (01 §9) is populated for jobs the store builds from a schedule; it is null for every other job. Inferred details:
+  - The store writes the occurrence into the job's payload row as a third `headers` member, `schedule` (key, scheduled-at, covered-from, covered-until, epoch ms), beside the business and diagnostic maps. Reserve reads it with the payload. There is no migration and no extra join, and the IC-07 diagnostic-metadata rule is unchanged.
+  - A scheduled occurrence reports its scheduled instant and covered range. A run-once covers from the first missed instant through the cutoff; otherwise the range is the instant itself.
+  - A manual trigger reports the trigger command's decision time (store time after its locks) as the scheduled instant and both ends of the range.
+  - A `ResolveCatchUp` run-once reports the open episode's first due instant through its cutoff.
+  - 00's scheduler row no longer says the member is always null.
+- §11 lists the tests added for the owed items: SCHED-11, the scheduler half of SCHED-14, PGX-04 materialization, CMD-04 and CMD-05 as separate tests, the hosted path, pure planner tests and the remaining scheduling-internals §10 rows.
+
 ## 1. Contract
 
 A schedule is a durable, keyed definition that produces jobs at evaluated instants. Each occurrence produces at most one job or one recorded disposition. The cursor moves forward only and only over occurrences that were emitted, coalesced or explicitly skipped. The scheduler is a role: any number of replicas may run it, none holds a lease, and materialization is a store command whose effect is atomic with the jobs it creates.
@@ -236,8 +246,25 @@ Occurrence detail is retained 30 days after materialization (cleanup is SP-021).
 | PGX-02 (schedule half) | `Scheduled_jobs_carry_the_template_profile_tuple` | Job tuple equals the definition's |
 | CMD-01 … 05 | `Schedule_commands_follow_the_receipt_protocol` (theory per operation) | Concurrent and sequential sends apply once; changed body → `CommandConflict`; DropReply resolves; lock past NotAfter → `CommandExpired`; pruned receipt → `CommandExpired` |
 | ISO-01 | `The_same_schedule_key_in_two_applications_never_interacts` | Two applications, one key: separate rows, jobs and revisions |
-| PGX-04 (materialization) | not yet written | Materialization against scope creation and edits in opposite orders: no deadlock |
+| PGX-04 (materialization) | `ScheduleCaseTests.Materialization_and_scope_creation_in_opposite_orders_never_deadlock`, `…Materialization_versus_scope_creation_and_edits_in_both_orders` | 30 free races and two barrier orders with new scopes created in opposite orders, plus an edit waiting on the row: every command applies, no deadlock |
 | P-06 (scheduler half) | not yet written | 1,000 minute schedules plus one 1,000-occurrence catch-up; lag p99 ≤ 3 s; worker lease loss 0 |
+
+Added 2026-11-01:
+
+| Case | Test | Proves |
+|---|---|---|
+| SCHED-09, SCHED-10, SCHED-13, SCHED-15, SCH-04 | `SchedulePlannerTests` (Core, Pure, 17 tests) | The planner alone: misfire policies and grace equality, batches of 32, one cutoff per episode, the limit and age reviews, pending resume policies, one-time schedules, revisions carried, never rewinding |
+| SCHED-09, SCHED-13, SCHED-15 | `ScheduleCaseTests.The_hosted_scheduler_seeds_once_materializes_and_jobs_see_their_occurrence` | Hosted `SchedulerService`: the seed registers once; the loop materializes; `IJobContext.Schedule` equals the occurrence row (manual: store time; plain job: null); a restart keeps the pause; a drifted declaration never overwrites |
+| SCHED-11 | `ScheduleCaseTests.A_missing_profile_is_a_local_diagnostic_only` | Unknown profile and unknown TZDB hash: `schedule_missing_profile` / `schedule_missing_artifact` local diagnostics, no review, no job, no event or audit, cursor kept; a valid schedule beside them runs; restored, it materializes |
+| SCHED-14 (scheduler half) | `ScheduleCaseTests.An_elapsed_evaluation_budget_backs_off_locally_and_writes_nothing` | An elapsed budget is a local `schedule_budget_elapsed` diagnostic; no failure command, review, job or cursor move. The slot rule is SP-015's `EvaluatorBoundsTests` |
+| CMD-04 | `ScheduleCaseTests.A_schedule_command_whose_deadline_passes_during_a_lock_wait_expires_without_effect` | Materialization waiting on a held schedule row past NotAfter: `CommandExpired` / `ObservedNoEffect`, no receipt, job or cursor move; an applied command replayed after NotAfter returns its receipt |
+| CMD-05 | `ScheduleCaseTests.Pruned_schedule_receipts_replay_as_expired_and_never_reapply` | After harness pruning, Materialize, SetScheduleState and Trigger replays are `CommandExpired` with no new job, audit or revision |
+| SCHED-13 (§10 clock backward) | `ScheduleCaseTests.A_plan_cut_off_after_store_time_is_rejected_and_the_cursor_waits` | A cutoff after store time is `cutoff_in_future`; nothing changes; a plan at store time applies |
+| SCH-03 (§10 queue paused) | `ScheduleCaseTests.A_paused_queue_keeps_materializing_while_execution_waits` | Materialization continues on a paused queue; Reserve refuses; the same plan again creates nothing |
+| SCHED-15 (§10 slow serialized) | `ScheduleCaseTests.Serialized_catch_up_jobs_never_run_concurrently` | Three caught-up serialized jobs on four slots run one at a time |
+| SCH-01 (§10 uniqueness) | `ScheduleCaseTests.Cross_occurrence_uniqueness_needs_explicit_reuse_and_then_links` | Active key without reuse fails validation; with reuse later occurrences are `linked_existing` to one job |
+
+Other §10 rows: two schedulers (SCH-01), disconnect (SCHED-12), fault rollback (SCH-02), pause before plan (SCH-03), edit race (SCHED-13 and PGX-04 order 1), downtime and budget (SCHED-09, SCHED-10, SCH-04), wrong evaluator (SCHED-11), pruned history (SCH-05), manual triggers (SCHED-15), staggered definitions (the seed drift test). Fold, gap and transitions are SP-015 (SCHED-01 … 08). Retry overtaking under `serialize` is visible only as ordinary retry timing; no test asserts it.
 
 ## 12. Must not claim
 

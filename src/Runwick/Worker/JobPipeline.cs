@@ -53,7 +53,7 @@ internal sealed class JobContext(AttemptEntry entry, string application, object 
 
     public IReadOnlyList<ResourceFence> Fences => fences;
 
-    public JobScheduleInfo? Schedule => null;
+    public JobScheduleInfo? Schedule => entry.Reserved.Schedule;
 
     public JobCancellationCause CancellationCauses => entry.Causes;
 

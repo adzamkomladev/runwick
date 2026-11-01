@@ -47,7 +47,7 @@ public interface IJobContext
     /// <summary>One per fencing-enabled permit held. Protects a resource only if it rejects lower values.</summary>
     IReadOnlyList<ResourceFence> Fences { get; }
 
-    /// <summary>Always null until the scheduler ships.</summary>
+    /// <summary>The schedule occurrence a scheduled job materializes (13); null for every other job.</summary>
     JobScheduleInfo? Schedule { get; }
 
     /// <summary>Each locally observed cancellation cause, independently.</summary>

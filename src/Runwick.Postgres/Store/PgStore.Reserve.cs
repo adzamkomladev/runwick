@@ -178,7 +178,7 @@ internal sealed partial class PgStore
                 await EventAsync(tx, job.JobId, attemptId, "attempt_reserved",
                     new JsonObject { ["generation"] = job.Generation, ["reservationNumber"] = reservationNumber }).ConfigureAwait(false);
 
-                var (payload, business, diagnostic, createdAt) = await ReadPayloadAsync(tx, job.JobId).ConfigureAwait(false);
+                var (payload, business, diagnostic, createdAt, schedule) = await ReadPayloadAsync(tx, job.JobId).ConfigureAwait(false);
                 var reserved = new ReservedJob(
                     new JobPosition(job.JobId, job.Generation, revision, JobStates.Reserved),
                     new LeaseGrant(new LeaseHandle(job.JobId, attemptId, request.WorkerInstanceId, token, job.Generation), expiry),
@@ -189,14 +189,14 @@ internal sealed partial class PgStore
                     request.Queue, request.Priority,
                     policy.Policy,
                     [.. scopes.Where(s => s.Fencing).Select(s => new StoreFence(s.ScopeId, fences[s.ScopeId]))],
-                    createdAt);
+                    createdAt) { Schedule = schedule };
                 return new PgOutcome<ReservedJob>.Commit(StoreReply<ReservedJob>.Applied(reserved, now), ReceiptCodec.Reserve(reserved));
             },
             async (tx, row) =>
             {
                 var o = row.Result!;
-                var (payload, business, diagnostic, createdAt) = await ReadPayloadAsync(tx, Guid.Parse(o["jobId"]!.GetValue<string>())).ConfigureAwait(false);
-                return StoreReply<ReservedJob>.Applied(ReceiptCodec.ReadReserve(o, payload, business, diagnostic, createdAt), row.DecidedAt!.Value, replayed: true);
+                var (payload, business, diagnostic, createdAt, schedule) = await ReadPayloadAsync(tx, Guid.Parse(o["jobId"]!.GetValue<string>())).ConfigureAwait(false);
+                return StoreReply<ReservedJob>.Applied(ReceiptCodec.ReadReserve(o, payload, business, diagnostic, createdAt) with { Schedule = schedule }, row.DecidedAt!.Value, replayed: true);
             },
             ct);
     }
@@ -208,7 +208,7 @@ internal sealed partial class PgStore
         return new Guid(bytes, bigEndian: true);
     }
 
-    static async Task<(byte[] Payload, Dictionary<string, string> Business, Dictionary<string, string> Diagnostic, DateTimeOffset CreatedAt)> ReadPayloadAsync(PgTx tx, Guid jobId)
+    static async Task<(byte[] Payload, Dictionary<string, string> Business, Dictionary<string, string> Diagnostic, DateTimeOffset CreatedAt, JobScheduleInfo? Schedule)> ReadPayloadAsync(PgTx tx, Guid jobId)
     {
         using var cmd = tx.Sql("""
             SELECT p.payload_utf8, p.headers::text, j.created_at
@@ -222,7 +222,7 @@ internal sealed partial class PgStore
         }
 
         var (business, diagnostic) = ReadHeaders(rows[0].Item2);
-        return (rows[0].Item1, business, diagnostic, rows[0].Item3);
+        return (rows[0].Item1, business, diagnostic, rows[0].Item3, ReadScheduleHeader(rows[0].Item2));
     }
 
     sealed record GenerationRow(ExecutionPolicy Policy, int StartedCount, int ConsecutiveUnstarted);

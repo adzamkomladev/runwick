@@ -23,6 +23,14 @@ Implementation choices *[choice]*:
 3. History rows are diagnostic: a lost `RecordScalingEvent` write never changes the applied target.
 4. `SetPoolOverride/1` is an administrative operation with the usual receipt, event and audit (08). `EstimateDemand` and `RecordScalingEvent` are worker-internal, like `PublishPresence`.
 
+## Changes (2026-11-01, SP-014 owed cases)
+
+- §4.1, inferred: a truncated lane is counted as its 2,000 sampled rows and the sample is still used as demand (a lower bound), not as unknown. The `ScalerSample` doc comment that calls truncated coverage "unknown" is wrong; the code already treats it as a lower bound.
+- §4.1, inferred: "never overlapping" means a late estimate is abandoned at its deadline (the statement is cancelled) before the next sample starts, so at most one estimate statement per worker waits on the database.
+- §5, inferred: an override above max is clamped to max (`override_clamped_to_max`); one equal to the clamped current target applies with no transition and writes no history.
+- §6: scaling-event retention is owed to SP-021 (the retention jobs); no retention job exists in M3.
+- §7 lists the cases added for the owed items, including SCL-02 … SCL-05 (15 I-1).
+
 ## 1. Contract
 
 An `AutoConcurrency(min, max)` pool changes its local ticket target between `min` and `max` from local occupancy and a shared estimate of due backlog. It never touches ownership, leases, admission or other workers. A failing scaler freezes targets; it is not a critical loop.
@@ -110,7 +118,7 @@ In the controller, an override applies at once (clamped to max, never to min), r
 
 ## 6. History (`scaling_events`)
 
-One row per applied target change: instance, pool, old and new target, desired, candidate, reason, snapshot time, membership digest. Unchanged samples write nothing. Retention follows the event retention job (owed, 06 §1.13).
+One row per applied target change: instance, pool, old and new target, desired, candidate, reason, snapshot time, membership digest. Unchanged samples write nothing. Retention follows the event retention job (06 §1.13), owed to SP-021.
 
 ## 7. Cases
 
@@ -122,7 +130,16 @@ One row per applied target change: instance, pool, old and new target, desired, 
 | CAP-08 | `ScalerTests.The_blocked_ratio_…`; `ScalingTests.The_estimate_shares_backlog_…` |
 | WRK-02 / CAP-12 | `ScalingTests.The_estimate_shares_backlog_and_an_override_to_zero_cancels_nothing` |
 
-Owed: multi-worker share test (two hosts, one queue); truncation at 2,000 per lane; estimate deadline fault; scaling-event retention.
+| CAP-08, SCL-02 | `ScalerCaseTests.Two_workers_on_one_queue_share_the_backlog_and_the_survivor_takes_it_all` |
+| CAP-06 | `ScalerCaseTests.Each_lane_counts_at_most_2000_due_rows_and_a_full_lane_sets_truncated` |
+| CAP-07, CAP-11 | `ScalerCaseTests.A_late_estimate_is_unknown_demand_and_never_overlaps_the_next` |
+| CAP-01, CAP-12, WRK-02, SCL-03 | `ScalerCaseTests.Automatic_targets_bound_hung_handlers_and_reductions_cancel_nothing` |
+| CAP-10 | `ScalerCaseTests.A_pressure_stop_freezes_growth_and_resets_its_evidence` |
+| CAP-11, SCL-04 | `ScalerOutageTests.A_store_outage_freezes_automatic_targets_with_pending_finishes` |
+| SCL-03 | `ScalerTests.An_oscillating_backlog_and_long_jobs_never_move_the_target` |
+| SCL-05 | `ScalerTests.A_zero_minimum_keeps_discovery_through_missing_metrics_and_recovers_from_zero` |
+
+Owed: scaling-event retention (SP-021).
 
 ## 8. Must not claim
 

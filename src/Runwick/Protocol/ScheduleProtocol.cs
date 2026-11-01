@@ -95,7 +95,8 @@ internal sealed record ScheduleTemplate(
     /// The dispatch item for one occurrence: the template plus the proposed job ID, and the exclusive
     /// <c>schedule</c> scope when the definition serializes (13 §7.1). Eligible at once (no NotBefore).
     /// </summary>
-    public DispatchItem ToItem(Guid storeId, string application, Guid commandId, long notAfterMs, Guid scheduleId, bool serialize, Guid proposedJobId)
+    public DispatchItem ToItem(Guid storeId, string application, Guid commandId, long notAfterMs, Guid scheduleId, bool serialize, Guid proposedJobId,
+        JobScheduleInfo? schedule = null)
     {
         IReadOnlyList<ScopeRequirement> scopes = serialize
             ? [.. Scopes, new ScopeRequirement(ScheduleOperations.ScopeKind, scheduleId.ToString("D"), 1)]
@@ -107,7 +108,7 @@ internal sealed record ScheduleTemplate(
             ActiveKey, null, null, BusinessMetadata, new Dictionary<string, string>(StringComparer.Ordinal), Policy, proposedJobId);
         var digests = Fingerprints.ForDispatch(storeId, application, commandId, notAfterMs, intent);
         var rates = intent.RateScopes.Select(s => Rates.First(r => r.Kind == s.Kind && r.Key == s.Key)).ToList();
-        return new DispatchItem(intent, scopes, digests) { Rates = rates };
+        return new DispatchItem(intent, scopes, digests) { Rates = rates, Schedule = schedule };
     }
 }
 

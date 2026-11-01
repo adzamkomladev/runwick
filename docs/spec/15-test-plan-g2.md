@@ -8,6 +8,13 @@ This document lists the cases gate **G-2** (milestone M3) requires, the case IDs
 
 - New document. §3 inventory for all of M3. §4 defines the SP-011 cases (TXC, CTL, EVT, MODE are inferred, I-1). §5–§10 name the cases of SP-012 … SP-017; each of those items completes its section with definitions when its own spec (09, 10, 11, 13, 14) is written.
 
+## Changes (2026-11-01, SP-014 and SP-016 owed cases)
+
+- I-1 gains SCL-02 … SCL-05, one per capacity-control §6 scaler row (inferred).
+- The CAP-11 automatic-mode sub-part is defined as: during a store outage every automatic target holds (unknown demand, no growth feedback from failing finishes, attempts bounded), and a late estimate is abandoned at its deadline so at most one estimate statement per worker is ever outstanding.
+- The CAP-01 automatic-mode sub-part is defined as: hung handlers never hold more tickets than the clamped automatic target; an override above the maximum is clamped to it.
+- §7 and §9 list the new tests; the owed lists shrink to what is still open (scaling-event retention, SP-021; P-06 scheduler half, measured separately).
+
 ## 1. Suites, projects and traits
 
 As 07 §1. Additions:
@@ -80,6 +87,10 @@ These acceptance bullets have no ID in the source documents. The IDs are defined
 | MODE-01 … MODE-05 | SP-011, SP-012 | The five deployments (08 §9) |
 | RDY-01 … RDY-03 | SP-012 | Readiness/presence bullets |
 | SCL-01 | SP-014 | The R4 scaler trace |
+| SCL-02 | SP-014 | capacity-control §6 "replica count and capability mix change": demand shares adapt (added 2026-11-01) |
+| SCL-03 | SP-014 | §6 "oscillating backlog and long jobs": sample/cooldown/step rules hold and no work is cancelled (added 2026-11-01) |
+| SCL-04 | SP-014 | §6 "storage outage and pending finishes": no scale-up feedback loop, attempts bounded (added 2026-11-01) |
+| SCL-05 | SP-014 | §6 "zero minimum and missing metrics": discovery survives and bootstrap recovers (added 2026-11-01) |
 
 ## 4. SP-011 cases
 
@@ -237,7 +248,20 @@ Built in `ScalerTests` (Core, Pure) and `ScalingTests` (PostgreSQL):
 | CAP-08 | `The_blocked_ratio_needs_twenty_cycles_…`; `The_estimate_shares_backlog_…` | Freeze threshold; real estimate (due count, capable instances, digest, overrides) |
 | WRK-02 / CAP-12 (scale-down) | `The_estimate_shares_backlog_and_an_override_to_zero_cancels_nothing` | Target 0 stops refill; the running handler completes; nothing cancelled; history rows 1 → 0 → 1 |
 
-Owed before SP-014 acceptance: two-worker share (one queue, two hosts), per-lane truncation at 2,000, estimate-deadline fault, CAP-01/10/11 auto sub-parts, and the capacity-control §6 scaler rows.
+Added 2026-11-01 (`ScalerCaseTests`, `ScalerOutageTests` in PostgreSQL; two more `ScalerTests`):
+
+| Case | Test | Proves |
+|---|---|---|
+| CAP-08, SCL-02 | `ScalerCaseTests.Two_workers_on_one_queue_share_the_backlog_and_the_survivor_takes_it_all` | Two hosts, one queue, 240 due: each estimate reports due 240 and 2 capable instances, desired 7 each; after one stops, the survivor's desired is 12 |
+| CAP-06 | `ScalerCaseTests.Each_lane_counts_at_most_2000_due_rows_and_a_full_lane_sets_truncated` | 1,999 + 3 due (future rows excluded) is exact; a lane of 2,000 sets `truncated` and is counted as 2,000; 2,001 still counts 2,000 |
+| CAP-07, CAP-11 | `ScalerCaseTests.A_late_estimate_is_unknown_demand_and_never_overlaps_the_next` | Estimate blocked by a lock: each sample fails at its deadline, target holds at 1 with `demand_unknown`, at most one estimate statement waits; after release growth resumes |
+| CAP-01, CAP-12, WRK-02, SCL-03 | `ScalerCaseTests.Automatic_targets_bound_hung_handlers_and_reductions_cancel_nothing` | Hung handlers never exceed the clamped target (override 50 → 4); reductions to 1 and 0 cancel nothing; three history rows |
+| CAP-10 | `ScalerCaseTests.A_pressure_stop_freezes_growth_and_resets_its_evidence` | While admission is pressure-stopped every sample is `frozen:pressure`; growth after resume needs three fresh samples |
+| CAP-11, SCL-04 | `ScalerOutageTests.A_store_outage_freezes_automatic_targets_with_pending_finishes` | Store killed with 12 pending finishes: one target throughout, entries ≤ max, attempts bounded, invariants hold |
+| SCL-03 | `ScalerTests.An_oscillating_backlog_and_long_jobs_never_move_the_target` | Demand flipping every sample never builds evidence |
+| SCL-05 | `ScalerTests.A_zero_minimum_keeps_discovery_through_missing_metrics_and_recovers_from_zero` | Min 0 keeps its bootstrap ticket through unknown samples; from zero, demand regrows after one cooldown |
+
+Owed before SP-014 acceptance: scaling-event retention (06 §1.13). No retention job exists before SP-021; it is owed there.
 
 ## 8. SP-015 cases
 
@@ -249,7 +273,9 @@ SCH-01 … SCH-05 (SCH-05 history pruning by harness pruning), SCHED-09 … SCHE
 
 Built in `ScheduleStoreTests` (PostgreSQL); the case table with test names is 13 §11: SCH-01 … SCH-05, SCHED-09, SCHED-10, SCHED-12, SCHED-13, SCHED-15, PGX-02 (schedule half), CMD-01 … CMD-03, ISO-01.
 
-Owed before SP-016 acceptance: SCHED-11 and SCHED-14 tests, PGX-04 (materialization against scope creation in opposite orders), P-06 scheduler half, pure planner unit tests, a hosted-path test of `SchedulerService` (seed and loop), and `IJobContext.Schedule`.
+Added 2026-11-01: `SchedulePlannerTests` (Core, Pure: SCHED-09, SCHED-10, SCHED-13, SCHED-15, SCH-04) and `ScheduleCaseTests` (PostgreSQL: the hosted path and `IJobContext.Schedule`, SCHED-11, the scheduler half of SCHED-14, PGX-04 materialization, CMD-04, CMD-05, and the remaining scheduling-internals §10 rows). The table is 13 §11.
+
+Owed before SP-016 acceptance: P-06 scheduler half (§11, measured separately).
 
 ## 10. SP-017 cases
 
