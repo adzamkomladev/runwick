@@ -711,14 +711,27 @@ internal static class G2Workloads
     {
         var spec = new G2Spec("P-09", "relay", [], [], null, 0, 0, Drain: false, Capabilities: [], OutboxSource: true);
         var sessions = new Dictionary<string, long>(StringComparer.Ordinal);
+        var missedSessionSamples = 0;
         var run = await RunOnceAsync(db, root, spec, async c =>
         {
             var source = c.SourceConnection("wl:script");
             async Task SampleSessions()
             {
-                foreach (var r in await RowsAsync(source, """
-                    SELECT coalesce(application_name, ''), count(*) FROM pg_stat_activity WHERE datname = current_database() GROUP BY 1
-                    """).ConfigureAwait(false))
+                List<object?[]> rows;
+                try
+                {
+                    rows = await RowsAsync(source, """
+                        SELECT coalesce(application_name, ''), count(*) FROM pg_stat_activity WHERE datname = current_database() GROUP BY 1
+                        """).ConfigureAwait(false);
+                }
+                catch (Npgsql.NpgsqlException)
+                {
+                    // A diagnostic sample that times out on a loaded host is skipped and counted; it never ends the run.
+                    missedSessionSamples++;
+                    return;
+                }
+
+                foreach (var r in rows)
                 {
                     var k = (string)r[0]!;
                     sessions[k] = Math.Max(sessions.GetValueOrDefault(k), Convert.ToInt64(r[1], CultureInfo.InvariantCulture));
@@ -855,6 +868,7 @@ internal static class G2Workloads
                 ["rate"] = a.Double("mark-loss", 0.05),
             };
             c.Extra["sourceSessionsMax"] = new JsonObject(sessions.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)kv.Value)));
+            c.Extra["missedSessionSamples"] = missedSessionSamples;
             c.Extra["relay"] = File.Exists(Path.Combine(c.Dir, "relay.summary.json")) ? JsonNode.Parse(File.ReadAllText(Path.Combine(c.Dir, "relay.summary.json"))) : null;
             c.Extra["writer"] = File.Exists(Path.Combine(c.Dir, "writer.summary.json")) ? JsonNode.Parse(File.ReadAllText(Path.Combine(c.Dir, "writer.summary.json"))) : null;
             c.Extra["sevenDayCutoff"] = new JsonObject
