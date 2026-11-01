@@ -69,6 +69,11 @@ internal sealed class DbSampler(string connectionString, string database, string
 
                 await file.WriteLineAsync(s.ToJson().ToJsonString()).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (_stop.IsCancellationRequested)
+            {
+                // Disposed while a sample was being read: the last sample is simply not taken.
+                break;
+            }
             catch (Exception ex) when (ex is NpgsqlException or TimeoutException or InvalidOperationException or System.Net.Sockets.SocketException)
             {
                 Failures++;
