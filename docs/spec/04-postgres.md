@@ -6,6 +6,15 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-01, PF-02)
+
+The §6.1 batching rule ("statements whose inputs do not depend on prior results may be sent together") is now applied to the protocol frame. Statements, their order on the server and every decision are unchanged:
+
+- **Gate batch:** the §6.1 `set_config`, G1 and G2 go in one round trip. The server runs them in order, so G2's `FOR SHARE` follows G1's, and every gate check runs on the results before anything else is sent. RegisterApplication keeps a separate G2 after its seed insert, because the insert follows G1's checks. Staging sends G1 and G2 together (it has no `set_config`).
+- **Receipt batch:** R1, R3 and the §6.3 clock read go in one round trip. R3 and the clock run after R1's insert, or after R1's wait on an in-flight holder. Their results are used only when R1 inserted; when it did not, R2 follows as before and both results are discarded. The only difference from the written sequence is that R3, a plain read with no lock, also runs when its result is not needed.
+- **Staging:** the caller transaction's read-only check and `SAVEPOINT runwick_stage` go in one round trip. A read-only transaction has the savepoint released before the `transaction_invalid` rejection, so the caller's transaction is left as it was. `RELEASE` stays separate, after the checks.
+- Saving: 4 round trips per receipted driver-owned call, 2 per Renew and PublishPresence, 4 per staged call. Per job (Dispatch + Reserve + Begin + Finish): 64 → 48. Fault-point effects are in 07 "Changes (2026-11-01, PF-02)".
+
 ## Changes (2026-10-31, SP-016)
 
 - `0006_scheduler` (revision 6) adds `schedules`, `schedule_definitions`, `schedule_occurrences` and `schedule_audit_ranges` (13 §3). It widens `concurrency_scopes_kind_v2_ck` (`schedule`), `queue_events_kind_v4_ck` (nine schedule kinds), `management_audit_operation_v3_ck` (six schedule operations) and `management_audit_target_kind_v3_ck` (`schedule`). Jobs it creates carry `created_reason = 'scheduled'`.

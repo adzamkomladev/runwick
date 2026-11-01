@@ -73,6 +73,34 @@ internal sealed class PgTx(NpgsqlConnection connection, NpgsqlTransaction transa
         return list;
     }
 
+    /// <summary>
+    /// Runs a multi-statement command (statements joined with <c>;</c>) in one round trip and returns every result
+    /// set's rows. The statements run in order on the server, so each runs after the locks of the ones before it (04 §6.1).
+    /// </summary>
+    public async Task<List<List<object?[]>>> QueryBatchAsync(NpgsqlCommand cmd)
+    {
+        var sets = new List<List<object?[]>>();
+        var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        await using (reader.ConfigureAwait(false))
+        {
+            do
+            {
+                var rows = new List<object?[]>();
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                {
+                    var row = new object?[reader.FieldCount];
+                    reader.GetValues(row!);
+                    rows.Add(row);
+                }
+
+                sets.Add(rows);
+            }
+            while (await reader.NextResultAsync(ct).ConfigureAwait(false));
+        }
+
+        return sets;
+    }
+
     async ValueTask BeforeMutation(bool mutation)
     {
         if (mutation && _mutations == 0)
