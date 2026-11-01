@@ -391,7 +391,8 @@ public sealed class PeerDeploymentModeTests
         while (true)
         {
             stats = await Task.WhenAll(workers.Select(w => w.StatsAsync()));
-            if (stats.Sum(s => s.StagedObserved + s.FinishesSent) == expected)
+            // FinishesSent counts sends, so a Finish resubmitted after a timeout counts twice: at least one per stage.
+            if (stats.Sum(s => s.StagedObserved + s.FinishesSent) >= expected)
             {
                 break;
             }

@@ -322,7 +322,8 @@ public sealed class DeploymentModeTests
         // Finish that storage rejects because the staged Finish already closed the attempt (08 §8.2); either way the
         // ledger and state checks above hold.
         await WorkerHost.WaitUntil(
-            () => Interlocked.Read(ref w.Engine.StagedCompletionsObserved) + Interlocked.Read(ref w.Engine.FinishesSent) == all.Count - victims.Count,
+            // FinishesSent counts sends, so a Finish resubmitted after a timeout counts twice: at least one per stage.
+            () => Interlocked.Read(ref w.Engine.StagedCompletionsObserved) + Interlocked.Read(ref w.Engine.FinishesSent) >= all.Count - victims.Count,
             Long, "every committed stage settled by the engine");
         Assert.True(Interlocked.Read(ref w.Engine.StagedCompletionsObserved) > 0);
         await w.StopAsync();
