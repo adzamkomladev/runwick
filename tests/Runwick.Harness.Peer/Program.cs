@@ -125,6 +125,12 @@ async Task<JsonObject> RunAsync(string cmd, JsonObject m)
         case "startWorker":
         case "releaseHeld":
         case "stopWorker":
+        case "workerStats":
+        case "workerDispatch":
+        case "workerPause":
+        case "workerResume":
+        case "workerCancel":
+        case "workerObserve":
             return await PeerWorker.HandleAsync(cmd, m, faults).ConfigureAwait(false);
         default:
             throw new InvalidOperationException($"unknown command '{cmd}'");

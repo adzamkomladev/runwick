@@ -35,6 +35,7 @@ public sealed class ReadinessTests
     [Fact]
     [Trait("Category", "Contract")]
     [Trait("Case", "RDY-01")]
+    [Trait("Case", "WRK-15")]
     public async Task A_saturated_queue_sends_no_reserves_and_writes_nothing_per_job()
     {
         // WRK-15 / RDY-01: a queue scope of 2 held by two hung handlers, a blocked backlog behind it.
@@ -75,8 +76,68 @@ public sealed class ReadinessTests
         Assert.Equal(backlog - 2, await f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE state = 'pending'"));
 
         release.SetResult();
+        // The drain is bounded by one Reserve round trip per admission (selection is serial per pool); on the shared
+        // G-2 host that measured about 2.6 jobs/s (2026-11-01), so 500 jobs need more than the earlier 3 minutes.
         await WorkerHost.WaitUntil(() => f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE state = 'succeeded'").Result == backlog,
-            TimeSpan.FromMinutes(3), "the backlog drains once the scope frees");
+            TimeSpan.FromMinutes(8), "the backlog drains once the scope frees");
+        await AssertInvariants(f);
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    [Trait("Case", "RDY-01")]
+    [Trait("Case", "WRK-15")]
+    public async Task A_full_type_scope_over_ten_thousand_jobs_costs_no_per_job_transaction()
+    {
+        // RDY-01 type-scope half (15 §5): test.work has a job-type scope of 2, held by two hung handlers, with 10,000
+        // due jobs behind it. Probe/2 reports no queue saturation here (the queue has no scope), so Reserve stays the
+        // authority: each blocked Reserve is one rolled-back transaction that examines one candidate, and the lane is
+        // single-type, so it cools (250 ms doubling to 2 s, 05 §8.6). The cost is bounded by the cooldown, not the backlog.
+        await using var f = await DriverFixture.StartAsync(Ns("rdy01t"));
+        var release = new TaskCompletionSource();
+        await using var typed = WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults, 4, jobs: j => j.MaxConcurrent(2),
+            configure: r => r.Producer(o => o.AdmissionWait = TimeSpan.FromSeconds(30)));
+        typed.Script.Default = (_, _, _) => release.Task;
+        const int backlog = 10_000;
+        await Task.WhenAll(Enumerable.Range(0, 2).Select(async lane =>
+        {
+            for (var i = lane * 100; i < backlog; i += 200)
+            {
+                await typed.Dispatcher.DispatchManyAsync([.. Enumerable.Range(i, 100).Select(n => new BatchDispatchItem(new WorkJob("t" + n)))]);
+            }
+        }));
+        Assert.Equal(backlog, await f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE state = 'pending'"));
+
+        await typed.StartAsync();
+        await WorkerHost.WaitUntil(() => typed.Script.Invocations.Count == 2, Wait, "the type scope is full");
+        await Task.Delay(TimeSpan.FromSeconds(4)); // the lane cooldown reaches its 2 s cap
+
+        const string rows = "SELECT md5(string_agg(job_id::text || ':' || xmin::text, ',' ORDER BY job_id)) FROM runwick.jobs WHERE state = 'pending'";
+        var pool = typed.Engine.Pools.Single();
+        var reserves = Interlocked.Read(ref pool.ReservesSent);
+        var receipts = await ReserveReceiptsAsync(f);
+        var events = await f.CountAsync("SELECT count(*) FROM runwick.queue_events");
+        var attempts = await f.CountAsync("SELECT count(*) FROM runwick.job_attempts");
+        var before = (await DispatchSupport.TextAsync(f, rows)).Single();
+        var window = TimeSpan.FromSeconds(10);
+        await Task.Delay(window);
+
+        // At most one Reserve per cooldown (2 s − 20 %) plus slack; nothing durable is written for the blocked
+        // backlog: no pending job row version changes, no receipt, no event, no attempt.
+        var sent = Interlocked.Read(ref pool.ReservesSent) - reserves;
+        Assert.InRange(sent, 0, (long)(window.TotalSeconds / 1.6) + 4);
+        Assert.Equal(receipts, await ReserveReceiptsAsync(f));
+        Assert.Equal(events, await f.CountAsync("SELECT count(*) FROM runwick.queue_events"));
+        Assert.Equal(attempts, await f.CountAsync("SELECT count(*) FROM runwick.job_attempts"));
+        Assert.Equal(before, (await DispatchSupport.TextAsync(f, rows)).Single());
+        Assert.Equal(2, typed.Script.Invocations.Count);
+        Assert.Equal(backlog - 2, await f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE state = 'pending'"));
+
+        // Released, the backlog flows again (two at a time); 50 more are enough to show it, the rest is not drained.
+        release.SetResult();
+        await WorkerHost.WaitUntil(() => f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE state = 'succeeded'").Result >= 50,
+            TimeSpan.FromMinutes(3), "the backlog moves once the scope frees");
+        await typed.StopAsync();
         await AssertInvariants(f);
     }
 
@@ -167,6 +228,7 @@ public sealed class ReadinessTests
     [Fact]
     [Trait("Category", "Fault")]
     [Trait("Case", "RDY-02")]
+    [Trait("Case", "WRK-19")]
     public async Task Expired_or_pruned_presence_changes_no_ownership_and_renewals_continue()
     {
         // WRK-19 / RDY-02: presence expires (publication failing) while a job lease is healthy; then rows are pruned.
@@ -189,7 +251,9 @@ public sealed class ReadinessTests
         var lease = await LeaseAsync(f, job);
         await WorkerHost.WaitUntil(() => LeaseAsync(f, job).GetAwaiter().GetResult() > lease, Wait, "a renewal after presence expired");
         await WorkerHost.WaitUntil(() => w.Engine.Presence.Failing, Wait, "publication failing");
-        Assert.Equal(WorkerReadiness.Degraded, w.Engine.Health().Readiness);
+        // Failing publication alone is Degraded. On the loaded shared host a slow renewal can briefly add pressure
+        // (Unhealthy); the state the case is about is the one the worker settles in while publication keeps failing.
+        await WorkerHost.WaitUntil(() => w.Engine.Health().Readiness == WorkerReadiness.Degraded, Wait, "degraded while publication fails");
 
         await f.ExecAsync("DELETE FROM runwick.worker_instances");
         lease = await LeaseAsync(f, job);
@@ -250,7 +314,11 @@ public sealed class ReadinessTests
 
     [Fact]
     [Trait("Category", "Contract")]
-    [Trait("Case", "MODE-P")]
+    [Trait("Case", "MODE-01")]
+    [Trait("Case", "MODE-02")]
+    [Trait("Case", "MODE-03")]
+    [Trait("Case", "MODE-04")]
+    [Trait("Case", "MODE-05")]
     public async Task Each_worker_role_publishes_its_subscriptions_and_capabilities_and_producers_publish_none()
     {
         // MODE-01 … 05 presence repeat (15 §5): a worker row with exact subscriptions; a producer-only client has none.

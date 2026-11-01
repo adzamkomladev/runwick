@@ -84,11 +84,13 @@ internal sealed class WorkerHost : IAsyncDisposable
     /// <summary>
     /// Builds (not starts) a worker host. <paramref name="jobs"/> configures <see cref="WorkJob"/> (named
     /// <c>test.work</c> on queue <c>default</c>); <paramref name="options"/> runs after the scaled timing profile
-    /// (<see cref="TestTiming.RealStoreDivisor"/> unless <paramref name="divisor"/> is given).
+    /// (<see cref="TestTiming.RealStoreDivisor"/> unless <paramref name="divisor"/> is given). <paramref name="worker"/>
+    /// runs after pool <c>main</c> is declared, for further pools of the same group (CAP-01).
     /// </summary>
     public static WorkerHost Create(string connectionString, string application, IFaultInjector faults, int concurrency = 4,
         Action<JobBuilder<WorkJob>>? jobs = null, Action<WorkerOptions>? options = null, Action<RunwickBuilder>? configure = null,
-        Action<IServiceCollection>? services = null, int? divisor = null, string queue = "default", Action<PoolBuilder>? pool = null)
+        Action<IServiceCollection>? services = null, int? divisor = null, string queue = "default", Action<PoolBuilder>? pool = null,
+        Action<WorkerBuilder>? worker = null)
     {
         var sc = new ServiceCollection();
         sc.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
@@ -100,22 +102,26 @@ internal sealed class WorkerHost : IAsyncDisposable
             r.Application(application).UsePostgres(connectionString);
             RegisterWork(r, queue, jobs);
             r.AddHandler<WorkJob, ScriptedWorkHandler>();
-            r.AddWorker(w => w.Pool("main", p =>
+            r.AddWorker(w =>
             {
-                // concurrency 0 leaves the pool's concurrency to the pool callback (an AutoConcurrency pool, 11 §2).
-                p.Queues(queue);
-                if (concurrency > 0)
+                w.Pool("main", p =>
                 {
-                    p.FixedConcurrency(concurrency);
-                }
+                    // concurrency 0 leaves the pool's concurrency to the pool callback (an AutoConcurrency pool, 11 §2).
+                    p.Queues(queue);
+                    if (concurrency > 0)
+                    {
+                        p.FixedConcurrency(concurrency);
+                    }
 
-                pool?.Invoke(p);
-            }).Configure(o =>
-            {
-                TestTiming.Scaled(o, divisor ?? TestTiming.RealStoreDivisor);
+                    pool?.Invoke(p);
+                }).Configure(o =>
+                {
+                    TestTiming.Scaled(o, divisor ?? TestTiming.RealStoreDivisor);
 
-                options?.Invoke(o);
-            }));
+                    options?.Invoke(o);
+                });
+                worker?.Invoke(w);
+            });
             configure?.Invoke(r);
         });
         var host = new WorkerHost(sc.BuildServiceProvider());
