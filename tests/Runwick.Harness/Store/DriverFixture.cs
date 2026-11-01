@@ -104,6 +104,14 @@ internal sealed class DriverFixture : IAsyncDisposable
         return peer;
     }
 
+    /// <summary>Starts a peer OS process without opening a client; the caller sends its own open command (SP-013).</summary>
+    public async Task<PeerClient> StartPeer(string processIdentity)
+    {
+        var peer = await PeerClient.StartAsync(processIdentity).ConfigureAwait(false);
+        _peers.Add(peer);
+        return peer;
+    }
+
     /// <summary>Internal SetQueueState/1 through a store opened for the application.</summary>
     public async Task SetQueuePaused(string application, string queue, bool paused)
     {

@@ -8,6 +8,13 @@ This document lists the cases gate **G-2** (milestone M3) requires, the case IDs
 
 - New document. §3 inventory for all of M3. §4 defines the SP-011 cases (TXC, CTL, EVT, MODE are inferred, I-1). §5–§10 name the cases of SP-012 … SP-017; each of those items completes its section with definitions when its own spec (09, 10, 11, 13, 14) is written.
 
+## Changes (2026-11-01, SP-013 owed cases)
+
+- 2026-11-01: The capacity-control §6 rate rows get inferred IDs RATE-05 … RATE-10 (I-1), one per row. The enlargement/cleanup race keeps no ID and stays deferred to SP-021 (it needs the cleanup predicate).
+- 2026-11-01: §3 RATE row now reads RATE-01 … RATE-10. §6 lists the tests for RATE-05 … RATE-10, UPG-02, UPG-06 and PGX-01.
+- 2026-11-01: The "old binary" of UPG-02 / UPG-06 is a peer process whose known-capability set lacks `rate_admission` (peer command `openOldBinary`). The gate (03 §10.3) and V-24 read only that set, so the peer behaves as a pre-SP-013 binary on every path the gate guards. No separately built old binary is used.
+- 2026-11-01: PGX-01 at the current schema revision (7) uses the 04 §7.15 harness gate change (admin SQL) for `drain`, `maintenance` and an added required capability. The capability added is one this binary does not know (`teleport`), which is how "a required capability added" looks to this binary. The activation of `rate_admission` racing an old-binary Begin is UPG-02.
+
 ## 1. Suites, projects and traits
 
 As 07 §1. Additions:
@@ -55,7 +62,7 @@ Roles in MODE cases are separate `ServiceProvider`s, each with its own connectio
 | RDY | this document (inferred) | RDY-01 … RDY-03 | SP-012 |
 | OBS | driver-contract-suite | driver-contract-suite:OBS-01 | SP-012 |
 | WRK | 07 §10 | WRK-15, WRK-19 (SP-012); WRK-02 (SP-014) | several |
-| RATE | capacity-control §6 | RATE-01 … RATE-04 and the §6 rate rows | SP-013 |
+| RATE | capacity-control §6 | RATE-01 … RATE-04; RATE-05 … RATE-10, the §6 rate rows (inferred, I-1) | SP-013 |
 | TIME | 07 §11 | TIME-06 rate-deferral sub-part | SP-013 |
 | UPG | postgres-upgrades | UPG-02 / UPG-06 subset (old binary cannot Begin after activation; rollback after activation rejected) | SP-013 |
 | SCL | this document (inferred) | SCL-01 | SP-014 |
@@ -80,6 +87,12 @@ These acceptance bullets have no ID in the source documents. The IDs are defined
 | MODE-01 … MODE-05 | SP-011, SP-012 | The five deployments (08 §9) |
 | RDY-01 … RDY-03 | SP-012 | Readiness/presence bullets |
 | SCL-01 | SP-014 | The R4 scaler trace |
+| RATE-05 (2026-11-01) | SP-013 | capacity-control §6 "Last rate grant across replicas": at least three worker processes, no more than N grants per rolling window, no partial multi-scope charge |
+| RATE-06 (2026-11-01) | SP-013 | §6 "Rate rejection after reservation": exact permits released, attempt closed, budget and abandonment unchanged, future eligibility set |
+| RATE-07 (2026-11-01) | SP-013 | §6 "Begin commit response lost": the replay neither charges nor starts twice (Applied and deferred Begins) |
+| RATE-08 (2026-11-01) | SP-013 | §6 "Handler failure / crash after Begin", crash half through the fault harness: the grant stays counted, recovery charges nothing, the retry needs a new grant |
+| RATE-09 (2026-11-01) | SP-013 | §6 "Multiple concurrency/rate scopes": opposite declared order under barriers, no lock-order cycle |
+| RATE-10 (2026-11-01) | SP-013 | §6 "Backward database time" on the controlled store clock: logical rate time never reverses, no early refill |
 
 ## 4. SP-011 cases
 
@@ -219,7 +232,21 @@ Built in `RateAdmissionTests` (PostgreSQL only; the SQLite twin is SP-019):
 | CAP-05 | `Rate_policy_bounds_are_validated_at_registration_and_on_edit` | Registration bounds (limit, window, ms precision, scope count, two job-type rates) and edit bounds; unknown scope |
 | TIME-06 (rate sub-part) | `The_worker_retires_a_deferred_begin_and_runs_the_job_once_admitted` | Real `WorkerHost`: `RateDeferrals ≥ 1`, each job runs once, grants ≥ W apart, unstarted guard 0 |
 
-Owed before SP-013 acceptance (not yet written): last grant across replicas with peer processes, opposite-order scopes under barriers, enlargement/cleanup race (needs the SP-021 predicate), crash after Begin through the fault harness, UPG-02 with an old-binary peer, PGX-01 rerun at revision 4, and P-06 (rate decision latency, §11).
+Added 2026-11-01 (`RateAdmissionReplicaTests`, `RateAdmissionClockTests`, `RateGateRaceTests`):
+
+| Case | Test | Proves |
+|---|---|---|
+| RATE-05 | `Three_replica_processes_never_grant_more_than_n_per_rolling_window` | Three peer processes, nine jobs, limit 3 per 5 s with a second (resource) scope: the first all-at-once round grants exactly 3; every round ≤ 3; 9 grants in each scope, two per attempt; no 5 s interval holds more than 3 |
+| RATE-06 | `A_rate_rejection_after_reservation_releases_exact_permits_and_sets_eligibility` | Only the deferred attempt's permit is released; `admission_deferred`; started/unstarted/execution 0/0/0; `eligible_at` = EligibleAt ≥ grant + W; Reserve then gets NoWork |
+| RATE-07 | `A_lost_begin_reply_replays_without_a_second_grant_or_start` | `DropReply` after commit on an Applied and on a deferred Begin: the same command replays (Applied with the same execution number; the stored deferral); one start, one close, no extra grant |
+| RATE-08 | `A_crash_after_begin_keeps_the_grant_and_the_retry_needs_a_new_one` | Peer `KillProcess` at `AfterCommitBeforeReply` of Begin: one grant; Recover keeps it; the retry is deferred inside the window and admitted after it with a second grant |
+| RATE-09 | `Opposite_order_rate_scopes_lock_in_uuid_order_and_never_deadlock` | Twelve rounds, alternating processes: an admin lock on the higher-UUID scope plus a barrier at `AfterLocksBeforeFreshTime` interleave the two Begins; the opposite-order Begin waits on the first Begin (lower UUID), never on the admin lock; one Applied, one RateLimited on both scopes; no 40P01 |
+| RATE-10 | `A_backward_store_clock_never_reverses_rate_time_or_refills_early` | libfaketime server (RequiresDocker): after a 30 s backward step the next Begin is deferred, `last_decision_at` does not go back, EligibleAt covers the remaining logical window |
+| UPG-02 (subset) | `After_activation_an_old_binary_cannot_begin_and_keeps_only_settlement_paths` | An old-binary peer works before activation; its Begin racing activation waits on the gate and is refused `capability_unsupported` with nothing written; it cannot Begin a rated job (no grant), Reserve or Dispatch; Renew, Finish and ReleaseReservation stay open |
+| UPG-06 (subset) | `Rollback_after_activation_is_rejected` | Lowering `rate_admission` is `InvalidRequest`; repeating it is `no_change`; an old binary cannot complete its handshake; the requirement, revision and audit are unchanged |
+| PGX-01 | `Gate_changes_race_every_command_family_at_the_current_revision` (11 rows) | At schema revision 7, for Dispatch, DispatchMany, Stage, Reserve, rate-aware Begin, Renew, Finish, Recover, ReleaseReservation, PublishPresence and RegisterQueue: a command holding the gate commits under the old gate before `drain` / an added capability / `maintenance` commits; a command arriving during the change observes it before any mutation (creation paths refused with nothing written; settlement paths applied under `drain` and refused under `maintenance`) |
+
+Owed before SP-013 acceptance: P-06 (rate decision latency, §11). Deferred: the enlargement/cleanup race (no ID; needs the SP-021 cleanup predicate), `not-applicable` with SP-021 as the reason.
 
 ## 7. SP-014 cases
 

@@ -20,6 +20,13 @@ Implementation choices *[choice]*:
 2. Edits go through a separate operation `EditRatePolicy/1`, not `EditScopePolicy/1`, because the arithmetic and freeze differ.
 3. A deferral's jitter is drawn once inside the transaction and stored in the receipt.
 
+Changes (2026-11-01, owed cases):
+
+- 2026-11-01: The capacity-control §6 rate rows are cases RATE-05 … RATE-10 (15 I-1). The enlargement/cleanup race has no ID and stays with SP-021.
+- 2026-11-01: §4 lock order, made testable: the rate scopes are locked by one `SELECT … ORDER BY rate_scope_id FOR UPDATE`, so there is no fault point between two scope locks. RATE-09 interleaves the acquisitions with an admin row lock on the higher-UUID scope plus a barrier at `AfterLocksBeforeFreshTime`, and checks which backend the second Begin waits on.
+- 2026-11-01: §6.1, "binaries without the capability": their handshake also fails after activation, because RegisterQueue and RegisterScope are creation paths (03 §10.3). An old binary already running keeps Renew, Finish, Recover and ReleaseReservation. This is the UPG-06 "rollback after activation is rejected" subset, together with the refusal to lower a capability.
+- 2026-11-01: §4 "a crash after Begin keeps the grant": Recover charges and refunds nothing (RATE-08).
+
 ## 1. Contract
 
 An exact rolling-window count of Begin authorizations. For a scope with limit N and window W, at logical decision time t, a Begin is admitted only if fewer than N grants of that scope have `authorized_at ∈ (t − W, t]`. Each execution costs one grant in every scope it requires, all or none. A grant is a Begin authorization, not when user code or a downstream call ran.
@@ -116,8 +123,17 @@ A semantic change sets `not_before = t + newWindow`, where t is the scope's nond
 | CAP-05 | `Rate_policy_bounds_are_validated_at_registration_and_on_edit` | Registration and edit bounds; unknown scope |
 | PGX-03 (rate half) | `Rate_scopes_are_refused_until_the_application_activates_rate_admission` | Refused before activation, nothing written. Activation replay, `no_change`, unknown capability, audit |
 | TIME-06 (rate sub-part) | `The_worker_retires_a_deferred_begin_and_runs_the_job_once_admitted` | The real worker: deferrals ≥ 1, every job runs once, consecutive grants ≥ W apart, unstarted guard untouched |
+| RATE-05 | `RateAdmissionReplicaTests.Three_replica_processes_never_grant_more_than_n_per_rolling_window` | Three peer worker processes: exactly N grants in the first contended window, never more than N in any window, no partial two-scope charge |
+| RATE-06 | `RateAdmissionReplicaTests.A_rate_rejection_after_reservation_releases_exact_permits_and_sets_eligibility` | Exact permit release, closed attempt, unchanged budgets, `eligible_at` = EligibleAt |
+| RATE-07 | `RateAdmissionReplicaTests.A_lost_begin_reply_replays_without_a_second_grant_or_start` | Lost Begin reply (Applied and deferred): replay neither charges nor starts twice |
+| RATE-08 | `RateAdmissionReplicaTests.A_crash_after_begin_keeps_the_grant_and_the_retry_needs_a_new_one` | Peer killed after Begin commits: grant kept through recovery, the retry needs a new grant |
+| RATE-09 | `RateAdmissionReplicaTests.Opposite_order_rate_scopes_lock_in_uuid_order_and_never_deadlock` | Opposite declared order under barriers: UUID lock order, no deadlock, all-or-none grants |
+| RATE-10 | `RateAdmissionClockTests.A_backward_store_clock_never_reverses_rate_time_or_refills_early` | Backward store clock (libfaketime): no early refill, logical time kept |
+| UPG-02 (subset) | `RateAdmissionReplicaTests.After_activation_an_old_binary_cannot_begin_and_keeps_only_settlement_paths` | Old-binary peer: Begin refused after activation (also when racing it), settlement paths kept |
+| UPG-06 (subset) | `RateAdmissionReplicaTests.Rollback_after_activation_is_rejected` | No lowering; an old binary cannot start after activation |
+| PGX-01 | `RateGateRaceTests.Gate_changes_race_every_command_family_at_the_current_revision` | Gate changes race every command family, including the rate-aware Begin, at revision 7 |
 
-Not yet covered, still owed by SP-013 before acceptance: the capacity-control §6 rows "last grant across replicas" with peer processes, "opposite-order scopes" under barriers, "enlargement/cleanup race" (needs SP-021's cleanup predicate in the harness), UPG-02 with an old-binary peer, and the P-06 rate measurement.
+Not yet covered: the P-06 rate measurement, still owed by SP-013 before acceptance. The "enlargement/cleanup race" row needs SP-021's cleanup predicate and is deferred to SP-021 (`not-applicable`).
 
 ## 8. Must not claim
 
