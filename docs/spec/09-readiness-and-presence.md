@@ -19,6 +19,8 @@ Contradictions and gaps resolved:
 | C-7 | The record inventory names `worker_subscriptions`; M2 keeps subscriptions in a jsonb column | `0005_readiness` adds the join table (§3). The jsonb column stays for display |
 | C-8 | A failed first presence publication was swallowed and readiness ignored `Presence.Failing`, against 05 §14 / §17 | Startup retries the first publication 3 times; persistent failure opens admission with readiness `Degraded` (§3.2) |
 
+Added 2026-11-01 (SP-012 owed cases): the case table (§6) gains the RDY-01 type-scope half, the CAP-01 fixed remainder, the CAP-02 / CAP-03 real-store halves, the PGX-07 subset and the peer-process MODE rerun; their inferred definitions are dated lines in 15 "Changes". The PGX-07 plans (10⁶ rows, realistic mix) show ListUnsupportedBacklog/1 reading its 256-row sample per lane through `jobs_ready` with buffers independent of the table size, so §5 still adds no type-oriented index; a lane headed by a long run of unsupported jobs was not measured.
+
 Implementation choices *[choice]*: saturation is counted live per probe, bounded by the scope capacity, with no durable "full scope" table (worker-engine-internals §5 defers it until measured); the diagnostic samples 256 due jobs per lane by default.
 
 ## 1. Rules
@@ -87,14 +89,20 @@ Each entry carries the lane, tuple, oldest sampled `eligible_at`, the sampled co
 
 | Case | Test (`ReadinessTests`) | Proves |
 |---|---|---|
-| RDY-01, WRK-15 | `A_saturated_queue_sends_no_reserves_and_writes_nothing_per_job` | A queue scope of 2 held by hung handlers over a 500-job backlog: over 10 s, zero Reserve commands and receipts, zero events, probes ≤ about one per 1.6 s; the backlog drains once released. The 10,000-job scale runs in the workload (§7) |
+| RDY-01, WRK-15 | `A_saturated_queue_sends_no_reserves_and_writes_nothing_per_job` | A queue scope of 2 held by hung handlers over a 500-job backlog: over 10 s, zero Reserve commands and receipts, zero events, probes ≤ about one per 1.6 s; the backlog drains once released. The 10,000-job scale is the type-scope row below |
 | CAP-04 | `A_saturated_queue_does_not_delay_another_queue_and_a_control_change_rechecks_at_once` | A saturated queue does not delay an unrelated queue's job; 5,000 wakes and invalidations keep probes ≥ 50 ms apart |
 | RDY-03 | `Unsupported_backlog_stays_visible_and_is_diagnosed_without_claims` | An unadvertised tuple and an advertised but unsubscribed queue: never reserved, `UnsupportedLanes` set, both diagnostic reasons, a later supported job still runs, readiness not unhealthy |
 | RDY-02, WRK-19 | `Expired_or_pruned_presence_changes_no_ownership_and_renewals_continue` | Presence expired and then deleted while a job runs: renewals continue, ownership unchanged, no Recover, readiness `Degraded` while publication fails, the job settles |
 | driver-contract-suite:OBS-01 | `With_every_wake_dropped_polling_finds_work_controls_and_recovery` | Wakes suppressed: another process's job, pause then resume, and an abandoned reservation's recovery are all found by polling |
-| MODE presence repeat | `Each_worker_role_publishes_its_subscriptions_and_capabilities_and_producers_publish_none` | Exact subscription and capability rows for the worker; none for a producer-only client; stopping status after stop |
+| MODE-01 … MODE-05 (presence repeat) | `Each_worker_role_publishes_its_subscriptions_and_capabilities_and_producers_publish_none` | Exact subscription and capability rows for the worker; none for a producer-only client; stopping status after stop |
+| RDY-01, WRK-15 (type scope) | `A_full_type_scope_over_ten_thousand_jobs_costs_no_per_job_transaction` | A job-type scope of 2 held by hung handlers over 10,000 due jobs: over 10 s, Reserves within the lane cooldown bound, no pending row version changed, no receipt, event or attempt; the backlog moves once released |
+| CAP-01 (fixed remainder) | `CapacityShareTests.Invalid_fixed_pools_fail_startup_…`, `Fixed_pools_keep_their_own_maxima_…`, `A_pool_with_no_mode_is_fixed_four_…` | Startup rejection with no store write; per-pool maxima and the group maximum 16 under hung handlers, pools independent; default fixed 4 |
+| CAP-02 (real store) | `CapacityShareTests.Queue_and_lane_shares_hold_…`, `Lane_shares_are_six_three_one_…` | Queue shares 1:3 and lane shares 6:3:1 in store admission order; a returning queue banks no credit |
+| CAP-03 (real store) | `CapacityShareTests.Strict_starves_an_aged_lane_…` | Store-time aging: strict starves the aged lane, strict-with-aging takes it every ninth admission |
+| PGX-07 (subset) | `ReadinessPlanTests.Probe_reserve_and_diagnostic_plans_…` | `EXPLAIN (ANALYZE, BUFFERS)` of probe/2, the Reserve candidate scan and the diagnostic at 10⁵ and 10⁶ rows: `jobs_ready` index scans, buffers independent of size |
+| MODE-01 … MODE-05 (peer processes) | `PeerDeploymentModeTests` | The five deployments with worker roles in peer OS processes (three per store in MODE-02/03/05), with presence rows per process |
 
-Owed before SP-012 acceptance (not yet written): CAP-01 fixed-mode remainder and CAP-02/CAP-03 real-store halves (the G-1 case table lists them without `Case` traits, 15 §5 note), the RDY-01 type-scope half at 10,000 jobs, PGX-07 `EXPLAIN (ANALYZE, BUFFERS)` plans at 10⁵ / 10⁶ rows for probe/2, Reserve and the diagnostic, MODE-01 … MODE-05 with peer-process workers, and the measurements G1-M1 / G1-M3 rerun, P-04 and P-05 at 1/3/6 replicas.
+Owed before SP-012 acceptance: the measurements G1-M1 / G1-M3 rerun, P-04 and P-05 at 1/3/6 replicas (15 §11, reference host).
 
 ## 7. Must not claim
 
