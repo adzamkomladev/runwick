@@ -323,7 +323,7 @@ public sealed class DeploymentModeTests
         // ledger and state checks above hold.
         await WorkerHost.WaitUntil(
             () => Interlocked.Read(ref w.Engine.StagedCompletionsObserved) + Interlocked.Read(ref w.Engine.FinishesSent) == all.Count - victims.Count,
-            TimeSpan.FromSeconds(10), "every committed stage settled by the engine");
+            Long, "every committed stage settled by the engine");
         Assert.True(Interlocked.Read(ref w.Engine.StagedCompletionsObserved) > 0);
         await w.StopAsync();
         await AssertInvariants(f);

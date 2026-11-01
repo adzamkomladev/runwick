@@ -310,7 +310,12 @@ public sealed class ScheduleCaseTests
         Assert.Equal(["* * * * *"], await TextAsync(f, "SELECT cron_text FROM runwick.schedule_definitions"));
         Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM runwick.queue_events WHERE event_kind = 'schedule_registered'"));
         Assert.True((await ReadAsync(c, "tick")).Paused);
-        Assert.Equal(2, await f.CountAsync("SELECT count(*) FROM runwick.job_generations WHERE created_reason = 'scheduled'"));
+        // The run-once occurrence and the manual trigger, plus any later minute the hosted scheduler reached before the
+        // pause on a slow host: exactly one job per occurrence.
+        var occurrences = await f.CountAsync("SELECT count(*) FROM runwick.schedule_occurrences");
+        Assert.True(occurrences >= 2, $"{occurrences} occurrences");
+        Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM runwick.schedule_occurrences WHERE occurrence_kind = 'manual'"));
+        Assert.Equal(occurrences, await f.CountAsync("SELECT count(*) FROM runwick.job_generations WHERE created_reason = 'scheduled'"));
     }
 
     // ------------------------------------------------------------------ SCHED-11

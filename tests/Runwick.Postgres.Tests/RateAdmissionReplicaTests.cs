@@ -147,13 +147,28 @@ public sealed class RateAdmissionReplicaTests
 
                 return mine;
             }))).SelectMany(x => x).ToList();
+            var roundStart = await f.StoreNow();
             var replies = await Task.WhenAll(leases.Select(l => l.Peer.SendAsync("begin", new JsonObject { ["lease"] = l.Lease.DeepClone() })));
             var statuses = replies.Select(r => r["status"]!.GetValue<string>()).ToList();
             Assert.All(statuses, s => Assert.Contains(s, new[] { "Applied", "RateLimited" }));
             Assert.All(replies.Where(r => r["status"]!.GetValue<string>() == "RateLimited"), r => Assert.Equal("Applied", r["effect"]!.GetValue<string>()));
             var admitted = statuses.Count(s => s == "Applied");
-            Assert.True(admitted <= RateJobs.ReplicaLimit, $"round {round}: {admitted} grants for limit {RateJobs.ReplicaLimit}");
-            if (round == 0)
+
+            // The bound is per rolling window, not per round: on a loaded host the round's Begins can span more than one
+            // window, and then a second window's grants are correct. The store's grant times decide.
+            Assert.Equal(0, await WindowsOverLimit(f));
+            var spreadMs = (await TextAsync(f, """
+                SELECT coalesce((extract(epoch FROM max(g.authorized_at) - min(g.authorized_at)) * 1000)::bigint, 0)::text
+                FROM runwick.rate_grants AS g JOIN runwick.rate_scopes AS s USING (application, rate_scope_id)
+                WHERE s.scope_kind = 'job-type' AND g.authorized_at >= @r
+                """, ("r", roundStart))).Single();
+            var oneWindow = long.Parse(spreadMs, System.Globalization.CultureInfo.InvariantCulture) < (long)RateJobs.ReplicaWindow.TotalMilliseconds;
+            if (oneWindow)
+            {
+                Assert.True(admitted <= RateJobs.ReplicaLimit, $"round {round}: {admitted} grants within {spreadMs} ms for limit {RateJobs.ReplicaLimit}");
+            }
+
+            if (round == 0 && oneWindow)
             {
                 // The empty window takes exactly n of the nine contenders: the last grant goes to exactly one replica.
                 Assert.Equal((Jobs, RateJobs.ReplicaLimit), (leases.Count, admitted));
@@ -168,15 +183,17 @@ public sealed class RateAdmissionReplicaTests
         Assert.Equal(Jobs, await f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE execution_count = 1 AND state = 'running'"));
 
         // … and no rolling window of either scope ever holds more than n.
-        Assert.Equal(0, await f.CountAsync("""
-            SELECT count(*) FROM runwick.rate_grants AS a JOIN runwick.rate_scopes AS s USING (application, rate_scope_id)
-            WHERE s.scope_kind = 'job-type'
-              AND (SELECT count(*) FROM runwick.rate_grants AS b
-                   WHERE b.rate_scope_id = a.rate_scope_id AND b.authorized_at > a.authorized_at - s.window_ms * interval '1 millisecond'
-                     AND b.authorized_at <= a.authorized_at) > s.limit_count
-            """));
+        Assert.Equal(0, await WindowsOverLimit(f));
         await RateSupport.NoInvariantViolations(f);
     }
+
+    static Task<long> WindowsOverLimit(DriverFixture f) => f.CountAsync("""
+        SELECT count(*) FROM runwick.rate_grants AS a JOIN runwick.rate_scopes AS s USING (application, rate_scope_id)
+        WHERE s.scope_kind = 'job-type'
+          AND (SELECT count(*) FROM runwick.rate_grants AS b
+               WHERE b.rate_scope_id = a.rate_scope_id AND b.authorized_at > a.authorized_at - s.window_ms * interval '1 millisecond'
+                 AND b.authorized_at <= a.authorized_at) > s.limit_count
+        """);
 
     [Fact]
     [Trait("Category", "Contract")]
