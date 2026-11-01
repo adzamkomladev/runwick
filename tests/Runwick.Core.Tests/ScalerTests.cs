@@ -287,4 +287,55 @@ public sealed class ScalerTests
     [InlineData(8, 240, 20)]
     public void Desired_is_occupancy_plus_drain_rate_over_utilization(double occupied, double work, int expected) =>
         Assert.Equal(expected, PoolScaler.Desired(occupied, work));
+
+    [Fact]
+    [Trait("Case", "SCL-03")]
+    public void An_oscillating_backlog_and_long_jobs_never_move_the_target()
+    {
+        // capacity-control §6 "oscillating backlog and long jobs": demand that flips every sample never builds three
+        // consecutive growth or six shrink samples; long jobs alone (occupancy, no due backlog) never grow.
+        var scaler = new PoolScaler(4, 16);
+        var flips = Drive(scaler, now => (int)(now / Tick) % 2 == 0 ? S(now, work: WorkFor(16), backlog: true) : S(now, occupied: 4),
+            TimeSpan.FromMinutes(10));
+        Assert.Equal([4], flips);
+
+        // Two-on, one-off: still never three in a row.
+        var bursts = Drive(new PoolScaler(4, 16), now => (int)(now / Tick) % 3 == 2 ? S(now, occupied: 4) : S(now, work: WorkFor(16), backlog: true),
+            TimeSpan.FromMinutes(10));
+        Assert.Equal([4], bursts);
+
+        // Long jobs hold every ticket for minutes with nothing due: no growth, and the occupied tickets keep the target.
+        var busy = new PoolScaler(4, 16);
+        Assert.Equal([4], Drive(busy, now => S(now, occupied: 4, work: 0, backlog: false), TimeSpan.FromMinutes(10)));
+        Assert.Equal("no_due_backlog", busy.Sample(S(TimeSpan.FromMinutes(11), occupied: 16, work: 0, backlog: false)).Reason);
+    }
+
+    [Fact]
+    [Trait("Case", "SCL-05")]
+    public void A_zero_minimum_keeps_discovery_through_missing_metrics_and_recovers_from_zero()
+    {
+        // capacity-control §6 "zero minimum and missing metrics": the bootstrap ticket survives any run of unknown
+        // samples, trusted idleness drops it to zero, and due work grows it back by normal rules.
+        var scaler = new PoolScaler(0, 4);
+        Assert.Equal([1], Drive(scaler, now => S(now, work: null), TimeSpan.FromMinutes(10)));
+        Assert.True(scaler.Bootstrapping);
+
+        var start = TimeSpan.FromMinutes(10);
+        Assert.Equal(0, scaler.Sample(S(start + Tick)).NewTarget);
+
+        // At zero, unknown demand holds zero (never invents work); due backlog grows it after three samples.
+        Assert.Null(scaler.Sample(S(start + Tick * 2, work: null)).NewTarget);
+        var grown = new List<(TimeSpan At, int Target)>();
+        for (var now = start + Tick * 3; now <= start + TimeSpan.FromMinutes(3); now += Tick)
+        {
+            if (scaler.Sample(S(now, work: WorkFor(4), backlog: true)).NewTarget is { } t)
+            {
+                grown.Add((now, t));
+            }
+        }
+
+        // Evidence is complete at +25 s, but the drop to zero at +5 s starts a cooldown: the first growth is at +35 s.
+        Assert.Equal(start + Tick + ScalerRules.ChangeCooldown, grown[0].At);
+        Assert.Equal([1, 2, 3, 4], grown.Select(g => g.Target));
+    }
 }

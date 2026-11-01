@@ -72,7 +72,19 @@ public sealed class ScheduleStoreTests
     {
         var s = await ReadAsync(c, key);
         var t = await c.Store.StoreNowAsync(CancellationToken.None);
-        return (s, t, SchedulePlanner.Plan(s, t, ScheduleRecurrence.For(s.Definition, TzdbArtifact.Pinned, TimeProvider.System), Guid.CreateVersion7));
+        return (s, t, SchedulePlanner.Plan(s, t, ScheduleRecurrence.For(s.Definition, TzdbArtifact.Pinned, FrozenBudgetClock.Instance), Guid.CreateVersion7));
+    }
+
+    /// <summary>
+    /// The planner's 250 ms cooperative budget (12 §8) is wall-clock; these store cases are not about it (SCHED-14 is
+    /// EvaluatorBoundsTests and ScheduleCaseTests), so their plans run on a timestamp that never advances and host load
+    /// cannot cut an episode short.
+    /// </summary>
+    sealed class FrozenBudgetClock : TimeProvider
+    {
+        public static readonly FrozenBudgetClock Instance = new();
+
+        public override long GetTimestamp() => 0;
     }
 
     static Task<StoreReply<ScheduleMaterialization>> SendAsync(TestClient c, MaterializeRequest plan, Guid? id = null) =>

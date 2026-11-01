@@ -306,7 +306,7 @@ internal sealed partial class PgStore : IScheduleStore
 
     /// <summary>Creates the jobs of one command through the shared dispatch core (created reason <c>scheduled</c>, 13 C-10).</summary>
     async Task<(IReadOnlyList<(Guid JobId, string Disposition)> Jobs, StoreReply<T>? Rejection)> DispatchScheduledAsync<T>(
-        PgTx tx, ScheduleSnapshot s, IReadOnlyList<Guid> proposedJobIds) where T : class
+        PgTx tx, ScheduleSnapshot s, IReadOnlyList<(Guid JobId, JobScheduleInfo Occurrence)> proposedJobIds) where T : class
     {
         IReadOnlyList<(Guid JobId, string Disposition)> none = [];
         if (proposedJobIds.Count == 0)
@@ -317,7 +317,8 @@ internal sealed partial class PgStore : IScheduleStore
         var storeId = runner.StoreId ?? throw new InvalidOperationException("Describe has not run yet.");
         var notAfterMs = PgTime.Ms(tx.Op.NotAfter);
         var items = proposedJobIds
-            .Select(id => s.Definition.Template.ToItem(storeId, tx.Application, tx.Op.CommandId, notAfterMs, s.ScheduleId, s.Definition.Serialize, id))
+            .Select(p => s.Definition.Template.ToItem(storeId, tx.Application, tx.Op.CommandId, notAfterMs, s.ScheduleId, s.Definition.Serialize, p.JobId,
+                p.Occurrence))
             .ToList();
         var outcome = await DispatchCoreAsync(tx, items, continueOnConflict: false, createdReason: "scheduled").ConfigureAwait(false);
         if (outcome.Rejection is { } rejection)
@@ -329,6 +330,14 @@ internal sealed partial class PgStore : IScheduleStore
             i.Result!.Disposition == DispatchDisposition.Created ? "created" : "linked_existing"))];
         return (jobs, null);
     }
+
+    /// <summary>
+    /// What <c>IJobContext.Schedule</c> reports for a job built from this occurrence (01 §9): the schedule key, the scheduled
+    /// instant and the covered range, which is the instant itself unless a run-once covers more. A manual trigger passes
+    /// <c>default</c>: the dispatch core substitutes its decision time, which is only known after the scope locks.
+    /// </summary>
+    static JobScheduleInfo Occurrence(ScheduleSnapshot s, DateTimeOffset at, DateTimeOffset? from, DateTimeOffset? through) =>
+        new(s.Key, at, from ?? at, through ?? at);
 
     async Task ScheduleEventAsync(PgTx tx, string kind, ScheduleSnapshot s, ControlActor actor, JsonObject details)
     {
@@ -478,7 +487,8 @@ internal sealed partial class PgStore : IScheduleStore
                     return new PgOutcome<ScheduleMaterialization>.Rollback(Invalid<ScheduleMaterialization>(x.Item1, x.Item2, x.Item3));
                 }
 
-                var (jobs, refused) = await DispatchScheduledAsync<ScheduleMaterialization>(tx, s!, [.. r.Occurrences.Select(o => o.ProposedJobId)])
+                var (jobs, refused) = await DispatchScheduledAsync<ScheduleMaterialization>(tx, s!,
+                    [.. r.Occurrences.Select(o => (o.ProposedJobId, Occurrence(s!, o.ScheduledAt, o.CoveredFrom, o.CoveredThrough)))])
                     .ConfigureAwait(false);
                 if (refused is not null)
                 {
@@ -762,7 +772,8 @@ internal sealed partial class PgStore : IScheduleStore
                     }
                 }
 
-                var (jobs, refused) = await DispatchScheduledAsync<ScheduleMaterialization>(tx, s, [r.ProposedJobId]).ConfigureAwait(false);
+                var (jobs, refused) = await DispatchScheduledAsync<ScheduleMaterialization>(tx, s, [(r.ProposedJobId, Occurrence(s, default, null, null))])
+                    .ConfigureAwait(false);
                 if (refused is not null)
                 {
                     return new PgOutcome<ScheduleMaterialization>.Rollback(refused);
@@ -828,7 +839,8 @@ internal sealed partial class PgStore : IScheduleStore
                 }
 
                 var runOnce = r.Resolution == "run_once" && s.NextDueAt is not null;
-                var (jobs, refused) = await DispatchScheduledAsync<ScheduleMaterialization>(tx, s, runOnce ? [r.ProposedJobId] : []).ConfigureAwait(false);
+                var (jobs, refused) = await DispatchScheduledAsync<ScheduleMaterialization>(tx, s,
+                    runOnce ? [(r.ProposedJobId, Occurrence(s, s.NextDueAt!.Value, s.NextDueAt, episode.Cutoff))] : []).ConfigureAwait(false);
                 if (refused is not null)
                 {
                     return new PgOutcome<ScheduleMaterialization>.Rollback(refused);

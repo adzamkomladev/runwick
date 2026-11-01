@@ -315,7 +315,7 @@ internal sealed partial class PgStore
                     .Arr("payloads", intents.Select(i => i.PayloadUtf8).ToArray(), NpgsqlDbType.Bytea)
                     .Arr("profile_ids", intents.Select(i => i.SerializerProfileId).ToArray(), NpgsqlDbType.Text)
                     .Arr("profile_versions", intents.Select(i => i.SerializerProfileVersion).ToArray(), NpgsqlDbType.Integer)
-                    .Arr("headers", intents.Select(Headers).ToArray(), NpgsqlDbType.Jsonb))
+                    .Arr("headers", ordered.Select(c => Headers(c.Item, tx.Now)).ToArray(), NpgsqlDbType.Jsonb))
             {
                 await tx.ExecAsync(payloads).ConfigureAwait(false);
             }
@@ -403,8 +403,9 @@ internal sealed partial class PgStore
         window.Dirty = true;
     }
 
-    static string Headers(DispatchIntent intent)
+    static string Headers(DispatchItem item, DateTimeOffset now)
     {
+        var intent = item.Intent;
         static JsonObject Map(IReadOnlyDictionary<string, string> m)
         {
             var o = new JsonObject();
@@ -416,7 +417,24 @@ internal sealed partial class PgStore
             return o;
         }
 
-        return new JsonObject { ["business"] = Map(intent.BusinessMetadata), ["diagnostic"] = Map(intent.DiagnosticMetadata) }.ToJsonString();
+        var headers = new JsonObject { ["business"] = Map(intent.BusinessMetadata), ["diagnostic"] = Map(intent.DiagnosticMetadata) };
+        if (item.Schedule is { } s)
+        {
+            if (s.ScheduledAt == default)
+            {
+                // A manual trigger: its occurrence is the decision time of the command that creates the job.
+                s = new JobScheduleInfo(s.ScheduleName, now, now, now);
+            }
+
+            // The occurrence of a store-built scheduled job (13 §3.2): a third member beside the two metadata maps.
+            headers["schedule"] = new JsonObject
+            {
+                ["key"] = s.ScheduleName, ["scheduledAt"] = PgTime.Ms(s.ScheduledAt),
+                ["coveredFrom"] = PgTime.Ms(s.CoveredFrom), ["coveredUntil"] = PgTime.Ms(s.CoveredUntil),
+            };
+        }
+
+        return headers.ToJsonString();
     }
 
     // ------------------------------------------------------------------ ResolveCommand/1

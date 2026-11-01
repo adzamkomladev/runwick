@@ -229,4 +229,11 @@ internal sealed partial class PgStore(PgDataSources sources, PgRunner runner, Ti
             n is JsonObject m ? m.ToDictionary(p => p.Key, p => p.Value!.GetValue<string>(), StringComparer.Ordinal) : new(StringComparer.Ordinal);
         return (Map(o["business"]), Map(o["diagnostic"]));
     }
+
+    /// <summary>The <c>schedule</c> member of a payload row's headers (scheduled jobs only).</summary>
+    static JobScheduleInfo? ReadScheduleHeader(string json) =>
+        JsonNode.Parse(json)!.AsObject()["schedule"] is JsonObject s
+            ? new JobScheduleInfo(s["key"]!.GetValue<string>(), PgTime.FromMs(s["scheduledAt"]!.GetValue<long>()),
+                PgTime.FromMs(s["coveredFrom"]!.GetValue<long>()), PgTime.FromMs(s["coveredUntil"]!.GetValue<long>()))
+            : null;
 }

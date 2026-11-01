@@ -39,13 +39,13 @@ public static class G2CaseTable
         .. For("SP-013", [.. Range("RATE", 1, 10)]),
 
         // SP-014 (15 §7)
-        .. For("SP-014", "SCL-01", "CAP-01", "CAP-06", "CAP-07", "CAP-08", "CAP-10", "CAP-11", "CAP-12", "WRK-02"),
+        .. For("SP-014", "SCL-01", "SCL-02", "SCL-03", "SCL-04", "SCL-05", "CAP-01", "CAP-06", "CAP-07", "CAP-08", "CAP-10", "CAP-11", "CAP-12", "WRK-02"),
 
         // SP-015 (15 §8)
         .. For("SP-015", [.. Range("SCHED", 1, 8), "SCHED-14", "DEP-01", "SER-11"]),
 
         // SP-016 (15 §9)
-        .. For("SP-016", [.. Range("SCHED", 9, 13), "SCHED-15", .. Range("SCH", 1, 5), "PGX-02", "PGX-04", "ISO-01", .. Range("CMD", 1, 5)]),
+        .. For("SP-016", [.. Range("SCHED", 9, 13), "SCHED-14", "SCHED-15", .. Range("SCH", 1, 5), "PGX-02", "PGX-04", "ISO-01", .. Range("CMD", 1, 5)]),
 
         // SP-017 (15 §10)
         .. For("SP-017", [.. Range("OUTBOX", 1, 7), "OUT-01", "OUT-02", .. Range("TX", 1, 4), .. Range("CMD", 1, 5), "ISO-01", "SER-11"]),
@@ -60,6 +60,7 @@ public static class G2CaseTable
         ("RATE-04", "enlargement/cleanup race (capacity-control §6)", "SP-021"),
         ("CAP-11", "dashboard/management lanes", "SP-020, SP-024"),
         ("SCH-05", "schedule delete and tombstones", "SP-020, SP-021"),
+        ("SCL-01", "scaling-event retention (06 §1.13)", "SP-021"),
     ];
 
     /// <summary>15 §11 workloads (name, owning item).</summary>

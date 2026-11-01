@@ -84,7 +84,7 @@ G-1 passes when the SP-010 report shows that rollback, death before/after Begin,
 | Probe saturation evidence, presence subscriptions, "no capable worker" diagnostic | M3 / SP-012 ([09](09-readiness-and-presence.md)) | Probe/1, aging and cooldowns from Reserve replies only (05 §7–§8; corrected 2026-10-31, 09 C-1) |
 | Rolling-window rate limits, rate-aware Begin/1 | M3 / SP-013 | A worker refuses to start against an application with rate policies enabled |
 | Automatic concurrency (autoscaler) | M3 / SP-014 (delivered, 11) | — |
-| Scheduler (cron, materialization, misfire) | M3 / SP-015–016 (delivered, 12, 13) | `IJobContext.Schedule` is still always null (13, not done) |
+| Scheduler (cron, materialization, misfire) | M3 / SP-015–016 (delivered, 12, 13) | `IJobContext.Schedule` is set for scheduled jobs (13, Changes 2026-11-01) |
 | Transactional outbox | M3 / SP-017 ([14](14-outbox.md)) | — |
 | SQLite, Redis providers | M4 / SP-019, SP-025 (spike SP-018) | — |
 | Management API, CLI, retention cleanup, telemetry package, dashboard | M4 / SP-020–024, SP-032 | — |

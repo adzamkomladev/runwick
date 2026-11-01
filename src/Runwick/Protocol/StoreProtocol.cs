@@ -134,6 +134,12 @@ internal sealed record DispatchItem(DispatchIntent Intent, IReadOnlyList<ScopeRe
 
     /// <summary>Seed policies for <see cref="DispatchIntent.RateScopes"/>, in the same order (10 §3.1). Not fingerprinted.</summary>
     public IReadOnlyList<RateRequirement> Rates { get; init; } = [];
+
+    /// <summary>
+    /// The occurrence a store-built scheduled job materializes (13 §3.2, 01 §9 <c>IJobContext.Schedule</c>). Set only by the
+    /// store for template jobs; stored with the payload row, never fingerprinted, never part of either metadata map.
+    /// </summary>
+    public JobScheduleInfo? Schedule { get; init; }
 }
 
 /// <summary>A rate scope a dispatch requires, with the seed policy used only if the scope does not exist yet.</summary>
@@ -189,7 +195,11 @@ internal sealed record ReservedJob(
     string Priority,
     ExecutionPolicy Policy,
     IReadOnlyList<StoreFence> Fences,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt)
+{
+    /// <summary>The occurrence of a scheduled job (01 §9); null for every other job.</summary>
+    public JobScheduleInfo? Schedule { get; init; }
+}
 
 internal sealed record BeginRequest(LeaseHandle Lease);
 
