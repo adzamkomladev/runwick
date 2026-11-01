@@ -16,7 +16,10 @@ public sealed record RatedPairJob(string Id, string Resource) : IQueueJob;
 /// <summary>Rate admission (10): RATE-01 … RATE-04, CAP-05, CMD-06 rate half, TIME-06 rate sub-part, PGX-03 rate half.</summary>
 public sealed class RateAdmissionTests
 {
-    static readonly TimeSpan Window = TimeSpan.FromSeconds(3);
+    // Long enough that the few store calls between a grant and the Begin a test expects to be deferred stay inside the
+    // window on a loaded host; at 3 s, a slow Reserve let the grant leave the window and the Begin was (correctly) Applied.
+    static readonly TimeSpan Window = TimeSpan.FromSeconds(10);
+    static readonly long WindowMs = (long)Window.TotalMilliseconds;
 
     static readonly ControlActor Actor = new("user:ops", null, "host", "rates");
 
@@ -259,12 +262,12 @@ public sealed class RateAdmissionTests
         var revision = await f.CountAsync("SELECT policy_revision FROM runwick.rate_scopes WHERE scope_kind = 'job-type'");
 
         // Identical policy: no_change, no freeze. Enlarged window: freeze for one full new window.
-        var same = await c.Store.EditRatePolicyAsync(c.Command(new RatePolicyRequest("job-type", "test.rated", 2, 3_000, revision, Actor)), CancellationToken.None);
+        var same = await c.Store.EditRatePolicyAsync(c.Command(new RatePolicyRequest("job-type", "test.rated", 2, WindowMs, revision, Actor)), CancellationToken.None);
         Assert.Equal("no_change", same.Error!.Code);
-        var edit = await c.Store.EditRatePolicyAsync(c.Command(new RatePolicyRequest("job-type", "test.rated", 5, 6_000, revision, Actor)), CancellationToken.None);
+        var edit = await c.Store.EditRatePolicyAsync(c.Command(new RatePolicyRequest("job-type", "test.rated", 5, 2 * WindowMs, revision, Actor)), CancellationToken.None);
         Assert.Equal(StoreStatus.Applied, edit.Status);
         Assert.Equal((5, revision + 1, 1), (edit.Value!.Limit, edit.Value.PolicyRevision, edit.Value.RetainedGrants));
-        var stale = await c.Store.EditRatePolicyAsync(c.Command(new RatePolicyRequest("job-type", "test.rated", 6, 6_000, revision, Actor)), CancellationToken.None);
+        var stale = await c.Store.EditRatePolicyAsync(c.Command(new RatePolicyRequest("job-type", "test.rated", 6, 2 * WindowMs, revision, Actor)), CancellationToken.None);
         Assert.Equal(StoreStatus.VersionConflict, stale.Status);
 
         await c.Dispatcher.DispatchAsync(new RatedJob("frozen"));
@@ -276,7 +279,7 @@ public sealed class RateAdmissionTests
         var ahead = (await f.StoreNow()) + TimeSpan.FromMinutes(5);
         await f.ExecAsync("UPDATE runwick.rate_scopes SET last_decision_at = @t, not_before = NULL", ("t", ahead));
         await WorkerHost.WaitUntil(() => c.ReserveAsync().GetAwaiter().GetResult() is { Status: StoreStatus.Applied } r
-            && c.BeginAsync(r.Value!.Lease.Handle).GetAwaiter().GetResult().Reply.Status == StoreStatus.Applied, TimeSpan.FromSeconds(10), "admitted");
+            && c.BeginAsync(r.Value!.Lease.Handle).GetAwaiter().GetResult().Reply.Status == StoreStatus.Applied, 2 * Window + TimeSpan.FromSeconds(10), "admitted");
         Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM runwick.rate_grants WHERE authorized_at >= @t", ("t", ahead)));
         Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM runwick.rate_scopes WHERE last_decision_at >= @t", ("t", ahead)));
 

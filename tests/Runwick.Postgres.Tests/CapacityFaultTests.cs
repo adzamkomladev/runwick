@@ -81,14 +81,17 @@ public sealed class CapacityFaultTests
         Assert.Equal(16, w.Script.Invocations.Count);
         Assert.Equal(16, await f.CountAsync("SELECT count(*) FROM runwick.job_attempts"));
         Assert.Equal(8, await f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE state = 'pending'"));
+        var released = await f.StoreNow();
         release.SetResult();
         await WaitCount(f, "SELECT count(*) FROM runwick.jobs WHERE state = 'succeeded'", 24, "all 24 succeeded");
         await w.StopAsync();
-        // Each job executed once. Under host load the worker may give a reservation up before Begin (05 §9.3,
-        // lost:SafetyDeadline) and the job runs on a later attempt, so unstarted attempt rows are not replacements.
+        // No job executed a second time while the 16 were hung. Under host load the worker may give a reservation up
+        // before Begin (05 §9.3, lost:SafetyDeadline), so unstarted attempt rows are not replacements; and once released, a
+        // lease that expired under starved renewals may be recovered and run again (at-least-once), which is not CAP-01.
         Assert.Equal(0, await f.CountAsync("""
-            SELECT count(*) FROM (SELECT job_id FROM runwick.job_attempts WHERE authorized_at IS NOT NULL GROUP BY job_id HAVING count(*) > 1) x
-            """));
+            SELECT count(*) FROM (SELECT job_id FROM runwick.job_attempts WHERE authorized_at IS NOT NULL AND authorized_at < @released
+                                  GROUP BY job_id HAVING count(*) > 1) x
+            """, ("released", released)));
         Assert.Empty(SnapshotInvariants.Violations((await f.ReadCommittedSnapshot()).Model));
     }
 
