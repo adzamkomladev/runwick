@@ -298,6 +298,117 @@ function dispatchVectors() {
   return out;
 }
 
+// ---- schedule definition identity (spec 12 §5) ----
+// The recurrence is given as normalized sets: normalization is the grammar's job (SCHED-01); this is the fingerprint.
+export function scheduleEnvelope(recurrence, settings = {}) {
+  const rec = recurrence.dialect === "runwick.instant.v1"
+    ? C.obj({ dialect: C.str(recurrence.dialect), dueAt: C.int(recurrence.dueAt) })
+    : C.obj({
+        dayOfMonth: C.arr(recurrence.dayOfMonth.map(C.int)), dayOfWeek: C.arr(recurrence.dayOfWeek.map(C.int)),
+        dialect: C.str(recurrence.dialect), evaluatorProfile: C.str(recurrence.evaluatorProfile),
+        foldPolicy: C.str(recurrence.foldPolicy), gapPolicy: C.str(recurrence.gapPolicy),
+        hour: C.arr(recurrence.hour.map(C.int)), minute: C.arr(recurrence.minute.map(C.int)),
+        month: C.arr(recurrence.month.map(C.int)), second: C.arr(recurrence.second.map(C.int)),
+        zone: C.obj({ canonicalId: C.str(recurrence.zone.canonicalId), tzdbSha256: C.str(recurrence.zone.tzdbSha256), tzdbVersion: C.str(recurrence.zone.tzdbVersion) }),
+      });
+  return C.obj({ fingerprintVersion: C.int(1), recurrence: rec, settings: strMap(settings) });
+}
+
+const range = (a, b, step = 1) => { const out = []; for (let i = a; i <= b; i += step) out.push(i); return out; };
+const tzdb = { tzdbVersion: "2026f", tzdbSha256: "b17c31650e9163761b50645b4ab3806649deb24be55c790857fdd004b5611be3" };
+const cron5 = (sets, zone, gap = "skip", fold = "earlier") => ({
+  dialect: "runwick.cron5.v1", evaluatorProfile: "runwick.cron.v1/cronos-0.13.0/nodatime-3.3.7", second: [0],
+  minute: sets.minute, hour: sets.hour, dayOfMonth: sets.dayOfMonth ?? range(1, 31), month: sets.month ?? range(1, 12),
+  dayOfWeek: sets.dayOfWeek ?? range(0, 6), gapPolicy: gap, foldPolicy: fold, zone: { canonicalId: zone, ...tzdb },
+});
+
+function scheduleVectors() {
+  const out = [];
+  const add = (id, text, zoneEntered, recurrence, expect, settings = {}) => {
+    const env = scheduleEnvelope(recurrence, settings);
+    out.push({ id, text, zoneEntered, settings, recurrence, canonicalHex: encode(env).toString("hex"), fingerprint: digest("runwick.schedule-definition.v1", env), expect });
+  };
+  const weekdays9 = { minute: [0], hour: [9], dayOfWeek: [1, 2, 3, 4, 5] };
+  add("SD-1", "0 9 * * MON-FRI", "Europe/Berlin", cron5(weekdays9, "Europe/Berlin"), { fingerprint: "76883d95cd2413ed1e4f9438a8d786fff8bdbc4a0f48e22391998ee0945a9fc1" });
+  add("SD-2", "0 9 * * MON-FRI", "Europe/Berlin", cron5(weekdays9, "Europe/Berlin", "shift", "both"), { fingerprint: "63ee9ef060168a8c58d656396dcf5db4c35c8ea1f8b133bb2c30502ec4d7ec10" });
+  add("SD-3", null, null, { dialect: "runwick.instant.v1", dueAt: 1782896400000 }, {
+    fingerprint: "c66d3c054d3d4a4713d4b45143931c8f1b80a774c51b6d9415d2d6e0181fffaf",
+    canonicalHex: "0600000003030000001266696e6765727072696e7456657273696f6e040000000131030000000a726563757272656e6365060000000203000000076469616c656374030000001272756e7769636b2e696e7374616e742e763103000000056475654174040000000d31373832383936343030303030030000000873657474696e67730600000000",
+  });
+  add("SD-4", "0\t09 * * 5,4,3,2,1", "Europe/Berlin", cron5(weekdays9, "Europe/Berlin"), { fingerprint: "76883d95cd2413ed1e4f9438a8d786fff8bdbc4a0f48e22391998ee0945a9fc1" });
+  add("SD-5", "30 2 * * *", "Asia/Calcutta", cron5({ minute: [30], hour: [2] }, "Asia/Kolkata", "shift", "later"), {});
+  add("SD-6", "0 9 1 * MON", null, cron5({ minute: [0], hour: [9], dayOfMonth: [1], dayOfWeek: [1] }, "Etc/UTC"), {});
+  add("SD-7", "*/15 30 2 * * SUN", "Europe/Berlin", { ...cron5({ minute: [30], hour: [2], dayOfWeek: [0] }, "Europe/Berlin", "skip", "both"), dialect: "runwick.cron6.v1", second: [0, 15, 30, 45] }, {});
+  add("SD-8", "0 0 29 2 *", "America/Sao_Paulo", cron5({ minute: [0], hour: [0], dayOfMonth: [29], month: [2] }, "America/Sao_Paulo"), {});
+  return out;
+}
+
+// ---- outbox hash domains (spec 14 §7) ----
+export function outboxDeliveryObject(d) {
+  return C.obj({
+    acceptUntil: C.int(d.acceptUntil), application: C.str(d.application), businessDigest: C.str(d.businessDigest),
+    destinationStoreId: C.str(d.destinationStoreId), diagnosticMetadata: strMap(d.diagnosticMetadata), fingerprintVersion: C.int(1),
+    messageId: C.str(d.messageId), policyDigest: C.str(d.policyDigest), proposedJobId: C.str(d.proposedJobId), sourceStoreId: C.str(d.sourceStoreId),
+  });
+}
+
+export function outboxCommandObject(c, deliveryDigest) {
+  return C.obj({
+    application: C.str(c.application), body: C.obj({ deliveryDigest: C.str(deliveryDigest) }), commandId: C.str(c.commandId),
+    fingerprintVersion: C.int(1), notAfter: C.int(c.notAfter), operation: C.str("ReceiveOutbox"), operationVersion: C.int(1), storeId: C.str(c.storeId),
+  });
+}
+
+const transportOf = (d, t) => ({ ...t, application: d.application, storeId: d.destinationStoreId });
+
+export function outboxDigests(d, transport) {
+  const delivery = digest("runwick.outbox.delivery/1", outboxDeliveryObject(d));
+  const command = transport ? digest("runwick.outbox.command/1", outboxCommandObject(transportOf(d, transport), delivery)) : null;
+  return { delivery, command };
+}
+
+function outboxVectors() {
+  const b0 = base();
+  const baseDelivery = () => ({
+    sourceStoreId: "8b6e2c1a-4f3d-4e5a-9b7c-1d2e3f405162", messageId: "0192f3a1-8000-7000-8000-0000000000aa",
+    destinationStoreId: b0.storeId, application: b0.application,
+    businessDigest: digest("runwick.dispatch-request.v1", businessEnvelope(b0)), policyDigest: digest("runwick.dispatch-policy.v1", policyEnvelope(b0.policy)),
+    diagnosticMetadata: b0.diagnosticMetadata, proposedJobId: b0.proposedJobId, acceptUntil: 1793354400000 + 604800000,
+  });
+  const baseTransport = () => ({ commandId: "0192f3a1-8000-7000-8000-0000000000c1", notAfter: 1793354430000 });
+  const out = [];
+  const add = (id, change, mutate, mutateTransport = () => {}) => {
+    const d = baseDelivery(); mutate(d);
+    const t = baseTransport(); mutateTransport(t);
+    const { delivery, command } = outboxDigests(d, t);
+    out.push({
+      id, change, delivery: d, transport: t,
+      deliveryCanonicalHex: encode(outboxDeliveryObject(d)).toString("hex"), deliveryDigest: delivery,
+      commandCanonicalHex: encode(outboxCommandObject(transportOf(d, t), delivery)).toString("hex"), commandDigest: command,
+    });
+  };
+  add("OB-0", "base (GV-B0 intent, staged 2026-10-30T10:00Z, 7-day horizon)", () => {});
+  add("OB-1", "acceptUntil + 1 ms", (d) => { d.acceptUntil += 1; });
+  add("OB-2", "another source store", (d) => { d.sourceStoreId = "8b6e2c1a-4f3d-4e5a-9b7c-1d2e3f405163"; });
+  add("OB-3", "another message ID", (d) => { d.messageId = "0192f3a1-8000-7000-8000-0000000000ab"; });
+  add("OB-4", "another destination store", (d) => { d.destinationStoreId = "5d0c6f8e-2b7a-4c1d-9e3f-0a1b2c3d4e60"; });
+  add("OB-5", "traceparent parent-id changed (diagnostic metadata is frozen intent)", (d) => { d.diagnosticMetadata = { traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-b7ad6b7169203331-01" }; });
+  add("OB-6", "retry initialDelay 10000 (policy digest)", (d) => { const p = defaultPolicy(); p.retry.initialDelay = 10000; d.policyDigest = digest("runwick.dispatch-policy.v1", policyEnvelope(p)); });
+  add("OB-7", "new transport command ID: delivery unchanged", () => {}, (t) => { t.commandId = "0192f3a1-8000-7000-8000-0000000000c2"; });
+  add("OB-8", "transport NotAfter + 1 ms: delivery unchanged", () => {}, (t) => { t.notAfter += 1; });
+  return out;
+}
+
+function outboxSelfCheck(errors) {
+  const v = Object.fromEntries(outboxVectors().map((c) => [c.id, c]));
+  for (const id of ["OB-1", "OB-2", "OB-3", "OB-4", "OB-5", "OB-6"]) if (v[id].deliveryDigest === v["OB-0"].deliveryDigest) errors.push(`${id}: delivery digest unchanged`);
+  for (const id of ["OB-7", "OB-8"]) {
+    if (v[id].deliveryDigest !== v["OB-0"].deliveryDigest) errors.push(`${id}: transport changed the delivery digest`);
+    if (v[id].commandDigest === v["OB-0"].commandDigest) errors.push(`${id}: command digest unchanged`);
+  }
+  for (const c of scheduleVectors()) for (const [k, x] of Object.entries(c.expect)) if (c[k] !== x) errors.push(`${c.id}.${k}: ${c[k]} != ${x}`);
+}
+
 function build() {
   return {
     "primitives.json": { spec: "docs/spec/02 §12.1", cases: primitives.map(([json, hex]) => ({ inputBase64: Buffer.from(json, "utf8").toString("base64"), canonicalHex: hex })) },
@@ -307,6 +418,8 @@ function build() {
       accepted: accepts.map(([id, bytes]) => ({ id, inputBase64: bytes.toString("base64"), canonicalHex: encode(parsePayload(bytes)).toString("hex") })),
     },
     "dispatch.json": { spec: "docs/spec/02 §12.2", cases: dispatchVectors() },
+    "schedule-definition.json": { spec: "docs/spec/12 §5.4", domain: "runwick.schedule-definition.v1", cases: scheduleVectors() },
+    "outbox.json": { spec: "docs/spec/14 §7, §10", domains: ["runwick.outbox.delivery/1", "runwick.outbox.command/1"], cases: outboxVectors() },
   };
 }
 
@@ -326,10 +439,17 @@ function selfCheck() {
   const b0 = dispatchVectors()[0];
   const b0Bytes = Buffer.from(b0.businessCanonicalHex, "hex").length;
   if (b0Bytes !== 605) errors.push(`GV-B0 canonical length ${b0Bytes} != 605`);
+  outboxSelfCheck(errors);
   return errors;
 }
 
 const args = process.argv.slice(2);
+if (args[0] === "--outbox-digests") {
+  // Independent digests for one stored source row (tests/Runwick.Outbox.Tests): argv[1] = {delivery, transport?} JSON.
+  const input = JSON.parse(args[1]);
+  console.log(JSON.stringify(outboxDigests(input.delivery, input.transport)));
+  process.exit(0);
+}
 const errors = selfCheck();
 if (errors.length) { console.error("canonical self-check FAILED\n  " + errors.join("\n  ")); process.exit(1); }
 const files = build();
@@ -346,7 +466,7 @@ if (args.includes("--write")) {
   const extra = readdirSync(wireDir).filter((f) => f.endsWith(".json") && !(f in files));
   if (extra.length) bad.push(`unexpected files: ${extra.join(", ")}`);
   if (bad.length) { console.error("vector verify FAILED\n  " + bad.join("\n  ")); process.exit(1); }
-  console.log(`vectors OK (${Object.keys(files).length} files, golden digests match spec 02 §12)`);
+  console.log(`vectors OK (${Object.keys(files).length} files, golden digests match spec 02 §12 and 12 §5.4)`);
 } else {
   console.log("self-check OK; use --write or --verify");
 }

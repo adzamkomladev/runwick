@@ -96,9 +96,10 @@ internal sealed class SqliteOutbox(OutboxStager stager) : ISqliteOutbox
             await transaction.ReleaseAsync(Savepoint, cancellationToken).ConfigureAwait(false);
             return result;
         }
-        catch (Exception ex) when (ex is SqliteException or OutboxMessageConflictException or OutboxStagingException)
+        catch (Exception ex)
         {
-            await transaction.RollbackAsync(Savepoint, cancellationToken).ConfigureAwait(false);
+            // Any failure, cancellation included, leaves the caller's transaction as it was before Stage (14 §2.1).
+            await OutboxStager.RollBackToSavepointAsync(transaction, Savepoint).ConfigureAwait(false);
             if (ex is SqliteException { SqliteErrorCode: 1 } && ex.Message.Contains("no such table", StringComparison.Ordinal))
             {
                 throw new OutboxStagingException("outbox_not_installed", "The outbox source schema is not installed (SqliteOutboxSchema.InstallAsync).", ex);

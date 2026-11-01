@@ -103,6 +103,25 @@ internal sealed class OutboxStager(RunwickRuntime runtime, DispatchPreparer prep
         && incoming.BusinessDigest.AsSpan().SequenceEqual(business)
         && incoming.PolicyDigest.AsSpan().SequenceEqual(policy);
 
+    /// <summary>
+    /// Undoes a failed or cancelled Stage on the caller's transaction (14 §2.1 step 5). It runs on every exception,
+    /// cancellation included, and never takes the caller's token: a cancelled token must not skip the undo and leave the
+    /// staged row inside a transaction the caller may still commit. When the provider already ended the transaction (a
+    /// broken connection, or an error SQLite answers with an automatic rollback) the savepoint is gone; that failure is
+    /// swallowed so the caller sees the original error unchanged (TX-03).
+    /// </summary>
+    public static async Task RollBackToSavepointAsync(System.Data.Common.DbTransaction transaction, string savepoint)
+    {
+        try
+        {
+            await transaction.RollbackAsync(savepoint, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is System.Data.Common.DbException or InvalidOperationException or ObjectDisposedException)
+        {
+            // The transaction (and with it the savepoint) no longer exists; nothing staged can commit.
+        }
+    }
+
     public static StagedOutboxMessage Result(Guid sourceStoreId, OutboxIntent intent, bool existing) =>
         new(sourceStoreId, intent.MessageId, intent.DestinationStoreId, intent.DestinationApplication, new JobId(intent.ProposedJobId),
             intent.StagedAt, intent.AcceptUntil, existing);

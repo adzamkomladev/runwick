@@ -81,6 +81,12 @@ internal sealed class DriverFixture : IAsyncDisposable
 
     public Task<HarnessSnapshot> ReadCommittedSnapshot() => SnapshotReader.ReadAsync(AdminConnectionString);
 
+    /// <summary>
+    /// Replays every job's committed history through the ReferenceModel (15 §12.2 rule 4); empty when all are accepted.
+    /// See <see cref="CommittedHistory"/> for the sources and the lease limit.
+    /// </summary>
+    public Task<IReadOnlyList<string>> HistoryViolations() => CommittedHistory.ViolationsAsync(AdminConnectionString);
+
     public FaultHandle ArmFault(FaultPoint point, FaultSpec action, FaultTarget target, int times = 1) =>
         Faults.Arm(point, action, target, times);
 

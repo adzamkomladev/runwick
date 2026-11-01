@@ -2,6 +2,10 @@
 
 Sources: storage-command-protocol §6; management-and-dashboard §4, §6; management-retention-defaults ("Command lifetimes", "Audit"); review R6/R7; uniqueness-and-execution (manual retry); spec 01 §16, §18; spec 03 §5.2, §6.4–§6.6, §8, §10–§11; spec 04 §3, §7.14–§7.16, §8.4–§8.6; spec 05 §3.3; spec 06 §1.8.
 
+## Changes (2026-11-01)
+
+- (2026-11-01) Limit, §8.2 step 3. The staged-receipt lookup is bounded: 3 `ResolveCommand` calls, each within `ControlRequestTimeout`, with backoff. If all of them fail, the engine treats the stage as not observed and publishes the normal-path `PermanentFailure` `staged_completion_not_committed`. Step 4 then applies: for a committed stage, storage rejects that Finish and keeps the stored `succeeded` outcome. The outcome is correct, but the engine's local diagnostic and counters (`FinishesSent`, no `StagedCompletionsObserved`) read as an uncommitted stage. This spec does not ask for a longer or unbounded resolution, so behaviour is unchanged.
+
 ## Changes (2026-10-31, SP-016)
 
 - §3.1 rule 5: schedule operations take the schedule row after the receipt and before queue control (13 §8). Control operations on jobs never lock a schedule row.

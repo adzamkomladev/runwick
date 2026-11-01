@@ -119,6 +119,9 @@ public sealed class ControlProtocolTests
         Assert.Equal(both[0].Value, replay.Value);
         Assert.Equal(1, await Receipts(f, id));
         Assert.Equal(1, await Audits(f, id));
+
+        // 15 §12.2 rule 4: every committed job history is accepted by the ReferenceModel.
+        Assert.Empty(await f.HistoryViolations());
     }
 
     [Theory]
@@ -141,6 +144,9 @@ public sealed class ControlProtocolTests
         Assert.Equal(StoreStatus.CommandConflict, (await send(id, notAfter + TimeSpan.FromSeconds(1), Actor)).Status);
         Assert.Empty(pre.DiffTables(await f.ReadCommittedSnapshot()));
         Assert.Equal(1, await Audits(f, id));
+
+        // 15 §12.2 rule 4: every committed job history is accepted by the ReferenceModel.
+        Assert.Empty(await f.HistoryViolations());
     }
 
     [Theory]
@@ -163,6 +169,9 @@ public sealed class ControlProtocolTests
         Assert.Equal((StoreStatus.Applied, true), (replay.Status, replay.Replayed));
         Assert.Equal(1, await Receipts(f, id));
         Assert.Equal(1, await Audits(f, id));
+
+        // 15 §12.2 rule 4: every committed job history is accepted by the ReferenceModel.
+        Assert.Empty(await f.HistoryViolations());
     }
 
     [Fact]
@@ -184,6 +193,9 @@ public sealed class ControlProtocolTests
         Assert.Equal((true, "cancelled", true), (result.Succeeded, result.Effect, result.Replayed));
         Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM runwick.storage_commands WHERE operation = 'Cancel'"));
         Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM runwick.management_audit"));
+
+        // 15 §12.2 rule 4: every committed job history is accepted by the ReferenceModel.
+        Assert.Empty(await f.HistoryViolations());
     }
 
     [Fact]
@@ -223,6 +235,9 @@ public sealed class ControlProtocolTests
         Assert.Equal(0, await Receipts(f, command.CommandId));
         Assert.Equal(0, await Audits(f, command.CommandId));
         Assert.Equal(JobStates.Pending, (await PositionAsync(f, job)).State);
+
+        // 15 §12.2 rule 4: every committed job history is accepted by the ReferenceModel.
+        Assert.Empty(await f.HistoryViolations());
     }
 
     [Fact]
@@ -251,6 +266,9 @@ public sealed class ControlProtocolTests
         Assert.Empty(pre.DiffTables(await f.ReadCommittedSnapshot()));
         Assert.Equal(2, (await PositionAsync(f, job!.Value)).Generation);
         Assert.Equal(1, await Audits(f, id));
+
+        // 15 §12.2 rule 4: every committed job history is accepted by the ReferenceModel.
+        Assert.Empty(await f.HistoryViolations());
     }
 
     [Theory]
@@ -273,6 +291,9 @@ public sealed class ControlProtocolTests
         Assert.Equal(StoreStatus.Applied, (await send(id, NotAfter(Operations.AdministrativeLifetime), Actor)).Status);
         Assert.Equal("durable", (await TextAsync(f, "SELECT retention_class FROM runwick.storage_commands WHERE command_id = @c", ("c", id))).Single());
         Assert.Equal(operation, (await TextAsync(f, "SELECT operation FROM runwick.storage_commands WHERE command_id = @c", ("c", id))).Single());
+
+        // 15 §12.2 rule 4: every committed job history is accepted by the ReferenceModel.
+        Assert.Empty(await f.HistoryViolations());
     }
 
     [Fact]
@@ -303,5 +324,8 @@ public sealed class ControlProtocolTests
         var eventsB = await b.Store.EventsSinceAsync(b.Application, null, 100, CancellationToken.None);
         Assert.DoesNotContain(eventsB.Events, e => e.Kind is "job_cancelled" or "queue_paused");
         Assert.DoesNotContain(eventsB.Events, e => e.JobId == jobA);
+
+        // 15 §12.2 rule 4: every committed job history is accepted by the ReferenceModel.
+        Assert.Empty(await f.HistoryViolations());
     }
 }
