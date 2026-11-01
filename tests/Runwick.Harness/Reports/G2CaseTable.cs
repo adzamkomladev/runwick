@@ -42,13 +42,13 @@ public static class G2CaseTable
         .. For("SP-014", "SCL-01", "CAP-01", "CAP-06", "CAP-07", "CAP-08", "CAP-10", "CAP-11", "CAP-12", "WRK-02"),
 
         // SP-015 (15 §8)
-        .. For("SP-015", [.. Range("SCHED", 1, 8), "SCHED-14", "DEP-01"]),
+        .. For("SP-015", [.. Range("SCHED", 1, 8), "SCHED-14", "DEP-01", "SER-11"]),
 
         // SP-016 (15 §9)
         .. For("SP-016", [.. Range("SCHED", 9, 13), "SCHED-15", .. Range("SCH", 1, 5), "PGX-02", "PGX-04", "ISO-01", .. Range("CMD", 1, 5)]),
 
         // SP-017 (15 §10)
-        .. For("SP-017", [.. Range("OUTBOX", 1, 7), "OUT-01", "OUT-02", .. Range("TX", 1, 4), .. Range("CMD", 1, 5), "ISO-01"]),
+        .. For("SP-017", [.. Range("OUTBOX", 1, 7), "OUT-01", "OUT-02", .. Range("TX", 1, 4), .. Range("CMD", 1, 5), "ISO-01", "SER-11"]),
     ];
 
     /// <summary>Sub-parts 15 §3 and the item specs defer (§12.2 rule 2): <c>not-applicable</c> with the later SP.</summary>
