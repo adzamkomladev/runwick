@@ -53,7 +53,7 @@ public sealed class RoundTripBudgetTests
         ["SetQueueState"] = 8,
         ["EditRatePolicy"] = 9,
         ["MaterializeOccurrences"] = 9,
-        ["ReceiveOutbox"] = 8,
+        ["ReceiveOutbox"] = 1,
     };
 
     static readonly AsyncLocal<List<string>?> Current = new();

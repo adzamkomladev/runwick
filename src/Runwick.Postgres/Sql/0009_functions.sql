@@ -1984,3 +1984,123 @@ BEGIN
     RETURN runwick.rw_applied_v1('Applied', NULL, v_now, pg_catalog.jsonb_build_object('expiresAt', runwick.rw_ms_v1(v_expires)));
 END
 $fn$;
+
+-- ------------------------------------------------------------------ ReceiveOutbox/1 (14 §5)
+
+-- Lock order: gates -> receipt -> delivery identity (transaction advisory lock) -> dispatch keys -> new jobs/scopes.
+CREATE FUNCTION runwick.receive_outbox_v1(p_application text, p_command_id uuid, p_operation text, p_not_after timestamptz,
+    p_fingerprint bytea, p_class text, p_deadline_cap interval, p_store_id uuid, p_revisions bigint[], p_epoch integer,
+    p_capabilities jsonb, p_is_creation boolean, p_allow_drain boolean, p_staged boolean,
+    p_source_store_id uuid, p_message_id uuid, p_delivery_fingerprint bytea, p_accept_until timestamptz, p_profile text,
+    p_invalid text,
+    p_job_ids uuid[], p_job_names text[], p_payload_versions integer[], p_profile_ids text[], p_profile_versions integer[],
+    p_queues text[], p_priorities text[], p_not_before_ms bigint[], p_active_keys text[], p_window_keys text[],
+    p_window_ms bigint[], p_business bytea[], p_policy bytea[], p_payloads bytea[], p_headers jsonb[],
+    p_max_executions integer[], p_max_unstarted integer[], p_timeouts bigint[], p_retry jsonb[], p_unstarted jsonb[],
+    p_scopes jsonb[], p_rates jsonb[],
+    p_faults jsonb DEFAULT NULL)
+RETURNS runwick.rw_reply_v1 LANGUAGE plpgsql VOLATILE AS $fn$
+DECLARE
+    v_reply runwick.rw_reply_v1;
+    v_found boolean;
+    v_job uuid;
+    v_disposition text;
+    v_match text;
+    v_drift boolean;
+    v_delivered timestamptz;
+    v_accept timestamptz;
+    v_confirmed text;
+    v_stored_fingerprint bytea;
+    v_clock timestamptz;
+    v_now timestamptz;
+    v_steps integer := 0;
+    v_reject runwick.rw_reply_v1;
+    v_core record;
+    v_items jsonb;
+    v_n integer;
+    v_result jsonb;
+BEGIN
+    v_reply := runwick.rw_frame_v1(p_application, p_command_id, p_operation, p_not_after, p_fingerprint, p_class, p_deadline_cap,
+        p_store_id, p_revisions, p_epoch, p_capabilities, p_is_creation, p_allow_drain, p_staged);
+    IF v_reply.status IS NOT NULL THEN
+        RETURN v_reply;
+    END IF;
+
+    -- The delivery identity: serializes every transport command for one identity without a placeholder row.
+    PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+        'runwick.outbox/' || p_application || '/' || p_source_store_id::text || '/' || p_message_id::text, 0));
+    SELECT d.job_id, d.disposition, d.duplicate_match, d.policy_drift, d.delivered_at, d.accept_until, d.confirmed_profile,
+           d.delivery_fingerprint
+    INTO v_job, v_disposition, v_match, v_drift, v_delivered, v_accept, v_confirmed, v_stored_fingerprint
+    FROM runwick.outbox_deliveries AS d
+    WHERE d.application = p_application AND d.source_store_id = p_source_store_id AND d.message_id = p_message_id
+    FOR UPDATE;
+    v_found := FOUND;
+
+    PERFORM runwick.rw_fault('AfterLocksBeforeFreshTime', 0, p_faults); -- rw:fault
+    v_clock := pg_catalog.clock_timestamp();
+    v_now := runwick.ms_floor(v_clock);
+    IF v_clock >= p_not_after THEN
+        RETURN runwick.rw_no_effect_v1('CommandExpired', 'command_expired', v_now);
+    END IF;
+
+    IF p_not_after - v_now > p_deadline_cap THEN
+        RETURN runwick.rw_no_effect_v1('InvalidRequest', 'deadline_too_far', v_now);
+    END IF;
+
+    -- A retained mapping answers every later transport command for the identity, even after AcceptUntil.
+    IF v_found THEN
+        IF v_stored_fingerprint <> p_delivery_fingerprint THEN
+            RETURN runwick.rw_no_effect_v1('CommandConflict', 'delivery_conflict', v_now, NULL, v_job);
+        END IF;
+
+        v_result := pg_catalog.jsonb_build_object('jobId', v_job, 'disposition', v_disposition, 'match', v_match,
+            'policyDrift', v_drift, 'firstDelivery', false, 'deliveredAt', runwick.rw_ms_v1(v_delivered),
+            'acceptUntil', runwick.rw_ms_v1(v_accept), 'confirmedProfile', v_confirmed);
+        PERFORM runwick.rw_finalize_v1(p_application, p_class, p_command_id, 'Applied', v_result, v_now);
+        RETURN runwick.rw_applied_v1('Applied', NULL, v_now, v_result);
+    END IF;
+
+    IF v_now >= p_accept_until THEN
+        RETURN runwick.rw_no_effect_v1('CommandExpired', 'delivery_horizon_passed', v_now);
+    END IF;
+
+    SELECT c.p_steps, c.p_now, c.o_reject, c.o_items INTO v_core
+    FROM runwick.rw_dispatch_core_v1(p_application, p_command_id, p_not_after, false, 'initial', p_invalid,
+        p_job_ids, p_job_names, p_payload_versions, p_profile_ids, p_profile_versions, p_queues, p_priorities, p_not_before_ms,
+        p_active_keys, p_window_keys, p_window_ms, p_business, p_policy, p_payloads, p_headers, p_max_executions, p_max_unstarted,
+        p_timeouts, p_retry, p_unstarted, p_scopes, p_rates, p_faults, v_steps, NULL) AS c;
+    v_steps := v_core.p_steps;
+    v_now := v_core.p_now;
+    v_reject := v_core.o_reject;
+    v_items := v_core.o_items;
+    IF v_reject.status IS NOT NULL THEN
+        RETURN v_reject;
+    END IF;
+
+    -- The dispatch core re-read the clock after its own locks: the cutoff is checked at that decision instant.
+    IF v_now >= p_accept_until THEN
+        RETURN runwick.rw_no_effect_v1('CommandExpired', 'delivery_horizon_passed', v_now);
+    END IF;
+
+    v_job := (v_items -> 0 ->> 'jobId')::uuid;
+    INSERT INTO runwick.outbox_deliveries (
+        application, source_store_id, message_id, delivery_fingerprint, fingerprint_version, accept_until, retain_until,
+        job_id, disposition, duplicate_match, policy_drift, confirmed_profile, first_command_id, delivered_at)
+    VALUES (p_application, p_source_store_id, p_message_id, p_delivery_fingerprint, 1, p_accept_until, p_accept_until + interval '24 hours',
+            v_job, v_items -> 0 ->> 'disposition', v_items -> 0 ->> 'match', (v_items -> 0 ->> 'policyDrift')::boolean,
+            p_profile, p_command_id, v_now);
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    IF v_n <> 1 THEN
+        RAISE EXCEPTION 'rw:invalid_transition' USING ERRCODE = 'RWI01';
+    END IF;
+
+    v_steps := v_steps + 1;
+    PERFORM runwick.rw_fault('AfterMutation', v_steps, p_faults); -- rw:fault
+    v_result := pg_catalog.jsonb_build_object('jobId', v_job, 'disposition', v_items -> 0 ->> 'disposition',
+        'match', v_items -> 0 ->> 'match', 'policyDrift', (v_items -> 0 ->> 'policyDrift')::boolean, 'firstDelivery', true,
+        'deliveredAt', runwick.rw_ms_v1(v_now), 'acceptUntil', runwick.rw_ms_v1(p_accept_until), 'confirmedProfile', p_profile);
+    PERFORM runwick.rw_finalize_v1(p_application, p_class, p_command_id, 'Applied', v_result, v_now);
+    RETURN runwick.rw_applied_v1('Applied', NULL, v_now, v_result);
+END
+$fn$;
