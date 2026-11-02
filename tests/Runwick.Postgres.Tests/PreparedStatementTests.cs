@@ -14,6 +14,8 @@ namespace Runwick.Postgres.Tests;
 /// </summary>
 public sealed class PreparedStatementTests
 {
+    static readonly ControlActor Actor = new("user:test", null, "host", "pf-03");
+
     static async Task<List<int>> BackendsAsync(DriverFixture f, string applicationName)
     {
         var conn = new NpgsqlConnection(f.AdminConnectionString);
@@ -89,6 +91,16 @@ public sealed class PreparedStatementTests
             await c.BeginAsync(lease);
             await c.RenewAsync(lease);
             await c.FinishAsync(lease, AttemptOutcome.Succeeded);
+            await StatementPathAsync();
+        }
+
+        // The job path runs server functions (04 Changes 2026-11-02, PF-05): their client statement returns the reply type,
+        // not a table's columns, and PL/pgSQL replans its own statements, so they never meet 0A000. A statement-path
+        // command (SetQueueState with a revision that never matches: no effect) keeps the gate statement prepared.
+        async Task<string?> StatementPathAsync()
+        {
+            var reply = await c.Store.SetQueueStateAsync(c.Command(new QueueStateRequest("default", false, -1, Actor)), CancellationToken.None);
+            return reply.Status == StoreStatus.VersionConflict ? null : "SetQueueState " + reply.Status + " " + reply.Error?.Code;
         }
 
         using var stop = new CancellationTokenSource();
@@ -127,6 +139,11 @@ public sealed class PreparedStatementTests
                         {
                             failures.Enqueue($"{op} {status} {code}");
                         }
+                    }
+
+                    if (await StatementPathAsync() is { } refused)
+                    {
+                        failures.Enqueue(refused);
                     }
 
                     Interlocked.Increment(ref cycles);

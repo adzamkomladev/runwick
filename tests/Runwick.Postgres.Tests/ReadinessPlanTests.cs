@@ -64,7 +64,37 @@ public sealed class ReadinessPlanTests
 
     static string ProbeSql => Statement("PgStore.Readiness.cs", "public Task<ReadySnapshot> ProbeAsync(", 0);
 
-    static string ReserveCandidateSql => Statement("PgStore.Reserve.cs", "public Task<StoreReply<ReservedJob>> TryReserveAsync(", 1);
+    /// <summary>
+    /// Reserve's candidate claim, step C of <c>runwick.reserve_v1</c> (04 Changes 2026-11-02, PF-05), as a plain statement:
+    /// the INTO list is dropped and each function argument <c>p_x</c> becomes the parameter <c>@x</c>.
+    /// </summary>
+    static string ReserveCandidateSql
+    {
+        get
+        {
+            var text = SqlFile("0009_functions.sql");
+            var at = text.IndexOf("CREATE FUNCTION runwick.reserve_v1(", StringComparison.Ordinal);
+            Assert.True(at >= 0, "reserve_v1 not found in 0009_functions.sql");
+            var start = text.IndexOf("SELECT j.job_id", text.IndexOf("-- C: the candidate claim.", at, StringComparison.Ordinal), StringComparison.Ordinal);
+            var end = text.IndexOf("SKIP LOCKED", start, StringComparison.Ordinal) + "SKIP LOCKED".Length;
+            var sql = Regex.Replace(text[start..end], @"^\s*INTO [^\n]*\n", "", RegexOptions.Multiline);
+            return Regex.Replace(sql, @"\bp_(\w+)", "@$1");
+        }
+    }
+
+    static string SqlFile(string name)
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var candidate = Path.Combine(dir.FullName, "src", "Runwick.Postgres", "Sql", name);
+            if (File.Exists(candidate))
+            {
+                return File.ReadAllText(candidate);
+            }
+        }
+
+        throw new FileNotFoundException("product migration not found above the test output folder", name);
+    }
 
     static string DiagnosticSql => Statement("PgStore.Readiness.cs", "public Task<UnsupportedBacklog> ListUnsupportedBacklogAsync(", 0);
 
