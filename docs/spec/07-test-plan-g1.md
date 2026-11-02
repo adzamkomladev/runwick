@@ -4,6 +4,24 @@
 
 This document defines the test harness built in SP-003, the exact case list that gate **G-1** (milestone M2, PostgreSQL execution) requires, the first performance measurements recorded by SP-010, and the G-1 pass rule. Every case listed in §4–§13 is mandatory for G-1 unless this document marks a named sub-part as deferred to a later SP item.
 
+## Changes (2026-11-02, PF-06 batched finish)
+
+`FinishMany/1` (03/04/05 "Changes (2026-11-02, PF-06 batched finish)") adds ten Postgres cases in `FinishManyTests`. Every case ends with the ReferenceModel check of every committed history (item receipts are ordinary `Finish` receipts, so `CommittedHistory` maps them unchanged). Existing cases keep their assertions.
+
+- **FM-01** (Contract): per-item isolation. In one batch, a stale lease (wrong token) is `StaleLease` `ownership_mismatch` and an already-finished job is `InvalidState` `job_terminal`, both without effect or receipt, while the others apply, each with its own `Finish` receipt under its own command ID and its attempt closed by that ID; the batch has no receipt; the stale job keeps its permit. A refused ID is not reserved. Bounds: 0 or 33 items, a repeated command ID or job ID are `InvalidRequest`.
+- **FM-02** (Contract): replay of a whole batch. The same items again (plus a new one) replay their recorded replies exactly (value and decision time, including a retry's eligibility) and only the new one applies; an all-replay call commits nothing; `Finish/1` of an item replays the batch's receipt; a changed body under an item's ID is that item's `CommandConflict` while the other item replays.
+- **FM-03** (Fault): lost batch reply. `AfterCommitBeforeReply` `DropReply` on the call; each item then resolves alone with its own Finish/1: applied items replay, the stale item is refused again; after the items' NotAfter an applied item still replays and the refused one is `CommandExpired`.
+- **FM-04** (Contract): mixed outcomes in one batch: succeeded, retryable failure (retrying, delay drawn from the policy), permanent failure, user cancelled, failure with a cancel request (cancelled `cancellation_requested`), and a keyed job whose terminal close releases its key.
+- **FM-05** (Fault): fault hook. `AfterMutation` step 2 throws: nothing of items 1 and 2 commits (no receipt, jobs running, permits held); the same items then apply once.
+- **FM-06** (Contract): a renewal racing a batched finish. With the batch held at `AfterLocksBeforeFreshTime`, a `RenewMany` and a `Renew` of its leases wait, then find the jobs closed (`InvalidState`) while a lease outside the batch renews; the other way round, a batch waits behind a held `RenewMany` and then finishes on the renewed lease. No deadlock.
+- **FM-07** (Contract): lock order under contention. Four clients finish in batches (in reverse order) and two renew with `RenewMany` and finish singly, over 48 jobs on shared and paired scopes: no deadlock detected, every job succeeds once with one receipt.
+- **FM-08** (Contract): the worker batches. With both settlement calls held 1.5 s (client `BeforeGateLock` delay on the first two Finishes), the queued Finishes go out as `FinishMany`; 40 jobs run and settle once.
+- **FM-09** (Fault): a worker's lost batch reply. The first `FinishMany` reply is dropped; every item resolves by its own receipt; no job runs twice; no unconfirmed outcome.
+- **FM-10** (Fault): fallback. With the function missing (`UnsupportedVersion`), the worker turns batching off with a diagnostic and settles every Finish alone.
+- **Fault points:** `FinishMany` has `AfterLocksBeforeFreshTime` and `BeforeFirstMutation` once and `AfterMutation` once per applied item (step = the item's 1-based position). Finish/1 keeps its points and steps.
+- **MIG** kill-phase rows gain migration 0011; the manifest test expects schema revision 11 with `FinishMany: [1]`.
+- **PERF-01** gains `FinishMany` = 1 command for 2 items and for 8 items.
+
 ## Changes (2026-11-02, idle caps)
 
 Longer idle caps while a wake listener is healthy (05/06/13/14 Changes 2026-11-02, idle caps).
