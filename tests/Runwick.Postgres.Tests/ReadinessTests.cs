@@ -222,7 +222,21 @@ public sealed class ReadinessTests
         }
 
         Assert.NotEqual(supported, Guid.Empty);
-        Assert.NotEqual(WorkerReadiness.Unhealthy, w.Engine.Health().Readiness);
+        // The unsupported backlog never makes the worker unhealthy. A starved host can pressure-stop the engine on timer
+        // lag alone (05 §15.2), which clears after three healthy 1 s checks, so the case waits for that rather than
+        // sampling one instant; a backlog that held the worker unhealthy would still fail.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (w.Engine.Health().Readiness == WorkerReadiness.Unhealthy && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(250);
+        }
+
+        var health = w.Engine.Health();
+        Assert.True(health.Readiness != WorkerReadiness.Unhealthy, $"{health.Status}; pools suspended: "
+            + string.Join(",", w.Engine.Pools.Select(p => p.Suspended)) + "; events: "
+            + string.Join(" ", w.Events.Where(e => e.Name.StartsWith("pressure", StringComparison.Ordinal) || e.Name.Contains("uspend", StringComparison.Ordinal))
+                .Select(e => $"{e.Name}@{e.At.TotalSeconds:F1}"))
+            + "; diagnostics: " + string.Join(" | ", health.Diagnostics.TakeLast(6)));
         await AssertInvariants(f);
     }
 
