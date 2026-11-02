@@ -131,6 +131,12 @@ internal sealed class PgDataSources : IAsyncDisposable
             CommandTimeout = 0,
             CancellationTimeout = 2000,
             KeepAlive = 15,
+
+            // No session state ever outlives a transaction on these pools (PF-08): settings are transaction-local
+            // (set_config(..., true)), the migration lock and LISTEN use their own connections, and no cursor or temp
+            // table is used. The reset sequence (CLOSE ALL … UNLISTEN *, 7 statements on every return) is skipped; an
+            // open transaction is still rolled back on return.
+            NoResetOnClose = true,
         };
         // A prepared statement is planned for each bind's values, never from a cached generic plan (04 §9.2, PF-03).
         csb.Options = string.IsNullOrWhiteSpace(csb.Options) ? PlanMode : csb.Options + " " + PlanMode;

@@ -204,4 +204,45 @@ public sealed class PreparedStatementTests
         Assert.Equal(StoreStatus.Applied, (await c.RenewAsync(leases[0])).Status);
         Assert.Equal(idle, await BackendsAsync(f, "rw:warm:control"));
     }
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    [Trait("Item", "PF-08")]
+    [Trait("Case", "POOL-01")]
+    public async Task Pool_returns_send_no_reset_and_still_roll_back_an_open_transaction()
+    {
+        // 04 Changes 2026-11-02, PF-08: the driver pools skip the reset sequence; nothing a transaction set or wrote
+        // survives the return of its connection.
+        await using var f = await DriverFixture.StartAsync("noreset_" + Guid.NewGuid().ToString("N")[..8]);
+        var c = await f.OpenClient(configure: r => TestJobs.Register(r));
+        await f.ExecAsync("CREATE TABLE public.left_open (id integer PRIMARY KEY)");
+        await f.ExecAsync("GRANT ALL ON public.left_open TO PUBLIC");
+        var sources = (PgDataSources)c.Services.GetService(typeof(PgDataSources))!;
+        int pid;
+        var conn = await sources.For(PgLane.Renewal).OpenConnectionAsync();
+        await using (conn)
+        {
+            using var who = new NpgsqlCommand("SELECT pg_backend_pid()", conn);
+            pid = (int)(await who.ExecuteScalarAsync())!;
+            var tx = await conn.BeginTransactionAsync();
+            using var set = new NpgsqlCommand("SELECT set_config('lock_timeout', '1234ms', true); INSERT INTO public.left_open VALUES (1)", conn, tx);
+            await set.ExecuteNonQueryAsync();
+
+            // Returned to the pool with the transaction still open.
+        }
+
+        // The driver rolled the transaction back on return: the backend is idle (not idle in transaction), the row is gone
+        // and the setting was transaction-local.
+        Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM pg_stat_activity WHERE pid = @pid AND state = 'idle'", ("pid", pid)));
+        Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM public.left_open"));
+        for (var i = 0; i < 4; i++)
+        {
+            var again = await sources.For(PgLane.Renewal).OpenConnectionAsync();
+            await using (again)
+            {
+                using var setting = new NpgsqlCommand("SELECT current_setting('lock_timeout')", again);
+                Assert.NotEqual("1234ms", (string?)await setting.ExecuteScalarAsync());
+            }
+        }
+    }
 }

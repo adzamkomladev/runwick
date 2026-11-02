@@ -6,6 +6,13 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-02, PF-08)
+
+§9.2 pool settings, client cost only; no statement, lock, receipt or round-trip count changes.
+
+- **No reset on return.** The control and work pools set `No Reset On Close`. Npgsql otherwise sends its reset sequence (`CLOSE ALL`, `SET SESSION AUTHORIZATION DEFAULT`, `RESET ALL`, `UNLISTEN *`, `SELECT pg_advisory_unlock_all()`, `DISCARD SEQUENCES`, `DISCARD TEMP`) ahead of the next command on every connection returned to the pool. These pools never leave session state behind: every setting is transaction-local (`set_config(…, true)`), the migration advisory lock and LISTEN use their own connections, and no cursor, temp table or sequence is used. A connection returned inside a transaction is still rolled back by the driver. Prepared statements are unaffected (they were never discarded, PF-03). A caller-owned connection (staging, completion in the caller's transaction) is not a Runwick pool and keeps the caller's settings.
+- **Batch statements keep their parameters.** A statement added to a batch moves its parameters to the batch command instead of cloning them (the built command is disposed at once), so each parameter is allocated once.
+
 ## Changes (2026-11-02, PF-07)
 
 Replaces §5 "Notification: … LISTEN/NOTIFY is not in M2". Polling remains sufficient for correctness; notifications are an optional wake hint (05 Changes 2026-11-02, PF-07). No migration, no new operation, no new round trip.

@@ -226,10 +226,19 @@ internal sealed class PgBatch(NpgsqlConnection connection, NpgsqlTransaction tra
     {
         using (cmd)
         {
+            // The parameters move to the batch command (PF-08): the built command is disposed here, so cloning them only
+            // doubled the per-statement allocations.
             var bc = new NpgsqlBatchCommand(cmd.CommandText);
-            foreach (NpgsqlParameter p in cmd.Parameters)
+            var count = cmd.Parameters.Count;
+            if (count > 0)
             {
-                bc.Parameters.Add(p.Clone());
+                var moved = new NpgsqlParameter[count];
+                cmd.Parameters.CopyTo(moved, 0);
+                cmd.Parameters.Clear();
+                foreach (var p in moved)
+                {
+                    bc.Parameters.Add(p);
+                }
             }
 
             step.Command = bc;

@@ -4,6 +4,11 @@
 
 This document defines the test harness built in SP-003, the exact case list that gate **G-1** (milestone M2, PostgreSQL execution) requires, the first performance measurements recorded by SP-010, and the G-1 pass rule. Every case listed in §4–§13 is mandatory for G-1 unless this document marks a named sub-part as deferred to a later SP item.
 
+## Changes (2026-11-02, PF-08)
+
+- **POOL-01** (Contract, `PreparedStatementTests`): the driver pools skip the reset sequence (04 Changes 2026-11-02, PF-08), and a connection returned to the pool inside a transaction is still rolled back: its backend is idle, its row is gone, and its transaction-local setting is not seen by later users of the pool.
+- PERF-01 is unchanged (no statement or round trip changes).
+
 ## Changes (2026-11-02, PF-07)
 
 LISTEN/NOTIFY wake (05/04/13/14 "Changes (2026-11-02, PF-07)").
