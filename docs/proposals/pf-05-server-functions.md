@@ -604,3 +604,26 @@ PERF-01 is checked in every suite, as now. The latency targets are the plan's "A
 | Q8 | An R4 that matches no row: map it to `InvariantFault receipt_incomplete` (`RWI03`), or keep today's unclassified exception? This is the only reply that would change. |
 | Q9 | Build attempt IDs in SQL (`rw_uuid_v7` from the decision time, PostgreSQL 16-compatible), or let the client build them before the call from its own clock? |
 | Q10 | PQ1: is a reference environment available for the spike's go/no-go and for the "After PF-05" latency targets, or are they reported non-reference until SP-029? |
+
+## 11. Decisions (2026-11-02)
+
+**Answered by adzamkomla:**
+
+| # | Decision |
+|---|---|
+| Q2 | No spike. Convert every operation that needs it, in one go. |
+| Q3 | Yes: the PF-05 worker path comes before PF-06 batched Reserve, and `ReserveAndBegin/1` is written once, as a function. |
+| Q4 | Full scope ("convert everything that needs to be converted"). Besides the worker path, this includes Dispatch, DispatchMany, `StageAsync`, and the frequent background operations: schedule materialize/claim, outbox receive/settle and presence. Rare admin operations (controls, rate policy) stay on statements. |
+| Q5 | Stop and migrate. A binary keeps refusing any schema revision but its own; there is no dual path and no `UseServerFunctions` switch. |
+| Q10 | No reference environment for now. Report numbers as non-reference; a reference measurement may come once all the work is done. |
+| Plan Q5 | Back off the idle poll interval now that wake notifications exist (06 defaults and OBS-01's bound change with a dated entry). |
+
+**Not answered; the implementer takes these defaults, and any of them can be reversed:**
+
+| # | Default |
+|---|---|
+| Q1 | The 2-round-trip frame. COMMIT stays separate, and the single-trip variants are left for later. |
+| Q6 | Keep PF-04's per-batch `AfterMutation` numbering, so ADM-03's boundary does not move. |
+| Q7 | Reuse `schema_incompatible`, with detail `fault_hooks`. `Describe/1` checks the function digests at startup as well. |
+| Q8 | Keep today's behaviour, so no reply changes. |
+| Q9 | Build attempt IDs in SQL (`rw_uuid_v7` from the decision time). |
