@@ -1374,3 +1374,142 @@ BEGIN
     RETURN runwick.rw_applied_v1('Applied', NULL, v_now, v_result);
 END
 $fn$;
+
+-- ------------------------------------------------------------------ RenewMany/1 (04 Changes 2026-11-02, PF-06)
+
+CREATE FUNCTION runwick.renew_many_v1(p_application text, p_command_id uuid, p_operation text, p_not_after timestamptz,
+    p_fingerprint bytea, p_class text, p_deadline_cap interval, p_store_id uuid, p_revisions bigint[], p_epoch integer,
+    p_capabilities jsonb, p_is_creation boolean, p_allow_drain boolean, p_staged boolean,
+    p_job_ids uuid[], p_attempt_ids uuid[], p_worker_ids uuid[], p_tokens uuid[], p_generations integer[], p_lease interval,
+    p_faults jsonb DEFAULT NULL)
+RETURNS runwick.rw_reply_v1 LANGUAGE plpgsql VOLATILE AS $fn$
+DECLARE
+    v_reply runwick.rw_reply_v1;
+    v_clock timestamptz;
+    v_now timestamptz;
+    v_expiry timestamptz;
+    v_i integer;
+    v_found boolean;
+    v_state text;
+    v_generation integer;
+    v_attempt uuid;
+    v_worker uuid;
+    v_token uuid;
+    v_lease timestamptz;
+    v_cancel timestamptz;
+    v_required uuid[];
+    v_held uuid[];
+    v_items jsonb := '[]'::jsonb;
+    v_renew integer[] := '{}';
+    v_previous timestamptz[] := '{}';
+    v_updated uuid[];
+    v_ok boolean;
+BEGIN
+    v_reply := runwick.rw_frame_v1(p_application, p_command_id, p_operation, p_not_after, p_fingerprint, p_class, p_deadline_cap,
+        p_store_id, p_revisions, p_epoch, p_capabilities, p_is_creation, p_allow_drain, p_staged);
+    IF v_reply.status IS NOT NULL THEN
+        RETURN v_reply;
+    END IF;
+
+    -- J: every job in UUID order (rank 5); then S: every required scope of those jobs in UUID order (rank 7).
+    PERFORM 1 FROM runwick.jobs
+    WHERE application = p_application AND job_id = ANY (p_job_ids)
+    ORDER BY job_id
+    FOR NO KEY UPDATE;
+
+    PERFORM 1
+    FROM runwick.concurrency_scopes AS s
+    WHERE s.application = p_application
+      AND s.scope_id IN (SELECT r.scope_id FROM runwick.job_concurrency_requirements AS r
+                         WHERE r.application = p_application AND r.job_id = ANY (p_job_ids))
+    ORDER BY s.scope_id
+    FOR UPDATE OF s;
+
+    PERFORM runwick.rw_fault('AfterLocksBeforeFreshTime', 0, p_faults); -- rw:fault
+    v_clock := pg_catalog.clock_timestamp();
+    v_now := runwick.ms_floor(v_clock);
+    IF v_clock >= p_not_after THEN
+        RETURN runwick.rw_no_effect_v1('CommandExpired', 'command_expired', v_now);
+    END IF;
+
+    v_expiry := runwick.ms_floor(v_now + p_lease);
+
+    -- Each lease is checked against its locked row exactly as Renew/1 checks it, then its permit set (03 §7.2).
+    FOR v_i IN 1 .. pg_catalog.cardinality(p_job_ids) LOOP
+        SELECT j.state, j.generation, j.current_attempt_id, j.worker_instance_id, j.ownership_token, j.lease_expires_at,
+               j.cancel_requested_at
+        INTO v_state, v_generation, v_attempt, v_worker, v_token, v_lease, v_cancel
+        FROM runwick.jobs AS j
+        WHERE j.application = p_application AND j.job_id = p_job_ids[v_i];
+        v_found := FOUND;
+
+        v_reply := runwick.rw_ownership_v1(v_found, v_state, v_attempt, v_token, v_worker, v_generation, v_lease,
+            p_attempt_ids[v_i], p_tokens[v_i], p_worker_ids[v_i], p_generations[v_i], v_now, ARRAY['reserved', 'running']);
+        IF v_reply.status IS NOT NULL THEN
+            v_items := v_items || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('status', v_reply.status, 'code', v_reply.code));
+            CONTINUE;
+        END IF;
+
+        SELECT COALESCE(pg_catalog.array_agg(r.scope_id ORDER BY r.scope_id), '{}') INTO v_required
+        FROM runwick.job_concurrency_requirements AS r
+        WHERE r.application = p_application AND r.job_id = p_job_ids[v_i];
+
+        SELECT COALESCE(pg_catalog.array_agg(p.scope_id ORDER BY p.scope_id), '{}') INTO v_held
+        FROM runwick.concurrency_permits AS p
+        WHERE p.application = p_application AND p.job_id = p_job_ids[v_i] AND p.attempt_id = p_attempt_ids[v_i]
+          AND p.ownership_token = p_tokens[v_i] AND p.lease_expires_at = v_lease;
+
+        IF v_held <> v_required THEN
+            v_items := v_items || pg_catalog.jsonb_build_array(
+                pg_catalog.jsonb_build_object('status', 'InvariantFault', 'code', 'permit_set_mismatch'));
+            CONTINUE;
+        END IF;
+
+        v_items := v_items || pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('status', 'Applied',
+            'leaseExpiresAt', runwick.rw_ms_v1(v_expiry), 'cancelRequested', v_cancel IS NOT NULL));
+        v_renew := v_renew || v_i;
+        v_previous := v_previous || v_lease;
+    END LOOP;
+
+    IF pg_catalog.cardinality(v_renew) = 0 THEN
+        -- Nothing passed: the reply is the per-lease refusals, with no write.
+        RETURN runwick.rw_applied_v1('Applied', NULL, v_now, pg_catalog.jsonb_build_object('items', v_items));
+    END IF;
+
+    -- One set-based update per table, each row fenced by its own lease; checked per lease below.
+    PERFORM runwick.rw_fault('BeforeFirstMutation', 0, p_faults); -- rw:fault
+    WITH u AS (
+        UPDATE runwick.jobs AS j
+        SET lease_expires_at = v_expiry
+        FROM unnest(v_renew) AS l(i)
+        WHERE j.application = p_application AND j.job_id = p_job_ids[l.i]
+          AND j.current_attempt_id = p_attempt_ids[l.i] AND j.ownership_token = p_tokens[l.i]
+          AND j.worker_instance_id = p_worker_ids[l.i] AND j.generation = p_generations[l.i]
+          AND j.state IN ('reserved', 'running') AND j.lease_expires_at > v_now
+        RETURNING j.job_id)
+    SELECT COALESCE(pg_catalog.array_agg(u.job_id ORDER BY u.job_id), '{}') INTO v_updated FROM u;
+
+    WITH u AS (
+        UPDATE runwick.concurrency_permits AS p
+        SET lease_expires_at = v_expiry
+        FROM unnest(v_renew, v_previous) AS l(i, previous)
+        WHERE p.application = p_application AND p.job_id = p_job_ids[l.i] AND p.attempt_id = p_attempt_ids[l.i]
+          AND p.ownership_token = p_tokens[l.i] AND p.lease_expires_at = l.previous
+        RETURNING p.job_id, p.scope_id)
+    SELECT v_updated = ARRAY(SELECT p_job_ids[l.i] FROM unnest(v_renew) AS l(i) ORDER BY 1)
+       AND NOT EXISTS (
+           SELECT 1 FROM unnest(v_renew) AS l(i)
+           WHERE ARRAY(SELECT u.scope_id FROM u WHERE u.job_id = p_job_ids[l.i] ORDER BY 1)
+              <> ARRAY(SELECT r.scope_id FROM runwick.job_concurrency_requirements AS r
+                       WHERE r.application = p_application AND r.job_id = p_job_ids[l.i] ORDER BY 1))
+    INTO v_ok;
+    PERFORM runwick.rw_fault('AfterMutation', 1, p_faults); -- rw:fault
+
+    -- Every lease was checked under its locks, so a count that differs is a broken invariant: nothing commits.
+    IF NOT v_ok THEN
+        RETURN runwick.rw_no_effect_v1('InvariantFault', 'permit_set_mismatch', v_now);
+    END IF;
+
+    RETURN runwick.rw_applied_v1('Applied', NULL, v_now, pg_catalog.jsonb_build_object('items', v_items));
+END
+$fn$;
