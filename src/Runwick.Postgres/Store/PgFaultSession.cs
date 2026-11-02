@@ -18,6 +18,13 @@ namespace Runwick.Postgres.Store;
 /// the injector's own), then holds "proceed" (30000 + s), plus "throw" (40000 + s) when the injector threw, takes the
 /// next gate and releases this one. A backend that finds no "proceed" mark (this process died) aborts.
 /// </para>
+/// <para>
+/// The session connection is used by one thread at a time. Npgsql connections are not thread-safe: cancelling the
+/// watcher's command through a token, or disposing the connection while the watcher used it, could hang the call that
+/// owns the session after its own work had finished (ADM-03). So the watcher's statements take no cancellation token,
+/// every use of the connection holds <see cref="_io"/>, and <see cref="DisposeAsync"/> takes it before closing. The
+/// injector call itself (a barrier may wait indefinitely) runs outside it, so closing never waits for a barrier.
+/// </para>
 /// </summary>
 internal sealed class PgFaultSession : IAsyncDisposable
 {
@@ -28,6 +35,8 @@ internal sealed class PgFaultSession : IAsyncDisposable
     readonly PgOp _op;
     readonly int _nonce;
     readonly CancellationTokenSource _stop = new();
+    readonly SemaphoreSlim _io = new(1, 1);
+    bool _closed;
     Task? _watch;
 
     PgFaultSession(NpgsqlConnection connection, IFaultInjector faults, PgOp op, int nonce, string[] points)
@@ -76,6 +85,10 @@ internal sealed class PgFaultSession : IAsyncDisposable
         {
             // The call ended (or the session closed) while the watcher was waiting.
         }
+        catch (SessionClosedException)
+        {
+            // The session closed while the injector handled a point (an abandoned barrier): nothing left to mark.
+        }
     });
 
     async Task WatchAsync(int pid, CancellationToken ct)
@@ -85,17 +98,24 @@ internal sealed class PgFaultSession : IAsyncDisposable
         {
             int? code = null;
             var waiting = false;
-            using (var q = new NpgsqlCommand("""
+            await _io.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            try
+            {
+                if (_closed)
+                {
+                    return;
+                }
+
+                using var q = new NpgsqlCommand("""
                 SELECT objid::bigint, granted FROM pg_locks
                 WHERE locktype = 'advisory' AND objsubid = 2 AND classid::bigint = @nonce AND pid = @pid
-                """, _connection))
-            {
+                """, _connection);
                 q.Parameters.AddWithValue("nonce", (long)_nonce);
                 q.Parameters.AddWithValue("pid", pid);
-                var reader = await q.ExecuteReaderAsync(ct).ConfigureAwait(false);
+                var reader = await q.ExecuteReaderAsync(CancellationToken.None).ConfigureAwait(false);
                 await using (reader.ConfigureAwait(false))
                 {
-                    while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                    while (await reader.ReadAsync(CancellationToken.None).ConfigureAwait(false))
                     {
                         var key = reader.GetInt64(0);
                         var granted = reader.GetBoolean(1);
@@ -109,6 +129,10 @@ internal sealed class PgFaultSession : IAsyncDisposable
                         }
                     }
                 }
+            }
+            finally
+            {
+                _io.Release();
             }
 
             if (!waiting || code is not { } c)
@@ -141,34 +165,56 @@ internal sealed class PgFaultSession : IAsyncDisposable
         }
     }
 
-    async Task LockAsync(int key)
+    Task LockAsync(int key) => AdvisoryAsync("SELECT pg_advisory_lock(@nonce, @key)", key);
+
+    Task UnlockAsync(int key) => AdvisoryAsync("SELECT pg_advisory_unlock(@nonce, @key)", key);
+
+    /// <summary>One advisory-lock statement under <see cref="_io"/>; never cancelled, never after close.</summary>
+    async Task AdvisoryAsync(string sql, int key)
     {
-        using var cmd = new NpgsqlCommand("SELECT pg_advisory_lock(@nonce, @key)", _connection);
-        cmd.Parameters.AddWithValue("nonce", _nonce);
-        cmd.Parameters.AddWithValue("key", key);
-        await cmd.ExecuteNonQueryAsync(CancellationToken.None).ConfigureAwait(false);
+        await _io.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            if (_closed)
+            {
+                throw new SessionClosedException();
+            }
+
+            using var cmd = new NpgsqlCommand(sql, _connection);
+            cmd.Parameters.AddWithValue("nonce", _nonce);
+            cmd.Parameters.AddWithValue("key", key);
+            await cmd.ExecuteNonQueryAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        finally
+        {
+            _io.Release();
+        }
     }
 
-    async Task UnlockAsync(int key)
-    {
-        using var cmd = new NpgsqlCommand("SELECT pg_advisory_unlock(@nonce, @key)", _connection);
-        cmd.Parameters.AddWithValue("nonce", _nonce);
-        cmd.Parameters.AddWithValue("key", key);
-        await cmd.ExecuteNonQueryAsync(CancellationToken.None).ConfigureAwait(false);
-    }
+    sealed class SessionClosedException : Exception;
 
     public async ValueTask DisposeAsync()
     {
+        // Only the watcher's delay observes the token; a statement in flight runs to its end (a few milliseconds).
         await _stop.CancelAsync().ConfigureAwait(false);
-        if (_watch is not null)
+
+        // Wait for the connection to be free, then close it. An injector still blocked in a barrier or KillProcess is not
+        // waited for (it holds no connection): closing aborts the backend's wait (no "proceed" mark), and the watcher
+        // stops at its next use of the connection.
+        await _io.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
         {
-            // An injector still blocked in a barrier or KillProcess is not waited for: closing the session below aborts the
-            // backend's wait (no "proceed" mark), and the watcher's later lock calls fail harmlessly.
-            await Task.WhenAny(_watch, Task.Delay(TimeSpan.FromMilliseconds(200))).ConfigureAwait(false);
+            _closed = true;
+
+            // Closing the session releases every lock it holds.
+            await _connection.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _io.Release();
         }
 
-        // Closing the session releases every lock it holds.
-        await _connection.DisposeAsync().ConfigureAwait(false);
+        // A watcher that wakes after this point meets ObjectDisposedException, which it treats as the session's end.
         _stop.Dispose();
     }
 }
