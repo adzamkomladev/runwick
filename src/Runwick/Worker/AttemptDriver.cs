@@ -12,10 +12,13 @@ namespace Runwick.Worker;
 internal sealed partial class WorkerEngine
 {
     /// <summary>An Applied claim: the ticket moves once into a new entry; the lease is registered at once.</summary>
-    internal void Admit(PoolCoordinator pool, CapacityTicket ticket, ReservedJob reserved, TimeSpan? deadline, TimeSpan sentAt)
+    /// <remarks>With <paramref name="begun"/> (ReserveAndBegin/1), the claim's Begin is already decided and the
+    /// lifecycle settles that reply instead of sending Begin (05 §9.6).</remarks>
+    internal void Admit(PoolCoordinator pool, CapacityTicket ticket, ReservedJob reserved, TimeSpan? deadline, TimeSpan sentAt,
+        BeginReply? begun = null)
     {
         var job = Pipelines.ContainsKey(reserved.Contract.Name) ? Registry.ByName(reserved.Contract.Name) : null;
-        var entry = new AttemptEntry(pool, ticket, reserved, job, deadline) { AdmittedAt = sentAt };
+        var entry = new AttemptEntry(pool, ticket, reserved, job, deadline) { AdmittedAt = sentAt, PreBegun = begun is null ? null : (begun, sentAt) };
         Track(entry);
         if (deadline is null)
         {
@@ -112,30 +115,48 @@ internal sealed partial class WorkerEngine
 
     async Task LifecycleAsync(AttemptEntry entry)
     {
-        if (Draining)
+        bool? begun;
+        if (entry.PreBegun is { } pre)
         {
-            await ReleaseAsync(entry).ConfigureAwait(false);
-            return;
+            // ReserveAndBegin/1 (05 §9.6): storage already began the attempt in the claim's command, so there is no
+            // reservation to release and no Begin to send. The reply is settled exactly as a Begin reply; the margin
+            // and drain checks of invocation admission below still apply.
+            entry.PreBegun = null;
+            if (!entry.TryMove(AttemptPhase.Beginning))
+            {
+                return;
+            }
+
+            begun = HandleBegin(entry, pre.Reply, pre.SentAt);
+        }
+        else
+        {
+            if (Draining)
+            {
+                await ReleaseAsync(entry).ConfigureAwait(false);
+                return;
+            }
+
+            // §9.3: confirm authority (replayed claim) and margin before Begin.
+            if (!await EnsureMarginAsync(entry).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            if (Draining)
+            {
+                await ReleaseAsync(entry).ConfigureAwait(false);
+                return;
+            }
+
+            if (!entry.TryMove(AttemptPhase.Beginning))
+            {
+                return;
+            }
+
+            begun = await BeginAsync(entry).ConfigureAwait(false);
         }
 
-        // §9.3: confirm authority (replayed claim) and margin before Begin.
-        if (!await EnsureMarginAsync(entry).ConfigureAwait(false))
-        {
-            return;
-        }
-
-        if (Draining)
-        {
-            await ReleaseAsync(entry).ConfigureAwait(false);
-            return;
-        }
-
-        if (!entry.TryMove(AttemptPhase.Beginning))
-        {
-            return;
-        }
-
-        var begun = await BeginAsync(entry).ConfigureAwait(false);
         if (begun is null)
         {
             return;

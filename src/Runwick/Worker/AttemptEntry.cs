@@ -68,6 +68,12 @@ internal sealed class AttemptEntry : IDisposable
 
     public LeaseHandle Lease => Reserved.Lease.Handle;
 
+    /// <summary>
+    /// The Begin decided in the same command as the reservation (ReserveAndBegin/1, 05 §9.6): the lifecycle settles it
+    /// instead of sending Begin. Null for a Reserve-created entry, and once consumed.
+    /// </summary>
+    public (BeginReply Reply, TimeSpan SentAt)? PreBegun { get; set; }
+
     public Guid AttemptId => Lease.AttemptId;
 
     /// <summary>The registration that advertised the tuple; null is a configuration invariant fault (05 §10.1).</summary>

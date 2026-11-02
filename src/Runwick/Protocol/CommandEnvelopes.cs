@@ -35,6 +35,19 @@ internal static class CommandEnvelopes
         .Add("workerInstanceId", Fingerprints.Uuid(r.WorkerInstanceId))
         .Build();
 
+    /// <summary>ReserveAndBegin/1: Reserve/1's members plus <c>maxJobs</c>. Tokens and jitter are drawn per call, outside it.</summary>
+    public static CanonicalValue ReserveAndBegin(ReserveAndBeginRequest r) => CanonicalValue.Object()
+        .Add("after", r.After is { } a
+            ? CanonicalValue.Object().Add("eligibleAt", a.EligibleAt.ToUnixTimeMilliseconds()).Add("jobId", Fingerprints.Uuid(a.JobId)).Build()
+            : CanonicalValue.Null)
+        .Add("leaseDuration", Fingerprints.CeilMs(r.LeaseDuration))
+        .Add("maxJobs", r.MaxJobs)
+        .Add("priority", r.Priority)
+        .Add("queue", r.Queue)
+        .Add("supportedContracts", CanonicalValue.Array(SortContracts(r.SupportedContracts).Select(Contract)))
+        .Add("workerInstanceId", Fingerprints.Uuid(r.WorkerInstanceId))
+        .Build();
+
     public static CanonicalValue Begin(BeginRequest r) => CanonicalValue.Object().Add("lease", Lease(r.Lease)).Build();
 
     public static CanonicalValue Release(ReleaseRequest r) => CanonicalValue.Object().Add("lease", Lease(r.Lease)).Build();

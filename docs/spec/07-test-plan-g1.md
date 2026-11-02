@@ -16,6 +16,26 @@ Longer idle caps while a wake listener is healthy (05/06/13/14 Changes 2026-11-0
   - *Relay* (`RelayIdleTests`, scripted listener around the SQLite source, `IdlePoll` 200 ms): 10–22 claims per 4 s unsubscribed and 2–7 while healthy. A notified stage is delivered without waiting out the long poll. On loss the relay claims at once, then 10–22 claims per 4 s.
 - WRK-16 and CAP-04 are unchanged. Their jobs are notified or woken locally, so the long cap does not apply to them.
 
+## Changes (2026-11-02, PF-06 batched claim)
+
+`ReserveAndBegin/1` (03/04/05 "Changes (2026-11-02, PF-06 batched claim)") adds ten Postgres cases in `ReserveAndBeginTests`. Every case ends with the ReferenceModel check of every committed history (`CommittedHistory` maps the attempts a `ReserveAndBegin` receipt closed to the model's Begin or BeginDeferred). Existing cases keep their assertions; TIME-09 changes its setup (below).
+
+- **RAB-01** (Contract): per-job isolation. In one batch, a job whose scope is full is `CapacityBlocked` with its own scope and cursor while the jobs around it begin; each begun job is running with its own lease, one execution counted, and its Reserve and Begin values; the command has one receipt. The blocked job is claimed by the next batch once the scope frees, with a higher fencing value. A batch where every candidate is blocked applies nothing and resumes after the last candidate.
+- **RAB-02** (Contract): N limits. `MaxJobs` 0 and 33 are `InvalidRequest`; a batch claims at most N; a batch held at a barrier keeps its rows locked and a second batch claims the next candidates without waiting (`SKIP LOCKED`); an empty lane is `NoWork`.
+- **RAB-03** (Contract): rate deferral inside a batch. With a 2-per-minute rate scope, the first two rated jobs begin, the next two are `RateLimited` (attempt closed `admission_deferred`, no grant, job back to waiting), and an unrated job in the same batch begins.
+- **RAB-04** (Contract): cancellation inside a batch. A job cancelled before the batch is never a candidate. A Cancel that arrives while the batch holds its locks waits, then finds its job running: only that job carries the request, and only its Renew reports it.
+- **RAB-05** (Contract): Begin's closing plans inside a batch. A recorded cancel request and a spent budget close their attempts (`InvalidState` `cancelled_before_start`, `BudgetExhausted`), release the job's active key and permits, and the other jobs begin.
+- **RAB-06** (Fault): lost reply. `AfterCommitBeforeReply` `DropReply`; the same command again returns every outcome with the payloads, `Replayed = true`, one receipt, nothing new applied; each replayed lease renews and finishes; a changed body under the same ID is `CommandConflict`.
+- **RAB-07** (Fault): fault hook. `AfterMutation` step 2 (after the second job) throws: nothing of the first two jobs commits (no attempt, no fence, no receipt); the same command then applies once.
+- **RAB-08** (Contract): lock order. Four batch claimers and two Reserve+Begin claimers over 48 jobs on shared and paired scopes (the pairs in both orders): no deadlock detected, no scope over capacity, every job runs once.
+- **RAB-09** (Contract): the worker with 8 slots claims through `ReserveAndBegin` (applied batches > 0, receipts present); 40 jobs run once each.
+- **RAB-10** (Fault): fallback. With the function missing (the store reports `UnsupportedVersion`), the worker turns the batch off, records a diagnostic, keeps admission open and runs every job with Reserve and Begin.
+- **TIME-09** parts (a) and (b) run with one slot, so the claim is still Reserve then Begin; a new part (a2) loses the reply of a two-slot worker's `ReserveAndBegin` and then fails its resolution: the claim is reported unresolved, the pool stays suspended, and after the faults are disarmed the replayed outcome runs the job once.
+- **Fault points:** `ReserveAndBegin` has `AfterLocksBeforeFreshTime` and `BeforeFirstMutation` once and `AfterMutation` once per job (step = the job's 1-based position). Reserve/1 and Begin/1 keep their points and steps (their bodies moved into shared functions with the hooks in the same places).
+- **PGX-07** also explains the batched claim at a million rows (custom plan, buffers ≤ 40 + 8 × 32) and its generic plan (`plan_cache_mode = force_generic_plan`, as PL/pgSQL may cache it): every access to `jobs` uses `jobs_ready`.
+- **MIG** kill-phase rows gain migration 0010; the manifest test expects schema revision 10 with `ReserveAndBegin: [1]`.
+- **PERF-01** gains `ReserveAndBegin` = 1 command for 2 jobs and for 8 jobs. Per job: 8 round trips with Reserve + Begin; 4 + 2/n with one batch of n.
+
 ## Changes (2026-11-02, PF-05)
 
 Server functions (04 Changes 2026-11-02, PF-05). Every existing fault case keeps its point and its assertions.

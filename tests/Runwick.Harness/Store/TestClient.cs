@@ -114,6 +114,16 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
             () => ((ILeaseBatchStore)Store).RenewManyAsync(cmd, CancellationToken.None));
     }
 
+    /// <summary>ReserveAndBegin/1 (PF-06 batched claim); one history entry for the call.</summary>
+    internal Task<StoreReply<ClaimedJobs>> ReserveAndBeginAsync(int maxJobs, string queue = "default", string priority = "medium",
+        TimeSpan? lease = null, CandidateCursor? after = null, Guid? commandId = null, DateTimeOffset? notAfter = null)
+    {
+        var cmd = Command(new ReserveAndBeginRequest(WorkerInstanceId, queue, priority, Contracts, after, lease ?? TimeSpan.FromSeconds(30), maxJobs),
+            commandId, notAfter);
+        return Record(new StoreCommand<object>(application, cmd.CommandId, cmd.NotAfter, cmd.Body), Operations.ReserveAndBegin,
+            () => ((IReserveAndBeginStore)Store).ReserveAndBeginAsync(cmd, CancellationToken.None));
+    }
+
     internal Task<StoreReply<FinishedAttempt>> FinishAsync(LeaseHandle lease, AttemptOutcome outcome, TimeSpan? elapsed = null,
         TimeSpan? requestedDelay = null, AttemptError? error = null, Guid? commandId = null, DateTimeOffset? notAfter = null)
     {

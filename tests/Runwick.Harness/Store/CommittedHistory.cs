@@ -170,6 +170,10 @@ internal static class CommittedHistory
             "ReleaseReservation" => ModelOp.Release,
             "Begin" when a.Outcome == "admission_deferred" => ModelOp.BeginDeferred,
             "Begin" => ModelOp.Begin,
+
+            // ReserveAndBegin/1 (PF-06 batched claim) closes an attempt only through its Begin step.
+            "ReserveAndBegin" when a.Outcome == "admission_deferred" => ModelOp.BeginDeferred,
+            "ReserveAndBegin" => ModelOp.Begin,
             _ => a.Outcome switch
             {
                 "released" or "cancelled_before_start" => ModelOp.Release,

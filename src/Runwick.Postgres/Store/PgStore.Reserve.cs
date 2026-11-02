@@ -25,10 +25,10 @@ internal sealed partial class PgStore
         var fingerprint = CommandEnvelopes.Fingerprint(StoreId, command.Application, Operations.Reserve, command.CommandId, command.NotAfter,
             CommandEnvelopes.Reserve(request));
         // Q, C, G, the payload, S, the fresh clock, P, the fences, the attempt, the job, the permits, the event and R4
-        // run in runwick.reserve_v1 (04 §7.3); the attempt ID is UUIDv7 of the decision time, built in SQL.
+        // run in runwick.reserve_v2 through rw_reserve_job_v1 (04 §7.3); the attempt ID is UUIDv7 of the decision time, built in SQL.
         return runner.CallAsync(
             Op(command.Application, command.CommandId, Operations.Reserve, command.NotAfter, fingerprint, PgLane.Admission),
-            new PgCall("reserve_v1").P("p_queue", request.Queue).P("p_priority", request.Priority)
+            new PgCall("reserve_v2").P("p_queue", request.Queue).P("p_priority", request.Priority)
                 .P("p_after_eligible_at", request.After?.EligibleAt).P("p_after_job_id", request.After?.JobId)
                 .Arr("p_names", [.. contracts.Select(x => x.Name)], NpgsqlDbType.Text)
                 .Arr("p_versions", [.. contracts.Select(x => x.PayloadVersion)], NpgsqlDbType.Integer)
@@ -89,10 +89,10 @@ internal sealed partial class PgStore
         var fingerprint = CommandEnvelopes.Fingerprint(StoreId, command.Application, Operations.Begin, command.CommandId, command.NotAfter,
             CommandEnvelopes.Begin(command.Body));
         // J, G, then K/S/R as the plan needs, the fresh clock, the ownership check, the close or the rate step, the
-        // effects and R4 run in runwick.begin_v1 (04 §7.5, 10 §4). The defer jitter is drawn here and sent with the call.
+        // effects and R4 run in runwick.begin_v2 through rw_begin_job_v1 (04 §7.5, 10 §4). The defer jitter is drawn here and sent with the call.
         var reply = await runner.CallAsync(
             Op(command.Application, command.CommandId, Operations.Begin, command.NotAfter, fingerprint, PgLane.Admission),
-            new PgCall("begin_v1").P("p_job_id", lease.JobId).P("p_attempt_id", lease.AttemptId).P("p_worker_id", lease.WorkerInstanceId)
+            new PgCall("begin_v2").P("p_job_id", lease.JobId).P("p_attempt_id", lease.AttemptId).P("p_worker_id", lease.WorkerInstanceId)
                 .P("p_token", lease.OwnershipToken).P("p_generation", lease.Generation)
                 .P("p_min_defer", MinimumDefer).P("p_defer_jitter_ms", Random.Shared.Next(0, MaxDeferJitterMs + 1)),
             row =>

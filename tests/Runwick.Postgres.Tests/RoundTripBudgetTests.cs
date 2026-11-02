@@ -42,6 +42,8 @@ public sealed class RoundTripBudgetTests
         ["Begin rated 8"] = 1,
         ["Renew"] = 1,
         ["RenewMany"] = 1,
+        ["ReserveAndBegin 2"] = 1,
+        ["ReserveAndBegin 8"] = 1,
         ["Finish"] = 1,
         ["Recover"] = 1,
         ["ReleaseReservation"] = 1,
@@ -140,6 +142,23 @@ public sealed class RoundTripBudgetTests
         Assert.All(many.Value!.Outcomes, o => Assert.Equal(StoreStatus.Applied, o.Status));
         Assert.Equal(StoreStatus.Applied, (await c.ReleaseAsync(second)).Status);
         Assert.Equal(StoreStatus.Applied, (await Count("Finish", () => c.FinishAsync(lease, AttemptOutcome.Succeeded))).Status);
+
+        // ReserveAndBegin (PF-06 batched claim): one command claims and begins 2 or 8 jobs (the released "b" is one of them).
+        foreach (var (name, n) in new[] { ("ReserveAndBegin 2", 2), ("ReserveAndBegin 8", 8) })
+        {
+            for (var i = name.EndsWith(" 2", StringComparison.Ordinal) ? 1 : 0; i < n; i++)
+            {
+                await c.Dispatcher.DispatchAsync(new PingJob(name + i), cancellationToken: ct);
+            }
+
+            var claimed = await Count(name, () => c.ReserveAndBeginAsync(n));
+            Assert.Equal(StoreStatus.Applied, claimed.Status);
+            Assert.Equal(n, claimed.Value!.Outcomes.Count(o => o.Status == StoreStatus.Applied));
+            foreach (var o in claimed.Value.Outcomes)
+            {
+                Assert.Equal(StoreStatus.Applied, (await c.FinishAsync(o.Begun!.Lease.Handle, AttemptOutcome.Succeeded)).Status);
+            }
+        }
 
         // Rated Begin: one scope and eight scopes.
         foreach (var (name, dispatch) in new (string, Func<Task>)[]

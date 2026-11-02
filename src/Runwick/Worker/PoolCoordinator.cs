@@ -21,6 +21,7 @@ internal sealed class PoolCoordinator
     int _idleStep;
     int _roundReserves;
     bool _claimUnresolved;
+    bool _batchOff;
 
     public PoolCoordinator(WorkerEngine engine, PoolSettings settings)
     {
@@ -55,6 +56,9 @@ internal sealed class PoolCoordinator
     public Task? ClaimTask { get; private set; }
 
     public long ReservesSent;
+
+    /// <summary>Applied ReserveAndBegin commands (05 §9.6), for diagnostics and tests.</summary>
+    public long BatchClaims;
 
     /// <summary>Fresh claims stop while a Reserve or Begin of this pool is unresolved (05 §15.2).</summary>
     public bool Suspended => Volatile.Read(ref _suspensions) > 0 || _claimUnresolved;
@@ -214,9 +218,37 @@ internal sealed class PoolCoordinator
         while (true)
         {
             _roundReserves++;
-            var claim = ClaimAsync(ticket, lane, _cursors.GetValueOrDefault(lane));
-            ClaimTask = claim;
-            var (reply, sentAt) = await claim.ConfigureAwait(false);
+            StoreReply<ReservedJob>? reply = null;
+            TimeSpan sentAt = default;
+
+            // More than one free slot: claim them in one ReserveAndBegin command (05 §9.6). The batch settles its own
+            // Applied reply; a reply like a single Reserve's (no work, paused, all blocked, expired) continues below as
+            // one; any other non-Applied reply falls back to Reserve then Begin for this ticket.
+            if (BatchTickets(ticket, choice) is { } tickets)
+            {
+                var batch = BatchAsync(tickets, lane, _cursors.GetValueOrDefault(lane));
+                ClaimTask = batch;
+                var (batchReply, batchSentAt) = await batch.ConfigureAwait(false);
+                switch (Settle(choice, lane, tickets, batchReply, batchSentAt))
+                {
+                    case BatchResult.Applied:
+                        return true;
+                    case BatchResult.Stopped:
+                        return false;
+                    case BatchResult.AsReserve:
+                        reply = StoreReply<ReservedJob>.NoEffect(batchReply!.Status, batchReply.Error ?? new StoreError("no_effect"), batchReply.DecidedAt);
+                        sentAt = batchSentAt;
+                        break;
+                }
+            }
+
+            if (reply is null)
+            {
+                var claim = ClaimAsync(ticket, lane, _cursors.GetValueOrDefault(lane));
+                ClaimTask = claim;
+                (reply, sentAt) = await claim.ConfigureAwait(false);
+            }
+
             var now = _engine.Clock.Now;
             if (reply is null)
             {
@@ -290,6 +322,146 @@ internal sealed class PoolCoordinator
         }
     }
 
+    enum BatchResult
+    {
+        /// <summary>At least one job began and no blocked candidate cooled the lane; every ticket is settled.</summary>
+        Applied,
+
+        /// <summary>Every ticket is settled and the visit ends (control stop, nothing began, or a cooldown).</summary>
+        Stopped,
+
+        /// <summary>A no-effect reply a single Reserve also returns; the first ticket continues as that Reserve's.</summary>
+        AsReserve,
+
+        /// <summary>Any other reply: the first ticket claims again with Reserve, then Begin.</summary>
+        Fallback,
+    }
+
+    /// <summary>
+    /// The tickets for one ReserveAndBegin command: the given one plus every other free slot, at most
+    /// <see cref="IReserveAndBeginStore.MaxJobs"/>. Null (and nothing more acquired) when the store has no batched
+    /// claim, the batch is off for this pool, or there is only one free slot: a single slot keeps Reserve then Begin.
+    /// Also null unless the selection had exactly one candidate lane and was not an aging pick: queue and lane shares
+    /// divide admissions (05 §8.4), so with several ready lanes every admission is its own selection.
+    /// </summary>
+    List<CapacityTicket>? BatchTickets(CapacityTicket first, LaneChoice choice)
+    {
+        if (_batchOff || _engine.Store is not IReserveAndBeginStore || choice.Aging || choice.EligibleQueues.Count != 1
+            || choice.EligibleLanes.Count != 1)
+        {
+            return null;
+        }
+
+        var tickets = new List<CapacityTicket> { first };
+        while (tickets.Count < IReserveAndBeginStore.MaxJobs && Gate.TryAcquire() is { } extra)
+        {
+            tickets.Add(extra);
+        }
+
+        return tickets.Count > 1 ? tickets : null;
+    }
+
+    /// <summary>
+    /// Settles a ReserveAndBegin reply (05 §9.6). Applied: each begun job moves one ticket into a new entry with its
+    /// Begin already decided; every other outcome returns its ticket at once (a rate deferral is counted and recorded as
+    /// a blocked admission outcome, a capacity-blocked candidate moves the lane cursor and cools as a blocked Reserve
+    /// does). Not Applied: every ticket but the first returns, and the first continues as the reply says.
+    /// </summary>
+    BatchResult Settle(LaneChoice choice, LaneKey lane, List<CapacityTicket> tickets, StoreReply<ClaimedJobs>? reply, TimeSpan sentAt)
+    {
+        if (reply is null)
+        {
+            _engine.Diagnose($"unresolved claim at control stop in pool {Settings.Name}");
+            tickets.ForEach(t => t.Return());
+            return BatchResult.Stopped;
+        }
+
+        if (reply.Status != StoreStatus.Applied || reply.Value is not { } claimed)
+        {
+            foreach (var extra in tickets.Skip(1))
+            {
+                extra.Return();
+            }
+
+            if (reply.Status is StoreStatus.NoWork or StoreStatus.QueuePaused or StoreStatus.CapacityBlocked or StoreStatus.CommandExpired)
+            {
+                return BatchResult.AsReserve;
+            }
+
+            // Anything else (an unsupported operation, a refused request, a fault): this pool claims with Reserve and
+            // Begin from now on, and the single path reports what it finds.
+            _batchOff = true;
+            _engine.Diagnose($"ReserveAndBegin returned {reply.Status} ({reply.Error?.Code}) in pool {Settings.Name}; claiming with Reserve and Begin");
+            return BatchResult.Fallback;
+        }
+
+        Interlocked.Increment(ref BatchClaims);
+        var now = _engine.Clock.Now;
+        var applied = 0;
+        var cool = false;
+        var i = 0;
+        foreach (var outcome in claimed.Outcomes)
+        {
+            var ticket = tickets[i++];
+            switch (outcome.Status)
+            {
+                case StoreStatus.Applied when outcome.Reserved is { } reserved && outcome.Begun is { } begun:
+                    applied++;
+                    var deadline = reply.Replayed ? (TimeSpan?)null : _engine.DeadlineFrom(sentAt, reserved.Lease, reply.DecidedAt);
+                    _engine.Admit(this, ticket, reserved, deadline, sentAt,
+                        new BeginReply(StoreReply<BegunExecution>.Applied(begun, reply.DecidedAt, reply.Replayed), null));
+                    break;
+                case StoreStatus.RateLimited:
+                    // T20 committed for this job alone (10 §4): as a deferred Begin, the ticket returns now.
+                    ticket.Return();
+                    Interlocked.Increment(ref _engine.RateDeferrals);
+                    Outcomes.Record(now, blocked: true);
+                    break;
+                case StoreStatus.CapacityBlocked:
+                    ticket.Return();
+                    Outcomes.Record(now, blocked: true);
+                    _cursors[lane] = outcome.Error?.ResumeAfter;
+                    switch (Classify(outcome.Error?.BlockedScopeId, lane))
+                    {
+                        case BlockedScope.Queue:
+                            Selector.CoolQueue(choice.Queue, now);
+                            cool = true;
+                            break;
+                        case BlockedScope.SingleTypeLane:
+                            Selector.CoolLane(choice.Queue, choice.Priority, now);
+                            cool = true;
+                            break;
+                    }
+
+                    break;
+                default:
+                    // Begin closed the attempt (cancelled before start, budget exhausted): nothing to run.
+                    ticket.Return();
+                    break;
+            }
+        }
+
+        // Fewer candidates than slots: the spare tickets return.
+        foreach (var spare in tickets.Skip(i))
+        {
+            spare.Return();
+        }
+
+        // One commit per begun job: the lane was the only candidate, so scores stay balanced and the queue's aging
+        // count advances once per admission, as n single claims would leave them.
+        for (var k = 0; k < applied; k++)
+        {
+            Selector.OnApplied(choice);
+        }
+
+        if (applied == 0)
+        {
+            Selector.OnNotApplied(choice);
+        }
+
+        return applied > 0 && !cool ? BatchResult.Applied : BatchResult.Stopped;
+    }
+
     enum BlockedScope
     {
         Queue,
@@ -327,11 +499,26 @@ internal sealed class PoolCoordinator
     /// One Reserve command resolved to a reply (05 §9.1–§9.2): an unknown commit resubmits the same command; past the
     /// claim resolution budget the claim is surfaced unresolved and this pool stays suspended. Null at control stop.
     /// </summary>
-    async Task<(StoreReply<ReservedJob>? Reply, TimeSpan SentAt)> ClaimAsync(CapacityTicket ticket, LaneKey lane, CandidateCursor? after)
+    Task<(StoreReply<ReservedJob>? Reply, TimeSpan SentAt)> ClaimAsync(CapacityTicket ticket, LaneKey lane, CandidateCursor? after)
     {
         _ = ticket;
         var command = _engine.Command(new ReserveRequest(_engine.WorkerInstanceId, lane.Queue, lane.Priority, _engine.Contracts, after,
             _engine.Options.LeaseDuration));
+        return ResolveAsync(command.CommandId, "Reserve", t => _engine.Store.TryReserveAsync(command, t));
+    }
+
+    /// <summary>One ReserveAndBegin command for <paramref name="tickets"/>.Count slots, resolved as a Reserve is (05 §9.6).</summary>
+    Task<(StoreReply<ClaimedJobs>? Reply, TimeSpan SentAt)> BatchAsync(List<CapacityTicket> tickets, LaneKey lane, CandidateCursor? after)
+    {
+        var store = (IReserveAndBeginStore)_engine.Store;
+        var command = _engine.Command(new ReserveAndBeginRequest(_engine.WorkerInstanceId, lane.Queue, lane.Priority, _engine.Contracts, after,
+            _engine.Options.LeaseDuration, tickets.Count));
+        return ResolveAsync(command.CommandId, "ReserveAndBegin", t => store.ReserveAndBeginAsync(command, t));
+    }
+
+    async Task<(StoreReply<T>? Reply, TimeSpan SentAt)> ResolveAsync<T>(Guid commandId, string operation, Func<CancellationToken, Task<StoreReply<T>>> send)
+        where T : class
+    {
         var first = _engine.Clock.Now;
         try
         {
@@ -342,16 +529,16 @@ internal sealed class PoolCoordinator
                 {
                     Interlocked.Increment(ref ReservesSent);
                     var reply = await _engine.CallAsync(_engine.AdmissionIo, attempt == 0 ? ControlPriority.Begin : ControlPriority.Resolution,
-                        _engine.Options.ControlRequestTimeout, t => _engine.Store.TryReserveAsync(command, t)).ConfigureAwait(false);
+                        _engine.Options.ControlRequestTimeout, send).ConfigureAwait(false);
                     return (reply, sentAt);
                 }
                 catch (Exception ex) when (!_engine.ControlStop.IsCancellationRequested)
                 {
-                    _engine.Logger.LogDebug(ex, "Runwick Reserve {Command} unresolved; resubmitting the same command.", command.CommandId);
+                    _engine.Logger.LogDebug(ex, "Runwick {Operation} {Command} unresolved; resubmitting the same command.", operation, commandId);
                     if (!_claimUnresolved && _engine.Clock.Now - first >= _engine.Options.ClaimResolutionBudget)
                     {
                         _claimUnresolved = true;
-                        _engine.Diagnose($"unresolved claim {command.CommandId} in pool {Settings.Name}: admission suspended until it resolves");
+                        _engine.Diagnose($"unresolved claim {commandId} in pool {Settings.Name}: admission suspended until it resolves");
                     }
 
                     await _engine.Clock.Delay(_engine.Backoff(attempt), _engine.ControlStop).ConfigureAwait(false);

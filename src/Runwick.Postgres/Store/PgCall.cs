@@ -88,6 +88,9 @@ internal sealed class PgRow
 
     public DateTimeOffset? CreatedAt { get; init; }
 
+    /// <summary>Rows after the reply row: the payload rows of a set-returning function (ReserveAndBegin/1).</summary>
+    public List<PgRow> More { get; } = [];
+
     /// <summary>The call applied an effect now (not a replay): the client commits.</summary>
     public bool Commits => Effect == nameof(StoreEffect.Applied) && !Replayed;
 

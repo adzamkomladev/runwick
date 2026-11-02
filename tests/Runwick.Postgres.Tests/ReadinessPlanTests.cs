@@ -65,20 +65,74 @@ public sealed class ReadinessPlanTests
     static string ProbeSql => Statement("PgStore.Readiness.cs", "public Task<ReadySnapshot> ProbeAsync(", 0);
 
     /// <summary>
-    /// Reserve's candidate claim, step C of <c>runwick.reserve_v1</c> (04 Changes 2026-11-02, PF-05), as a plain statement:
-    /// the INTO list is dropped and each function argument <c>p_x</c> becomes the parameter <c>@x</c>.
+    /// Reserve's candidate claim, step C of <c>runwick.reserve_v2</c> (04 Changes 2026-11-02, PF-05 and PF-06 batched claim),
+    /// as a plain statement: the INTO list is dropped and each function argument <c>p_x</c> becomes the parameter <c>@x</c>.
     /// </summary>
-    static string ReserveCandidateSql
+    static string ReserveCandidateSql => CandidateSql("reserve_v2", "-- C: the candidate claim.");
+
+    /// <summary>
+    /// ReserveAndBegin/1's claim, step C of <c>runwick.reserve_and_begin_v1</c> (PF-06 batched claim): the same statement with
+    /// <c>LIMIT v_max</c>, which becomes the parameter <c>@max</c>.
+    /// </summary>
+    static string ClaimCandidateSql => CandidateSql("reserve_and_begin_v1", "-- C: the candidate claim (").Replace("v_max", "@max", StringComparison.Ordinal);
+
+    static string CandidateSql(string function, string marker)
     {
-        get
+        var text = SqlFile("0010_reserve_and_begin.sql");
+        var at = text.IndexOf("CREATE FUNCTION runwick." + function + "(", StringComparison.Ordinal);
+        Assert.True(at >= 0, function + " not found in 0010_reserve_and_begin.sql");
+        var start = text.IndexOf("SELECT j.job_id", text.IndexOf(marker, at, StringComparison.Ordinal), StringComparison.Ordinal);
+        var end = text.IndexOf("SKIP LOCKED", start, StringComparison.Ordinal) + "SKIP LOCKED".Length;
+        var sql = Regex.Replace(text[start..end], @"^\s*INTO [^\n]*\n", "", RegexOptions.Multiline);
+        return Regex.Replace(sql, @"\bp_(\w+)", "@$1");
+    }
+
+    /// <summary>
+    /// The plan PL/pgSQL may cache for the batched claim after its first executions (<c>LIMIT</c> a parameter): the
+    /// statement prepared with the function's parameter types and explained under <c>plan_cache_mode =
+    /// force_generic_plan</c>. Reports the access paths to <c>jobs</c>.
+    /// </summary>
+    static async Task<List<(string Node, string? Index)>> GenericClaimAccessAsync(DriverFixture f, string application)
+    {
+        var names = new[]
         {
-            var text = SqlFile("0009_functions.sql");
-            var at = text.IndexOf("CREATE FUNCTION runwick.reserve_v1(", StringComparison.Ordinal);
-            Assert.True(at >= 0, "reserve_v1 not found in 0009_functions.sql");
-            var start = text.IndexOf("SELECT j.job_id", text.IndexOf("-- C: the candidate claim.", at, StringComparison.Ordinal), StringComparison.Ordinal);
-            var end = text.IndexOf("SKIP LOCKED", start, StringComparison.Ordinal) + "SKIP LOCKED".Length;
-            var sql = Regex.Replace(text[start..end], @"^\s*INTO [^\n]*\n", "", RegexOptions.Multiline);
-            return Regex.Replace(sql, @"\bp_(\w+)", "@$1");
+            ("application", "text"), ("queue", "text"), ("priority", "text"), ("after_job_id", "uuid"), ("after_eligible_at", "timestamptz"),
+            ("names", "text[]"), ("versions", "integer[]"), ("profile_ids", "text[]"), ("profile_versions", "integer[]"), ("max", "integer"),
+        };
+        var sql = ClaimCandidateSql;
+        foreach (var ((name, _), i) in names.Select((n, i) => (n, i)).OrderByDescending(x => x.n.Item1.Length))
+        {
+            sql = Regex.Replace(sql, "@" + name + @"\b", "$$" + (i + 1));
+        }
+
+        await using var conn = new NpgsqlConnection(f.AdminConnectionString);
+        await conn.OpenAsync();
+        using (var prepare = new NpgsqlCommand(
+            $"SET plan_cache_mode = force_generic_plan; PREPARE rw_claim_plan({string.Join(", ", names.Select(n => n.Item2))}) AS {sql}", conn))
+        {
+            await prepare.ExecuteNonQueryAsync();
+        }
+
+        // A utility statement takes no bind parameters: the application is inlined as a literal.
+        using var cmd = new NpgsqlCommand(
+            $"EXPLAIN (FORMAT JSON) EXECUTE rw_claim_plan('{application.Replace("'", "''", StringComparison.Ordinal)}', 'default', 'normal', NULL, NULL, '{{x}}', '{{1}}', '{{p}}', '{{1}}', 32)",
+            conn);
+        var json = (string)(await cmd.ExecuteScalarAsync())!;
+        var access = new List<(string, string?)>();
+        Walk(JsonNode.Parse(json)!.AsArray()[0]!["Plan"]!.AsObject(), access);
+        return access;
+
+        static void Walk(JsonObject node, List<(string, string?)> access)
+        {
+            if (node["Relation Name"]?.GetValue<string>() == "jobs")
+            {
+                access.Add((node["Node Type"]!.GetValue<string>(), node["Index Name"]?.GetValue<string>()));
+            }
+
+            foreach (var child in node["Plans"]?.AsArray() ?? [])
+            {
+                Walk(child!.AsObject(), access);
+            }
         }
     }
 
@@ -183,7 +237,12 @@ public sealed class ReadinessPlanTests
             cmd.Parameters.Add(new NpgsqlParameter("lane_priorities", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = lanes.Select(l => l.p).ToArray() });
         }
 
-        if (statement == "reserve")
+        if (statement == "claim")
+        {
+            cmd.Parameters.AddWithValue("max", IReserveAndBeginStore.MaxJobs);
+        }
+
+        if (statement is "reserve" or "claim")
         {
             cmd.Parameters.AddWithValue("queue", "q1");
             cmd.Parameters.AddWithValue("priority", "medium");
@@ -283,9 +342,11 @@ public sealed class ReadinessPlanTests
         });
         var contracts = c.Contracts;
         var template = (await c.Dispatcher.DispatchAsync(new WorkJob("template"))).JobId.Value;
-        var statements = new[] { ("probe", ProbeSql), ("reserve", ReserveCandidateSql), ("diagnostic", DiagnosticSql) };
+        var statements = new[] { ("probe", ProbeSql), ("reserve", ReserveCandidateSql), ("claim", ClaimCandidateSql), ("diagnostic", DiagnosticSql) };
         Assert.All(statements, s => Assert.Contains("runwick.jobs", s.Item2, StringComparison.Ordinal));
         Assert.Contains("FOR NO KEY UPDATE OF j SKIP LOCKED", ReserveCandidateSql, StringComparison.Ordinal);
+        Assert.Contains("FOR NO KEY UPDATE OF j SKIP LOCKED", ClaimCandidateSql, StringComparison.Ordinal);
+        Assert.Contains("LIMIT @max", ClaimCandidateSql, StringComparison.Ordinal);
 
         var results = new Dictionary<(string, long), Plan>();
         long loaded = 0;
@@ -314,6 +375,12 @@ public sealed class ReadinessPlanTests
                 });
             }
 
+            // The batched claim's cached (generic) plan, where LIMIT is a parameter, also uses the ready index.
+            var generic = await GenericClaimAccessAsync(f, f.Application);
+            TestContext.Current.TestOutputHelper?.WriteLine($"claim generic plan at {size:N0} rows: {string.Join(", ", generic)}");
+            Assert.NotEmpty(generic);
+            Assert.All(generic, a => Assert.Equal("jobs_ready", a.Index));
+
             // The real operations agree with the plans' inputs at this size.
             var snapshot = await c.Store.ProbeAsync(f.Application, [.. Queues.SelectMany(q => Priorities.Select(p => new LaneKey(q, p)))],
                 contracts, CancellationToken.None);
@@ -332,6 +399,7 @@ public sealed class ReadinessPlanTests
 
         Assert.InRange(results[("probe", 1_000_000)].Buffers, 1, 400);
         Assert.InRange(results[("reserve", 1_000_000)].Buffers, 1, 40);
+        Assert.InRange(results[("claim", 1_000_000)].Buffers, 1, 40 + (8 * IReserveAndBeginStore.MaxJobs));
         Assert.InRange(results[("diagnostic", 1_000_000)].Buffers, 1, (12 * 256) + 512);
     }
 }
