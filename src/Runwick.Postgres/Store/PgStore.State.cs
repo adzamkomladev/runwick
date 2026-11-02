@@ -28,10 +28,13 @@ internal sealed partial class PgStore
         FOR NO KEY UPDATE
         """).P("job_id", jobId);
 
-    static JobRow MapJob(Npgsql.NpgsqlDataReader r) => new(
-        r.GetString(0), r.GetInt32(1), r.GetInt64(2),
-        r.IsDBNull(3) ? null : r.GetGuid(3), r.IsDBNull(4) ? null : r.GetGuid(4), r.IsDBNull(5) ? null : r.GetGuid(5),
-        PgTime.ReadNullable(r, 6), PgTime.ReadNullable(r, 7), r.IsDBNull(8) ? null : r.GetString(8), r.GetString(9), PgTime.Read(r, 10));
+    static JobRow MapJob(Npgsql.NpgsqlDataReader r) => MapJobAt(r, 0);
+
+    /// <summary>J's columns starting at ordinal <paramref name="o"/> (RenewMany reads the job ID first).</summary>
+    static JobRow MapJobAt(Npgsql.NpgsqlDataReader r, int o) => new(
+        r.GetString(o), r.GetInt32(o + 1), r.GetInt64(o + 2),
+        r.IsDBNull(o + 3) ? null : r.GetGuid(o + 3), r.IsDBNull(o + 4) ? null : r.GetGuid(o + 4), r.IsDBNull(o + 5) ? null : r.GetGuid(o + 5),
+        PgTime.ReadNullable(r, o + 6), PgTime.ReadNullable(r, o + 7), r.IsDBNull(o + 8) ? null : r.GetString(o + 8), r.GetString(o + 9), PgTime.Read(r, o + 10));
 
     /// <summary>The locked job's current generation row, its execution count and whether it has rate requirements.</summary>
     sealed record GenerationRead(GenerationRow Gen, long ExecutionCount, bool Rated);

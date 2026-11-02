@@ -176,7 +176,7 @@ internal sealed record PgOp(
         or Operations.Begin or Operations.RegisterQueue or Operations.RegisterScope or OutboxOperations.ReceiveOutbox
         || ScheduleOperations.IsCreation(Operation);
 
-    public bool AllowedWhileDraining => Operation is Operations.Renew or Operations.Finish or Operations.Recover
+    public bool AllowedWhileDraining => Operation is Operations.Renew or Operations.RenewMany or Operations.Finish or Operations.Recover
         or Operations.ReleaseReservation or "PublishPresence" or "ReadinessProbe" or "ListExpiredLeases" or "ResolveCommand"
         or Operations.RegisterApplication or Operations.EventsSince || Operations.IsAdministrative(Operation)
         || Operation is ScheduleOperations.SetScheduleState or ScheduleOperations.UpdateSchedule or ScheduleOperations.ResolveCatchUp

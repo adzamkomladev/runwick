@@ -50,6 +50,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         new("0005_readiness", LoadSql("0005_readiness.sql"), 5),
         new("0006_scheduler", LoadSql("0006_scheduler.sql"), 6),
         new("0007_scaling", LoadSql("0007_scaling.sql"), 7),
+        new("0008_renew_many", LoadSql("0008_renew_many.sql"), 8),
     ];
 
     /// <summary>The schema revision this binary writes to (03 §10.1): the last migration's target.</summary>
@@ -495,6 +496,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         [5] = ["ReadinessProbe@2", "ListUnsupportedBacklog"],
         [6] = ScheduleOperations.All,
         [7] = ["SetPoolOverride", "EstimateDemand", "RecordScalingEvent"],
+        [8] = ["RenewMany"],
     };
 
     internal static IReadOnlyList<string> OperationsAt(long revision) => [.. VersionsAt(revision).Keys];

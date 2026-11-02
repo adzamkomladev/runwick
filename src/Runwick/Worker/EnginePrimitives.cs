@@ -232,6 +232,25 @@ internal sealed class PriorityGate(int capacity)
         }
     }
 
+    /// <summary>
+    /// A slot only when one is free now and nobody is waiting (the same condition under which
+    /// <see cref="AcquireAsync"/> completes synchronously); otherwise null, without queueing.
+    /// </summary>
+    public Slot? TryAcquire()
+    {
+        lock (_lock)
+        {
+            if (_held < capacity && _waiters.Count == 0)
+            {
+                _held++;
+                HeldSinceTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+                return new Slot(this);
+            }
+
+            return null;
+        }
+    }
+
     static async Task<Slot> WaitAsync(Task<Slot> wait, CancellationTokenRegistration registration)
     {
         try

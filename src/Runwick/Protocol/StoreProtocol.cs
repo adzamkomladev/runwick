@@ -227,6 +227,31 @@ internal interface IJobReservationStore
     Task<StoreReply<RenewedLease>> RenewAsync(StoreCommand<RenewRequest> command, CancellationToken ct);
 }
 
+/// <summary>RenewMany/1 (03 Changes 2026-11-02, PF-06): distinct leases of one worker, each renewed as Renew/1 would.</summary>
+internal sealed record RenewManyRequest(IReadOnlyList<LeaseHandle> Leases, TimeSpan LeaseDuration);
+
+/// <summary>
+/// One lease's outcome, in request order: <c>Applied</c> with <see cref="Value"/>, or the refusal Renew/1 would give
+/// (StaleLease, InvalidState, NotFound, InvariantFault <c>permit_set_mismatch</c>), with no effect on that lease.
+/// </summary>
+internal sealed record LeaseRenewal(StoreStatus Status, string? Code, RenewedLease? Value);
+
+/// <summary>Value of an Applied RenewMany: one outcome per requested lease, same order.</summary>
+internal sealed record RenewedLeases(IReadOnlyList<LeaseRenewal> Outcomes);
+
+/// <summary>
+/// Optional batched renewal (03 Changes 2026-11-02, PF-06). The reply is Applied when the transaction committed; each
+/// lease's own outcome is in <see cref="RenewedLeases.Outcomes"/>, and a refused lease never rolls back another. Any other
+/// reply status (expired, closed, unsupported, invalid request) applied nothing to any lease. No receipt, like Renew/1.
+/// </summary>
+internal interface ILeaseBatchStore
+{
+    /// <summary>The most leases one call may carry.</summary>
+    const int MaxLeases = 64;
+
+    Task<StoreReply<RenewedLeases>> RenewManyAsync(StoreCommand<RenewManyRequest> command, CancellationToken ct);
+}
+
 /// <summary>Begin reply: the protocol reply plus the closing value when Begin closed the attempt (spec 03 §2.1 table).</summary>
 internal sealed record BeginReply(StoreReply<BegunExecution> Reply, BeginClosed? Closed)
 {
@@ -506,6 +531,7 @@ internal static class Operations
     public const string Reserve = "Reserve";
     public const string Begin = "Begin";
     public const string Renew = "Renew";
+    public const string RenewMany = "RenewMany";
     public const string Finish = "Finish";
     public const string Recover = "Recover";
     public const string ReleaseReservation = "ReleaseReservation";
@@ -535,7 +561,7 @@ internal static class Operations
         RetentionClass(operation) == OwnershipClass ? TimeSpan.FromMinutes(10) : TimeSpan.FromHours(24);
 
     public static TimeSpan DeadlineCap(string operation) =>
-        operation is Reserve or Begin or Renew or Finish or Recover or ReleaseReservation ? TimeSpan.FromSeconds(60)
+        operation is Reserve or Begin or Renew or RenewMany or Finish or Recover or ReleaseReservation ? TimeSpan.FromSeconds(60)
         : operation == OutboxOperations.ReceiveOutbox ? OutboxOperations.TransportCap
         : ScheduleOperations.IsScheduler(operation) ? ScheduleOperations.SchedulerCap
         : TimeSpan.FromMinutes(10);

@@ -10,8 +10,9 @@ namespace Runwick.Workloads;
 /// (<c>controlWait</c>, from the engine's own tracking). Also derives the renewal margin (previous expiry − Renew decision,
 /// both store instants) and due-to-Begin (<c>eligible_at</c> from the Reserve cursor → Begin decision).
 /// </summary>
-internal sealed class TimingStore(IRunwickStore inner, Metrics metrics, bool detailed = false) : IRunwickStore
+internal sealed class TimingStore(IRunwickStore inner, Metrics metrics, bool detailed = false) : IRunwickStore, ILeaseBatchStore
 {
+
     readonly ConcurrentDictionary<Guid, DateTimeOffset> _expiry = new();
     readonly ConcurrentDictionary<Guid, DateTimeOffset> _eligible = new();
 
@@ -116,6 +117,39 @@ internal sealed class TimingStore(IRunwickStore inner, Metrics metrics, bool det
         if (reply is { Status: StoreStatus.Applied, Value: { } renewed })
         {
             _expiry[attempt] = renewed.Lease.ExpiresAt;
+        }
+
+        return reply;
+    }
+
+    /// <summary>RenewMany (PF-06): timed as <c>renewMany</c>; each member's margin is recorded as for Renew.</summary>
+    public async Task<StoreReply<RenewedLeases>> RenewManyAsync(StoreCommand<RenewManyRequest> command, CancellationToken ct)
+    {
+        var batch = inner as ILeaseBatchStore ?? throw new NotSupportedException("the inner store has no RenewMany");
+        var reply = await Timed("renewMany", () => batch.RenewManyAsync(command, ct), S).ConfigureAwait(false);
+        metrics.Observe("renewManySize", command.Body.Leases.Count);
+        if (reply is { Status: StoreStatus.Applied, Value: { } value })
+        {
+            for (var i = 0; i < value.Outcomes.Count && i < command.Body.Leases.Count; i++)
+            {
+                var attempt = command.Body.Leases[i].AttemptId;
+                if (_expiry.TryGetValue(attempt, out var previous))
+                {
+                    if (value.Outcomes[i].Status == StoreStatus.Applied)
+                    {
+                        metrics.Observe("renewalMargin", (previous - reply.DecidedAt).TotalMilliseconds);
+                    }
+                    else
+                    {
+                        metrics.Count("renewalMarginMissed");
+                    }
+                }
+
+                if (value.Outcomes[i].Value is { } renewed)
+                {
+                    _expiry[attempt] = renewed.Lease.ExpiresAt;
+                }
+            }
         }
 
         return reply;

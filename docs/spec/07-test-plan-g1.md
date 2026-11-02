@@ -4,6 +4,15 @@
 
 This document defines the test harness built in SP-003, the exact case list that gate **G-1** (milestone M2, PostgreSQL execution) requires, the first performance measurements recorded by SP-010, and the G-1 pass rule. Every case listed in §4–§13 is mandatory for G-1 unless this document marks a named sub-part as deferred to a later SP item.
 
+## Changes (2026-11-02, PF-06)
+
+`RenewMany/1` (03/04/05 "Changes (2026-11-02, PF-06)") adds three Postgres cases in `RenewManyTests`; no existing case changes and no fault point moves (RenewMany has Renew/1's two per-batch points).
+
+- **RENEWMANY-01** (Contract): per-lease fencing. One command carries a valid lease and leases with a wrong token, wrong generation, wrong worker and an unknown job; each refused member gets Renew/1's status and code, the valid lease's job and permit carry the new expiry, and the refused leases' rows are byte-for-byte unchanged. Duplicate job IDs are `InvalidRequest`.
+- **RENEWMANY-02** (Contract): one failure does not affect others. Healthy leases are interleaved with a lease whose permit was removed (`InvariantFault` `permit_set_mismatch`), a finished attempt and a lapsed lease; every healthy lease is renewed with its permits, the others are untouched, an all-refused command applies nothing, an expired NotAfter applies nothing to any lease, no receipt is written, and the healthy leases then Begin and Finish normally.
+- **CAP-10 (PF-06 part)** (Fault): 16 long handlers started together; at least one renewal wave goes out as one `RenewMany`, the renewal lane never exceeds 4 concurrent calls, every attempt renews at least twice, nothing is lost, and the jobs then succeed once each with no history violation. The existing CAP-10 case runs unchanged with batching active.
+- PERF-01 gains `RenewMany` = 3 commands.
+
 ## Changes (2026-11-01, PF-03)
 
 Performance plan PF-03 (04 "Changes (2026-11-01, PF-03)") adds three Postgres cases in `PreparedStatementTests`; no fault point moves and no existing case changes.

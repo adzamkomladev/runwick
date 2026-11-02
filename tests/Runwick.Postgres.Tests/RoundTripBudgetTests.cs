@@ -41,6 +41,7 @@ public sealed class RoundTripBudgetTests
         ["Begin rated 1"] = 5,
         ["Begin rated 8"] = 5,
         ["Renew"] = 3,
+        ["RenewMany"] = 3,
         ["Finish"] = 4,
         ["Recover"] = 8,
         ["ReleaseReservation"] = 8,
@@ -130,6 +131,14 @@ public sealed class RoundTripBudgetTests
         var lease = reserved.Value!.Lease.Handle;
         Assert.Equal(StoreStatus.Applied, (await Count("Begin", () => c.BeginAsync(lease))).Reply.Status);
         Assert.Equal(StoreStatus.Applied, (await Count("Renew", () => c.RenewAsync(lease))).Status);
+
+        // RenewMany (PF-06): the same three commands for any number of leases.
+        await c.Dispatcher.DispatchAsync(new PingJob("b"), cancellationToken: ct);
+        var second = (await c.ReserveAsync()).Value!.Lease.Handle;
+        var many = await Count("RenewMany", () => c.RenewManyAsync([lease, second]));
+        Assert.Equal(StoreStatus.Applied, many.Status);
+        Assert.All(many.Value!.Outcomes, o => Assert.Equal(StoreStatus.Applied, o.Status));
+        Assert.Equal(StoreStatus.Applied, (await c.ReleaseAsync(second)).Status);
         Assert.Equal(StoreStatus.Applied, (await Count("Finish", () => c.FinishAsync(lease, AttemptOutcome.Succeeded))).Status);
 
         // Rated Begin: one scope and eight scopes.

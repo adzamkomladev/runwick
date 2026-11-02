@@ -4,6 +4,15 @@
 
 Numeric values are restated here where the engine behavior depends on them; [06-defaults.md](06-defaults.md) is the single table of defaults, derived formulas and startup inequalities. Where the two disagree, 06 is authoritative for the number and this file for the behavior.
 
+## Changes (2026-11-02, PF-06)
+
+§11.2 renewal waves, when the store offers `RenewMany/1` (03 Changes 2026-11-02, PF-06). Without it the engine renews exactly as before.
+
+- **Wave.** When the first item in the due queue is due, every other live item due within `RenewalJitter / 2` (default 1.5 s) joins it, up to 64. A member therefore renews at most that much early and never later than its due time, so `due ≤ d − (2 × ControlRequestTimeout + ControlRetryBackoffMax + SchedulerAllowance)` still holds and the deadline math of §11.1 is unchanged.
+- **Arbiter.** Each member takes its own per-attempt arbiter slot without waiting (only when it is free and nobody is queued, §6 rule 3) and holds it for the whole call. A member whose arbiter is busy (Begin, Finish, ReleaseReservation or resolution in flight) leaves the wave and renews alone through the existing path, which waits for the arbiter. A wave left with one member renews it with `Renew/1`.
+- **Call.** One `RenewMany` on the renewal lane (still 4 concurrent calls at most), with a new command ID, NotAfter = wallNow + 30 s, and a timeout bounded by `ControlRequestTimeout` and by the earliest member deadline `d − now`. Every member counts as one renewal request for `RenewsSent`; the send time `s` is the call's send time for every member.
+- **Outcomes.** Each member's outcome is applied exactly as a Renew/1 reply (§11.3): only a fresh `Applied` advances `d`, and only if it arrives before the member's current `d` and the member is not latched; `StaleLease`/`InvalidState` latch `OwnershipLost`; `permit_set_mismatch` latches `OwnershipLost(InvariantFault)`. A failed call (exception, timeout, or any non-`Applied` reply) and a member's transient outcome fall back to the per-attempt path: a new Renew per attempt with its own control backoff. A late reply never revives a latched attempt; the watchdog (§11.4) is unchanged.
+
 ## Changes (2026-10-31, SP-012)
 
 - §7.2: probe starts are ≥ 50 ms apart per group, enforced in the coordinator (it was a stated rule only).

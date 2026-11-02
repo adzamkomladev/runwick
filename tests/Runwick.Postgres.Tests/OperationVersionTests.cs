@@ -32,6 +32,7 @@ public sealed class OperationVersionTests
         (6, "RegisterSchedule", 1), (6, "MaterializeOccurrences", 1), (6, "SetScheduleState", 1), (6, "UpdateSchedule", 1),
         (6, "TriggerSchedule", 1), (6, "ResolveCatchUp", 1), (6, "RecordScheduleEvaluationFailure", 1), (6, "RevalidateSchedule", 1),
         (7, "SetPoolOverride", 1), (7, "EstimateDemand", 1), (7, "RecordScalingEvent", 1),
+        (8, "RenewMany", 1),
     ];
 
     [Fact]
