@@ -1130,3 +1130,152 @@ BEGIN
     RETURN runwick.rw_applied_v1('Applied', NULL, v_now, v_result);
 END
 $fn$;
+
+-- ------------------------------------------------------------------ Recover/1 (04 §7.8)
+
+CREATE FUNCTION runwick.recover_v1(p_application text, p_command_id uuid, p_operation text, p_not_after timestamptz,
+    p_fingerprint bytea, p_class text, p_deadline_cap interval, p_store_id uuid, p_revisions bigint[], p_epoch integer,
+    p_capabilities jsonb, p_is_creation boolean, p_allow_drain boolean, p_staged boolean,
+    p_job_id uuid, p_attempt_id uuid, p_token uuid, p_entropy bigint,
+    p_faults jsonb DEFAULT NULL)
+RETURNS runwick.rw_reply_v1 LANGUAGE plpgsql VOLATILE AS $fn$
+DECLARE
+    v_reply runwick.rw_reply_v1;
+    v_state text;
+    v_generation integer;
+    v_revision bigint;
+    v_attempt uuid;
+    v_token uuid;
+    v_lease timestamptz;
+    v_cancel boolean;
+    v_active_key text;
+    v_job_name text;
+    v_max_executions integer;
+    v_max_unstarted integer;
+    v_started integer;
+    v_unstarted integer;
+    v_retry jsonb;
+    v_unstarted_retry jsonb;
+    v_reserved boolean;
+    v_k integer;
+    v_new_state text;
+    v_reason text;
+    v_outcome text;
+    v_policy jsonb;
+    v_clock timestamptz;
+    v_now timestamptz;
+    v_delay bigint;
+    v_eligible timestamptz;
+    v_new_revision bigint;
+    v_step integer := 0;
+    v_n integer;
+    v_result jsonb;
+BEGIN
+    v_reply := runwick.rw_frame_v1(p_application, p_command_id, p_operation, p_not_after, p_fingerprint, p_class, p_deadline_cap,
+        p_store_id, p_revisions, p_epoch, p_capabilities, p_is_creation, p_allow_drain, p_staged);
+    IF v_reply.status IS NOT NULL THEN
+        RETURN v_reply;
+    END IF;
+
+    -- J
+    SELECT j.state, j.generation, j.revision, j.current_attempt_id, j.ownership_token, j.lease_expires_at,
+           j.cancel_requested_at IS NOT NULL, j.active_unique_key, j.job_name
+    INTO v_state, v_generation, v_revision, v_attempt, v_token, v_lease, v_cancel, v_active_key, v_job_name
+    FROM runwick.jobs AS j
+    WHERE j.application = p_application AND j.job_id = p_job_id
+    FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+        RETURN runwick.rw_no_effect_v1('NotFound', 'job_not_found', NULL);
+    END IF;
+
+    IF v_attempt IS DISTINCT FROM p_attempt_id OR v_token IS DISTINCT FROM p_token OR v_state NOT IN ('reserved', 'running') THEN
+        RETURN runwick.rw_no_effect_v1('StaleLease', 'stale_lease', NULL);
+    END IF;
+
+    -- G
+    SELECT g.max_executions, g.max_unstarted_abandonments, g.started_count, g.consecutive_unstarted_count,
+           g.retry_policy, g.unstarted_retry_policy
+    INTO v_max_executions, v_max_unstarted, v_started, v_unstarted, v_retry, v_unstarted_retry
+    FROM runwick.job_generations AS g
+    WHERE g.application = p_application AND g.job_id = p_job_id AND g.generation = v_generation;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'generation row missing' USING ERRCODE = 'RWI04';
+    END IF;
+
+    v_reserved := v_state = 'reserved';
+    v_k := v_unstarted + 1;
+    IF v_reserved AND v_cancel THEN
+        v_new_state := 'cancelled'; v_reason := 'cancelled_before_start';
+    ELSIF v_reserved AND v_k >= v_max_unstarted THEN
+        v_new_state := 'failed'; v_reason := 'reservation_abandonment_exhausted';
+    ELSIF v_reserved THEN
+        v_new_state := CASE WHEN v_started = 0 THEN 'pending' ELSE 'retrying' END;
+    ELSIF v_cancel THEN
+        v_new_state := 'cancelled'; v_reason := 'cancellation_requested';
+    ELSIF v_started < v_max_executions THEN
+        v_new_state := 'retrying';
+    ELSE
+        v_new_state := 'failed'; v_reason := 'execution_budget_exhausted';
+    END IF;
+
+    -- K (a terminal close only), then S.
+    IF v_new_state IN ('succeeded', 'failed', 'cancelled') AND v_active_key IS NOT NULL THEN
+        PERFORM 1 FROM runwick.dispatch_keys
+        WHERE application = p_application AND job_name = v_job_name AND key_kind = 'active' AND key = v_active_key
+        FOR UPDATE;
+    END IF;
+
+    PERFORM 1
+    FROM runwick.concurrency_scopes AS s
+    WHERE s.application = p_application
+      AND s.scope_id IN (SELECT r.scope_id FROM runwick.job_concurrency_requirements AS r
+                         WHERE r.application = p_application AND r.job_id = p_job_id)
+    ORDER BY s.scope_id
+    FOR UPDATE OF s;
+
+    PERFORM runwick.rw_fault('AfterLocksBeforeFreshTime', 0, p_faults); -- rw:fault
+    v_clock := pg_catalog.clock_timestamp();
+    v_now := runwick.ms_floor(v_clock);
+    IF v_clock >= p_not_after THEN
+        RETURN runwick.rw_no_effect_v1('CommandExpired', 'command_expired', v_now);
+    END IF;
+
+    IF v_lease > v_now THEN
+        RETURN runwick.rw_no_effect_v1('StaleLease', 'lease_renewed', v_now);
+    END IF;
+
+    PERFORM runwick.rw_fault('BeforeFirstMutation', 0, p_faults); -- rw:fault
+    IF v_reserved AND NOT v_cancel THEN
+        UPDATE runwick.job_generations
+        SET consecutive_unstarted_count = consecutive_unstarted_count + 1
+        WHERE application = p_application AND job_id = p_job_id AND generation = v_generation;
+        GET DIAGNOSTICS v_n = ROW_COUNT;
+        IF v_n <> 1 THEN
+            RAISE EXCEPTION 'rw:invalid_transition' USING ERRCODE = 'RWI01';
+        END IF;
+
+        v_step := v_step + 1;
+        PERFORM runwick.rw_fault('AfterMutation', v_step, p_faults); -- rw:fault
+    END IF;
+
+    IF v_new_state NOT IN ('succeeded', 'failed', 'cancelled') THEN
+        v_policy := CASE WHEN v_reserved THEN v_unstarted_retry ELSE v_retry END;
+        v_delay := runwick.rw_retry_delay_v1(CASE WHEN v_reserved THEN v_k ELSE v_started END,
+            (v_policy ->> 'initialDelay')::bigint, (v_policy ->> 'maximumDelay')::bigint, p_entropy);
+        v_eligible := v_now + v_delay * interval '1 millisecond';
+    END IF;
+
+    v_outcome := CASE WHEN v_reserved THEN 'abandoned_before_start' ELSE 'abandoned_running' END;
+    v_new_revision := runwick.rw_close_v1(p_application, p_command_id, v_now, p_job_id, p_attempt_id, p_token, v_generation,
+        v_revision, v_job_name, v_active_key, v_outcome, v_new_state, v_reason, 'attempt_recovered',
+        NULL, v_delay, v_eligible, NULL, NULL);
+    v_step := v_step + 1;
+    PERFORM runwick.rw_fault('AfterMutation', v_step, p_faults); -- rw:fault
+    v_result := pg_catalog.jsonb_build_object('jobId', p_job_id, 'generation', v_generation, 'revision', v_new_revision,
+        'state', v_new_state, 'attemptId', p_attempt_id, 'attemptOutcome', v_outcome, 'disposition', v_new_state,
+        'terminalReason', v_reason, 'eligibleAt', runwick.rw_ms_v1(v_eligible), 'retryDelay', v_delay);
+    PERFORM runwick.rw_finalize_v1(p_application, p_class, p_command_id, 'Applied', v_result, v_now);
+    RETURN runwick.rw_applied_v1('Applied', NULL, v_now, v_result);
+END
+$fn$;
+

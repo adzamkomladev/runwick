@@ -283,77 +283,13 @@ internal sealed partial class PgStore
         var request = command.Body;
         var fingerprint = CommandEnvelopes.Fingerprint(StoreId, command.Application, Operations.Recover, command.CommandId, command.NotAfter,
             CommandEnvelopes.Recover(request));
-        return runner.ExecuteAsync(
+        // J, the expected-attempt check, G, K (a terminal close), S, the fresh clock, the lease check, the unstarted count,
+        // the retry delay and A -> P -> J' -> K' -> E with R4 run in runwick.recover_v1 (04 §7.8).
+        return runner.CallAsync(
             Op(command.Application, command.CommandId, Operations.Recover, command.NotAfter, fingerprint, PgLane.Background),
-            async tx =>
-            {
-                var job = await LockJobAsync(tx, request.JobId).ConfigureAwait(false);
-                if (job is null)
-                {
-                    return new PgOutcome<FinishedAttempt>.Rollback(tx.Reject<FinishedAttempt>(StoreStatus.NotFound, "job_not_found"));
-                }
-
-                if (job.AttemptId != request.ExpectedAttemptId || job.Token != request.ExpectedOwnershipToken
-                    || job.State is not (JobStates.Reserved or JobStates.Running))
-                {
-                    return new PgOutcome<FinishedAttempt>.Rollback(tx.Reject<FinishedAttempt>(StoreStatus.StaleLease, "stale_lease"));
-                }
-
-                var gen = await ReadGenerationAsync(tx, request.JobId, job.Generation).ConfigureAwait(false);
-                var cancel = job.CancelRequestedAt is not null;
-                var reserved = job.State == JobStates.Reserved;
-                var k = gen.ConsecutiveUnstarted + 1;
-                var (state, reason) = (reserved, cancel) switch
-                {
-                    (true, true) => (JobStates.Cancelled, (string?)"cancelled_before_start"),
-                    (true, false) when k >= gen.Policy.MaxConsecutiveUnstartedAbandonments => (JobStates.Failed, "reservation_abandonment_exhausted"),
-                    (true, false) => (gen.StartedCount == 0 ? JobStates.Pending : JobStates.Retrying, null),
-                    (false, true) => (JobStates.Cancelled, "cancellation_requested"),
-                    (false, false) when gen.StartedCount < gen.Policy.MaxExecutions => (JobStates.Retrying, null),
-                    _ => (JobStates.Failed, "execution_budget_exhausted"),
-                };
-                if (JobStates.IsTerminal(state))
-                {
-                    await LockActiveKeyAsync(tx, job).ConfigureAwait(false);
-                }
-
-                await LockScopesAsync(tx, request.JobId).ConfigureAwait(false);
-                if (!await tx.DecideAsync().ConfigureAwait(false))
-                {
-                    return new PgOutcome<FinishedAttempt>.Rollback(tx.Reject<FinishedAttempt>(StoreStatus.CommandExpired, "command_expired"));
-                }
-
-                if (job.LeaseExpiresAt > tx.Now)
-                {
-                    return new PgOutcome<FinishedAttempt>.Rollback(tx.Reject<FinishedAttempt>(StoreStatus.StaleLease, "lease_renewed"));
-                }
-
-                if (reserved && !cancel)
-                {
-                    using var g = tx.Sql("""
-                        UPDATE runwick.job_generations
-                        SET consecutive_unstarted_count = consecutive_unstarted_count + 1
-                        WHERE application = @application AND job_id = @job_id AND generation = @generation
-                        """).P("job_id", request.JobId).P("generation", job.Generation);
-                    Expect(await tx.ExecAsync(g).ConfigureAwait(false), 1);
-                }
-
-                long? delay = null;
-                DateTimeOffset? eligible = null;
-                if (!JobStates.IsTerminal(state))
-                {
-                    delay = reserved ? SampleDelayMs(gen.Policy.UnstartedRetry, k) : SampleDelayMs(gen.Policy.Retry, gen.StartedCount);
-                    eligible = PgTime.Ceil(tx.Now + TimeSpan.FromMilliseconds(delay.Value));
-                }
-
-                var outcome = reserved ? "abandoned_before_start" : "abandoned_running";
-                var revision = await CloseAsync(tx, new Close(job, request.JobId, request.ExpectedAttemptId, request.ExpectedOwnershipToken,
-                    outcome, state, reason, "attempt_recovered") { RetryDelayMs = delay, NextEligibleAt = eligible }).ConfigureAwait(false);
-                var finished = new FinishedAttempt(new JobPosition(request.JobId, job.Generation, revision, state), outcome, state, reason, eligible);
-                return new PgOutcome<FinishedAttempt>.Commit(StoreReply<FinishedAttempt>.Applied(finished, tx.Now),
-                    ReceiptCodec.Finished(finished, request.ExpectedAttemptId, delay));
-            },
-            (tx, row) => Task.FromResult(StoreReply<FinishedAttempt>.Applied(ReceiptCodec.ReadFinished(row.Result!), row.DecidedAt!.Value, replayed: true)),
+            new PgCall("recover_v1").P("p_job_id", request.JobId).P("p_attempt_id", request.ExpectedAttemptId)
+                .P("p_token", request.ExpectedOwnershipToken).Entropy("p_entropy"),
+            MapFinished,
             ct);
     }
 
