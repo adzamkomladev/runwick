@@ -1911,3 +1911,76 @@ BEGIN
     RETURN runwick.rw_applied_v1('Applied', NULL, v_now, v_result);
 END
 $fn$;
+
+-- ------------------------------------------------------------------ PublishPresence/1 (04 §7.12, 09 §3)
+
+CREATE FUNCTION runwick.publish_presence_v1(p_application text, p_command_id uuid, p_operation text, p_not_after timestamptz,
+    p_fingerprint bytea, p_class text, p_deadline_cap interval, p_store_id uuid, p_revisions bigint[], p_epoch integer,
+    p_capabilities jsonb, p_is_creation boolean, p_allow_drain boolean, p_staged boolean,
+    p_instance_id uuid, p_process_id integer, p_host_name text, p_build_id text, p_status text, p_capability_revision bigint,
+    p_presence_sequence bigint, p_subscriptions jsonb, p_pool_targets jsonb, p_expiry interval,
+    p_names text[], p_versions integer[], p_profile_ids text[], p_profile_versions integer[], p_queues text[],
+    p_faults jsonb DEFAULT NULL)
+RETURNS runwick.rw_reply_v1 LANGUAGE plpgsql VOLATILE AS $fn$
+DECLARE
+    v_reply runwick.rw_reply_v1;
+    v_clock timestamptz;
+    v_now timestamptz;
+    v_expires timestamptz;
+BEGIN
+    v_reply := runwick.rw_frame_v1(p_application, p_command_id, p_operation, p_not_after, p_fingerprint, p_class, p_deadline_cap,
+        p_store_id, p_revisions, p_epoch, p_capabilities, p_is_creation, p_allow_drain, p_staged);
+    IF v_reply.status IS NOT NULL THEN
+        RETURN v_reply;
+    END IF;
+
+    PERFORM runwick.rw_fault('AfterLocksBeforeFreshTime', 0, p_faults); -- rw:fault
+    v_clock := pg_catalog.clock_timestamp();
+    v_now := runwick.ms_floor(v_clock);
+    IF v_clock >= p_not_after THEN
+        RETURN runwick.rw_no_effect_v1('CommandExpired', 'command_expired', v_now);
+    END IF;
+
+    PERFORM runwick.rw_fault('BeforeFirstMutation', 0, p_faults); -- rw:fault
+    INSERT INTO runwick.worker_instances AS w (
+        application, instance_id, process_id, host_name, build_id, status,
+        capability_revision, presence_sequence, subscriptions, pool_targets, started_at, heartbeat_at, expires_at)
+    VALUES (p_application, p_instance_id, p_process_id, p_host_name, p_build_id, p_status,
+            p_capability_revision, p_presence_sequence, p_subscriptions, p_pool_targets, v_now, v_now, runwick.ms_floor(v_now + p_expiry))
+    ON CONFLICT (application, instance_id) DO UPDATE
+    SET status = EXCLUDED.status,
+        capability_revision = EXCLUDED.capability_revision,
+        presence_sequence = EXCLUDED.presence_sequence,
+        subscriptions = EXCLUDED.subscriptions,
+        pool_targets = EXCLUDED.pool_targets,
+        heartbeat_at = EXCLUDED.heartbeat_at,
+        expires_at = EXCLUDED.expires_at
+    WHERE w.presence_sequence < EXCLUDED.presence_sequence
+    RETURNING w.expires_at INTO v_expires;
+    PERFORM runwick.rw_fault('AfterMutation', 1, p_faults); -- rw:fault
+    IF v_expires IS NULL THEN
+        RETURN runwick.rw_no_effect_v1('VersionConflict', 'presence_sequence_stale', v_now);
+    END IF;
+
+    IF pg_catalog.cardinality(p_names) > 0 THEN
+        INSERT INTO runwick.worker_capabilities (
+            application, instance_id, capability_revision, job_name, payload_version, serializer_profile_id, serializer_profile_version)
+        SELECT p_application, p_instance_id, p_capability_revision, c.name, c.version, c.profile_id, c.profile_version
+        FROM unnest(p_names, p_versions, p_profile_ids, p_profile_versions) AS c(name, version, profile_id, profile_version)
+        ON CONFLICT DO NOTHING;
+        PERFORM runwick.rw_fault('AfterMutation', 2, p_faults); -- rw:fault
+    END IF;
+
+    -- Queue subscriptions as join rows; instance IDs are never reused, so insert-if-absent is complete.
+    IF pg_catalog.cardinality(p_queues) > 0 THEN
+        INSERT INTO runwick.worker_subscriptions (application, instance_id, queue)
+        SELECT p_application, p_instance_id, q.queue
+        FROM unnest(p_queues) AS q(queue)
+        ORDER BY q.queue COLLATE "C"
+        ON CONFLICT DO NOTHING;
+        PERFORM runwick.rw_fault('AfterMutation', CASE WHEN pg_catalog.cardinality(p_names) > 0 THEN 3 ELSE 2 END, p_faults); -- rw:fault
+    END IF;
+
+    RETURN runwick.rw_applied_v1('Applied', NULL, v_now, pg_catalog.jsonb_build_object('expiresAt', runwick.rw_ms_v1(v_expires)));
+END
+$fn$;
