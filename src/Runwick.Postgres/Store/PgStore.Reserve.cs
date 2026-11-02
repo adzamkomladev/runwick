@@ -67,55 +67,11 @@ internal sealed partial class PgStore
         return (rows[0].Item1, business, diagnostic, rows[0].Item3, ReadScheduleHeader(rows[0].Item2));
     }
 
-    sealed record GenerationRow(ExecutionPolicy Policy, int StartedCount, int ConsecutiveUnstarted);
-
-    static async Task<GenerationRow> ReadGenerationAsync(PgTx tx, Guid jobId, int generation)
-    {
-        using var g = GenerationSql(tx, jobId, generation);
-        var rows = await tx.QueryAsync(g, MapGeneration).ConfigureAwait(false);
-        return rows.Count == 1 ? rows[0] : throw new InvalidOperationException("generation row missing");
-    }
-
-    static Npgsql.NpgsqlCommand GenerationSql(PgTx tx, Guid jobId, int generation) => tx.Sql("""
-        SELECT max_executions, max_unstarted_abandonments, execution_timeout_ms,
-               retry_policy::text, unstarted_retry_policy::text, started_count, consecutive_unstarted_count
-        FROM runwick.job_generations
-        WHERE application = @application AND job_id = @job_id AND generation = @generation
-        """).P("job_id", jobId).P("generation", generation);
-
-    static GenerationRow MapGeneration(Npgsql.NpgsqlDataReader r) => new(
-        new ExecutionPolicy(r.GetInt32(0), r.IsDBNull(2) ? null : r.GetInt64(2), ReadRetry(r.GetString(3)), r.GetInt32(1), ReadRetry(r.GetString(4))),
-        r.GetInt32(5), r.GetInt32(6));
-
-    sealed record ScopeRow(Guid ScopeId, int Capacity, bool Fencing, long FencingCounter);
-
-    /// <summary>S: the job's required scopes, locked in UUID order.</summary>
-    static async Task<List<ScopeRow>> LockScopesAsync(PgTx tx, Guid jobId)
-    {
-        using var s = LockScopesSql(tx, jobId);
-        return await tx.QueryAsync(s, MapScope).ConfigureAwait(false);
-    }
-
-    static Npgsql.NpgsqlCommand LockScopesSql(PgTx tx, Guid jobId) => tx.Sql("""
-        SELECT s.scope_id, s.capacity, s.fencing_enabled, s.fencing_counter
-        FROM runwick.concurrency_scopes AS s
-        WHERE s.application = @application
-          AND s.scope_id IN (SELECT r.scope_id FROM runwick.job_concurrency_requirements AS r
-                             WHERE r.application = @application AND r.job_id = @job_id)
-        ORDER BY s.scope_id
-        FOR UPDATE OF s
-        """).P("job_id", jobId);
-
-    static ScopeRow MapScope(Npgsql.NpgsqlDataReader r) => new(r.GetGuid(0), r.GetInt32(1), r.GetBoolean(2), r.GetInt64(3));
-
     static async Task EventAsync(PgTx tx, Guid jobId, Guid? attemptId, string kind, JsonObject details)
     {
         using var e = EventSql(tx, jobId, attemptId, kind, details);
         await tx.ExecAsync(e).ConfigureAwait(false);
     }
-
-    static void EventInto(PgBatch batch, PgTx tx, Guid jobId, Guid? attemptId, string kind, JsonObject details) =>
-        batch.Exec(EventSql(tx, jobId, attemptId, kind, details));
 
     static Npgsql.NpgsqlCommand EventSql(PgTx tx, Guid jobId, Guid? attemptId, string kind, JsonObject details) => tx.Sql("""
         INSERT INTO runwick.queue_events (application, job_id, attempt_id, command_id, event_kind, occurred_at, details)

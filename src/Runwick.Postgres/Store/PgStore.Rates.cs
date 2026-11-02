@@ -96,17 +96,6 @@ internal sealed partial class PgStore : IRateControlStore
 
     // ------------------------------------------------------------------ Begin rate step (10 §4)
 
-    /// <summary>The job's rate scope IDs. Requirements are immutable, so a plain read is enough to decide the lock plan.</summary>
-    static async Task<List<Guid>> RateRequirementsAsync(PgTx tx, Guid jobId)
-    {
-        using var q = tx.Sql("""
-            SELECT rate_scope_id FROM runwick.job_rate_requirements
-            WHERE application = @application AND job_id = @job_id
-            ORDER BY rate_scope_id
-            """).P("job_id", jobId);
-        return await tx.QueryAsync(q, r => r.GetGuid(0)).ConfigureAwait(false);
-    }
-
     // The rate step of Begin/1 (10 §4: R, logical time t, the window counts, the charge or the committed deferral with
     // its hint) runs in runwick.begin_v1 (PF-05).
 
