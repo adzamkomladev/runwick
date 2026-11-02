@@ -258,102 +258,23 @@ internal sealed partial class PgStore
 
         var fingerprint = CommandEnvelopes.Fingerprint(StoreId, command.Application, Operations.Finish, command.CommandId, command.NotAfter,
             CommandEnvelopes.Finish(request));
-        return Run(transaction,
-            Op(command.Application, command.CommandId, Operations.Finish, command.NotAfter, fingerprint, PgLane.Settlement),
-            async tx =>
-            {
-                // J, G, K, S and the decision clock in one round trip when the outcome is terminal whatever the job
-                // says (success, user cancel, permanent failure): K precedes S as in 04 §5, and K is found through the
-                // locked job row. Otherwise J and G go first, and K (if terminal), S and the clock follow (PF-04).
-                var terminalAnyway = request.Outcome is AttemptOutcome.Succeeded or AttemptOutcome.UserCancelled or AttemptOutcome.PermanentFailure;
-                var locks = tx.Batch();
-                var jq = locks.Query(LockJobSql(tx, lease.JobId), MapJob);
-                var gq = locks.Query(GenerationOfLockedJobSql(tx, lease.JobId), MapGenerationRead);
-                PgBatch.Rows<DateTimeOffset>? clock = null;
-                if (terminalAnyway)
-                {
-                    locks.Query(ActiveKeyOfLockedJobSql(tx, lease.JobId), _ => 0);
-                    locks.Query(LockScopesSql(tx, lease.JobId), MapScope);
-                    clock = locks.Query(PgTx.ClockSql(tx), PgTx.ReadClock);
-                }
-
-                await tx.RunAsync(locks).ConfigureAwait(false);
-                var job = jq.Items.Count == 1 ? jq.Items[0] : null;
-                var gen = job is null ? null : gq.Items.Count == 1 ? gq.Items[0].Gen : throw new InvalidOperationException("generation row missing");
-                var cancel = job?.CancelRequestedAt is not null;
-                var budget = gen is not null && gen.StartedCount < gen.Policy.MaxExecutions;
-                var (state, reason) = request.Outcome switch
-                {
-                    AttemptOutcome.Succeeded => (JobStates.Succeeded, (string?)"succeeded"),
-                    AttemptOutcome.UserCancelled => (JobStates.Cancelled, "user_cancelled"),
-                    _ when cancel => (JobStates.Cancelled, "cancellation_requested"),
-                    AttemptOutcome.PermanentFailure => (JobStates.Failed, "permanent_failure"),
-                    _ when budget => (JobStates.Retrying, null),
-                    _ => (JobStates.Failed, "execution_budget_exhausted"),
-                };
-                if (clock is null)
-                {
-                    var rest = tx.Batch();
-                    if (job is not null && JobStates.IsTerminal(state) && job.ActiveKey is not null)
-                    {
-                        rest.Query(ActiveKeyOfLockedJobSql(tx, lease.JobId), _ => 0);
-                    }
-
-                    if (job is not null)
-                    {
-                        rest.Query(LockScopesSql(tx, lease.JobId), MapScope);
-                    }
-
-                    clock = rest.Query(PgTx.ClockSql(tx), PgTx.ReadClock);
-                    await tx.RunAsync(rest).ConfigureAwait(false);
-                }
-
-                if (!await tx.DecideAtAsync(clock.Items[0]).ConfigureAwait(false))
-                {
-                    return new PgOutcome<FinishedAttempt>.Rollback(tx.Reject<FinishedAttempt>(StoreStatus.CommandExpired, "command_expired"));
-                }
-
-                if (Ownership(job, lease, tx.Now, JobStates.Running) is { } refusal)
-                {
-                    return new PgOutcome<FinishedAttempt>.Rollback(tx.Reject<FinishedAttempt>(refusal.Status, refusal.Code));
-                }
-
-                long? delay = null;
-                DateTimeOffset? eligible = null;
-                if (state == JobStates.Retrying)
-                {
-                    var retry = gen!.Policy.Retry;
-                    delay = request.Outcome == AttemptOutcome.RetryableFailure && request.RequestedRetryDelay is { } r
-                        ? (long)Execution.RetryEvaluator.Requested(r, TimeSpan.FromMilliseconds(retry.MaximumDelayMs)).TotalMilliseconds
-                        : SampleDelayMs(retry, gen.StartedCount);
-                    eligible = PgTime.Ceil(tx.Now + TimeSpan.FromMilliseconds(delay.Value));
-                }
-
-                // The close statements and R4 in one round trip; the counts are checked before COMMIT (PF-04).
-                var outcome = Snake(request.Outcome);
-                var effects = tx.Batch();
-                var verify = CloseInto(effects, tx, new Close(job!, lease.JobId, lease.AttemptId, lease.OwnershipToken, outcome, state, reason, "attempt_finished")
-                {
-                    ElapsedMs = (long)Math.Max(0, request.ExecutionElapsed.TotalMilliseconds),
-                    RetryDelayMs = delay,
-                    NextEligibleAt = eligible,
-                    Error = ErrorJson(request.Error),
-                });
-                var finished = new FinishedAttempt(new JobPosition(lease.JobId, job!.Generation, job.Revision + 1, state), outcome, state, reason, eligible);
-                return new PgOutcome<FinishedAttempt>.Commit(StoreReply<FinishedAttempt>.Applied(finished, tx.Now),
-                    ReceiptCodec.Finished(finished, lease.AttemptId, delay))
-                {
-                    Effects = effects,
-                    Verify = () =>
-                    {
-                        verify();
-                        return null;
-                    },
-                };
-            },
-            (tx, row) => Task.FromResult(StoreReply<FinishedAttempt>.Applied(ReceiptCodec.ReadFinished(row.Result!), row.DecidedAt!.Value, replayed: true)),
-            ct);
+        // J, G, K (a terminal close), S, the fresh clock, the ownership check, the retry delay and A -> P -> J' -> K' -> E
+        // with R4 run in runwick.finish_v1 (04 §7.7); staged, the same call runs inside the caller's savepoint (08 §8.1).
+        var op = Op(command.Application, command.CommandId, Operations.Finish, command.NotAfter, fingerprint, PgLane.Settlement);
+        var call = new PgCall("finish_v1").P("p_job_id", lease.JobId).P("p_attempt_id", lease.AttemptId).P("p_worker_id", lease.WorkerInstanceId)
+            .P("p_token", lease.OwnershipToken).P("p_generation", lease.Generation).P("p_outcome", Snake(request.Outcome))
+            .P("p_elapsed_ms", (long)Math.Max(0, request.ExecutionElapsed.TotalMilliseconds))
+            .P("p_requested_delay_ms", request.RequestedRetryDelay is { } d ? (long?)Math.Max(1, CeilMs(d)) : null)
+            .Json("p_error", ErrorJson(request.Error)).Entropy("p_entropy");
+        return transaction is null
+            ? runner.CallAsync(op, call, MapFinished, ct)
+            : runner.StageCallAsync(transaction, op, call, MapFinished, ct);
     }
+
+    static long CeilMs(TimeSpan value) => (value.Ticks + TimeSpan.TicksPerMillisecond - 1) / TimeSpan.TicksPerMillisecond;
+
+    static StoreReply<FinishedAttempt> MapFinished(PgRow row) =>
+        row.HasValue ? row.Applied(ReceiptCodec.ReadFinished(row.Result!)) : row.Reject<FinishedAttempt>();
 
     // ------------------------------------------------------------------ Recover/1 (04 §7.8)
 
