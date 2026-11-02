@@ -280,6 +280,52 @@ internal interface ILeaseBatchStore
     Task<StoreReply<RenewedLeases>> RenewManyAsync(StoreCommand<RenewManyRequest> command, CancellationToken ct);
 }
 
+/// <summary>
+/// ReserveAndBegin/1 (03 Changes 2026-11-02, PF-06 batched claim): Reserve/1's request plus <see cref="MaxJobs"/>, the most
+/// jobs this one command may claim (1 to <see cref="IReserveAndBeginStore.MaxJobs"/>; the engine never asks for more than its
+/// free local slots).
+/// </summary>
+internal sealed record ReserveAndBeginRequest(
+    Guid WorkerInstanceId,
+    string Queue,
+    string Priority,
+    IReadOnlyList<JobContract> SupportedContracts,
+    CandidateCursor? After,
+    TimeSpan LeaseDuration,
+    int MaxJobs);
+
+/// <summary>
+/// One claimed candidate's outcome, in candidate order. <c>Applied</c>: reserved and begun (<see cref="Reserved"/> and
+/// <see cref="Begun"/>). <c>CapacityBlocked</c>: not reserved, no effect (<see cref="Error"/> carries the blocked scope and
+/// the candidate's cursor). <c>RateLimited</c>: reserved, then deferred (T20; <see cref="Deferred"/>). <c>InvalidState</c>
+/// <c>cancelled_before_start</c> or <c>BudgetExhausted</c>: reserved, then closed (<see cref="Closed"/>). Each is exactly
+/// the outcome Reserve/1 followed by Begin/1 would give that job at the same decision time; no outcome affects another.
+/// </summary>
+internal sealed record ClaimOutcome(
+    Guid JobId,
+    StoreStatus Status,
+    StoreError? Error,
+    ReservedJob? Reserved,
+    BegunExecution? Begun,
+    BeginClosed? Closed,
+    RateDeferral? Deferred);
+
+/// <summary>Value of an Applied ReserveAndBegin: one outcome per claimed candidate (at least one reserved), candidate order.</summary>
+internal sealed record ClaimedJobs(IReadOnlyList<ClaimOutcome> Outcomes);
+
+/// <summary>
+/// Optional batched claim (03 Changes 2026-11-02, PF-06 batched claim). Applied means the transaction committed and at least
+/// one candidate was reserved; one receipt holds every outcome, so a lost reply is resolved by resubmitting the same command.
+/// NoWork, QueuePaused, CapacityBlocked (every candidate blocked) and every other reply status applied nothing.
+/// </summary>
+internal interface IReserveAndBeginStore
+{
+    /// <summary>The most jobs one call may claim.</summary>
+    const int MaxJobs = 32;
+
+    Task<StoreReply<ClaimedJobs>> ReserveAndBeginAsync(StoreCommand<ReserveAndBeginRequest> command, CancellationToken ct);
+}
+
 /// <summary>Begin reply: the protocol reply plus the closing value when Begin closed the attempt (spec 03 §2.1 table).</summary>
 internal sealed record BeginReply(StoreReply<BegunExecution> Reply, BeginClosed? Closed)
 {
@@ -557,6 +603,7 @@ internal static class Operations
     public const string Dispatch = "Dispatch";
     public const string DispatchMany = "DispatchMany";
     public const string Reserve = "Reserve";
+    public const string ReserveAndBegin = "ReserveAndBegin";
     public const string Begin = "Begin";
     public const string Renew = "Renew";
     public const string RenewMany = "RenewMany";
@@ -583,13 +630,13 @@ internal static class Operations
     public const string DurableClass = "durable";
 
     public static string RetentionClass(string operation) =>
-        operation is Reserve or Begin or Recover or ReleaseReservation ? OwnershipClass : DurableClass;
+        operation is Reserve or ReserveAndBegin or Begin or Recover or ReleaseReservation ? OwnershipClass : DurableClass;
 
     public static TimeSpan RetentionFloor(string operation) =>
         RetentionClass(operation) == OwnershipClass ? TimeSpan.FromMinutes(10) : TimeSpan.FromHours(24);
 
     public static TimeSpan DeadlineCap(string operation) =>
-        operation is Reserve or Begin or Renew or RenewMany or Finish or Recover or ReleaseReservation ? TimeSpan.FromSeconds(60)
+        operation is Reserve or ReserveAndBegin or Begin or Renew or RenewMany or Finish or Recover or ReleaseReservation ? TimeSpan.FromSeconds(60)
         : operation == OutboxOperations.ReceiveOutbox ? OutboxOperations.TransportCap
         : ScheduleOperations.IsScheduler(operation) ? ScheduleOperations.SchedulerCap
         : TimeSpan.FromMinutes(10);

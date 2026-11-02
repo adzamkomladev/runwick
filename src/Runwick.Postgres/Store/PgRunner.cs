@@ -545,7 +545,15 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
                     throw new InvalidOperationException($"runwick.{call.Function} returned no row.");
                 }
 
-                return PgRow.Read(reader);
+                var row = PgRow.Read(reader);
+
+                // A set-returning function (ReserveAndBegin/1) follows its reply row with one payload row per begun job.
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                {
+                    row.More.Add(PgRow.Read(reader));
+                }
+
+                return row;
             }
         }
         catch (PostgresException ex) when (ex.SqlState == "RWF01" && session?.Thrown is { } thrown)

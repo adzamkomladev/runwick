@@ -94,7 +94,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
     /// </summary>
     internal bool FaultHooks { get; init; }
 
-    [GeneratedRegex(@"CREATE FUNCTION runwick\.([a-z0-9_]+)\(.*?AS \$fn\$(.*?)\$fn\$", RegexOptions.Singleline)]
+    [GeneratedRegex(@"CREATE FUNCTION runwick\.([a-z0-9_]+)\(.*?AS \$fn\$(.*?)\$fn\$|^DROP FUNCTION runwick\.([a-z0-9_]+)\(", RegexOptions.Singleline | RegexOptions.Multiline)]
     private static partial Regex FunctionPattern();
 
     /// <summary>
@@ -108,6 +108,13 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         {
             foreach (Match f in FunctionPattern().Matches(m.SqlFor(hooks)))
             {
+                // A later migration drops a superseded function (0010: reserve_v1, begin_v1): it is no longer expected.
+                if (f.Groups[3].Success)
+                {
+                    map.Remove(f.Groups[3].Value);
+                    continue;
+                }
+
 #pragma warning disable CA5351 // Matches PostgreSQL md5(prosrc) for drift detection; not a security use.
                 map[f.Groups[1].Value] = Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(f.Groups[2].Value)));
 #pragma warning restore CA5351
@@ -147,8 +154,11 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         return problems;
     }
 
-    /// <summary>Every function name either variant creates.</summary>
-    internal static IEnumerable<string> AllFunctionNames => HooksFunctions.Value.Keys;
+    /// <summary>Every function name either variant creates, including ones a later migration drops (still unexpected if present).</summary>
+    internal static IEnumerable<string> AllFunctionNames => AllCreated.Value;
+
+    static readonly Lazy<IReadOnlyList<string>> AllCreated = new(() =>
+        [.. Migrations!.SelectMany(m => FunctionPattern().Matches(m.Sql)).Where(f => f.Groups[1].Success).Select(f => f.Groups[1].Value).Distinct()]);
 
     internal const string FunctionDigestSql = """
         SELECT p.proname || ':' || md5(p.prosrc)
@@ -168,6 +178,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         new("0007_scaling", LoadSql("0007_scaling.sql"), 7),
         new("0008_renew_many", LoadSql("0008_renew_many.sql"), 8),
         new("0009_functions", LoadSql("0009_functions.sql"), 9),
+        new("0010_reserve_and_begin", LoadSql("0010_reserve_and_begin.sql"), 10),
     ];
 
     /// <summary>The schema revision this binary writes to (03 §10.1): the last migration's target.</summary>
@@ -623,6 +634,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         [7] = ["SetPoolOverride", "EstimateDemand", "RecordScalingEvent"],
         [8] = ["RenewMany"],
         [9] = [],
+        [10] = ["ReserveAndBegin"],
     };
 
     internal static IReadOnlyList<string> OperationsAt(long revision) => [.. VersionsAt(revision).Keys];

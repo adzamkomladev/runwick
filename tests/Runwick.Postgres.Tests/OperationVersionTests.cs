@@ -33,6 +33,7 @@ public sealed class OperationVersionTests
         (6, "TriggerSchedule", 1), (6, "ResolveCatchUp", 1), (6, "RecordScheduleEvaluationFailure", 1), (6, "RevalidateSchedule", 1),
         (7, "SetPoolOverride", 1), (7, "EstimateDemand", 1), (7, "RecordScalingEvent", 1),
         (8, "RenewMany", 1),
+        (10, "ReserveAndBegin", 1),
     ];
 
     [Fact]

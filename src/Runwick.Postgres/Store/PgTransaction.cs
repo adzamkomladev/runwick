@@ -175,7 +175,7 @@ internal sealed record PgOp(
 {
     public bool HasReceipt => Fingerprint is not null;
 
-    public bool IsCreation => Operation is Operations.Dispatch or Operations.DispatchMany or Operations.Reserve
+    public bool IsCreation => Operation is Operations.Dispatch or Operations.DispatchMany or Operations.Reserve or Operations.ReserveAndBegin
         or Operations.Begin or Operations.RegisterQueue or Operations.RegisterScope or OutboxOperations.ReceiveOutbox
         || ScheduleOperations.IsCreation(Operation);
 
