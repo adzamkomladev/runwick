@@ -489,3 +489,232 @@ BEGIN
         pg_catalog.jsonb_build_object('leaseExpiresAt', runwick.rw_ms_v1(v_expiry), 'cancelRequested', v_cancel IS NOT NULL));
 END
 $fn$;
+
+-- ------------------------------------------------------------------ Reserve/1 (04 §7.3)
+
+CREATE FUNCTION runwick.reserve_v1(p_application text, p_command_id uuid, p_operation text, p_not_after timestamptz,
+    p_fingerprint bytea, p_class text, p_deadline_cap interval, p_store_id uuid, p_revisions bigint[], p_epoch integer,
+    p_capabilities jsonb, p_is_creation boolean, p_allow_drain boolean, p_staged boolean,
+    p_queue text, p_priority text, p_after_eligible_at timestamptz, p_after_job_id uuid,
+    p_names text[], p_versions integer[], p_profile_ids text[], p_profile_versions integer[],
+    p_lease interval, p_worker_id uuid, p_token uuid,
+    p_faults jsonb DEFAULT NULL)
+RETURNS runwick.rw_reply_v1 LANGUAGE plpgsql VOLATILE AS $fn$
+DECLARE
+    v_reply runwick.rw_reply_v1;
+    v_paused boolean;
+    v_job_id uuid;
+    v_eligible timestamptz;
+    v_generation integer;
+    v_revision bigint;
+    v_reservations bigint;
+    v_name text;
+    v_payload_version integer;
+    v_profile_id text;
+    v_profile_version integer;
+    v_max_executions integer;
+    v_max_unstarted integer;
+    v_timeout bigint;
+    v_retry jsonb;
+    v_unstarted jsonb;
+    v_payload bytea;
+    v_headers jsonb;
+    v_created timestamptz;
+    v_scope_ids uuid[];
+    v_capacities integer[];
+    v_fencing boolean[];
+    v_counters bigint[];
+    v_fence_ids uuid[];
+    v_fence_values bigint[];
+    v_blocked uuid;
+    v_clock timestamptz;
+    v_now timestamptz;
+    v_expiry timestamptz;
+    v_attempt uuid;
+    v_new_revision bigint;
+    v_n integer;
+    v_result jsonb;
+BEGIN
+    v_reply := runwick.rw_frame_v1(p_application, p_command_id, p_operation, p_not_after, p_fingerprint, p_class, p_deadline_cap,
+        p_store_id, p_revisions, p_epoch, p_capabilities, p_is_creation, p_allow_drain, p_staged);
+    IF v_reply.replayed THEN
+        -- The reservation's payload row is immutable; the receipt names the job.
+        SELECT p.payload_utf8, p.headers, j.created_at INTO v_payload, v_headers, v_created
+        FROM runwick.job_payloads AS p JOIN runwick.jobs AS j USING (application, job_id)
+        WHERE p.application = p_application AND p.job_id = (v_reply.result ->> 'jobId')::uuid;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'payload row missing for a waiting job' USING ERRCODE = 'RWI04';
+        END IF;
+
+        v_reply.payload := v_payload;
+        v_reply.headers := v_headers;
+        v_reply.created_at := v_created;
+        RETURN v_reply;
+    END IF;
+
+    IF v_reply.status IS NOT NULL THEN
+        RETURN v_reply;
+    END IF;
+
+    -- Q (04 §7.3): a paused or unregistered queue claims nothing.
+    SELECT q.paused INTO v_paused FROM runwick.queue_controls AS q
+    WHERE q.application = p_application AND q.queue = p_queue
+    FOR SHARE;
+    IF NOT FOUND THEN
+        RETURN runwick.rw_no_effect_v1('NoWork', 'queue_not_registered', NULL);
+    END IF;
+
+    IF v_paused THEN
+        RETURN runwick.rw_no_effect_v1('QueuePaused', 'queue_paused', NULL);
+    END IF;
+
+    -- C: the candidate claim.
+    SELECT j.job_id, j.eligible_at, j.generation, j.revision, j.reservation_count,
+           j.job_name, j.payload_version, j.serializer_profile_id, j.serializer_profile_version
+    INTO v_job_id, v_eligible, v_generation, v_revision, v_reservations, v_name, v_payload_version, v_profile_id, v_profile_version
+    FROM runwick.jobs AS j
+    WHERE j.application = p_application
+      AND j.queue = p_queue
+      AND j.priority = p_priority
+      AND j.state IN ('pending', 'retrying')
+      AND j.eligible_at <= pg_catalog.statement_timestamp()
+      AND (p_after_job_id IS NULL OR (j.eligible_at, j.job_id) > (p_after_eligible_at, p_after_job_id))
+      AND EXISTS (
+          SELECT 1
+          FROM unnest(p_names, p_versions, p_profile_ids, p_profile_versions) AS c(name, version, profile_id, profile_version)
+          WHERE c.name = j.job_name AND c.version = j.payload_version
+            AND c.profile_id = j.serializer_profile_id
+            AND c.profile_version = j.serializer_profile_version)
+    ORDER BY j.eligible_at, j.job_id
+    LIMIT 1
+    FOR NO KEY UPDATE OF j SKIP LOCKED;
+    IF NOT FOUND THEN
+        RETURN runwick.rw_no_effect_v1('NoWork', 'no_work', NULL);
+    END IF;
+
+    -- G: a separate statement, so its snapshot is taken after C's lock.
+    SELECT g.max_executions, g.max_unstarted_abandonments, g.execution_timeout_ms, g.retry_policy, g.unstarted_retry_policy
+    INTO v_max_executions, v_max_unstarted, v_timeout, v_retry, v_unstarted
+    FROM runwick.job_generations AS g
+    WHERE g.application = p_application AND g.job_id = v_job_id AND g.generation = v_generation;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'generation row missing' USING ERRCODE = 'RWI04';
+    END IF;
+
+    SELECT p.payload_utf8, p.headers, j.created_at INTO v_payload, v_headers, v_created
+    FROM runwick.job_payloads AS p JOIN runwick.jobs AS j USING (application, job_id)
+    WHERE p.application = p_application AND p.job_id = v_job_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'payload row missing for a waiting job' USING ERRCODE = 'RWI04';
+    END IF;
+
+    -- S: the job's scopes in UUID order, the last blocking lock.
+    SELECT COALESCE(pg_catalog.array_agg(x.scope_id ORDER BY x.scope_id), '{}'),
+           COALESCE(pg_catalog.array_agg(x.capacity ORDER BY x.scope_id), '{}'),
+           COALESCE(pg_catalog.array_agg(x.fencing_enabled ORDER BY x.scope_id), '{}'),
+           COALESCE(pg_catalog.array_agg(x.fencing_counter ORDER BY x.scope_id), '{}')
+    INTO v_scope_ids, v_capacities, v_fencing, v_counters
+    FROM (SELECT s.scope_id, s.capacity, s.fencing_enabled, s.fencing_counter
+          FROM runwick.concurrency_scopes AS s
+          WHERE s.application = p_application
+            AND s.scope_id IN (SELECT r.scope_id FROM runwick.job_concurrency_requirements AS r
+                               WHERE r.application = p_application AND r.job_id = v_job_id)
+          ORDER BY s.scope_id
+          FOR UPDATE OF s) AS x;
+
+    PERFORM runwick.rw_fault('AfterLocksBeforeFreshTime', 0, p_faults); -- rw:fault
+    v_clock := pg_catalog.clock_timestamp();
+    v_now := runwick.ms_floor(v_clock);
+    IF v_clock >= p_not_after THEN
+        RETURN runwick.rw_no_effect_v1('CommandExpired', 'command_expired', v_now);
+    END IF;
+
+    -- P: live permits per scope at the decision time; the first full scope (UUID order) blocks.
+    IF pg_catalog.cardinality(v_scope_ids) > 0 THEN
+        SELECT r.scope_id INTO v_blocked
+        FROM unnest(v_scope_ids, v_capacities) WITH ORDINALITY AS r(scope_id, capacity, ord)
+        WHERE (SELECT count(*) FROM runwick.concurrency_permits AS p
+               WHERE p.application = p_application AND p.scope_id = r.scope_id AND p.lease_expires_at > v_now) >= r.capacity
+        ORDER BY r.ord
+        LIMIT 1;
+        IF v_blocked IS NOT NULL THEN
+            RETURN runwick.rw_no_effect_v1('CapacityBlocked', 'capacity_blocked', v_now, NULL, NULL, v_blocked, v_eligible, v_job_id);
+        END IF;
+    END IF;
+
+    v_expiry := runwick.ms_floor(v_now + p_lease);
+    v_attempt := runwick.rw_uuid_v7(v_now);
+    PERFORM runwick.rw_fault('BeforeFirstMutation', 0, p_faults); -- rw:fault
+
+    -- Fences: the returned counters are the permits' fencing values (count checked).
+    IF true = ANY (v_fencing) THEN
+        WITH u AS (
+            UPDATE runwick.concurrency_scopes
+            SET fencing_counter = fencing_counter + 1
+            WHERE application = p_application AND fencing_enabled
+              AND scope_id = ANY (ARRAY(SELECT f.id FROM unnest(v_scope_ids, v_fencing) AS f(id, on_) WHERE f.on_))
+            RETURNING scope_id, fencing_counter)
+        SELECT COALESCE(pg_catalog.array_agg(u.scope_id ORDER BY u.scope_id), '{}'),
+               COALESCE(pg_catalog.array_agg(u.fencing_counter ORDER BY u.scope_id), '{}')
+        INTO v_fence_ids, v_fence_values FROM u;
+        IF v_fence_ids <> ARRAY(SELECT f.id FROM unnest(v_scope_ids, v_fencing) AS f(id, on_) WHERE f.on_ ORDER BY f.id)
+           OR v_fence_values <> ARRAY(SELECT f.c + 1 FROM unnest(v_scope_ids, v_fencing, v_counters) AS f(id, on_, c) WHERE f.on_ ORDER BY f.id) THEN
+            RAISE EXCEPTION 'rw:invalid_transition' USING ERRCODE = 'RWI01';
+        END IF;
+    ELSE
+        v_fence_ids := '{}';
+        v_fence_values := '{}';
+    END IF;
+
+    INSERT INTO runwick.job_attempts (
+        application, attempt_id, job_id, generation, reservation_number, worker_instance_id, ownership_token, reserved_at)
+    VALUES (p_application, v_attempt, v_job_id, v_generation, v_reservations + 1, p_worker_id, p_token, v_now);
+
+    UPDATE runwick.jobs
+    SET state = 'reserved', reservation_count = reservation_count + 1, revision = revision + 1,
+        current_attempt_id = v_attempt, worker_instance_id = p_worker_id, ownership_token = p_token,
+        lease_expires_at = v_expiry, updated_at = v_now
+    WHERE application = p_application AND job_id = v_job_id AND state IN ('pending', 'retrying')
+    RETURNING revision INTO v_new_revision;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    IF v_n <> 1 OR v_new_revision <> v_revision + 1 THEN
+        RETURN runwick.rw_no_effect_v1('InvariantFault', 'invalid_transition', v_now);
+    END IF;
+
+    IF pg_catalog.cardinality(v_scope_ids) > 0 THEN
+        INSERT INTO runwick.concurrency_permits (
+            application, scope_id, attempt_id, job_id, ownership_token, lease_expires_at, fencing_value)
+        SELECT p_application, s.scope_id, v_attempt, v_job_id, p_token, v_expiry,
+               v_fence_values[pg_catalog.array_position(v_fence_ids, s.scope_id)]
+        FROM unnest(v_scope_ids) AS s(scope_id)
+        ORDER BY s.scope_id;
+    END IF;
+
+    INSERT INTO runwick.queue_events (application, job_id, attempt_id, command_id, event_kind, occurred_at, details)
+    VALUES (p_application, v_job_id, v_attempt, p_command_id, 'attempt_reserved', v_now,
+            pg_catalog.jsonb_build_object('generation', v_generation, 'reservationNumber', v_reservations + 1));
+
+    -- R4: receipt codec v1 (ReceiptCodec.Reserve).
+    v_result := pg_catalog.jsonb_build_object(
+        'jobId', v_job_id, 'generation', v_generation, 'revision', v_new_revision, 'state', 'reserved',
+        'attemptId', v_attempt, 'workerInstanceId', p_worker_id, 'ownershipToken', p_token,
+        'leaseExpiresAt', runwick.rw_ms_v1(v_expiry), 'reservationNumber', v_reservations + 1,
+        'contract', pg_catalog.jsonb_build_object('name', v_name, 'payloadVersion', v_payload_version,
+            'serializerProfileId', v_profile_id, 'serializerProfileVersion', v_profile_version),
+        'queue', p_queue, 'priority', p_priority,
+        'cursor', pg_catalog.jsonb_build_object('eligibleAt', runwick.rw_ms_v1(v_eligible), 'jobId', v_job_id),
+        'policy', pg_catalog.jsonb_build_object('executionTimeout', v_timeout, 'fingerprintVersion', 1,
+            'maxConsecutiveUnstartedAbandonments', v_max_unstarted, 'maxExecutions', v_max_executions,
+            'retry', v_retry, 'unstartedRetry', v_unstarted),
+        'fences', COALESCE((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('scopeId', f.id, 'value', f.v) ORDER BY f.ord)
+                            FROM unnest(v_fence_ids, v_fence_values) WITH ORDINALITY AS f(id, v, ord)), '[]'::jsonb));
+    PERFORM runwick.rw_finalize_v1(p_application, p_class, p_command_id, 'Applied', v_result, v_now);
+    PERFORM runwick.rw_fault('AfterMutation', 1, p_faults); -- rw:fault
+
+    v_reply := runwick.rw_applied_v1('Applied', NULL, v_now, v_result);
+    v_reply.payload := v_payload;
+    v_reply.headers := v_headers;
+    v_reply.created_at := v_created;
+    RETURN v_reply;
+END
+$fn$;

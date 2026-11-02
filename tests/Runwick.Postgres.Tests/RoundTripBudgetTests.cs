@@ -36,7 +36,7 @@ public sealed class RoundTripBudgetTests
     static readonly Dictionary<string, int> Expected = new()
     {
         ["Dispatch"] = 4,
-        ["Reserve"] = 5,
+        ["Reserve"] = 1,
         ["Begin"] = 4,
         ["Begin rated 1"] = 5,
         ["Begin rated 8"] = 5,

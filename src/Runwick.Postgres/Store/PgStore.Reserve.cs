@@ -24,188 +24,26 @@ internal sealed partial class PgStore
 
         var fingerprint = CommandEnvelopes.Fingerprint(StoreId, command.Application, Operations.Reserve, command.CommandId, command.NotAfter,
             CommandEnvelopes.Reserve(request));
-        return runner.ExecuteAsync(
+        // Q, C, G, the payload, S, the fresh clock, P, the fences, the attempt, the job, the permits, the event and R4
+        // run in runwick.reserve_v1 (04 §7.3); the attempt ID is UUIDv7 of the decision time, built in SQL.
+        return runner.CallAsync(
             Op(command.Application, command.CommandId, Operations.Reserve, command.NotAfter, fingerprint, PgLane.Admission),
-            async tx =>
+            new PgCall("reserve_v1").P("p_queue", request.Queue).P("p_priority", request.Priority)
+                .P("p_after_eligible_at", request.After?.EligibleAt).P("p_after_job_id", request.After?.JobId)
+                .Arr("p_names", [.. contracts.Select(x => x.Name)], NpgsqlDbType.Text)
+                .Arr("p_versions", [.. contracts.Select(x => x.PayloadVersion)], NpgsqlDbType.Integer)
+                .Arr("p_profile_ids", [.. contracts.Select(x => x.SerializerProfileId)], NpgsqlDbType.Text)
+                .Arr("p_profile_versions", [.. contracts.Select(x => x.SerializerProfileVersion)], NpgsqlDbType.Integer)
+                .P("p_lease", request.LeaseDuration).P("p_worker_id", request.WorkerInstanceId).P("p_token", NewToken()),
+            row =>
             {
-                // Q and the candidate claim in one round trip (PF-04): the claim's inputs are the request's, and the
-                // server takes Q's share lock first (04 §5). A paused or unregistered queue rolls the claim back.
-                var claim = tx.Batch();
-                var qq = claim.Query(tx.Sql("""
-                    SELECT paused FROM runwick.queue_controls
-                    WHERE application = @application AND queue = @queue
-                    FOR SHARE
-                    """).P("queue", request.Queue), r => r.GetBoolean(0));
-                var cq = claim.Query(tx.Sql("""
-                    SELECT j.job_id, j.eligible_at, j.generation, j.revision, j.reservation_count,
-                           j.job_name, j.payload_version, j.serializer_profile_id, j.serializer_profile_version
-                    FROM runwick.jobs AS j
-                    WHERE j.application = @application
-                      AND j.queue = @queue
-                      AND j.priority = @priority
-                      AND j.state IN ('pending', 'retrying')
-                      AND j.eligible_at <= statement_timestamp()
-                      AND (@after_job_id::uuid IS NULL
-                           OR (j.eligible_at, j.job_id) > (@after_eligible_at::timestamptz, @after_job_id::uuid))
-                      AND EXISTS (
-                          SELECT 1
-                          FROM unnest(@names::text[], @versions::integer[], @profile_ids::text[], @profile_versions::integer[])
-                               AS c(name, version, profile_id, profile_version)
-                          WHERE c.name = j.job_name AND c.version = j.payload_version
-                            AND c.profile_id = j.serializer_profile_id
-                            AND c.profile_version = j.serializer_profile_version)
-                    ORDER BY j.eligible_at, j.job_id
-                    LIMIT 1
-                    FOR NO KEY UPDATE OF j SKIP LOCKED
-                    """).P("queue", request.Queue).P("priority", request.Priority)
-                        .P("after_job_id", request.After?.JobId, NpgsqlDbType.Uuid).P("after_eligible_at", request.After?.EligibleAt)
-                        .Arr("names", [.. contracts.Select(x => x.Name)], NpgsqlDbType.Text)
-                        .Arr("versions", [.. contracts.Select(x => x.PayloadVersion)], NpgsqlDbType.Integer)
-                        .Arr("profile_ids", [.. contracts.Select(x => x.SerializerProfileId)], NpgsqlDbType.Text)
-                        .Arr("profile_versions", [.. contracts.Select(x => x.SerializerProfileVersion)], NpgsqlDbType.Integer), r => (
-                    JobId: r.GetGuid(0), EligibleAt: PgTime.Read(r, 1), Generation: r.GetInt32(2), Revision: r.GetInt64(3),
-                    ReservationCount: r.GetInt64(4),
-                    Contract: new JobContract(r.GetString(5), r.GetInt32(6), r.GetString(7), r.GetInt32(8))));
-                await tx.RunAsync(claim).ConfigureAwait(false);
-                if (qq.Items.Count == 0)
+                if (!row.HasValue)
                 {
-                    return new PgOutcome<ReservedJob>.Rollback(tx.Reject<ReservedJob>(StoreStatus.NoWork, "queue_not_registered"));
+                    return row.Reject<ReservedJob>();
                 }
 
-                if (qq.Items[0])
-                {
-                    return new PgOutcome<ReservedJob>.Rollback(tx.Reject<ReservedJob>(StoreStatus.QueuePaused, "queue_paused"));
-                }
-
-                var candidates = cq.Items;
-                if (candidates.Count == 0)
-                {
-                    return new PgOutcome<ReservedJob>.Rollback(tx.Reject<ReservedJob>(StoreStatus.NoWork, "no_work"));
-                }
-
-                // G, the payload, S and the decision clock in one round trip: each needs only the claimed job, and
-                // S is the last blocking lock (PF-04).
-                var job = candidates[0];
-                var locks = tx.Batch();
-                var gq = locks.Query(GenerationSql(tx, job.JobId, job.Generation), MapGeneration);
-                var pq = locks.Query(PayloadSql(tx, job.JobId), MapPayload);
-                var sq = locks.Query(LockScopesSql(tx, job.JobId), MapScope);
-                var clock = locks.Query(PgTx.ClockSql(tx), PgTx.ReadClock);
-                await tx.RunAsync(locks).ConfigureAwait(false);
-                var policy = gq.Items.Count == 1 ? gq.Items[0] : throw new InvalidOperationException("generation row missing");
-                var (payload, business, diagnostic, createdAt, schedule) = Payload(pq.Items);
-                var scopes = sq.Items;
-
-                if (!await tx.DecideAtAsync(clock.Items[0]).ConfigureAwait(false))
-                {
-                    return new PgOutcome<ReservedJob>.Rollback(tx.Reject<ReservedJob>(StoreStatus.CommandExpired, "command_expired"));
-                }
-
-                var now = tx.Now;
-                if (scopes.Count > 0)
-                {
-                    using var p = tx.Sql("""
-                        SELECT r.scope_id, count(p.attempt_id) AS live
-                        FROM unnest(@scope_ids::uuid[]) AS r(scope_id)
-                        LEFT JOIN runwick.concurrency_permits AS p
-                          ON p.application = @application AND p.scope_id = r.scope_id AND p.lease_expires_at > @now
-                        GROUP BY r.scope_id
-                        """).Arr("scope_ids", [.. scopes.Select(s => s.ScopeId)], NpgsqlDbType.Uuid).P("now", now);
-                    var live = (await tx.QueryAsync(p, r => (Scope: r.GetGuid(0), Live: r.GetInt64(1))).ConfigureAwait(false))
-                        .ToDictionary(x => x.Scope, x => x.Live);
-                    var blocked = scopes.FirstOrDefault(s => live[s.ScopeId] >= s.Capacity);
-                    if (blocked is not null)
-                    {
-                        return new PgOutcome<ReservedJob>.Rollback(tx.Reject<ReservedJob>(StoreStatus.CapacityBlocked, "capacity_blocked",
-                            blockedScope: blocked.ScopeId, resumeAfter: new CandidateCursor(job.EligibleAt, job.JobId)));
-                    }
-                }
-
-                var expiry = PgTime.Floor(now + request.LeaseDuration);
-                var reservationNumber = job.ReservationCount + 1;
-                var attemptId = Guid.CreateVersion7(now);
-                var token = NewToken();
-
-                // The effects and R4 in one round trip (PF-04). The scopes are locked, so each fence is the scope's
-                // counter + 1, and the job is locked, so its new revision is its revision + 1; both are checked.
-                var fences = scopes.Where(s => s.Fencing).ToDictionary(s => s.ScopeId, s => s.FencingCounter + 1);
-                var revision = job.Revision + 1;
-                var effects = tx.Batch();
-                PgBatch.Rows<(Guid, long)>? fq = null;
-                if (fences.Count > 0)
-                {
-                    fq = effects.Query(tx.Sql("""
-                        UPDATE runwick.concurrency_scopes
-                        SET fencing_counter = fencing_counter + 1
-                        WHERE application = @application AND fencing_enabled AND scope_id = ANY (@scope_ids::uuid[])
-                        RETURNING scope_id, fencing_counter
-                        """).Arr("scope_ids", [.. fences.Keys], NpgsqlDbType.Uuid), r => (r.GetGuid(0), r.GetInt64(1)), mutation: true);
-                }
-
-                effects.Exec(tx.Sql("""
-                    INSERT INTO runwick.job_attempts (
-                        application, attempt_id, job_id, generation, reservation_number, worker_instance_id, ownership_token, reserved_at)
-                    VALUES (@application, @attempt_id, @job_id, @generation, @reservation_number, @worker, @token, @now)
-                    """).P("attempt_id", attemptId).P("job_id", job.JobId).P("generation", job.Generation)
-                        .P("reservation_number", reservationNumber).P("worker", request.WorkerInstanceId).P("token", token).P("now", now));
-
-                var ju = effects.Query(tx.Sql("""
-                    UPDATE runwick.jobs
-                    SET state = 'reserved', reservation_count = reservation_count + 1, revision = revision + 1,
-                        current_attempt_id = @attempt_id, worker_instance_id = @worker, ownership_token = @token,
-                        lease_expires_at = @expiry, updated_at = @now
-                    WHERE application = @application AND job_id = @job_id AND state IN ('pending', 'retrying')
-                    RETURNING revision
-                    """).P("attempt_id", attemptId).P("worker", request.WorkerInstanceId).P("token", token)
-                        .P("expiry", expiry).P("now", now).P("job_id", job.JobId), r => r.GetInt64(0), mutation: true);
-
-                if (scopes.Count > 0)
-                {
-                    effects.Exec(tx.Sql("""
-                        INSERT INTO runwick.concurrency_permits (
-                            application, scope_id, attempt_id, job_id, ownership_token, lease_expires_at, fencing_value)
-                        SELECT @application, p.scope_id, @attempt_id, @job_id, @token, @expiry, p.fence
-                        FROM unnest(@scope_ids::uuid[], @fences::bigint[]) AS p(scope_id, fence)
-                        ORDER BY p.scope_id
-                        """).P("attempt_id", attemptId).P("job_id", job.JobId).P("token", token).P("expiry", expiry)
-                            .Arr("scope_ids", [.. scopes.Select(s => s.ScopeId)], NpgsqlDbType.Uuid)
-                            .Arr("fences", [.. scopes.Select(s => fences.TryGetValue(s.ScopeId, out var v) ? (long?)v : null)], NpgsqlDbType.Bigint));
-                }
-
-                EventInto(effects, tx, job.JobId, attemptId, "attempt_reserved",
-                    new JsonObject { ["generation"] = job.Generation, ["reservationNumber"] = reservationNumber });
-
-                var reserved = new ReservedJob(
-                    new JobPosition(job.JobId, job.Generation, revision, JobStates.Reserved),
-                    new LeaseGrant(new LeaseHandle(job.JobId, attemptId, request.WorkerInstanceId, token, job.Generation), expiry),
-                    job.Contract,
-                    new CandidateCursor(job.EligibleAt, job.JobId),
-                    reservationNumber,
-                    payload, business, diagnostic,
-                    request.Queue, request.Priority,
-                    policy.Policy,
-                    [.. scopes.Where(s => s.Fencing).Select(s => new StoreFence(s.ScopeId, fences[s.ScopeId]))],
-                    createdAt) { Schedule = schedule };
-                var invalid = new PgOutcome<ReservedJob>.Rollback(tx.Reject<ReservedJob>(StoreStatus.InvariantFault, "invalid_transition"));
-                return new PgOutcome<ReservedJob>.Commit(StoreReply<ReservedJob>.Applied(reserved, now), ReceiptCodec.Reserve(reserved))
-                {
-                    Effects = effects,
-                    Verify = () =>
-                    {
-                        if (fq is not null && !(fq.Items.Count == fences.Count && fq.Items.All(f => fences[f.Item1] == f.Item2)))
-                        {
-                            throw new InvariantViolationException("invalid_transition");
-                        }
-
-                        return ju.Items is [var r] && r == revision ? null : invalid;
-                    },
-                };
-            },
-            async (tx, row) =>
-            {
-                var o = row.Result!;
-                var (payload, business, diagnostic, createdAt, schedule) = await ReadPayloadAsync(tx, Guid.Parse(o["jobId"]!.GetValue<string>())).ConfigureAwait(false);
-                return StoreReply<ReservedJob>.Applied(ReceiptCodec.ReadReserve(o, payload, business, diagnostic, createdAt) with { Schedule = schedule }, row.DecidedAt!.Value, replayed: true);
+                var (payload, business, diagnostic, createdAt, schedule) = Payload([(row.Payload!, row.Headers!, row.CreatedAt!.Value)]);
+                return row.Applied(ReceiptCodec.ReadReserve(row.Result!, payload, business, diagnostic, createdAt) with { Schedule = schedule });
             },
             ct);
     }
@@ -216,20 +54,6 @@ internal sealed partial class PgStore
         RandomNumberGenerator.Fill(bytes);
         return new Guid(bytes, bigEndian: true);
     }
-
-    static async Task<(byte[] Payload, Dictionary<string, string> Business, Dictionary<string, string> Diagnostic, DateTimeOffset CreatedAt, JobScheduleInfo? Schedule)> ReadPayloadAsync(PgTx tx, Guid jobId)
-    {
-        using var cmd = PayloadSql(tx, jobId);
-        return Payload(await tx.QueryAsync(cmd, MapPayload).ConfigureAwait(false));
-    }
-
-    static Npgsql.NpgsqlCommand PayloadSql(PgTx tx, Guid jobId) => tx.Sql("""
-        SELECT p.payload_utf8, p.headers::text, j.created_at
-        FROM runwick.job_payloads p JOIN runwick.jobs j USING (application, job_id)
-        WHERE p.application = @application AND p.job_id = @job_id
-        """).P("job_id", jobId);
-
-    static (byte[], string, DateTimeOffset) MapPayload(Npgsql.NpgsqlDataReader r) => ((byte[])r[0], r.GetString(1), r.GetFieldValue<DateTimeOffset>(2));
 
     static (byte[] Payload, Dictionary<string, string> Business, Dictionary<string, string> Diagnostic, DateTimeOffset CreatedAt, JobScheduleInfo? Schedule) Payload(
         List<(byte[], string, DateTimeOffset)> rows)
