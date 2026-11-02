@@ -62,6 +62,9 @@ internal sealed class FaultHandle(FaultPoint point, FaultSpec spec, FaultTarget 
 
     public int Fired => Volatile.Read(ref _fired);
 
+    /// <summary>Whether the handle can still fire (an exhausted handle stays listed but plans nothing).</summary>
+    public bool CanFire => Volatile.Read(ref _remaining) > 0;
+
     public TaskBarrier Barrier { get; } = new($"{point}:{target}");
 
     internal readonly ConcurrentQueue<FaultContext> Contexts = new();
@@ -98,7 +101,8 @@ internal sealed class HarnessFaultInjector : IFaultInjector, IFaultPlanner
     {
         lock (_gate)
         {
-            return _armed.Exists(h => h.Point == point && (h.Target with { Step = null }).Matches(new FaultContext(point, operation, commandId, application)));
+            return _armed.Exists(h => h.CanFire && h.Point == point
+                && (h.Target with { Step = null }).Matches(new FaultContext(point, operation, commandId, application)));
         }
     }
 
