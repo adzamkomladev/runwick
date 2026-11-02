@@ -41,6 +41,9 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
     /// <summary>Items settled from an Applied FinishMany reply without a per-item resolution.</summary>
     public long BatchedItemsSettled;
 
+    /// <summary>The last FinishMany failure that fell back to per-item resolution (diagnostics and tests).</summary>
+    public string? LastBatchFailure { get; private set; }
+
     public void Start()
     {
         for (var i = 0; i < WorkerSettings.SettlementLane; i++)
@@ -158,6 +161,7 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
                     {
                         // Not applied or outcome unknown: every item resolves alone with its own command (its receipt decides).
                         engine.Logger.LogDebug(ex, "Runwick FinishMany {Command} of {Count} unresolved; resolving each Finish.", command.CommandId, members.Count);
+                        LastBatchFailure = ex.GetType().Name + ": " + ex.Message;
                     }
                 }
             }
@@ -193,10 +197,12 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
                         Volatile.Write(ref _batchOff, true);
                     }
 
+                    LastBatchFailure = $"{reply.Status} ({reply.Error?.Code})";
                     engine.Diagnose($"FinishMany returned {reply.Status} ({reply.Error?.Code}); resolving each Finish alone");
                 }
                 else
                 {
+                    LastBatchFailure = reply is null ? LastBatchFailure ?? "no reply" : $"{reply.Status} ({reply.Error?.Code})";
                     retryDelay = true;
                 }
 

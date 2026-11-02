@@ -455,11 +455,13 @@ public sealed class FinishManyTests
 
         // After startup's schema check, before any finish: the store now answers 42883 for the batched finish.
         await f.ExecAsync("ALTER FUNCTION runwick.finish_many_v1 RENAME TO finish_many_v1_hidden");
-        BusyLane(f);
+        f.ArmFault(FaultPoint.BeforeGateLock, FaultSpec.Sleep(TimeSpan.FromMilliseconds(1500)), FaultTarget.Op(Operations.Finish), times: 2);
         await RunJobsAsync(f, w, 24, start: false);
-        Assert.True(Interlocked.Read(ref w.Engine.Completion.BatchesSent) > 0);
-        Assert.Equal(0, Interlocked.Read(ref w.Engine.Completion.BatchesApplied));
-        Assert.Contains(w.Engine.Health().Diagnostics, d => d.Contains("FinishMany returned UnsupportedVersion", StringComparison.Ordinal));
+        var completion = w.Engine.Completion;
+        Assert.True(Interlocked.Read(ref completion.BatchesSent) > 0);
+        Assert.Equal(0, Interlocked.Read(ref completion.BatchesApplied));
+        Assert.True(w.Engine.Health().Diagnostics.Any(d => d.Contains("FinishMany returned UnsupportedVersion", StringComparison.Ordinal)),
+            $"last batch failure: {completion.LastBatchFailure}");
         Assert.Empty(await f.HistoryViolations());
     }
 }
