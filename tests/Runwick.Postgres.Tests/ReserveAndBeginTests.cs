@@ -393,4 +393,60 @@ public sealed class ReserveAndBeginTests
         Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM (SELECT job_id FROM runwick.job_attempts WHERE authorized_at IS NOT NULL GROUP BY job_id HAVING count(*) > 1) x"));
         Assert.Empty(await f.HistoryViolations());
     }
+
+    static Runwick.Harness.Engine.WorkerHost Host(DriverFixture f, int concurrency) =>
+        Runwick.Harness.Engine.WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults, concurrency);
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    [Trait("Item", "PF-06")]
+    [Trait("Case", "RAB-09")]
+    public async Task A_worker_with_free_slots_claims_them_in_one_command()
+    {
+        // 05 §9.6: with more than one free slot the worker sends ReserveAndBegin for those slots; every job runs once.
+        await using var f = await DriverFixture.StartAsync(Ns("rab09"));
+        await using var w = Host(f, concurrency: 8);
+        const int jobs = 40;
+        await w.Dispatcher.DispatchManyAsync([.. Enumerable.Range(0, jobs).Select(n => new BatchDispatchItem(new Runwick.Harness.Engine.WorkJob("j" + n)))]);
+        await w.StartAsync();
+        await Runwick.Harness.Engine.WorkerHost.WaitUntil(() => w.Script.Invocations.Count >= jobs, TimeSpan.FromSeconds(90), "every job invoked");
+        await Runwick.Harness.Engine.WorkerHost.WaitUntil(() => f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE state = 'succeeded'").Result == jobs,
+            TimeSpan.FromSeconds(60), "every job settled");
+
+        var pool = w.Engine.Pools.Single();
+        Assert.True(Interlocked.Read(ref pool.BatchClaims) > 0);
+        Assert.True(await f.CountAsync("SELECT count(*) FROM runwick.storage_commands WHERE operation = 'ReserveAndBegin'") > 0);
+        Assert.True(w.Engine.AdmissionOpen);
+        Assert.Equal(jobs, w.Script.Invocations.Count);
+        Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM (SELECT job_id FROM runwick.job_attempts WHERE authorized_at IS NOT NULL GROUP BY job_id HAVING count(*) > 1) x"));
+        Assert.Empty(await f.HistoryViolations());
+    }
+
+    [Fact]
+    [Trait("Category", "Fault")]
+    [Trait("Item", "PF-06")]
+    [Trait("Case", "RAB-10")]
+    public async Task A_non_applied_batch_reply_falls_back_to_reserve_and_begin()
+    {
+        // Any reply other than Applied or a Reserve-like no-effect (here: the operation missing from the schema, which
+        // the store reports as UnsupportedVersion) turns the pool to Reserve then Begin; admission stays open.
+        await using var f = await DriverFixture.StartAsync(Ns("rab10"));
+        await using var w = Host(f, concurrency: 8);
+        await w.StartAsync();
+
+        // After startup's schema check, before any claim: the store now answers 42883 for the batched claim.
+        await f.ExecAsync("ALTER FUNCTION runwick.reserve_and_begin_v1 RENAME TO reserve_and_begin_v1_hidden");
+        const int jobs = 12;
+        await w.Dispatcher.DispatchManyAsync([.. Enumerable.Range(0, jobs).Select(n => new BatchDispatchItem(new Runwick.Harness.Engine.WorkJob("j" + n)))]);
+        await Runwick.Harness.Engine.WorkerHost.WaitUntil(() => f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE state = 'succeeded'").Result == jobs,
+            TimeSpan.FromSeconds(90), "every job settled through Reserve and Begin");
+
+        var pool = w.Engine.Pools.Single();
+        Assert.Equal(0, Interlocked.Read(ref pool.BatchClaims));
+        Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM runwick.storage_commands WHERE operation = 'ReserveAndBegin'"));
+        Assert.True(await f.CountAsync("SELECT count(*) FROM runwick.storage_commands WHERE operation = 'Begin'") >= jobs);
+        Assert.True(w.Engine.AdmissionOpen);
+        Assert.Contains(w.Engine.Health().Diagnostics, d => d.Contains("ReserveAndBegin returned UnsupportedVersion", StringComparison.Ordinal));
+        Assert.Empty(await f.HistoryViolations());
+    }
 }

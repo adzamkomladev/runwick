@@ -10,7 +10,7 @@ namespace Runwick.Workloads;
 /// (<c>controlWait</c>, from the engine's own tracking). Also derives the renewal margin (previous expiry − Renew decision,
 /// both store instants) and due-to-Begin (<c>eligible_at</c> from the Reserve cursor → Begin decision).
 /// </summary>
-internal sealed class TimingStore(IRunwickStore inner, Metrics metrics, bool detailed = false) : IRunwickStore, ILeaseBatchStore, IWakeNotificationSource
+internal sealed class TimingStore(IRunwickStore inner, Metrics metrics, bool detailed = false) : IRunwickStore, ILeaseBatchStore, IReserveAndBeginStore, IWakeNotificationSource
 {
     // Wake notifications pass straight through (05 §7.2, PF-07); they are not store calls and are not timed.
     public Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, Action onLost, CancellationToken ct) =>
@@ -94,6 +94,39 @@ internal sealed class TimingStore(IRunwickStore inner, Metrics metrics, bool det
             if (!reply.Reply.Replayed && _eligible.TryRemove(attempt, out var eligible))
             {
                 metrics.Observe("dueToBegin", (reply.Reply.DecidedAt - eligible).TotalMilliseconds);
+            }
+        }
+
+        return reply;
+    }
+
+    /// <summary>
+    /// ReserveAndBegin (PF-06 batched claim): timed as <c>reserveAndBegin</c>, with the claimed count as
+    /// <c>reserveAndBeginSize</c>; each begun job's expiry and due-to-Begin are recorded as for Reserve then Begin. An
+    /// inner store without the operation answers UnsupportedVersion, and the engine falls back to Reserve and Begin.
+    /// </summary>
+    public async Task<StoreReply<ClaimedJobs>> ReserveAndBeginAsync(StoreCommand<ReserveAndBeginRequest> command, CancellationToken ct)
+    {
+        if (inner is not IReserveAndBeginStore batch)
+        {
+            return StoreReply<ClaimedJobs>.NoEffect(StoreStatus.UnsupportedVersion, new StoreError("operation_unsupported"), DateTimeOffset.UtcNow);
+        }
+
+        var reply = await Timed("reserveAndBegin", () => batch.ReserveAndBeginAsync(command, ct), S).ConfigureAwait(false);
+        if (reply is { Status: StoreStatus.Applied, Value: { } claimed })
+        {
+            metrics.Observe("reserveAndBeginSize", claimed.Outcomes.Count);
+            foreach (var x in claimed.Outcomes)
+            {
+                metrics.Count($"reserveAndBegin.item:{x.Status}");
+                if (x is { Reserved: { } job, Begun: { } begun })
+                {
+                    _expiry[job.Lease.Handle.AttemptId] = begun.Lease.ExpiresAt;
+                    if (!reply.Replayed)
+                    {
+                        metrics.Observe("dueToBegin", (reply.DecidedAt - job.Cursor.EligibleAt).TotalMilliseconds);
+                    }
+                }
             }
         }
 
