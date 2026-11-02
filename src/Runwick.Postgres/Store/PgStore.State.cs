@@ -300,42 +300,13 @@ internal sealed partial class PgStore
         var lease = command.Body.Lease;
         var fingerprint = CommandEnvelopes.Fingerprint(StoreId, command.Application, Operations.ReleaseReservation, command.CommandId, command.NotAfter,
             CommandEnvelopes.Release(command.Body));
-        return runner.ExecuteAsync(
+        // J, G, K (a cancelled release), S, the fresh clock, the ownership check and A -> P -> J' -> K' -> E with R4 run in
+        // runwick.release_reservation_v1 (04 §7.9).
+        return runner.CallAsync(
             Op(command.Application, command.CommandId, Operations.ReleaseReservation, command.NotAfter, fingerprint, PgLane.Settlement),
-            async tx =>
-            {
-                var job = await LockJobAsync(tx, lease.JobId).ConfigureAwait(false);
-                var gen = job is null ? null : await ReadGenerationAsync(tx, lease.JobId, job.Generation).ConfigureAwait(false);
-                var cancel = job?.CancelRequestedAt is not null;
-                if (job is not null)
-                {
-                    if (cancel)
-                    {
-                        await LockActiveKeyAsync(tx, job).ConfigureAwait(false);
-                    }
-
-                    await LockScopesAsync(tx, lease.JobId).ConfigureAwait(false);
-                }
-
-                if (!await tx.DecideAsync().ConfigureAwait(false))
-                {
-                    return new PgOutcome<ReleasedReservation>.Rollback(tx.Reject<ReleasedReservation>(StoreStatus.CommandExpired, "command_expired"));
-                }
-
-                if (Ownership(job, lease, tx.Now, JobStates.Reserved) is { } refusal)
-                {
-                    return new PgOutcome<ReleasedReservation>.Rollback(tx.Reject<ReleasedReservation>(refusal.Status, refusal.Code));
-                }
-
-                var state = cancel ? JobStates.Cancelled : gen!.StartedCount == 0 ? JobStates.Pending : JobStates.Retrying;
-                var revision = await CloseAsync(tx, new Close(job!, lease.JobId, lease.AttemptId, lease.OwnershipToken, "released", state,
-                    cancel ? "cancelled_before_start" : null, "attempt_released")).ConfigureAwait(false);
-                var released = new ReleasedReservation(new JobPosition(lease.JobId, job!.Generation, revision, state), state,
-                    cancel ? null : job.EligibleAt);
-                return new PgOutcome<ReleasedReservation>.Commit(StoreReply<ReleasedReservation>.Applied(released, tx.Now),
-                    ReceiptCodec.Released(released, lease.AttemptId));
-            },
-            (tx, row) => Task.FromResult(StoreReply<ReleasedReservation>.Applied(ReceiptCodec.ReadReleased(row.Result!), row.DecidedAt!.Value, replayed: true)),
+            new PgCall("release_reservation_v1").P("p_job_id", lease.JobId).P("p_attempt_id", lease.AttemptId)
+                .P("p_worker_id", lease.WorkerInstanceId).P("p_token", lease.OwnershipToken).P("p_generation", lease.Generation),
+            row => row.HasValue ? row.Applied(ReceiptCodec.ReadReleased(row.Result!)) : row.Reject<ReleasedReservation>(),
             ct);
     }
 }

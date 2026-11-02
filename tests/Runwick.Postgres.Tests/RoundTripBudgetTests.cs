@@ -44,7 +44,7 @@ public sealed class RoundTripBudgetTests
         ["RenewMany"] = 3,
         ["Finish"] = 1,
         ["Recover"] = 1,
-        ["ReleaseReservation"] = 8,
+        ["ReleaseReservation"] = 1,
         ["ReadinessProbe"] = 1,
         ["PublishPresence"] = 5,
         ["StageAsync"] = 5,
