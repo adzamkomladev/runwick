@@ -162,6 +162,7 @@ internal sealed class OutboxRelay(
             {
                 try
                 {
+                    Interlocked.Increment(ref Claims);
                     var leases = await Call(c => source.ClaimAsync(_owner, free, options.LeaseDuration, c)).ConfigureAwait(false);
                     failures = 0;
                     foreach (var lease in leases)
@@ -184,9 +185,12 @@ internal sealed class OutboxRelay(
 
             if (claimed == 0 || _inFlight.Count >= options.MaxInFlight)
             {
+                // Nothing claimed with a free slot: the idle poll, longer while the wake listener is healthy. A full or
+                // renewal-paused relay keeps IdlePoll (a freed slot ends the wait either way).
+                var idle = claimed == 0 && free > 0 && !_renewalUncertain ? IdlePollNow : options.IdlePoll;
                 try
                 {
-                    await _slotFreed.WaitAsync(options.IdlePoll, stop).ConfigureAwait(false);
+                    await _slotFreed.WaitAsync(idle, stop).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (stop.IsCancellationRequested)
                 {
@@ -199,11 +203,31 @@ internal sealed class OutboxRelay(
     /// <summary>Wake notifications received (tests and diagnostics).</summary>
     public long Notifications;
 
+    /// <summary>Claim calls (tests and diagnostics).</summary>
+    public long Claims;
+
+    /// <summary>Listener sessions lost or refused after a subscription (tests and diagnostics).</summary>
+    public long ListenerLosses;
+
+    /// <summary>
+    /// While the wake listener is subscribed, the idle poll is this multiple of <see cref="OutboxRelayOptions.IdlePoll"/>
+    /// (1 s to 5 s by default; 14 Changes 2026-11-02, idle caps).
+    /// </summary>
+    internal const int ListeningIdleFactor = 5;
+
+    volatile bool _listenerHealthy;
+
+    /// <summary>True from a successful (re)subscription until the session is lost, refused or the listener stops.</summary>
+    public bool ListenerHealthy => _listenerHealthy;
+
+    /// <summary>The idle poll now: 5 × IdlePoll while the listener is healthy, IdlePoll otherwise.</summary>
+    internal TimeSpan IdlePollNow => _listenerHealthy ? options.IdlePoll * ListeningIdleFactor : options.IdlePoll;
+
     async Task ListenAsync(IOutboxWakeSource wake)
     {
         try
         {
-            await wake.ListenAsync(OnWake, _claimStop.Token).ConfigureAwait(false);
+            await wake.ListenAsync(OnNotification, OnSubscribed, OnListenerLost, _claimStop.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (_claimStop.IsCancellationRequested)
         {
@@ -212,11 +236,43 @@ internal sealed class OutboxRelay(
         {
             logger.LogWarning(ex, "Runwick outbox wake listener stopped; the relay keeps polling.");
         }
+        finally
+        {
+            OnListenerLost();
+        }
+    }
+
+    void OnNotification()
+    {
+        Interlocked.Increment(ref Notifications);
+        OnWake();
+    }
+
+    /// <summary>(Re)subscribed: stages committed while unsubscribed were not notified, so claim once now.</summary>
+    void OnSubscribed()
+    {
+        _listenerHealthy = true;
+        OnWake();
+    }
+
+    /// <summary>
+    /// Lost, refused or stopped: stages are no longer notified, so the 1 s poll applies again. The current wait ends now,
+    /// so no wait begun under the longer poll outlives the session.
+    /// </summary>
+    void OnListenerLost()
+    {
+        if (!_listenerHealthy)
+        {
+            return;
+        }
+
+        _listenerHealthy = false;
+        Interlocked.Increment(ref ListenerLosses);
+        OnWake();
     }
 
     void OnWake()
     {
-        Interlocked.Increment(ref Notifications);
         try
         {
             if (_slotFreed.CurrentCount == 0)

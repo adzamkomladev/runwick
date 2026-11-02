@@ -4,6 +4,18 @@
 
 This document defines the test harness built in SP-003, the exact case list that gate **G-1** (milestone M2, PostgreSQL execution) requires, the first performance measurements recorded by SP-010, and the G-1 pass rule. Every case listed in §4–§13 is mandatory for G-1 unless this document marks a named sub-part as deferred to a later SP item.
 
+## Changes (2026-11-02, idle caps)
+
+Longer idle caps while a wake listener is healthy (05/06/13/14 Changes 2026-11-02, idle caps).
+
+- **OBS-01** bound. The listener is healthy and every notification is dropped, so the worker idles at the 10 s cap. Discovery of another process's job and of a resume is now bounded by 10 s × 1.2 + hint age 2 s + 4 s for one probe and one claim on this host = 18 s (was 2.4 + 2 + 4 = 8.4 s). The case also asserts that the listener stayed healthy, so the bound really covers the long cap. The recovery part is unchanged: recovery is timer-driven.
+- **WAKE-02** also asserts that a terminated session is reported as lost (`ListenerLosses`), and that the long cap returns after the resubscription.
+- **WAKE-03** (new; the worker and scheduler halves are Pure, over fake time; the relay half is Contract). Listener healthy → longer cap; lost → old cap at once.
+  - *Worker* (`WorkerEngineTests.A_healthy_listener_lengthens_the_idle_cap_…`, scripted listener): 2 s before the first subscription; 4–8 probes per 60 s while healthy; a notification still wakes at once. On loss the pools probe within 200 ms, then 24–40 probes per 60 s, and un-notified work is found within 2.4 s + hint age. After a resubscription the cap is 10 s again.
+  - *Scheduler* (`SchedulerIdleTests`, scripted schedule listener): 11–13 due reads per 60 s unsubscribed, 3–5 while healthy, and a known due instant read within 100 ms of falling due. On loss the scheduler reads at once, then 11–13 reads per 60 s.
+  - *Relay* (`RelayIdleTests`, scripted listener around the SQLite source, `IdlePoll` 200 ms): 10–22 claims per 4 s unsubscribed and 2–7 while healthy. A notified stage is delivered without waiting out the long poll. On loss the relay claims at once, then 10–22 claims per 4 s.
+- WRK-16 and CAP-04 are unchanged. Their jobs are notified or woken locally, so the long cap does not apply to them.
+
 ## Changes (2026-11-02, PF-08)
 
 - **POOL-01** (Contract, `PreparedStatementTests`): the driver pools skip the reset sequence (04 Changes 2026-11-02, PF-08), and a connection returned to the pool inside a transaction is still rolled back: its backend is idle, its row is gone, and its transaction-local setting is not seen by later users of the pool.

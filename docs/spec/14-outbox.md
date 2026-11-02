@@ -2,6 +2,13 @@
 
 **Sources:** [transactional-outbox.md](../architecture/transactional-outbox.md) (all sections, OUTBOX-01 … OUTBOX-07); [storage-command-protocol.md](../architecture/storage-command-protocol.md) "Outbox destination extension"; [driver-contract-suite.md](../architecture/driver-contract-suite.md) §4 (TX), OUT-01, OUT-02, CMD-01 … CMD-05, ISO-01; [performance-acceptance-plan.md](../architecture/performance-acceptance-plan.md) (P-09); 02 §7–§9; 03 §2.1, §4, §10; 04 §5, §6, §8; 06 §1.4, §1.7; 07 §4 (CMD), §8 (TX), §9 (ISO-01); 15 §10–§11.
 
+## Changes (2026-11-02, idle caps)
+
+- **Idle poll.** While the relay's wake listener is healthy (from a successful (re)subscription until the session is lost or refused, or the listener stops), a claim loop that claimed nothing with a free slot waits **5 × `IdlePoll`** (5 s by default). Otherwise it waits `IdlePoll` (1 s), as before; a full relay or one paused by renewal uncertainty always waits `IdlePoll`, and a freed slot ends any wait. A lost session ends the current wait at once.
+- **Interface.** `IOutboxWakeSource.ListenAsync(onWake, onSubscribed, onLost, ct)`: a (re)subscription is now reported apart from a notification (both still end the idle wait), and a lost or refused session calls `onLost` before the reconnect back-off.
+- **Cost.** Rows that become claimable by time (a `RetryLaterAsync` back-off, an expired lease of another owner) are not notified; an idle relay with a healthy listener finds them within 5 s instead of 1 s. Retry back-off starts at 1 s and the relay lease is 60 s, so this adds at most 4 s to an already delayed delivery.
+- **Why 5 s.** Five times fewer idle claim transactions. The SQLite source has no notifications and keeps 1 s.
+
 ## Changes (2026-11-02, PF-07)
 
 Optional wake channel on the PostgreSQL source. Stage's INSERT notifies `runwick_outbox` (empty payload) when it inserts a row; PostgreSQL delivers it only when the caller's transaction commits, so a rolled-back stage never wakes the relay. A relay whose source offers notifications listens on one dedicated unpooled session (outside the source's two-connection pool, application name `<name>:listen`), reconnecting after 1 s doubling to 30 s. A notification, and every (re)subscription, ends the claim loop's idle wait (`IdlePoll`) early. The SQLite source has no notifications. Claims, leases and polling are unchanged; with every notification lost the relay delivers on its normal idle poll.
@@ -169,7 +176,7 @@ The renewal loop renews every in-flight lease each `RenewalInterval`. A `false` 
 | `LeaseDuration` | 60 s | ≥ 5 s and ≥ 3 × `RenewalInterval` |
 | `RenewalInterval` | 15 s | > 0 |
 | `ProviderCallTimeout` (each source or destination call) | 5 s | > 0 and < `RenewalInterval` |
-| `IdlePoll` | 1 s | > 0 |
+| `IdlePoll` | 1 s (the idle wait is 5 × `IdlePoll` while the wake listener is healthy) | > 0 |
 | `RetryInitial` → `RetryMax`, exponential, equal jitter | 1 s → 60 s | `RetryMax ≥ RetryInitial` |
 | `TransportLifetime` | 30 s | (0, 30 s], and never past AcceptUntil |
 | Source connections per relay group | 2 | fixed: one claim lane, one control lane (renew, transport, marks) |

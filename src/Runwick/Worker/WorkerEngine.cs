@@ -249,6 +249,22 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
     /// <summary>Listener (re)subscriptions.</summary>
     public long ListenerSubscriptions;
 
+    /// <summary>Listener sessions lost or refused (each one returns the pools to the short idle cap).</summary>
+    public long ListenerLosses;
+
+    volatile bool _listenerHealthy;
+
+    /// <summary>
+    /// True from a successful (re)subscription until the session is lost, refused or the listener stops. Only then does a
+    /// committed dispatch reach this worker as a wake, so only then may an idle pool wait longer (05 Changes 2026-11-02,
+    /// idle caps). Dropping notifications on receipt (<see cref="NotificationsSuppressed"/>) leaves it true: that is the
+    /// worst case of a healthy session, which OBS-01 bounds.
+    /// </summary>
+    public bool ListenerHealthy => _listenerHealthy;
+
+    /// <summary>The idle backoff cap now: 10 s while the listener is healthy, otherwise the 2 s of 05 §7.2.</summary>
+    public TimeSpan IdleBackoffCap => _listenerHealthy ? WorkerSettings.IdleBackoffCapListening : WorkerSettings.IdleBackoffCap;
+
     /// <summary>
     /// Drops every wake notification (harness hook for driver-contract-suite:OBS-01): the worker then finds work, control
     /// changes and recovery only by polling, which stays the correctness path.
@@ -283,6 +299,7 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
     void OnListenerSubscribed()
     {
         Interlocked.Increment(ref ListenerSubscriptions);
+        _listenerHealthy = true;
         if (NotificationsSuppressed)
         {
             return;
@@ -290,6 +307,36 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
 
         Readiness.Invalidate();
         WakePools();
+    }
+
+    /// <summary>
+    /// Lost or refused session: commits are no longer notified, so the short cap applies again at once. The pools are
+    /// woken so none sits out a long wait begun while the session was healthy; their next idle wait is capped at 2 s.
+    /// </summary>
+    void OnListenerLost()
+    {
+        if (!_listenerHealthy)
+        {
+            return;
+        }
+
+        _listenerHealthy = false;
+        Interlocked.Increment(ref ListenerLosses);
+        WakePools();
+    }
+
+    async Task ListenAsync(IWakeNotificationSource notifications)
+    {
+        try
+        {
+            await notifications.ListenAsync(Application, WakeChannels.Work, OnWakeNotification, OnListenerSubscribed, OnListenerLost, LoopStop)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            // Stopped or faulted: nothing will notify any more.
+            OnListenerLost();
+        }
     }
 
     public void Track(AttemptEntry entry) => _entries[entry.AttemptId] = entry;
@@ -372,8 +419,7 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
         // Optional wake channel (05 §7.2, PF-07): a hint only; losing it costs latency, never correctness.
         if (Store is IWakeNotificationSource notifications)
         {
-            Supervise("listener", () => notifications.ListenAsync(Application, WakeChannels.Work, OnWakeNotification, OnListenerSubscribed, LoopStop),
-                critical: false);
+            Supervise("listener", () => ListenAsync(notifications), critical: false);
         }
 
         if (_lifetime is not null)
@@ -459,7 +505,7 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
         }
 
         // Only the resume transition wakes the pools: a wake on every healthy tick would cut the idle backoff
-        // (100 ms → 2 s) to the 1 s tick and double idle probes.
+        // (100 ms → 2 s, or 10 s while the listener is healthy) to the 1 s tick and multiply idle probes.
         if (transition == "pressureResume")
         {
             WakePools();

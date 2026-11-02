@@ -4,6 +4,15 @@
 
 Every numeric default used by milestone M2 is in this file. Behavior that uses each value is specified in [05-worker-engine.md](05-worker-engine.md) (cited as `05 §n`) and the storage/protocol specs. A value listed here is the default; a host may change configurable values only within the startup inequalities of §3. Values marked *profile constant* are not host-configurable (raising them requires a new serializer profile/format version).
 
+## Changes (2026-11-02, idle caps)
+
+Idle polling backs off further while a wake listener is healthy (05/13/14 Changes 2026-11-02, idle caps). Every value below applies only from a successful (re)subscription until the session is lost or refused. Otherwise the earlier value stays in force.
+
+- §1.5 idle probe backoff cap: 2,000 → **10,000 ms** while the worker's listener is healthy; F-10 and V-22 read the cap that applies at each wait. The blocked lane/queue cooldown cap stays 2,000 ms.
+- §1.12 relay idle poll: 1 s → **5 s** (5 × `IdlePoll`) while the relay's listener is healthy. A full or renewal-paused relay keeps `IdlePoll`.
+- §1.14 scheduler idle back-off: 5 s → **15 s** (3 × `IdlePollInterval`) while the scheduler's listener is healthy. An idle wait never runs past the next due instant the scheduler knows of.
+- No option is added. The worker cap is a constant, as before. The relay and scheduler values scale with their existing `IdlePoll` and `IdlePollInterval` options.
+
 ## Changes (2026-10-31, SP-016)
 
 - §1.14 adds the scheduler defaults and bounds (13 §9–§10).
@@ -133,7 +142,7 @@ Implementation choices (marked *[choice]* below): whole-millisecond durations (V
 | BlockedCandidatesPerLaneVisit | 8 | candidates | Lane visit scan budget | WEI §5, CDB §2 | V-21 |
 | ReservesPerRound | 32 | Reserve calls incl. successes | Pool scheduling round, then yield | WEI §5, CDB §2 | V-21 |
 | Readiness maximum hint age | 2,000 | ms | Snapshot refresh | CDB §2 | V-22 |
-| Idle probe backoff | 100 → 2,000, doubling, jitter ±20 % | ms | Readiness polling (F-10) | CDB §2 | V-22 |
+| Idle probe backoff | 100 → 2,000 (→ 10,000 while the wake listener is healthy), doubling, jitter ±20 % | ms | Readiness polling (F-10) | CDB §2 | V-22 |
 | Blocked lane/queue cooldown | 250 → 2,000, doubling, jitter ±20 % | ms | Lane/queue cooldown, QueuePaused backoff (F-10) | CDB §2 | V-22 |
 | Notification probe spacing | ≥ 50 | ms per polling group; 1 probe in flight | Readiness | CDB §2 | V-22 |
 | Capability-set bound | 512 (*[choice]*) | deduplicated decoding tuples per probe / Reserve | Readiness, Reserve, presence | C-5 | V-17 |
@@ -237,7 +246,7 @@ Not in M2 (listed so no M2 component invents them): rate-policy bounds (1–100,
 | MaxInFlight / claim batch | 4 (1 – 64) | messages | Relay | 14 §4.2 |
 | Source lease / renewal | 60 s / 15 s (lease ≥ 5 s, ≥ 3 × renewal) | s | Relay | 14 §4.2 |
 | Provider call timeout | 5 s (< renewal) | s | Relay | 14 §4.2 |
-| Idle poll | 1 s | s | Relay | 14 §4.2 |
+| Idle poll | 1 s (5 s while the wake listener is healthy) | s | Relay | 14 §4.2 |
 | Retry | 1 s → 60 s, exponential, equal jitter | s | Relay | 14 §4.2 |
 | Source connections | 2 per relay group (claim lane, control lane) | connections | Relay | 14 §4.2 |
 
@@ -264,7 +273,7 @@ These are benchmark inputs, not tuned release values.
 | Setting | Default | Bound |
 |---|---|---|
 | Due read | 32 schedules per pass | — |
-| Polling | 1 s while due; idle back-off to 5 s, × (1 ± 0.10) | — |
+| Polling | 1 s while due; idle back-off to 5 s (15 s while the schedule listener is healthy, never past a known due instant), × (1 ± 0.10) | — |
 | Materializations in flight | 1 per scheduler/store group | — |
 | Local allowance | 100 jobs/s, burst 32 | — |
 | Request / resolution budget | 5 s / 30 s | — |
@@ -326,7 +335,7 @@ effective budget end = min(ControlStopCutoff, host token cancellation)
 
 **F-9 Receipt retention:** `retain_until = NotAfter + 10 min` (class `ownership`) or `NotAfter + 24 h` (class `durable`).
 
-**F-10 Jittered doubling backoff** (idle probe base 100 ms, cooldown base 250 ms, cap 2,000 ms): consecutive step `i ≥ 0`: `nominal_i = min(cap, base × 2^i)`; `actual_i = nominal_i × (1 + u)`, `u` uniform in `[−0.20, +0.20]` (*[choice]* jitter applied after the cap); always > 0. Reset to `i = 0` on an Applied reservation in that lane/queue (cooldown) or actual work / useful wake hint (idle).
+**F-10 Jittered doubling backoff** (idle probe base 100 ms, cooldown base 250 ms, cap 2,000 ms; the idle probe cap is 10,000 ms while the wake listener is healthy): consecutive step `i ≥ 0`: `nominal_i = min(cap, base × 2^i)`; `actual_i = nominal_i × (1 + u)`, `u` uniform in `[−0.20, +0.20]` (*[choice]* jitter applied after the cap); always > 0. Reset to `i = 0` on an Applied reservation in that lane/queue (cooldown) or actual work / useful wake hint (idle).
 
 **F-11 Smooth weighted round robin** (per level): trial `t_x = score_x + w_x`; winner = argmax (rotating tie-break); on Applied only: `score_x := t_x` for all eligible x, then `score_winner −= Σ w_x`. Shares under a stable set: queues 1:3 → 2,500/7,500 per 10,000; lanes 6:3:1 → 6,000/3,000/1,000 per 10,000.
 
@@ -365,7 +374,7 @@ Startup rejects any violation with an error naming the setting(s) and the inequa
 | V-19 | `PresenceHeartbeat × 1.1 < PresenceExpiry` *[choice]* | 5.5 s < 20 s |
 | V-20 | Lane weights positive integers; `AgingEvery ≥ 1`; `AgingThreshold > 0`; mode ∈ {weighted, strict-with-aging, strict} | 6/3/1; 8; 60 s |
 | V-21 | `BlockedCandidatesPerLaneVisit ≥ 1`; `ReservesPerRound ≥ BlockedCandidatesPerLaneVisit` *[choice]*; `RecoveryBatch ≥ 1` | 8 ≤ 32; 32 |
-| V-22 | For idle backoff and cooldown: `0 < base ≤ cap`; jitter fraction in [0, 1); hint max age > 0; probe spacing > 0 | 100 ms ≤ 2 s; 250 ms ≤ 2 s; 0.20; 2 s; 50 ms |
+| V-22 | For idle backoff and cooldown: `0 < base ≤ cap`; jitter fraction in [0, 1); hint max age > 0; probe spacing > 0 | 100 ms ≤ 2 s (10 s listening); 250 ms ≤ 2 s; 0.20; 2 s; 50 ms |
 | V-23 | `LeaseDuration` within the store's supported lease bounds (checked against the store compatibility manifest) | 60 s |
 | V-24 | The binary knows every capability the application requires (SP-013 builds know `rate_admission`; earlier binaries refuse a rate-enabled application) | pass |
 

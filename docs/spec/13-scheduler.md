@@ -2,6 +2,12 @@
 
 **Sources:** [scheduling-internals.md](../architecture/scheduling-internals.md) §2–§10 (primary); [scheduler-evaluator-and-defaults.md](../architecture/scheduler-evaluator-and-defaults.md) §3, §5; [postgres-schema-and-operations.md](../architecture/postgres-schema-and-operations.md) §4–§6; [storage-command-protocol.md](../architecture/storage-command-protocol.md); [management-retention-defaults.md](../architecture/management-retention-defaults.md) (command lifetimes, schedule retention); [public-api-contract.md](../architecture/public-api-contract.md) §9, §18; 12 (evaluator); 08 (actor, audit, events, receipts); 10 (rate scopes, capability activation pattern); 03 §3, §8.
 
+## Changes (2026-11-02, idle caps)
+
+- **Cap.** While the schedule listener is healthy (from a successful (re)subscription until the session is lost or refused, or the listener stops), the idle back-off doubles to **3 × `IdlePollInterval`** (15 s by default) instead of `IdlePollInterval` (5 s). Otherwise it is 5 s, as before. A lost session ends the current idle wait at once (one pass, then the back-off from `PollInterval`).
+- **Known due instants.** Occurrences become due by time, and nothing notifies that. After every applied materialization the scheduler records the schedule's new `scan_after_at`, mapped to local time through the plan's cutoff, and no idle wait runs past the earliest recorded instant. A schedule this process has materialized is therefore read when it falls due, whatever the cap. A schedule it has not seen since start (or one another replica materializes) is found within the cap: ≤ 16.5 s instead of ≤ 5.5 s. Edits still notify.
+- **Why 15 s.** The idle scheduler already costs 0.23 statements/s (pf-05-08 report §5); 15 s cuts the due reads by a further third. With the due-instant bound, the longer cap costs lateness only for schedules this process has not yet materialized.
+
 ## Changes (2026-11-02, PF-07)
 
 Optional wake channel. RegisterSchedule (when it creates the row), UpdateSchedule and SetScheduleState notify `runwick_schedule` with `application/schedule_key`, inside their existing statements and only on commit (04 Changes 2026-11-02, PF-07). A scheduler whose store offers notifications listens on one dedicated session; a notification ends the current idle wait and resets the idle back-off to `PollInterval`. Polling is unchanged and stays the correctness path: a dropped notification only delays the next pass to the normal back-off.
@@ -222,7 +228,7 @@ Occurrence detail is retained 30 days after materialization (cleanup is SP-021).
 | Name | Value |
 |---|---|
 | Due read | ≤ 32 schedules per pass, ordered `(scan_after_at, schedule_id)` |
-| Polling | 1 s while due work exists; idle back-off to 5 s, × (1 ± 0.10) |
+| Polling | 1 s while due work exists; idle back-off to 5 s (15 s while the schedule listener is healthy; never past a due instant this process recorded), × (1 ± 0.10) |
 | Materializations in flight | 1 per scheduler/store group |
 | Local allowance | 100 jobs/s, burst 32 per scheduler/store group |
 | Request / resolution budget | 5 s / 30 s |

@@ -35,7 +35,7 @@ internal enum CallEffect
 /// command ID (so resubmissions replay), leases, executions and finishes. The script decides each call's fate
 /// before (<see cref="Before"/>) and after (<see cref="DropReply"/>) the effect.
 /// </summary>
-internal sealed class ScriptedStore(TimeProvider time) : IRunwickStore
+internal sealed class ScriptedStore(TimeProvider time) : IRunwickStore, IWakeNotificationSource
 {
     readonly Lock _lock = new();
     readonly Dictionary<Guid, object> _receipts = [];
@@ -352,7 +352,17 @@ internal sealed class ScriptedStore(TimeProvider time) : IRunwickStore
             return StoreReply<ReleasedReservation>.Applied(new ReleasedReservation(Position(job), "released", now), now);
         }, ct);
 
-    // ---- readiness
+    // ---- wake notifications (05 §7.2)
+
+    /// <summary>
+    /// The scripted listener. Null (the default): <see cref="ListenAsync"/> returns at once, never subscribing, exactly
+    /// like a store without notifications. Set it before start to script subscriptions, losses and notifications.
+    /// </summary>
+    public ScriptedListener? Listener { get; set; }
+
+    public Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, Action onLost, CancellationToken ct) =>
+        Listener is { } listener && channel == WakeChannels.Work ? listener.RunAsync(onWake, onSubscribed, onLost, ct) : Task.CompletedTask;
+
 
     public Task<ReadySnapshot> ProbeAsync(string application, IReadOnlyList<LaneKey> lanes, IReadOnlyList<JobContract> supportedContracts, CancellationToken ct)
     {
@@ -379,4 +389,31 @@ internal sealed class ScriptedStore(TimeProvider time) : IRunwickStore
             return Task.FromResult(expired);
         }
     }
+}
+
+/// <summary>A scripted wake listener session: the test decides when it subscribes, loses its session and notifies.</summary>
+internal sealed class ScriptedListener
+{
+    Action<string>? _onWake;
+    Action? _onSubscribed;
+    Action? _onLost;
+    readonly TaskCompletionSource _running = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes once the engine's listener task has started.</summary>
+    public Task Running => _running.Task;
+
+    internal async Task RunAsync(Action<string> onWake, Action onSubscribed, Action onLost, CancellationToken ct)
+    {
+        _onWake = onWake;
+        _onSubscribed = onSubscribed;
+        _onLost = onLost;
+        _running.TrySetResult();
+        await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
+    }
+
+    public void Subscribe() => (_onSubscribed ?? throw new InvalidOperationException("listener not running"))();
+
+    public void Lose() => (_onLost ?? throw new InvalidOperationException("listener not running"))();
+
+    public void Notify(string queue) => (_onWake ?? throw new InvalidOperationException("listener not running"))(queue);
 }

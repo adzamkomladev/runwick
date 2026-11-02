@@ -301,6 +301,12 @@ public sealed class ReadinessTests
         await w.StartAsync();
         await WorkerHost.WaitUntil(() => Interlocked.Read(ref w.Engine.ListenerSubscriptions) >= 1, Wait, "the listener subscribed");
 
+        // A healthy session with every notification dropped is the worst case of the long idle cap (05 Changes
+        // 2026-11-02, idle caps): the bound is that cap + 20 % (12 s) + hint age (2 s) + one probe and claim (slack 4 s).
+        Assert.True(w.Engine.ListenerHealthy);
+        Assert.Equal(TimeSpan.FromSeconds(10), w.Engine.IdleBackoffCap);
+        var bound = WorkerSettings.IdleBackoffCapListening * 1.2 + WorkerSettings.HintMaxAge + TimeSpan.FromSeconds(4);
+
         var producer = await f.OpenClient(configure: r =>
         {
             WorkerHost.RegisterWork(r);
@@ -309,7 +315,7 @@ public sealed class ReadinessTests
 
         // Due work from another process.
         var first = (await producer.Dispatcher.DispatchAsync(new WorkJob("polled"))).JobId.Value;
-        await WorkerHost.WaitUntil(() => w.Script.Completed.ContainsKey("polled"), TimeSpan.FromSeconds(2.4 + 2 + 4), "discovered by polling");
+        await WorkerHost.WaitUntil(() => w.Script.Completed.ContainsKey("polled"), bound, "discovered by polling");
 
         // Pause then resume, observed through the probe.
         await f.SetQueuePaused(f.Application, "default", true);
@@ -317,7 +323,7 @@ public sealed class ReadinessTests
         await Task.Delay(TimeSpan.FromSeconds(5));
         Assert.Equal(0, await f.CountAsync($"SELECT count(*) FROM runwick.job_attempts WHERE job_id = '{paused}'"));
         await f.SetQueuePaused(f.Application, "default", false);
-        await WorkerHost.WaitUntil(() => w.Script.Completed.ContainsKey("while-paused"), TimeSpan.FromSeconds(2.4 + 2 + 4), "resume discovered by polling");
+        await WorkerHost.WaitUntil(() => w.Script.Completed.ContainsKey("while-paused"), bound, "resume discovered by polling");
 
         // Recovery: a reservation whose owner vanished (a 1 s lease on queue "other", which this worker does not
         // subscribe to) is found by the timer-driven recovery loop (05 §13), which never waits on a wake signal.
@@ -331,6 +337,7 @@ public sealed class ReadinessTests
         // The notifications were sent and received, and every one was dropped.
         Assert.True(w.Engine.NotificationsReceived >= 2, $"notifications received: {w.Engine.NotificationsReceived}");
         Assert.Equal(w.Engine.NotificationsReceived, w.Engine.NotificationsDropped);
+        Assert.True(w.Engine.ListenerHealthy);
         await AssertInvariants(f);
     }
 

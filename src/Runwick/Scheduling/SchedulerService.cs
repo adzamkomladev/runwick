@@ -64,6 +64,30 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
     /// <summary>Schedule-channel notifications received (13 Changes 2026-11-02, PF-07).</summary>
     internal long Notifications;
 
+    /// <summary>Due reads sent by the loop (tests and diagnostics).</summary>
+    internal long Passes;
+
+    /// <summary>Listener sessions lost or refused after a subscription (tests and diagnostics).</summary>
+    internal long ListenerLosses;
+
+    /// <summary>
+    /// While the schedule listener is subscribed, the idle back-off may grow to this multiple of
+    /// <see cref="SchedulerOptions.IdlePollInterval"/> (5 s to 15 s by default; 13 Changes 2026-11-02, idle caps).
+    /// </summary>
+    internal const int ListeningIdleFactor = 3;
+
+    volatile bool _listenerHealthy;
+
+    /// <summary>True from a successful (re)subscription until the session is lost, refused or the listener stops.</summary>
+    internal bool ListenerHealthy => _listenerHealthy;
+
+    /// <summary>The idle back-off cap now: 3 × IdlePollInterval while the listener is healthy, IdlePollInterval otherwise.</summary>
+    internal TimeSpan IdleCap => _listenerHealthy ? _declarations.Options.IdlePollInterval * ListeningIdleFactor : _declarations.Options.IdlePollInterval;
+
+    // Local instant at which each schedule this process last materialized becomes due again (its new scan_after_at,
+    // carried over from store time through the plan's cutoff). An idle wait never runs past the earliest of them.
+    readonly Dictionary<Guid, DateTimeOffset> _nextScan = [];
+
     string Application => _runtime.Registry.Application;
 
     public async Task StartAsync(CancellationToken ct)
@@ -93,7 +117,7 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
             {
                 Interlocked.Increment(ref Notifications);
                 Signal();
-            }, Signal, ct).ConfigureAwait(false);
+            }, OnSubscribed, OnListenerLost, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -101,6 +125,65 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Schedule notification listener stopped; the scheduler keeps polling.");
+        }
+        finally
+        {
+            OnListenerLost();
+        }
+    }
+
+    /// <summary>(Re)subscribed: edits made while unsubscribed were not notified, so pass once now.</summary>
+    void OnSubscribed()
+    {
+        _listenerHealthy = true;
+        Signal();
+    }
+
+    /// <summary>
+    /// Lost, refused or stopped: edits are no longer notified, so the 5 s cap applies again. The current idle wait ends
+    /// now (one pass, then the back-off from PollInterval), so no wait begun under the longer cap outlives the session.
+    /// </summary>
+    void OnListenerLost()
+    {
+        if (!_listenerHealthy)
+        {
+            return;
+        }
+
+        _listenerHealthy = false;
+        Interlocked.Increment(ref ListenerLosses);
+        Signal();
+    }
+
+    /// <summary>Time until the earliest known next due instant, or null when none is known (passed ones are dropped).</summary>
+    internal TimeSpan? UntilKnownDue()
+    {
+        lock (_nextScan)
+        {
+            var now = _time.GetUtcNow();
+            DateTimeOffset? earliest = null;
+            foreach (var (id, at) in _nextScan.ToList())
+            {
+                if (at <= now)
+                {
+                    _nextScan.Remove(id);
+                }
+                else if (earliest is null || at < earliest)
+                {
+                    earliest = at;
+                }
+            }
+
+            return earliest - now;
+        }
+    }
+
+    /// <summary>Records a materialized schedule's next scan instant, mapped from store time to local time through the cutoff.</summary>
+    internal void NoteNextScan(Guid scheduleId, DateTimeOffset scanAfterAt, DateTimeOffset cutoff)
+    {
+        lock (_nextScan)
+        {
+            _nextScan[scheduleId] = _time.GetUtcNow() + (scanAfterAt - cutoff);
         }
     }
 
@@ -186,6 +269,7 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
             var worked = false;
             try
             {
+                Interlocked.Increment(ref Passes);
                 var due = await store.ReadDueSchedulesAsync(Application, ScheduleBounds.DueReadLimit, ct).ConfigureAwait(false);
                 foreach (var schedule in due.Schedules)
                 {
@@ -201,11 +285,19 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
                 _logger.LogWarning(ex, "Scheduler pass failed; retrying after back-off.");
             }
 
-            idle = worked ? options.PollInterval : TimeSpan.FromTicks(Math.Min(idle.Ticks * 2, options.IdlePollInterval.Ticks));
+            // Idle back-off to IdleCap (5 s, or 15 s while the schedule listener is healthy), never past the next due
+            // instant this process knows of: occurrences become due by time, which no notification announces.
+            idle = worked ? options.PollInterval : TimeSpan.FromTicks(Math.Min(idle.Ticks * 2, IdleCap.Ticks));
             var jitter = 1 + ((Random.Shared.NextDouble() * 0.2) - 0.1);
+            var wait = TimeSpan.FromTicks((long)(idle.Ticks * jitter));
+            if (UntilKnownDue() is { } untilDue && untilDue < wait)
+            {
+                wait = untilDue;
+            }
+
             try
             {
-                if (await IdleAsync(TimeSpan.FromTicks((long)(idle.Ticks * jitter)), ct).ConfigureAwait(false))
+                if (await IdleAsync(wait, ct).ConfigureAwait(false))
                 {
                     idle = options.PollInterval;
                 }
@@ -256,6 +348,7 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         {
             case StoreStatus.Applied:
                 Interlocked.Increment(ref Materializations);
+                NoteNextScan(plan.ScheduleId, plan.After.ScanAfterAt, cutoff);
                 return true;
             case StoreStatus.InvalidRequest or StoreStatus.UniquenessConflict when reply.Error?.Code is "queue_not_registered" or "uniqueness_conflict"
                 or "uniqueness_composition_conflict" or "window_fingerprint_mismatch":

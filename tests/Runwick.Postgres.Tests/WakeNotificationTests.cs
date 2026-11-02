@@ -5,6 +5,7 @@ using Runwick.Harness.Engine;
 using Runwick.Harness.Jobs;
 using Runwick.Harness.Store;
 using Runwick.Protocol;
+using Runwick.Worker;
 using static Runwick.Postgres.Tests.DispatchSupport;
 
 namespace Runwick.Postgres.Tests;
@@ -107,6 +108,8 @@ public sealed class WakeNotificationTests
         await using var w = WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults, 4);
         await w.StartAsync();
         await WorkerHost.WaitUntil(() => Interlocked.Read(ref w.Engine.ListenerSubscriptions) >= 1, Wait, "the listener subscribed");
+        Assert.True(w.Engine.ListenerHealthy);
+        Assert.Equal(WorkerSettings.IdleBackoffCapListening, w.Engine.IdleBackoffCap);
         var producer = await f.OpenClient(configure: r => WorkerHost.RegisterWork(r));
 
         await producer.Dispatcher.DispatchAsync(new WorkJob("woken"));
@@ -119,7 +122,11 @@ public sealed class WakeNotificationTests
                 SELECT pg_terminate_backend(pid) FROM pg_stat_activity
                 WHERE datname = current_database() AND application_name LIKE '%:listen') t
             """));
+        // The loss is reported (the pools fall back to the 2 s cap until the resubscription), then the long cap returns.
+        await WorkerHost.WaitUntil(() => Interlocked.Read(ref w.Engine.ListenerLosses) >= 1, Wait, "the loss reported");
         await WorkerHost.WaitUntil(() => Interlocked.Read(ref w.Engine.ListenerSubscriptions) >= 2, Wait, "the listener resubscribed");
+        await WorkerHost.WaitUntil(() => w.Engine.ListenerHealthy, Wait, "healthy again");
+        Assert.Equal(WorkerSettings.IdleBackoffCapListening, w.Engine.IdleBackoffCap);
 
         var before = Interlocked.Read(ref w.Engine.NotificationsReceived);
         await producer.Dispatcher.DispatchAsync(new WorkJob("after-reconnect"));

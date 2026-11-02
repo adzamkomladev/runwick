@@ -85,7 +85,7 @@ internal sealed class PostgresOutboxSource : IOutboxSource, IOutboxWakeSource, I
     /// The wake listener (14 Changes 2026-11-02, PF-07): one unpooled session outside the two-connection pool; a lost
     /// session is replaced after a back-off of 1 s doubling to 30 s. Polling covers every gap.
     /// </summary>
-    public async Task ListenAsync(Action onWake, CancellationToken ct)
+    public async Task ListenAsync(Action onWake, Action onSubscribed, Action onLost, CancellationToken ct)
     {
         var backoff = TimeSpan.FromSeconds(1);
         while (!ct.IsCancellationRequested)
@@ -110,7 +110,7 @@ internal sealed class PostgresOutboxSource : IOutboxSource, IOutboxWakeSource, I
                     }
 
                     backoff = TimeSpan.FromSeconds(1);
-                    onWake();
+                    onSubscribed();
                     while (!ct.IsCancellationRequested)
                     {
                         if (!await connection.WaitAsync(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false))
@@ -128,6 +128,7 @@ internal sealed class PostgresOutboxSource : IOutboxSource, IOutboxWakeSource, I
             catch (Exception ex) when (ex is NpgsqlException or IOException or TimeoutException or InvalidOperationException
                 or System.Net.Sockets.SocketException or OperationCanceledException)
             {
+                onLost();
                 try
                 {
                     await Task.Delay(backoff, ct).ConfigureAwait(false);

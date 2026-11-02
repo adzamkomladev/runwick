@@ -34,6 +34,9 @@ internal sealed class WorkerSettings
     public const int FirstPresenceAttempts = 3;
     public static readonly TimeSpan IdleBackoffBase = TimeSpan.FromMilliseconds(100);
     public static readonly TimeSpan IdleBackoffCap = TimeSpan.FromSeconds(2);
+
+    /// <summary>Idle backoff cap while the wake listener is subscribed (05 Changes 2026-11-02, idle caps; 06 §1.5).</summary>
+    public static readonly TimeSpan IdleBackoffCapListening = TimeSpan.FromSeconds(10);
     public static readonly TimeSpan CooldownBase = TimeSpan.FromMilliseconds(250);
     public static readonly TimeSpan CooldownCap = TimeSpan.FromSeconds(2);
     public static readonly TimeSpan PresenceHeartbeat = TimeSpan.FromSeconds(5);

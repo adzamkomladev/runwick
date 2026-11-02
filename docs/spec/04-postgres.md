@@ -6,6 +6,10 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-02, idle caps)
+
+- The listener session of PF-07 also reports a lost or refused session (`onLost`) before its reconnect back-off. Workers, the scheduler and the relay use the longer idle caps only between a subscription and a loss (05/13/14 Changes 2026-11-02, idle caps). Nothing else changes: no SQL, migration or round trip.
+
 ## Changes (2026-11-02, PF-08)
 
 §9.2 pool settings, client cost only; no statement, lock, receipt or round-trip count changes.
