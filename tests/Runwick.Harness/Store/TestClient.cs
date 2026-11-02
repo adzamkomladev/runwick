@@ -106,6 +106,14 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
             () => Store.RenewAsync(cmd, CancellationToken.None), _ => (lease.JobId, lease.AttemptId));
     }
 
+    /// <summary>RenewMany/1 (PF-06) over the given leases; one history entry for the call.</summary>
+    internal Task<StoreReply<RenewedLeases>> RenewManyAsync(IReadOnlyList<LeaseHandle> leases, TimeSpan? duration = null, DateTimeOffset? notAfter = null)
+    {
+        var cmd = Command(new RenewManyRequest(leases, duration ?? TimeSpan.FromSeconds(30)), notAfter: notAfter);
+        return Record(new StoreCommand<object>(application, cmd.CommandId, cmd.NotAfter, cmd.Body), Operations.RenewMany,
+            () => ((ILeaseBatchStore)Store).RenewManyAsync(cmd, CancellationToken.None));
+    }
+
     internal Task<StoreReply<FinishedAttempt>> FinishAsync(LeaseHandle lease, AttemptOutcome outcome, TimeSpan? elapsed = null,
         TimeSpan? requestedDelay = null, AttemptError? error = null, Guid? commandId = null, DateTimeOffset? notAfter = null)
     {

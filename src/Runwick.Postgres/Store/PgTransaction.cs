@@ -176,7 +176,7 @@ internal sealed record PgOp(
         or Operations.Begin or Operations.RegisterQueue or Operations.RegisterScope or OutboxOperations.ReceiveOutbox
         || ScheduleOperations.IsCreation(Operation);
 
-    public bool AllowedWhileDraining => Operation is Operations.Renew or Operations.Finish or Operations.Recover
+    public bool AllowedWhileDraining => Operation is Operations.Renew or Operations.RenewMany or Operations.Finish or Operations.Recover
         or Operations.ReleaseReservation or "PublishPresence" or "ReadinessProbe" or "ListExpiredLeases" or "ResolveCommand"
         or Operations.RegisterApplication or Operations.EventsSince || Operations.IsAdministrative(Operation)
         || Operation is ScheduleOperations.SetScheduleState or ScheduleOperations.UpdateSchedule or ScheduleOperations.ResolveCatchUp
@@ -226,10 +226,19 @@ internal sealed class PgBatch(NpgsqlConnection connection, NpgsqlTransaction tra
     {
         using (cmd)
         {
+            // The parameters move to the batch command (PF-08): the built command is disposed here, so cloning them only
+            // doubled the per-statement allocations.
             var bc = new NpgsqlBatchCommand(cmd.CommandText);
-            foreach (NpgsqlParameter p in cmd.Parameters)
+            var count = cmd.Parameters.Count;
+            if (count > 0)
             {
-                bc.Parameters.Add(p.Clone());
+                var moved = new NpgsqlParameter[count];
+                cmd.Parameters.CopyTo(moved, 0);
+                cmd.Parameters.Clear();
+                foreach (var p in moved)
+                {
+                    bc.Parameters.Add(p);
+                }
             }
 
             step.Command = bc;

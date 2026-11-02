@@ -31,6 +31,7 @@ internal sealed class OutboxRelay(
     readonly SemaphoreSlim _slotFreed = new(0);
     Task? _claimLoop;
     Task? _renewLoop;
+    Task? _listener;
     volatile bool _renewalUncertain;
     int _disposed;
 
@@ -70,6 +71,12 @@ internal sealed class OutboxRelay(
 
         _claimLoop = Task.Run(ClaimLoopAsync, CancellationToken.None);
         _renewLoop = Task.Run(RenewLoopAsync, CancellationToken.None);
+        if (source is IOutboxWakeSource wake)
+        {
+            // Optional (14 Changes 2026-11-02, PF-07): a committed stage ends the idle poll early.
+            _listener = Task.Run(() => ListenAsync(wake), CancellationToken.None);
+        }
+
         return Task.CompletedTask;
     }
 
@@ -80,6 +87,11 @@ internal sealed class OutboxRelay(
         if (_claimLoop is { } loop)
         {
             await loop.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+
+        if (_listener is { } listener)
+        {
+            await listener.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
 
         try
@@ -112,6 +124,11 @@ internal sealed class OutboxRelay(
 
         await _claimStop.CancelAsync().ConfigureAwait(false);
         await _abort.CancelAsync().ConfigureAwait(false);
+        if (_listener is { } listener)
+        {
+            await listener.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+
         _claimStop.Dispose();
         _abort.Dispose();
         _slotFreed.Dispose();
@@ -176,6 +193,39 @@ internal sealed class OutboxRelay(
                     return;
                 }
             }
+        }
+    }
+
+    /// <summary>Wake notifications received (tests and diagnostics).</summary>
+    public long Notifications;
+
+    async Task ListenAsync(IOutboxWakeSource wake)
+    {
+        try
+        {
+            await wake.ListenAsync(OnWake, _claimStop.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_claimStop.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Runwick outbox wake listener stopped; the relay keeps polling.");
+        }
+    }
+
+    void OnWake()
+    {
+        Interlocked.Increment(ref Notifications);
+        try
+        {
+            if (_slotFreed.CurrentCount == 0)
+            {
+                _slotFreed.Release();
+            }
+        }
+        catch (ObjectDisposedException)
+        {
         }
     }
 

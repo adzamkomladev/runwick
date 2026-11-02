@@ -375,7 +375,7 @@ internal static class G2Orchestrator
     }
 
     /// <summary>Registers the application and activates the run's capabilities (rate_admission, scheduler) through the store protocol.</summary>
-    static async Task PrepareStoreAsync(string cs, G2Spec spec)
+    internal static async Task PrepareStoreAsync(string cs, G2Spec spec)
     {
         var sc = new ServiceCollection();
         sc.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));

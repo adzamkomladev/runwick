@@ -6,6 +6,17 @@ This file defines the driver-neutral storage contract: internal records and inte
 
 Scope is M1 + M2 (PostgreSQL execution through gate G-1). Items marked **not in M2** are named only so that interfaces and records leave room for them; an M2 driver rejects them (§11).
 
+## Changes (2026-11-02, PF-06)
+
+Performance plan PF-06 adds `RenewMany/1`, the batched Renew that §3.3 left room for ("a batched Renew must report independent per-lease outcomes and a stale member must not roll back healthy ones"). `Renew/1` is unchanged and stays the per-attempt operation.
+
+- **§4 catalog row:** `RenewMany/1` | `ILeaseBatchStore.RenewManyAsync` (optional interface; a driver without it is used through `Renew/1`) | ownership mutation, **no receipt** | — | 30 s / 60 s | PF-06 (store manifest from schema revision 8, 04 Changes 2026-11-02).
+- **Request:** `RenewManyRequest(IReadOnlyList<LeaseHandle> Leases, TimeSpan LeaseDuration)`: 1 to 64 leases with distinct job IDs, one `LeaseDuration` within Renew/1's bounds. Anything else is `InvalidRequest` `invalid_request` with no effect.
+- **Reply:** one command ID and one NotAfter, as Renew/1 (R1: no fingerprint, no receipt row; a lost reply is resolved by a new command, never by resubmission). The reply status is `Applied` when the transaction committed, with `RenewedLeases(Outcomes)`: one `LeaseRenewal(Status, Code, Value)` per requested lease, in request order. Each member's status and code are exactly those Renew/1 would give for that lease at the same decision time (`Applied` with a `RenewedLease`; `StaleLease`, `InvalidState`, `NotFound`; `InvariantFault` `permit_set_mismatch`). A refused member has no effect, and no member's refusal rolls back another member. Every other reply status (`CommandExpired`, `AdmissionClosed`, `UnsupportedVersion`, `InvalidRequest`, a transient failure, or `InvariantFault` for the batch) means no lease was renewed.
+- **Semantics per member are §7's Renew row:** the exact current unexpired lease in `reserved`/`running`, ownership token, worker, attempt and generation checked against the locked job row (the fence); job and exact permit set extended to the same expiry; job revision unchanged (I-4, T21); no `queue_events` row. All members share one decision time `now` (fresh, after the last lock), and therefore one expiry.
+- **§10.2:** `RenewMany` is allowed in `open` and `drain` like Renew.
+- **§11 row** "Batched Reserve/Renew": batched Renew is now `RenewMany/1`; batched Reserve and `ReserveAndBegin/1` remain reserved.
+
 ## Changes (2026-10-31, SP-016)
 
 - §4: the eight schedule operations (13 §6) and the due read. `RegisterSchedule`, `MaterializeOccurrences` and `TriggerSchedule` are creation paths for the gate and need capability `scheduler`.

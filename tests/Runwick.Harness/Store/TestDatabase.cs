@@ -73,6 +73,40 @@ public sealed class TestDatabase : IAsyncDisposable
     }
 
     /// <summary>
+    /// A dedicated server for performance runs (PF-01 <c>eng/run-perf.sh</c>): always a new container (never
+    /// <c>RUNWICK_TEST_PG</c>), reached at the container's own bridge IP and port 5432, so no <c>docker-proxy</c> is in
+    /// the path. <c>pg_stat_statements</c> is loaded for the idle-cost measurement. <see cref="Direct"/> is true when the
+    /// address is the container IP; it falls back to the mapped port when the bridge IP is unreachable.
+    /// </summary>
+    public static async Task<TestDatabase> StartDirectAsync()
+    {
+        var container = new PostgreSqlBuilder(Image)
+            .WithUsername("postgres")
+            .WithPassword("pg")
+            .WithDatabase("rw")
+            .WithCommand("-c", "fsync=on", "-c", "synchronous_commit=on", "-c", "max_connections=400",
+                "-c", "shared_preload_libraries=pg_stat_statements", "-c", "pg_stat_statements.track=all")
+            .WithLabel("runwick.test", "true")
+            .Build();
+        await container.StartAsync().ConfigureAwait(false);
+        var mapped = Normalize(container.GetConnectionString());
+        var direct = Normalize(new NpgsqlConnectionStringBuilder(mapped) { Host = container.IpAddress, Port = 5432 }.ConnectionString);
+        try
+        {
+            await using var probe = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(direct) { Pooling = false, Timeout = 5 }.ConnectionString);
+            await probe.OpenAsync().ConfigureAwait(false);
+            return new TestDatabase(container, direct) { Direct = true };
+        }
+        catch (Exception ex) when (ex is NpgsqlException or System.Net.Sockets.SocketException or TimeoutException)
+        {
+            return new TestDatabase(container, mapped);
+        }
+    }
+
+    /// <summary>True when the connection string names the container's own IP (no <c>docker-proxy</c>).</summary>
+    public bool Direct { get; private init; }
+
+    /// <summary>
     /// A separate server on the harness-built libfaketime image (07 I-9) for store-clock steps (TIME-13); needs Docker.
     /// </summary>
     public static async Task<TestDatabase> StartFakeTimeAsync()

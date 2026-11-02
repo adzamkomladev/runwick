@@ -6,6 +6,37 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-02, PF-08)
+
+§9.2 pool settings, client cost only; no statement, lock, receipt or round-trip count changes.
+
+- **No reset on return.** The control and work pools set `No Reset On Close`. Npgsql otherwise sends its reset sequence (`CLOSE ALL`, `SET SESSION AUTHORIZATION DEFAULT`, `RESET ALL`, `UNLISTEN *`, `SELECT pg_advisory_unlock_all()`, `DISCARD SEQUENCES`, `DISCARD TEMP`) ahead of the next command on every connection returned to the pool. These pools never leave session state behind: every setting is transaction-local (`set_config(…, true)`), the migration advisory lock and LISTEN use their own connections, and no cursor, temp table or sequence is used. A connection returned inside a transaction is still rolled back by the driver. Prepared statements are unaffected (they were never discarded, PF-03). A caller-owned connection (staging, completion in the caller's transaction) is not a Runwick pool and keeps the caller's settings.
+- **Batch statements keep their parameters.** A statement added to a batch moves its parameters to the batch command instead of cloning them (the built command is disposed at once), so each parameter is allocated once.
+
+## Changes (2026-11-02, PF-07)
+
+Replaces §5 "Notification: … LISTEN/NOTIFY is not in M2". Polling remains sufficient for correctness; notifications are an optional wake hint (05 Changes 2026-11-02, PF-07). No migration, no new operation, no new round trip.
+
+- **Work channel `runwick_wake`.** The Dispatch core (driver-owned Dispatch/DispatchMany, staged dispatch, `ReceiveOutbox/1` and schedule materialization all share it) appends `pg_notify('runwick_wake', application || '/' || queue)` for each distinct queue with a created job eligible now (no `NotBefore`, or one at or before the decision time). It rides in the step-9 events statement as a CTE, so PERF-01 counts are unchanged. PostgreSQL delivers it only when the transaction commits (a staged dispatch: the caller's COMMIT), and folds identical payloads of one transaction. A rolled-back or delayed dispatch never notifies.
+- **Schedule channel `runwick_schedule`.** A newly inserted schedule row (RegisterSchedule `created`), UpdateSchedule and SetScheduleState notify `application || '/' || schedule_key`, inside their existing statements (13 Changes 2026-11-02, PF-07).
+- **Session.** One dedicated unpooled connection per listening component (worker, scheduler), application name `<prefix>:listen`, `KeepAlive` 15 s, no auto-prepare. It is the 05 §18 / 06 "Optional listener" session: per worker process the budget becomes control 6 + work 8 + 1 listener.
+- **Cost under load.** A committing transaction that notified takes PostgreSQL's notify-queue lock briefly at commit, so notifying commits serialize on it. Dispatches that create no eligible-now job (delayed, deduplicated, rejected) do not notify and pay nothing.
+- Lock order, fresh time after locks, receipts and `synchronous_commit` are untouched: `pg_notify` takes no row lock and reads no time.
+
+## Changes (2026-11-02, PF-06)
+
+`RenewMany/1` (03 Changes 2026-11-02, PF-06) for PostgreSQL.
+
+- **Migration `0008_renew_many` (schema revision 8).** No catalog change; the revision adds `"RenewMany": [1]` to the compatibility manifest (§8.5, cumulative). As with every revision, a binary that writes revision 7 meets a revision-8 store as `schema_incompatible`, and the reverse.
+- **§5.2 row** `RenewMany/1`: gates SHARE / SHARE; receipt **none**; jobs FOR NO KEY UPDATE, all requested job rows in one statement, UUID order (rank 5); concurrency scopes FOR UPDATE, every required scope of those jobs in one statement, UUID order (rank 7); dependent writes job leases, then permit leases. Locks are taken across members in rank order, never member by member, so two batches, or a batch and a Renew/Finish, cannot cycle.
+- **Statements (three round trips + COMMIT for any number of leases, as Renew/1):** the §6 gate batch; then one batch of J (`job_id = ANY(@job_ids) ORDER BY job_id FOR NO KEY UPDATE`), S (scopes of `job_concurrency_requirements` for those jobs, `ORDER BY scope_id FOR UPDATE`), the jobs' requirement rows and permit rows (dependent rows reached through the locked jobs, read by separate statements after the locks), and the decision clock (§5.1 rule 1). The driver then decides each lease against its own locked row with Renew/1's ownership rules, and checks its permit set (one permit per requirement, same attempt and token, expiry equal to the job's current lease expiry) **before** any write. Only passing leases go into the effects batch: one `UPDATE runwick.jobs … FROM unnest(job_ids, attempt_ids, tokens, workers, generations)` with every Renew/1 predicate per row (attempt, token, worker, generation, state, `lease_expires_at > now`) and `RETURNING job_id`, and one `UPDATE runwick.concurrency_permits … FROM unnest(job_ids, attempt_ids, tokens, previous_expiries) RETURNING job_id, scope_id`. Before COMMIT every passing lease must have exactly one job row and exactly its permit set returned; since each was checked under its locks, any difference is a broken invariant and rolls the whole batch back with `InvariantFault` `permit_set_mismatch`. When no lease passes, the transaction rolls back with an `Applied` reply carrying the refusals.
+- **Fault points** are those of Renew/1 (07 table): `AfterLocksBeforeFreshTime` once after the lock batch, `AfterMutation` once after the effects batch.
+- PERF-01: `RenewMany` = 3 commands (4 round trips) for 2 leases and for 64.
+
+## Changes (2026-11-02, PF-04 leftover: rated Begin)
+
+A rated Begin's window counts (10 §4) move into the rate-lock batch. The batch is K, R, then one statement that reads the decision clock and, per locked rate scope, the grants inside (t − W, t] with t = max(floor_ms(clock), the scopes' `last_decision_at`), computed in SQL from the same clock value. It replaces the bare clock read that ended the batch. The statement runs after R's `FOR UPDATE` in the same batch, so the scopes are locked by this transaction and the clock is still read after the last blocking lock (03 §1.3, rule 1 of "Changes (2026-11-01, PF-04)"); it is a separate statement, not R's target list. The driver recomputes t from R's rows and the clock it received and rolls back with `invalid_transition` on any mismatch. Lock order, the charge, the deferral (T20 and its hint reads) and `synchronous_commit` are unchanged. PERF-01: Begin rated 6 → 5 commands (7 → 6 round trips), for 1 and 8 scopes.
+
 ## Changes (2026-11-01, PF-03)
 
 Performance plan PF-03: automatic statement preparation and a warm control pool, in §9.2. Round trips are unchanged (PERF-01).

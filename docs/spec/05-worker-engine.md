@@ -4,6 +4,24 @@
 
 Numeric values are restated here where the engine behavior depends on them; [06-defaults.md](06-defaults.md) is the single table of defaults, derived formulas and startup inequalities. Where the two disagree, 06 is authoritative for the number and this file for the behavior.
 
+## Changes (2026-11-02, PF-07)
+
+§7.2 "optional LISTEN notifications" now ships for stores that offer them (the PostgreSQL store does; scripted and decorated stores without them behave exactly as before). Nothing in this section's rules changes: the hint age, idle backoff (100 ms doubling to 2 s), ≥ 50 ms probe spacing and the coalescing wake signal stay as specified.
+
+- **Listener.** One supervised, non-critical task per worker (`listener`), on the dedicated session of §18 (one unpooled connection, application name `<prefix>:listen`, outside the control and work pools). It runs `LISTEN runwick_wake` and, after 30 s without a notification, `SELECT 1` to prove the session is alive. A lost session is replaced after 1 s doubling to 30 s. Every successful (re)subscription drops the cached snapshot and wakes every pool ("Reconnect / resubscribe triggers a fresh probe"), since commits made while unsubscribed were not notified. A listener fault never closes admission.
+- **Notification.** Payload `<application>/<queue>`; a notification for another application or a queue no pool serves is ignored. For a served queue: when the cached snapshot (younger than the hint age) already shows a due lane of that queue, nothing happens; otherwise the snapshot is dropped and the pools that serve the queue get the wake signal. The next probe still waits out the 50 ms spacing, so a burst of commits costs at most one probe per 50 ms per group.
+- **Correctness.** Unchanged: a notification is a hint, never authority, and polling finds everything with every notification dropped. The engine's `NotificationsSuppressed` hook drops each notification on receipt (OBS-01, 07 Changes 2026-11-02, PF-07).
+- **Not changed.** The idle backoff cap stays 2 s. Raising it once notifications ship would lower idle cost but changes OBS-01's bound and 06 defaults; that is deferred to a separate decision.
+
+## Changes (2026-11-02, PF-06)
+
+§11.2 renewal waves, when the store offers `RenewMany/1` (03 Changes 2026-11-02, PF-06). Without it the engine renews exactly as before.
+
+- **Wave.** When the first item in the due queue is due, every other live item due within `RenewalJitter / 2` (default 1.5 s) joins it, up to 64. A member therefore renews at most that much early and never later than its due time, so `due ≤ d − (2 × ControlRequestTimeout + ControlRetryBackoffMax + SchedulerAllowance)` still holds and the deadline math of §11.1 is unchanged.
+- **Arbiter.** Each member takes its own per-attempt arbiter slot without waiting (only when it is free and nobody is queued, §6 rule 3) and holds it for the whole call. A member whose arbiter is busy (Begin, Finish, ReleaseReservation or resolution in flight) leaves the wave and renews alone through the existing path, which waits for the arbiter. A wave left with one member renews it with `Renew/1`.
+- **Call.** One `RenewMany` on the renewal lane (still 4 concurrent calls at most), with a new command ID, NotAfter = wallNow + 30 s, and a timeout bounded by `ControlRequestTimeout` and by the earliest member deadline `d − now`. Every member counts as one renewal request for `RenewsSent`; the send time `s` is the call's send time for every member.
+- **Outcomes.** Each member's outcome is applied exactly as a Renew/1 reply (§11.3): only a fresh `Applied` advances `d`, and only if it arrives before the member's current `d` and the member is not latched; `StaleLease`/`InvalidState` latch `OwnershipLost`; `permit_set_mismatch` latches `OwnershipLost(InvariantFault)`. A failed call (exception, timeout, or any non-`Applied` reply) and a member's transient outcome fall back to the per-attempt path: a new Renew per attempt with its own control backoff. A late reply never revives a latched attempt; the watchdog (§11.4) is unchanged.
+
 ## Changes (2026-10-31, SP-012)
 
 - §7.2: probe starts are ≥ 50 ms apart per group, enforced in the coordinator (it was a stated rule only).

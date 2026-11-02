@@ -401,13 +401,19 @@ internal sealed partial class PgStore
             }))
             .Concat(drift.Select(d => (Job: d.JobId, Kind: "policy_drift", Details: new JsonObject { ["ordinal"] = d.Ordinal, ["match"] = d.Match.ToString() })))
             .ToList();
+        // The wake notification (05 §7.2, PF-07) rides in the same statement: one per distinct queue with a job eligible now,
+        // delivered by PostgreSQL only if this transaction commits. Polling stays the correctness path.
+        var nowMs = PgTime.Ms(PgTime.Ceil(now));
+        var wakeQueues = created.Where(c => c.Item.Intent.NotBeforeMs is not { } nb || nb <= nowMs)
+            .Select(c => c.Item.Intent.Queue).Distinct(StringComparer.Ordinal).ToArray();
         if (events.Count > 0)
         {
-            await WriteAsync(tx.Sql("""
-                INSERT INTO runwick.queue_events (application, job_id, command_id, event_kind, occurred_at, details)
-                SELECT @application, e.job_id, @command_id, e.kind, @now, e.details
-                FROM unnest(@job_ids::uuid[], @kinds::text[], @details::jsonb[]) AS e(job_id, kind, details)
-                """).P("command_id", tx.Op.CommandId).P("now", now)
+            // The statement stays a plain INSERT without a result set (a batch reads only its row steps' result sets);
+            // the notify CTE is referenced by an InitPlan so it runs exactly once.
+            var cmd = wakeQueues.Length == 0
+                ? tx.Sql(InsertEventsSql)
+                : tx.Sql(InsertEventsAndNotifySql).Arr("wake_queues", wakeQueues, NpgsqlDbType.Text);
+            await WriteAsync(cmd.P("command_id", tx.Op.CommandId).P("now", now)
                     .Arr("job_ids", events.Select(e => e.Job).ToArray(), NpgsqlDbType.Uuid)
                     .Arr("kinds", events.Select(e => e.Kind).ToArray(), NpgsqlDbType.Text)
                     .Arr("details", events.Select(e => e.Details.ToJsonString()).ToArray(), NpgsqlDbType.Jsonb)).ConfigureAwait(false);
@@ -427,6 +433,15 @@ internal sealed partial class PgStore
 
         return new DispatchOutcome(results, null);
     }
+
+    const string InsertEventsSql = """
+        INSERT INTO runwick.queue_events (application, job_id, command_id, event_kind, occurred_at, details)
+        SELECT @application, e.job_id, @command_id, e.kind, @now, e.details
+        FROM unnest(@job_ids::uuid[], @kinds::text[], @details::jsonb[]) AS e(job_id, kind, details)
+        """;
+
+    static readonly string InsertEventsAndNotifySql =
+        "WITH w AS (" + NotifySql(WakeChannels.Work, "wake_queues") + ")\n" + InsertEventsSql + "\nWHERE (SELECT count(*) FROM w) >= 0";
 
     static bool ValidRetry(RetryPolicy r) =>
         r.InitialDelayMs is >= 1 and <= 86_400_000 && r.MaximumDelayMs >= r.InitialDelayMs && r.MaximumDelayMs <= 86_400_000;

@@ -83,6 +83,32 @@ internal sealed class PgDataSources : IAsyncDisposable
 
     public string ConnectionString => _connectionString;
 
+    /// <summary>
+    /// The listener session (05 §7.2, PF-07): one unpooled connection per listening component, outside the control and work
+    /// pools, so a pool reset never drops its LISTEN and a busy pool never delays a notification.
+    /// </summary>
+    internal string ListenConnectionString()
+    {
+        var configured = new NpgsqlConnectionStringBuilder(_connectionString).ApplicationName;
+        var prefix = string.IsNullOrEmpty(configured) ? _applicationNamePrefix : configured;
+        var csb = new NpgsqlConnectionStringBuilder(_connectionString)
+        {
+            Enlist = false,
+            Pooling = false,
+            Multiplexing = false,
+            MaxAutoPrepare = 0,
+            ApplicationName = $"{prefix}:listen",
+            IncludeErrorDetail = false,
+            KeepAlive = 15,
+        };
+        if (csb.Timeout is 0 or > 5)
+        {
+            csb.Timeout = 5;
+        }
+
+        return csb.ConnectionString;
+    }
+
     public NpgsqlDataSource For(PgLane lane) => lane is PgLane.Renewal or PgLane.Settlement ? _control.Value : _work.Value;
 
     public SemaphoreSlim Gate(PgLane lane) => _lanes[lane];
@@ -105,6 +131,12 @@ internal sealed class PgDataSources : IAsyncDisposable
             CommandTimeout = 0,
             CancellationTimeout = 2000,
             KeepAlive = 15,
+
+            // No session state ever outlives a transaction on these pools (PF-08): settings are transaction-local
+            // (set_config(..., true)), the migration lock and LISTEN use their own connections, and no cursor or temp
+            // table is used. The reset sequence (CLOSE ALL … UNLISTEN *, 7 statements on every return) is skipped; an
+            // open transaction is still rolled back on return.
+            NoResetOnClose = true,
         };
         // A prepared statement is planned for each bind's values, never from a cached generic plan (04 §9.2, PF-03).
         csb.Options = string.IsNullOrWhiteSpace(csb.Options) ? PlanMode : csb.Options + " " + PlanMode;

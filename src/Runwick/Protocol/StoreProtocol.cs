@@ -227,6 +227,56 @@ internal interface IJobReservationStore
     Task<StoreReply<RenewedLease>> RenewAsync(StoreCommand<RenewRequest> command, CancellationToken ct);
 }
 
+/// <summary>Wake channels (05 §7.2, PF-07). A wake is a hint only: polling stays the correctness path (OBS-01).</summary>
+internal static class WakeChannels
+{
+    /// <summary>Committed Dispatch/DispatchMany (driver-owned, staged, scheduler and outbox deliveries); key = queue.</summary>
+    public const string Work = "runwick_wake";
+
+    /// <summary>Committed schedule edits (register, update, pause/resume); key = schedule key.</summary>
+    public const string Schedule = "runwick_schedule";
+}
+
+/// <summary>
+/// Optional store notifications (05 §7.2 "optional LISTEN notifications", PF-07). One dedicated session per caller,
+/// never a pooled connection. Notifications are sent only by committed transactions, can be lost (reconnects, overflow)
+/// and are never required: every consumer keeps its polling.
+/// </summary>
+internal interface IWakeNotificationSource
+{
+    /// <summary>
+    /// Listens on <paramref name="channel"/> until <paramref name="ct"/> ends, reconnecting with backoff. Calls
+    /// <paramref name="onWake"/> with the key of each notification for <paramref name="application"/>, and
+    /// <paramref name="onSubscribed"/> after every successful (re)subscription, when notifications may have been missed.
+    /// </summary>
+    Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, CancellationToken ct);
+}
+
+/// <summary>RenewMany/1 (03 Changes 2026-11-02, PF-06): distinct leases of one worker, each renewed as Renew/1 would.</summary>
+internal sealed record RenewManyRequest(IReadOnlyList<LeaseHandle> Leases, TimeSpan LeaseDuration);
+
+/// <summary>
+/// One lease's outcome, in request order: <c>Applied</c> with <see cref="Value"/>, or the refusal Renew/1 would give
+/// (StaleLease, InvalidState, NotFound, InvariantFault <c>permit_set_mismatch</c>), with no effect on that lease.
+/// </summary>
+internal sealed record LeaseRenewal(StoreStatus Status, string? Code, RenewedLease? Value);
+
+/// <summary>Value of an Applied RenewMany: one outcome per requested lease, same order.</summary>
+internal sealed record RenewedLeases(IReadOnlyList<LeaseRenewal> Outcomes);
+
+/// <summary>
+/// Optional batched renewal (03 Changes 2026-11-02, PF-06). The reply is Applied when the transaction committed; each
+/// lease's own outcome is in <see cref="RenewedLeases.Outcomes"/>, and a refused lease never rolls back another. Any other
+/// reply status (expired, closed, unsupported, invalid request) applied nothing to any lease. No receipt, like Renew/1.
+/// </summary>
+internal interface ILeaseBatchStore
+{
+    /// <summary>The most leases one call may carry.</summary>
+    const int MaxLeases = 64;
+
+    Task<StoreReply<RenewedLeases>> RenewManyAsync(StoreCommand<RenewManyRequest> command, CancellationToken ct);
+}
+
 /// <summary>Begin reply: the protocol reply plus the closing value when Begin closed the attempt (spec 03 §2.1 table).</summary>
 internal sealed record BeginReply(StoreReply<BegunExecution> Reply, BeginClosed? Closed)
 {
@@ -506,6 +556,7 @@ internal static class Operations
     public const string Reserve = "Reserve";
     public const string Begin = "Begin";
     public const string Renew = "Renew";
+    public const string RenewMany = "RenewMany";
     public const string Finish = "Finish";
     public const string Recover = "Recover";
     public const string ReleaseReservation = "ReleaseReservation";
@@ -535,7 +586,7 @@ internal static class Operations
         RetentionClass(operation) == OwnershipClass ? TimeSpan.FromMinutes(10) : TimeSpan.FromHours(24);
 
     public static TimeSpan DeadlineCap(string operation) =>
-        operation is Reserve or Begin or Renew or Finish or Recover or ReleaseReservation ? TimeSpan.FromSeconds(60)
+        operation is Reserve or Begin or Renew or RenewMany or Finish or Recover or ReleaseReservation ? TimeSpan.FromSeconds(60)
         : operation == OutboxOperations.ReceiveOutbox ? OutboxOperations.TransportCap
         : ScheduleOperations.IsScheduler(operation) ? ScheduleOperations.SchedulerCap
         : TimeSpan.FromMinutes(10);

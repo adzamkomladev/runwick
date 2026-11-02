@@ -27,6 +27,7 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
     readonly EvaluatorSlot _slot = new();
     readonly TzdbArtifact _artifact;
     readonly CancellationTokenSource _stop = new();
+    TaskCompletionSource _wake = new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly Dictionary<Guid, string> _localDiagnostics = [];
     Task? _loop;
     double _tokens;
@@ -60,6 +61,9 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
     /// <summary>Completed materializations (tests and diagnostics).</summary>
     internal long Materializations;
 
+    /// <summary>Schedule-channel notifications received (13 Changes 2026-11-02, PF-07).</summary>
+    internal long Notifications;
+
     string Application => _runtime.Registry.Application;
 
     public async Task StartAsync(CancellationToken ct)
@@ -72,6 +76,51 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         }
 
         _loop = Task.Run(() => LoopAsync(store, _stop.Token), CancellationToken.None);
+        if (store is IWakeNotificationSource notifications)
+        {
+            // Optional (PF-07): a schedule edit ends the idle back-off early; polling stays the correctness path.
+            _listener = Task.Run(() => ListenAsync(notifications, _stop.Token), CancellationToken.None);
+        }
+    }
+
+    Task? _listener;
+
+    async Task ListenAsync(IWakeNotificationSource notifications, CancellationToken ct)
+    {
+        try
+        {
+            await notifications.ListenAsync(Application, WakeChannels.Schedule, _ =>
+            {
+                Interlocked.Increment(ref Notifications);
+                Signal();
+            }, Signal, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Schedule notification listener stopped; the scheduler keeps polling.");
+        }
+    }
+
+    void Signal() => Volatile.Read(ref _wake).TrySetResult();
+
+    /// <summary>Waits out the idle delay; true when a notification ended it early (the signal is then consumed).</summary>
+    async Task<bool> IdleAsync(TimeSpan delay, CancellationToken ct)
+    {
+        var wake = Volatile.Read(ref _wake);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var timer = Task.Delay(delay, _time, cts.Token);
+        if (await Task.WhenAny(wake.Task, timer).ConfigureAwait(false) == wake.Task)
+        {
+            await cts.CancelAsync().ConfigureAwait(false);
+            Interlocked.CompareExchange(ref _wake, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously), wake);
+            return true;
+        }
+
+        await timer.ConfigureAwait(false);
+        return false;
     }
 
     public async Task StopAsync(CancellationToken ct)
@@ -81,12 +130,18 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         {
             await loop.WaitAsync(ct).ConfigureAwait(false);
         }
+
+        if (_listener is { } listener)
+        {
+            await listener.WaitAsync(ct).ConfigureAwait(false);
+        }
     }
 
     public void Dispose()
     {
         _stop.Dispose();
         _slot.Dispose();
+
     }
 
     // ------------------------------------------------------------------ registration seed (13 §6.1)
@@ -150,7 +205,10 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
             var jitter = 1 + ((Random.Shared.NextDouble() * 0.2) - 0.1);
             try
             {
-                await Task.Delay(TimeSpan.FromTicks((long)(idle.Ticks * jitter)), _time, ct).ConfigureAwait(false);
+                if (await IdleAsync(TimeSpan.FromTicks((long)(idle.Ticks * jitter)), ct).ConfigureAwait(false))
+                {
+                    idle = options.PollInterval;
+                }
             }
             catch (OperationCanceledException)
             {

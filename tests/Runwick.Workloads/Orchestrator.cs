@@ -79,12 +79,13 @@ internal static class Orchestrator
 {
     static double _drainMinutes = 60;
 
-    public static async Task<int> RunAsync(Args a)
+    public static async Task<int> RunAsync(Args a, TestDatabase? existing = null)
     {
         var workload = a.Positional.Count > 0 ? a.Positional[0] : throw new ArgumentException("run <workload>");
         var root = a.OptStr("out") ?? Path.Combine("artifacts", "perf", $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{workload}");
         Directory.CreateDirectory(root);
-        await using var db = await TestDatabase.StartAsync().ConfigureAwait(false);
+        await using var owned = existing is null ? await TestDatabase.StartAsync().ConfigureAwait(false) : null;
+        var db = existing ?? owned!;
         var admin = Conn(db, "postgres", "wl:admin");
         var env = await EnvironmentInfo.CaptureAsync(db, admin, a).ConfigureAwait(false);
         await File.WriteAllTextAsync(Path.Combine(root, "env.json"), env.ToJsonString(Json.Indented)).ConfigureAwait(false);

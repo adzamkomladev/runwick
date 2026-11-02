@@ -36,7 +36,7 @@ internal static class FloorMode
         var dbCs = new NpgsqlConnectionStringBuilder(baseCs) { Database = dbName, Pooling = false }.ConnectionString;
         await RunwickPostgresMigrations.MigrateAsync(dbCs).ConfigureAwait(false);
 
-        using var listener = new ActivityListener
+        var listener = new ActivityListener
         {
             ShouldListenTo = s => s.Name == "Npgsql",
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
@@ -110,14 +110,143 @@ internal static class FloorMode
             Check((await Time("Finish", () => client.FinishAsync(handle, AttemptOutcome.Succeeded), keep).ConfigureAwait(false)).Status, "Finish");
         }
 
-        var report = Render(samples, n);
-        Console.WriteLine(report);
+        // The command listener allocates per command; the cost passes below run without it.
+        listener.Dispose();
+
+        var report = new StringBuilder(Render(samples, n));
+        var json = new System.Text.Json.Nodes.JsonObject
+        {
+            ["n"] = n,
+            ["loadAverage"] = File.ReadAllText("/proc/loadavg").Trim(),
+            ["p50Ms"] = new System.Text.Json.Nodes.JsonObject(samples.GroupBy(s => s.Op).Select(g =>
+                KeyValuePair.Create(g.Key, (System.Text.Json.Nodes.JsonNode?)Math.Round(P([.. g.Select(s => s.TotalMs).Order()], 0.5), 2)))),
+            ["commands"] = new System.Text.Json.Nodes.JsonObject(samples.GroupBy(s => s.Op).Select(g =>
+                KeyValuePair.Create(g.Key, (System.Text.Json.Nodes.JsonNode?)Math.Round(g.Average(s => s.Commands), 1)))),
+        };
+
+        // Client CPU and allocation per job (Dispatch + Reserve + Begin + Finish), sequential, no listener attached.
+        var costJobs = a.Int("cost-jobs", 0);
+        if (costJobs > 0)
+        {
+            async Task JobAsync()
+            {
+                await client.Dispatcher.DispatchAsync(new PingJob("c")).ConfigureAwait(false);
+                var r = await client.ReserveAsync().ConfigureAwait(false);
+                Check(r.Status, "Reserve");
+                var h = r.Value!.Lease.Handle;
+                Check((await client.BeginAsync(h).ConfigureAwait(false)).Reply.Status, "Begin");
+                Check((await client.FinishAsync(h, AttemptOutcome.Succeeded).ConfigureAwait(false)).Status, "Finish");
+            }
+
+            for (var i = 0; i < 20; i++)
+            {
+                await JobAsync().ConfigureAwait(false);
+            }
+
+            using var self = Process.GetCurrentProcess();
+            self.Refresh();
+            var cpu0 = self.TotalProcessorTime;
+            var alloc0 = GC.GetTotalAllocatedBytes(true);
+            var wall0 = Stopwatch.GetTimestamp();
+            for (var i = 0; i < costJobs; i++)
+            {
+                await JobAsync().ConfigureAwait(false);
+            }
+
+            var wall = Stopwatch.GetElapsedTime(wall0);
+            self.Refresh();
+            var cpuMs = (self.TotalProcessorTime - cpu0).TotalMilliseconds / costJobs;
+            var allocKiB = (GC.GetTotalAllocatedBytes(true) - alloc0) / 1024.0 / costJobs;
+            json["costJobs"] = costJobs;
+            json["cpuMsPerJob"] = Math.Round(cpuMs, 2);
+            json["allocKiBPerJob"] = Math.Round(allocKiB, 1);
+            json["wallMsPerJob"] = Math.Round(wall.TotalMilliseconds / costJobs, 2);
+            report.AppendLine(CultureInfo.InvariantCulture,
+                $"Client cost per job (Dispatch + Reserve + Begin + Finish, {costJobs} jobs, no listener): CPU {cpuMs:F2} ms, allocated {allocKiB:F1} KiB, wall {wall.TotalMilliseconds / costJobs:F1} ms.");
+            report.AppendLine();
+
+            if (a.Has("alloc-profile"))
+            {
+                // Allocation sampling: the runtime's AllocationTick event fires about every 100 KiB allocated and names
+                // the type that crossed the threshold, so tick counts per type approximate each type's share.
+                using var profiler = new AllocationProfiler();
+                for (var i = 0; i < costJobs; i++)
+                {
+                    await JobAsync().ConfigureAwait(false);
+                }
+
+                await Task.Delay(1000).ConfigureAwait(false);
+                var top = profiler.Top(25);
+                var total = Math.Max(1, profiler.Total);
+                var arr = new System.Text.Json.Nodes.JsonArray();
+                report.AppendLine(CultureInfo.InvariantCulture, $"Allocation profile ({profiler.Total} AllocationTick samples over {costJobs} jobs; share of samples):");
+                report.AppendLine();
+                report.AppendLine("| Type | samples | share |");
+                report.AppendLine("|---|---|---|");
+                foreach (var (type, count) in top)
+                {
+                    report.AppendLine(CultureInfo.InvariantCulture, $"| `{type}` | {count} | {100.0 * count / total:F1} % |");
+                    arr.Add(new System.Text.Json.Nodes.JsonObject { ["type"] = type, ["samples"] = count });
+                }
+
+                report.AppendLine();
+                json["allocationProfile"] = arr;
+            }
+        }
+
+        var text = report.ToString();
+        Console.WriteLine(text);
         if (a.OptStr("out") is { } outFile)
         {
-            await File.WriteAllTextAsync(outFile, report).ConfigureAwait(false);
+            await File.WriteAllTextAsync(outFile, text).ConfigureAwait(false);
+        }
+
+        if (a.OptStr("json") is { } jsonFile)
+        {
+            await File.WriteAllTextAsync(jsonFile, json.ToJsonString(Json.Indented)).ConfigureAwait(false);
         }
 
         return 0;
+    }
+
+    /// <summary>In-process allocation sampler over the runtime's <c>GCAllocationTick</c> events (GC keyword, verbose).</summary>
+    sealed class AllocationProfiler : System.Diagnostics.Tracing.EventListener
+    {
+        readonly Dictionary<string, int> _counts = new(StringComparer.Ordinal);
+
+        public int Total { get; private set; }
+
+        protected override void OnEventSourceCreated(System.Diagnostics.Tracing.EventSource eventSource)
+        {
+            if (eventSource.Name == "Microsoft-Windows-DotNETRuntime")
+            {
+                EnableEvents(eventSource, System.Diagnostics.Tracing.EventLevel.Verbose, (System.Diagnostics.Tracing.EventKeywords)0x1);
+            }
+        }
+
+        protected override void OnEventWritten(System.Diagnostics.Tracing.EventWrittenEventArgs e)
+        {
+            if (e.EventName is not { } name || !name.StartsWith("GCAllocationTick", StringComparison.Ordinal) || e.PayloadNames is null)
+            {
+                return;
+            }
+
+            var i = e.PayloadNames.IndexOf("TypeName");
+            var type = i >= 0 ? e.Payload?[i] as string ?? "?" : "?";
+            lock (_counts)
+            {
+                _counts[type] = _counts.GetValueOrDefault(type) + 1;
+                Total++;
+            }
+        }
+
+        public List<(string Type, int Count)> Top(int n)
+        {
+            lock (_counts)
+            {
+                return [.. _counts.OrderByDescending(kv => kv.Value).Take(n).Select(kv => (kv.Key, kv.Value))];
+            }
+        }
     }
 
     static void Check(StoreStatus s, string op)

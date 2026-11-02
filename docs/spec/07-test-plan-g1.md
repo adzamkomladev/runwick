@@ -4,6 +4,29 @@
 
 This document defines the test harness built in SP-003, the exact case list that gate **G-1** (milestone M2, PostgreSQL execution) requires, the first performance measurements recorded by SP-010, and the G-1 pass rule. Every case listed in §4–§13 is mandatory for G-1 unless this document marks a named sub-part as deferred to a later SP item.
 
+## Changes (2026-11-02, PF-08)
+
+- **POOL-01** (Contract, `PreparedStatementTests`): the driver pools skip the reset sequence (04 Changes 2026-11-02, PF-08), and a connection returned to the pool inside a transaction is still rolled back: its backend is idle, its row is gone, and its transaction-local setting is not seen by later users of the pool.
+- PERF-01 is unchanged (no statement or round trip changes).
+
+## Changes (2026-11-02, PF-07)
+
+LISTEN/NOTIFY wake (05/04/13/14 "Changes (2026-11-02, PF-07)").
+
+- **OBS-01** now runs with the listener active and every notification dropped on receipt (`NotificationsSuppressed`), in addition to suppressed local wakes. It also asserts that notifications were received (≥ 2) and that every one was dropped, so the case proves polling alone, not an absent listener.
+- **WAKE-01** (Contract): a committed driver-owned dispatch notifies `application/queue` once; a rolled-back staged dispatch and a delayed dispatch notify nothing; a staged dispatch notifies on the caller's COMMIT, not before.
+- **WAKE-02** (Contract): the worker's listener wakes its pools; after its session is terminated it resubscribes (fresh probe) and wakes again; no duplicate invocation and no history violation. This is the WRK-16 "LISTEN reconnect" sub-part, which applies now that the listener ships.
+- PERF-01 is unchanged: the notification rides in an existing Dispatch statement.
+
+## Changes (2026-11-02, PF-06)
+
+`RenewMany/1` (03/04/05 "Changes (2026-11-02, PF-06)") adds three Postgres cases in `RenewManyTests`; no existing case changes and no fault point moves (RenewMany has Renew/1's two per-batch points).
+
+- **RENEWMANY-01** (Contract): per-lease fencing. One command carries a valid lease and leases with a wrong token, wrong generation, wrong worker and an unknown job; each refused member gets Renew/1's status and code, the valid lease's job and permit carry the new expiry, and the refused leases' rows are byte-for-byte unchanged. Duplicate job IDs are `InvalidRequest`.
+- **RENEWMANY-02** (Contract): one failure does not affect others. Healthy leases are interleaved with a lease whose permit was removed (`InvariantFault` `permit_set_mismatch`), a finished attempt and a lapsed lease; every healthy lease is renewed with its permits, the others are untouched, an all-refused command applies nothing, an expired NotAfter applies nothing to any lease, no receipt is written, and the healthy leases then Begin and Finish normally.
+- **CAP-10 (PF-06 part)** (Fault): 16 long handlers started together; at least one renewal wave goes out as one `RenewMany`, the renewal lane never exceeds 4 concurrent calls, every attempt renews at least twice, nothing is lost, and the jobs then succeed once each with no history violation. The existing CAP-10 case runs unchanged with batching active.
+- PERF-01 gains `RenewMany` = 3 commands.
+
 ## Changes (2026-11-01, PF-03)
 
 Performance plan PF-03 (04 "Changes (2026-11-01, PF-03)") adds three Postgres cases in `PreparedStatementTests`; no fault point moves and no existing case changes.
