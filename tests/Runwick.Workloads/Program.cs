@@ -8,12 +8,13 @@ using Runwick.Workloads;
 //   produce2 --conn cs --app a --g2 --mode poisson|topup --job kind ...             G-2 producer / lane feeder
 //   scheduler | relay | stage --conn cs --app a --g2 ...                           G-2 role processes
 //   report --results dir --workloads dir --out file [--gate g2]                      G-1 (or G-2) report case table
-//   floor --conn cs [--db rw_perffloor] [--n 200] [--warmup 20] [--out file]         per-call store floor (perf-floor diagnosis)
+//   floor --conn cs [--db rw_perffloor] [--n 200] [--warmup 20] [--out file] [--json file] [--cost-jobs n] [--alloc-profile]
+//   perf [--out dir] [--n 100] [--cost-jobs 300] [--idle-s 60] [--p01-measure-min 3] [--skip-p01]   PF-01 run (eng/run-perf.sh)
 // Workloads: G-1 P-01, P-02, P-08a, P-08b, P-08c, G1-M1, G1-M2, G1-M3; G-2 P-04, P-05, P-06r, P-06s, P-09
 // (parameters: docs/reports/g2-workloads-design.md).
 if (args.Length == 0)
 {
-    Console.Error.WriteLine("usage: Runwick.Workloads run|worker|produce|produce2|scheduler|relay|stage|report|floor ...");
+    Console.Error.WriteLine("usage: Runwick.Workloads run|worker|produce|produce2|scheduler|relay|stage|report|floor|perf ...");
     return 2;
 }
 
@@ -30,5 +31,6 @@ return args[0] switch
     "run" => await Orchestrator.RunAsync(a),
     "report" => await ReportMode.RunAsync(a),
     "floor" => await FloorMode.RunAsync(a),
+    "perf" => await PerfMode.RunAsync(a),
     _ => 2,
 };
