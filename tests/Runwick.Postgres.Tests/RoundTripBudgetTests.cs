@@ -52,7 +52,7 @@ public sealed class RoundTripBudgetTests
         ["Cancel"] = 8,
         ["SetQueueState"] = 8,
         ["EditRatePolicy"] = 9,
-        ["MaterializeOccurrences"] = 9,
+        ["MaterializeOccurrences"] = 1,
         ["ReceiveOutbox"] = 1,
     };
 

@@ -164,7 +164,9 @@ internal sealed partial class PgStore : IScheduleStore
                     observed = PgTime.Floor(PgTime.Read(reader, 4));
                     if (!await reader.IsDBNullAsync(5, ct).ConfigureAwait(false))
                     {
-                        list.Add(ReadSnapshot(reader, 5));
+                        var snapshot = ReadSnapshot(reader, 5);
+                        RememberDefinition(application, snapshot);
+                        list.Add(snapshot);
                     }
                 }
             }
@@ -185,7 +187,14 @@ internal sealed partial class PgStore : IScheduleStore
             var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             await using (reader.ConfigureAwait(false))
             {
-                return await reader.ReadAsync(ct).ConfigureAwait(false) ? ReadSnapshot(reader, 0) : null;
+                if (!await reader.ReadAsync(ct).ConfigureAwait(false))
+                {
+                    return null;
+                }
+
+                var snapshot = ReadSnapshot(reader, 0);
+                RememberDefinition(application, snapshot);
+                return snapshot;
             }
         }, ct);
 
@@ -461,96 +470,106 @@ internal sealed partial class PgStore : IScheduleStore
         }
 
         var fp = await FingerprintAsync(command, ScheduleOperations.MaterializeOccurrences, ScheduleEnvelopes.Materialize(r), ct).ConfigureAwait(false);
-        return await runner.ExecuteAsync(OpFor(command, ScheduleOperations.MaterializeOccurrences, fp),
-            async tx =>
+        var op = OpFor(command, ScheduleOperations.MaterializeOccurrences, fp);
+
+        // The jobs are built here from the definition at the expected revision (immutable per revision); the function
+        // checks the plan against the locked row before it uses them, so items from a stale revision are never used.
+        var items = new List<DispatchItem>();
+        if (r.Occurrences.Count > 0 && await DefinitionAtAsync(command.Application, r.ScheduleId, r.ExpectedDefinitionRevision, ct).ConfigureAwait(false)
+                is { } d)
+        {
+            var storeId = runner.StoreId ?? throw new InvalidOperationException("Describe has not run yet.");
+            var notAfterMs = PgTime.Ms(op.NotAfter);
+            items.AddRange(r.Occurrences.Select(o => d.Definition.Template.ToItem(storeId, command.Application, command.CommandId, notAfterMs,
+                r.ScheduleId, d.Definition.Serialize, o.ProposedJobId, new JobScheduleInfo(d.Key, o.ScheduledAt, o.CoveredFrom ?? o.ScheduledAt,
+                    o.CoveredThrough ?? o.ScheduledAt))));
+        }
+
+        static DateTime? T(DateTimeOffset? t) => t?.UtcDateTime;
+        const NpgsqlDbType A = NpgsqlDbType.Array;
+        var a = r.After;
+        var call = new PgCall("materialize_occurrences_v1")
+            .P("p_schedule_id", r.ScheduleId).P("p_expected_definition", r.ExpectedDefinitionRevision)
+            .P("p_expected_control", r.ExpectedControlRevision).P("p_expected_cursor", r.ExpectedCursorRevision)
+            .P("p_expected_episode", r.ExpectedEpisodeId).P("p_cutoff", r.Cutoff).P("p_max_plan_bytes", (long)ScheduleBounds.MaxPlanPayloadBytes)
+            .P("p_occ_scheduled", r.Occurrences.Select(o => o.ScheduledAt.UtcDateTime).ToArray(), A | NpgsqlDbType.TimestampTz)
+            .P("p_occ_keys", r.Occurrences.Select(o => ScheduleOperations.OccurrenceKey(o.ScheduledAt)).ToArray(), A | NpgsqlDbType.Text)
+            .P("p_occ_from", r.Occurrences.Select(o => T(o.CoveredFrom)).ToArray(), A | NpgsqlDbType.TimestampTz)
+            .P("p_occ_through", r.Occurrences.Select(o => T(o.CoveredThrough)).ToArray(), A | NpgsqlDbType.TimestampTz)
+            .P("p_occ_coalesced", r.Occurrences.Select(o => o.Coalesced).ToArray(), A | NpgsqlDbType.Boolean)
+            .P("p_after_through", a.EvaluatedThrough).P("p_after_next", a.NextDueAt).P("p_after_scan", a.ScanAfterAt)
+            .P("p_after_episode", a.Episode?.Id).P("p_after_episode_cutoff", a.Episode?.Cutoff)
+            .P("p_after_episode_emitted", a.Episode?.Emitted ?? 0).P("p_after_episode_limit", a.Episode?.Limit)
+            .P("p_review_reason", a.ReviewReason).P("p_clear", r.ClearsPendingPolicy)
+            .P("p_audit_from", r.AuditRanges.Select(x => T(x.FromExclusive)).ToArray(), A | NpgsqlDbType.TimestampTz)
+            .P("p_audit_through", r.AuditRanges.Select(x => x.ThroughInclusive.UtcDateTime).ToArray(), A | NpgsqlDbType.TimestampTz)
+            .P("p_audit_reasons", r.AuditRanges.Select(x => x.Reason).ToArray(), A | NpgsqlDbType.Text);
+        foreach (var (name, value, type) in DispatchArgs(items))
+        {
+            call.P(name, value, type);
+        }
+
+        return await runner.CallAsync(op, call, MapMaterialization, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>The refusals the statement path reported at the client's clock (no decision time from the store).</summary>
+    static readonly HashSet<string> PlanRefusals = new(StringComparer.Ordinal)
+    {
+        "scheduler_not_active", "schedule_not_found", "schedule_disabled", "schedule_paused", "schedule_needs_review", "revision_conflict",
+        "plan_too_large", "occurrence_below_high_water", "cursor_rewind",
+    };
+
+    StoreReply<ScheduleMaterialization> MapMaterialization(PgRow row) =>
+        row.HasValue ? row.Applied(ScheduleReceiptCodec.ReadMaterialization(row.Result!))
+        : row.DecidedAt is null && row.Code is { } code && PlanRefusals.Contains(code)
+            ? Invalid<ScheduleMaterialization>(row.StoreStatus, code, row.Detail)
+            : row.Reject<ScheduleMaterialization>();
+
+    /// <summary>
+    /// Schedule definitions by (application, schedule, revision). A revision is immutable, so an entry never goes stale; it is
+    /// filled by the schedule reads that precede a plan and, on a miss, by one read of the current row.
+    /// </summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<(string Application, Guid ScheduleId, long Revision), (string Key, ScheduleDefinitionRecord Definition)>
+        _definitions = new();
+
+    void RememberDefinition(string application, ScheduleSnapshot s)
+    {
+        if (_definitions.Count >= 4096)
+        {
+            _definitions.Clear();
+        }
+
+        _definitions.TryAdd((application, s.ScheduleId, s.DefinitionRevision), (s.Key, s.Definition));
+    }
+
+    async Task<(string Key, ScheduleDefinitionRecord Definition)?> DefinitionAtAsync(string application, Guid scheduleId, long revision, CancellationToken ct)
+    {
+        if (_definitions.TryGetValue((application, scheduleId, revision), out var hit))
+        {
+            return hit;
+        }
+
+        var s = await ReadOnlyAsync(PgLane.Background, async conn =>
+        {
+            using var cmd = new NpgsqlCommand($"""
+                SELECT {ScheduleColumns}
+                FROM {ScheduleJoin}
+                WHERE s.application = @application AND s.schedule_id = @id
+                """, conn);
+            cmd.P("application", application).P("id", scheduleId);
+            var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            await using (reader.ConfigureAwait(false))
             {
-                if (!await SchedulerActiveAsync(tx).ConfigureAwait(false))
-                {
-                    return new PgOutcome<ScheduleMaterialization>.Rollback(Invalid<ScheduleMaterialization>(StoreStatus.UnsupportedVersion, "scheduler_not_active"));
-                }
+                return await reader.ReadAsync(ct).ConfigureAwait(false) ? ReadSnapshot(reader, 0) : null;
+            }
+        }, ct).ConfigureAwait(false);
+        if (s is null)
+        {
+            return null;
+        }
 
-                var s = await LockScheduleAsync(tx, r.ScheduleId, null).ConfigureAwait(false);
-
-                // Plan checks precede the dispatch core so a stale plan is always reported as stale (13 §4.2).
-                var rejection = s is null ? (StoreStatus.NotFound, "schedule_not_found", (string?)null)
-                    : !s.Enabled ? (StoreStatus.InvalidState, "schedule_disabled", null)
-                    : s.Paused ? (StoreStatus.InvalidState, "schedule_paused", null)
-                    : s.NeedsReview ? (StoreStatus.InvalidState, "schedule_needs_review", null)
-                    : s.DefinitionRevision != r.ExpectedDefinitionRevision || s.ControlRevision != r.ExpectedControlRevision
-                      || s.CursorRevision != r.ExpectedCursorRevision || s.Episode?.Id != r.ExpectedEpisodeId
-                        ? (StoreStatus.VersionConflict, "revision_conflict", $"actual={s.DefinitionRevision}/{s.ControlRevision}/{s.CursorRevision}")
-                    : (long)r.Occurrences.Count * s.Definition.Template.PayloadUtf8.Length > ScheduleBounds.MaxPlanPayloadBytes
-                        ? (StoreStatus.InvalidRequest, "plan_too_large", null)
-                    : s.EvaluatedThrough is { } high && r.Occurrences.Any(o => o.ScheduledAt <= high)
-                        ? (StoreStatus.InvariantFault, "occurrence_below_high_water", null)
-                    : s.EvaluatedThrough is { } prior && (r.After.EvaluatedThrough is not { } next || next < prior)
-                        ? (StoreStatus.InvariantFault, "cursor_rewind", null)
-                    : default((StoreStatus, string, string?)?);
-                if (rejection is { } x)
-                {
-                    return new PgOutcome<ScheduleMaterialization>.Rollback(Invalid<ScheduleMaterialization>(x.Item1, x.Item2, x.Item3));
-                }
-
-                var (jobs, refused) = await DispatchScheduledAsync<ScheduleMaterialization>(tx, s!,
-                    [.. r.Occurrences.Select(o => (o.ProposedJobId, Occurrence(s!, o.ScheduledAt, o.CoveredFrom, o.CoveredThrough)))])
-                    .ConfigureAwait(false);
-                if (refused is not null)
-                {
-                    return new PgOutcome<ScheduleMaterialization>.Rollback(refused);
-                }
-
-                if (tx.Now < r.Cutoff)
-                {
-                    // The clock went backward after planning: reject and replan (13 §4.2).
-                    return Rollback<ScheduleMaterialization>(tx, StoreStatus.InvalidState, "cutoff_in_future");
-                }
-
-                var rows = r.Occurrences.Select((o, i) => (ScheduleOperations.ScheduledKind, ScheduleOperations.OccurrenceKey(o.ScheduledAt),
-                    (DateTimeOffset?)o.ScheduledAt, jobs[i].JobId, jobs[i].Disposition, o.Coalesced, o.CoveredFrom, o.CoveredThrough)).ToList();
-                if (!await InsertOccurrencesAsync(tx, s!.ScheduleId, s.DefinitionRevision, rows).ConfigureAwait(false))
-                {
-                    return Rollback<ScheduleMaterialization>(tx, StoreStatus.InvariantFault, "occurrence_exists");
-                }
-
-                var a = r.After;
-                using (var u = tx.Sql("""
-                    UPDATE runwick.schedules
-                    SET evaluated_through = @through, next_due_at = @next, scan_after_at = @scan,
-                        episode_id = @episode_id, episode_cutoff = @episode_cutoff, episode_emitted = @episode_emitted,
-                        episode_limit = @episode_limit, needs_review = @review, review_reason = @reason,
-                        resume_policy = CASE WHEN @clear THEN NULL ELSE resume_policy END,
-                        resume_cutoff = CASE WHEN @clear THEN NULL ELSE resume_cutoff END,
-                        cursor_revision = cursor_revision + 1, updated_at = @now
-                    WHERE application = @application AND schedule_id = @id
-                    """).P("through", a.EvaluatedThrough).P("next", a.NextDueAt).P("scan", a.ScanAfterAt)
-                        .P("episode_id", a.Episode?.Id, NpgsqlDbType.Uuid).P("episode_cutoff", a.Episode?.Cutoff)
-                        .P("episode_emitted", a.Episode?.Emitted ?? 0).P("episode_limit", a.Episode?.Limit, NpgsqlDbType.Integer)
-                        .P("review", a.ReviewReason is not null).P("reason", a.ReviewReason).P("clear", r.ClearsPendingPolicy)
-                        .P("now", tx.Now).P("id", s.ScheduleId))
-                {
-                    Expect(await tx.ExecAsync(u).ConfigureAwait(false), 1);
-                }
-
-                await AuditRangesAsync(tx, s.ScheduleId, s.DefinitionRevision, r.AuditRanges).ConfigureAwait(false);
-                var result = new ScheduleMaterialization(s.ScheduleId, s.CursorRevision + 1,
-                    [.. rows.Select(o => new MaterializedOccurrence(o.Item1, o.Item2, o.JobId, o.Disposition))]);
-                await ScheduleEventAsync(tx, "schedule_materialized", s, SchedulerActor, new JsonObject
-                {
-                    ["cursorRevision"] = result.CursorRevision, ["cutoff"] = PgTime.Ms(r.Cutoff), ["jobs"] = rows.Count,
-                    ["skippedRanges"] = r.AuditRanges.Count, ["episodeId"] = a.Episode?.Id.ToString("D"),
-                    ["needsReview"] = a.ReviewReason,
-                }).ConfigureAwait(false);
-                if (a.ReviewReason is not null)
-                {
-                    await ScheduleEventAsync(tx, "schedule_needs_review", s, SchedulerActor, new JsonObject { ["reason"] = a.ReviewReason })
-                        .ConfigureAwait(false);
-                }
-
-                return new PgOutcome<ScheduleMaterialization>.Commit(StoreReply<ScheduleMaterialization>.Applied(result, tx.Now),
-                    ScheduleReceiptCodec.Materialization(result));
-            },
-            MaterializationReplay,
-            ct).ConfigureAwait(false);
+        RememberDefinition(application, s);
+        return s.DefinitionRevision == revision ? (s.Key, s.Definition) : null;
     }
 
     static Task<StoreReply<ScheduleMaterialization>> MaterializationReplay(PgTx tx, ReceiptRow row) =>
