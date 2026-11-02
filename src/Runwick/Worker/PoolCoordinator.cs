@@ -192,10 +192,13 @@ internal sealed class PoolCoordinator
         }
     }
 
-    /// <summary>Idle backoff: 100 ms doubling to 2 s, ±20 %; a wake hint ends it early (05 §7.2).</summary>
+    /// <summary>
+    /// Idle backoff: 100 ms doubling to the cap, ±20 %; a wake hint ends it early (05 §7.2). The cap is 10 s while the
+    /// wake listener is healthy and 2 s otherwise (05 Changes 2026-11-02, idle caps), read at each wait.
+    /// </summary>
     async Task IdleAsync(CancellationToken stop)
     {
-        var nominal = TimeSpan.FromTicks(Math.Min(WorkerSettings.IdleBackoffCap.Ticks, WorkerSettings.IdleBackoffBase.Ticks << Math.Min(_idleStep, 10)));
+        var nominal = TimeSpan.FromTicks(Math.Min(_engine.IdleBackoffCap.Ticks, WorkerSettings.IdleBackoffBase.Ticks << Math.Min(_idleStep, 10)));
         _idleStep++;
         await Wake.WaitAsync(_engine.Clock, EngineClock.Jitter(nominal), stop).ConfigureAwait(false);
     }

@@ -868,6 +868,71 @@ public sealed class WorkerEngineTests
         Assert.Equal(1, e.Script.InvocationsOf("late"));
     }
 
+    [Fact]
+    [Trait("Category", "Pure")]
+    [Trait("Item", "PF-07")]
+    [Trait("Case", "WAKE-03")]
+    public async Task A_healthy_listener_lengthens_the_idle_cap_and_a_lost_one_restores_the_short_cap_at_once()
+    {
+        // 05 Changes 2026-11-02 (idle caps): 10 s while the wake listener is subscribed, 2 s before the first
+        // subscription and from the moment the session is lost.
+        await using var e = EngineFixture.Create();
+        var listener = new ScriptedListener();
+        e.Store.Listener = listener;
+        e.Step = TimeSpan.FromMilliseconds(20);
+        await e.StartAsync();
+        await e.RunUntilAsync(() => listener.Running.IsCompleted, Long, "the listener started");
+        Assert.False(e.Engine.ListenerHealthy);
+        Assert.Equal(TimeSpan.FromSeconds(2), e.Engine.IdleBackoffCap);
+
+        // Healthy: after the ramp, 60 s idle is 6 probes at nominal spacing (5–8 with ±20 % jitter); 2 s would be ~30.
+        listener.Subscribe();
+        Assert.True(e.Engine.ListenerHealthy);
+        Assert.Equal(TimeSpan.FromSeconds(10), e.Engine.IdleBackoffCap);
+        await e.AdvanceAsync(TimeSpan.FromSeconds(30));
+        var before = e.Engine.Readiness.Probes;
+        await e.AdvanceAsync(TimeSpan.FromSeconds(60));
+        Assert.InRange(e.Engine.Readiness.Probes - before, 4, 8);
+
+        // A notification still ends the long wait at once.
+        var added = e.Engine.Clock.Now;
+        var notified = e.Add("notified");
+        listener.Notify("default");
+        await e.RunUntilAsync(() => e.Events.Any(x => x.Name == "reserved" && x.Entry!.Lease.JobId == notified), Long, "the notified job");
+        Assert.True(e.Events.First(x => x.Name == "reserved" && x.Entry!.Lease.JobId == notified).At - added <= TimeSpan.FromMilliseconds(500));
+        await e.RunUntilAsync(() => e.Store.JobOf(notified).State == JobStates.Succeeded, Long, "success");
+        await e.AdvanceAsync(TimeSpan.FromSeconds(30));
+
+        // Lost: the pools are woken at once (no wait begun under the long cap outlives the session), then poll at 2 s:
+        // 60 s is 30 probes at nominal spacing (25–38 with jitter).
+        before = e.Engine.Readiness.Probes;
+        listener.Lose();
+        Assert.False(e.Engine.ListenerHealthy);
+        Assert.Equal(1, Interlocked.Read(ref e.Engine.ListenerLosses));
+        Assert.Equal(TimeSpan.FromSeconds(2), e.Engine.IdleBackoffCap);
+        await e.AdvanceAsync(TimeSpan.FromMilliseconds(200));
+        Assert.True(e.Engine.Readiness.Probes > before, "a lost session wakes the pools");
+        await e.AdvanceAsync(TimeSpan.FromSeconds(10));
+        before = e.Engine.Readiness.Probes;
+        await e.AdvanceAsync(TimeSpan.FromSeconds(60));
+        Assert.InRange(e.Engine.Readiness.Probes - before, 24, 40);
+
+        // While lost, un-notified work is found within today's bound: 2 s + 20 % + hint age + one step.
+        added = e.Engine.Clock.Now;
+        var polled = e.Add("polled");
+        await e.RunUntilAsync(() => e.Events.Any(x => x.Name == "reserved" && x.Entry!.Lease.JobId == polled), Long, "the polled job");
+        Assert.True(e.Events.First(x => x.Name == "reserved" && x.Entry!.Lease.JobId == polled).At - added
+            <= TimeSpan.FromSeconds(2.4) + WorkerSettings.HintMaxAge + e.Step);
+        await e.RunUntilAsync(() => e.Store.JobOf(polled).State == JobStates.Succeeded, Long, "the polled job succeeded");
+
+        // Resubscribed: the long cap again.
+        listener.Subscribe();
+        Assert.True(e.Engine.ListenerHealthy);
+        Assert.Equal(TimeSpan.FromSeconds(10), e.Engine.IdleBackoffCap);
+        Assert.Equal(1, e.Script.InvocationsOf("notified"));
+        Assert.Equal(1, e.Script.InvocationsOf("polled"));
+    }
+
     sealed class ThrowingDisposable : IAsyncDisposable
     {
         public ValueTask DisposeAsync() => throw new InvalidOperationException("dispose fault");

@@ -28,8 +28,12 @@ internal sealed record OutboxDelivered(Guid JobId, string Disposition, string Co
 /// </summary>
 internal interface IOutboxWakeSource
 {
-    /// <summary>Runs until <paramref name="ct"/>; calls <paramref name="onWake"/> per notification and after each (re)subscription.</summary>
-    Task ListenAsync(Action onWake, CancellationToken ct);
+    /// <summary>
+    /// Runs until <paramref name="ct"/>; calls <paramref name="onWake"/> per notification, <paramref name="onSubscribed"/>
+    /// after each (re)subscription and <paramref name="onLost"/> when the session is lost or refused, before the reconnect
+    /// back-off. The relay polls at its longer idle interval only between the two (14 Changes 2026-11-02, idle caps).
+    /// </summary>
+    Task ListenAsync(Action onWake, Action onSubscribed, Action onLost, CancellationToken ct);
 }
 
 /// <summary>

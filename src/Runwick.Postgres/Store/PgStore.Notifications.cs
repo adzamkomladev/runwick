@@ -20,7 +20,7 @@ internal sealed partial class PgStore : IWakeNotificationSource
     internal static string NotifySql(string channel, string keysParameter) =>
         $"SELECT pg_notify('{channel}', @application || '/' || k) FROM unnest(@{keysParameter}::text[]) AS k";
 
-    public async Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, CancellationToken ct)
+    public async Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, Action onLost, CancellationToken ct)
     {
         if (channel is not (WakeChannels.Work or WakeChannels.Schedule))
         {
@@ -73,6 +73,7 @@ internal sealed partial class PgStore : IWakeNotificationSource
                 or System.Net.Sockets.SocketException or OperationCanceledException)
             {
                 // Lost or refused session: polling covers the gap; resubscribe after a backoff (1 s doubling to 30 s).
+                onLost();
                 try
                 {
                     await Task.Delay(backoff, time, ct).ConfigureAwait(false);

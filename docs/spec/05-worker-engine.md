@@ -4,6 +4,17 @@
 
 Numeric values are restated here where the engine behavior depends on them; [06-defaults.md](06-defaults.md) is the single table of defaults, derived formulas and startup inequalities. Where the two disagree, 06 is authoritative for the number and this file for the behavior.
 
+## Changes (2026-11-02, idle caps)
+
+Decision (adzamkomla, 2026-11-02): now that the wake listener ships, an idle worker polls less often while its listener is healthy. This replaces the "Not changed" bullet of the PF-07 entry below.
+
+- **Cap.** The idle backoff cap of §7.2 is **10 s while the listener is healthy** and 2 s otherwise. Healthy means: from a successful (re)subscription until the session is lost or refused, or the listener task ends. Before the first subscription, after a loss, and with a store that offers no notifications, the cap is 2 s, exactly as before, so a missed notification never costs more than it did. The cap is read at every idle wait. Base (100 ms), doubling, jitter (±20 %), the resets, the 2 s hint age and the 50 ms probe spacing do not change. The blocked lane/queue cooldown cap stays 2 s.
+- **Loss.** A lost or refused session wakes every pool at once, so no wait begun under the 10 s cap outlives the session. The following waits are capped at 2 s until the resubscription, which still drops the snapshot and wakes the pools. Dropping notifications on receipt (`NotificationsSuppressed`, OBS-01) does not make the listener unhealthy: that is the worst case of a healthy session.
+- **Why 10 s.** Five times fewer idle probes per polling group, and a worst case for un-notified work of 12 s + hint age + one probe and one claim. That is the bound OBS-01 now asserts (07 Changes 2026-11-02, idle caps). It stays below the presence expiry (20 s) and well below the lease and renewal timescales. A healthy session loses notifications only on notify-queue overflow.
+- **Cost: work that becomes due by time.** Only committed dispatches with a job eligible now notify (04 Changes 2026-11-02, PF-07). Delayed dispatch (`NotBefore`), retry back-off, jobs released by another process's Recover or ReleaseReservation, a queue resumed by another process, and rate or concurrency room freed in another process are not notified. On a worker that has been idle long enough to reach the cap, they are found within 12 s + hint age instead of 2.4 s + hint age. Local wakes (local dispatch, ticket retirement, local control changes) are unchanged. A pool that has just reserved starts again from 100 ms, so short retry delays right after activity are found as quickly as before.
+- **Undetected loss.** A session that dies silently is noticed by the listener's 30 s `SELECT 1` (or TCP keepalive). Until then the 10 s cap applies.
+- **Store interface.** `IWakeNotificationSource.ListenAsync` gains an `onLost` callback, called when the session is lost or refused, before the reconnect back-off (04 Changes 2026-11-02, idle caps).
+
 ## Changes (2026-11-02, PF-07)
 
 §7.2 "optional LISTEN notifications" now ships for stores that offer them (the PostgreSQL store does; scripted and decorated stores without them behave exactly as before). Nothing in this section's rules changes: the hint age, idle backoff (100 ms doubling to 2 s), ≥ 50 ms probe spacing and the coalescing wake signal stay as specified.
@@ -300,7 +311,7 @@ Only nonempty lanes are returned. Lane and tuple arrays have equal lengths, non-
 |---|---|
 | Probes in flight per group | 1 |
 | Maximum hint age | 2 s (measured by local monotonic time since the snapshot was received); an expired snapshot requires a fresh probe before lane selection |
-| Idle backoff | Nominal 100 ms doubling to 2 s, each delay × (1 + u), u uniform in [−0.20, +0.20]; reset on an Applied reservation or a useful wake hint |
+| Idle backoff | Nominal 100 ms doubling to 2 s (10 s while the wake listener is healthy, Changes 2026-11-02, idle caps), each delay × (1 + u), u uniform in [−0.20, +0.20]; reset on an Applied reservation or a useful wake hint |
 | Notification-triggered probe spacing | ≥ 50 ms per group |
 | Reconnect / resubscribe | Triggers a fresh probe |
 

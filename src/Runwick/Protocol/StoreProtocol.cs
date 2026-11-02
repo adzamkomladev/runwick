@@ -246,10 +246,13 @@ internal interface IWakeNotificationSource
 {
     /// <summary>
     /// Listens on <paramref name="channel"/> until <paramref name="ct"/> ends, reconnecting with backoff. Calls
-    /// <paramref name="onWake"/> with the key of each notification for <paramref name="application"/>, and
-    /// <paramref name="onSubscribed"/> after every successful (re)subscription, when notifications may have been missed.
+    /// <paramref name="onWake"/> with the key of each notification for <paramref name="application"/>,
+    /// <paramref name="onSubscribed"/> after every successful (re)subscription, when notifications may have been missed,
+    /// and <paramref name="onLost"/> when the session is lost or refused, before the reconnect back-off. Between
+    /// <paramref name="onLost"/> and the next <paramref name="onSubscribed"/> nothing is notified: consumers keep their
+    /// short idle polls then (05 Changes 2026-11-02, idle caps).
     /// </summary>
-    Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, CancellationToken ct);
+    Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, Action onLost, CancellationToken ct);
 }
 
 /// <summary>RenewMany/1 (03 Changes 2026-11-02, PF-06): distinct leases of one worker, each renewed as Renew/1 would.</summary>

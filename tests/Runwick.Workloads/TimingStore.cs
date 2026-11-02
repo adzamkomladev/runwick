@@ -13,8 +13,8 @@ namespace Runwick.Workloads;
 internal sealed class TimingStore(IRunwickStore inner, Metrics metrics, bool detailed = false) : IRunwickStore, ILeaseBatchStore, IWakeNotificationSource
 {
     // Wake notifications pass straight through (05 §7.2, PF-07); they are not store calls and are not timed.
-    public Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, CancellationToken ct) =>
-        inner is IWakeNotificationSource source ? source.ListenAsync(application, channel, onWake, onSubscribed, ct) : Task.CompletedTask;
+    public Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, Action onLost, CancellationToken ct) =>
+        inner is IWakeNotificationSource source ? source.ListenAsync(application, channel, onWake, onSubscribed, onLost, ct) : Task.CompletedTask;
 
     readonly ConcurrentDictionary<Guid, DateTimeOffset> _expiry = new();
     readonly ConcurrentDictionary<Guid, DateTimeOffset> _eligible = new();
