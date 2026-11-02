@@ -224,7 +224,7 @@ internal sealed class PoolCoordinator
             // More than one free slot: claim them in one ReserveAndBegin command (05 §9.6). The batch settles its own
             // Applied reply; a reply like a single Reserve's (no work, paused, all blocked, expired) continues below as
             // one; any other non-Applied reply falls back to Reserve then Begin for this ticket.
-            if (BatchTickets(ticket) is { } tickets)
+            if (BatchTickets(ticket, choice) is { } tickets)
             {
                 var batch = BatchAsync(tickets, lane, _cursors.GetValueOrDefault(lane));
                 ClaimTask = batch;
@@ -341,10 +341,13 @@ internal sealed class PoolCoordinator
     /// The tickets for one ReserveAndBegin command: the given one plus every other free slot, at most
     /// <see cref="IReserveAndBeginStore.MaxJobs"/>. Null (and nothing more acquired) when the store has no batched
     /// claim, the batch is off for this pool, or there is only one free slot: a single slot keeps Reserve then Begin.
+    /// Also null unless the selection had exactly one candidate lane and was not an aging pick: queue and lane shares
+    /// divide admissions (05 §8.4), so with several ready lanes every admission is its own selection.
     /// </summary>
-    List<CapacityTicket>? BatchTickets(CapacityTicket first)
+    List<CapacityTicket>? BatchTickets(CapacityTicket first, LaneChoice choice)
     {
-        if (_batchOff || _engine.Store is not IReserveAndBeginStore)
+        if (_batchOff || _engine.Store is not IReserveAndBeginStore || choice.Aging || choice.EligibleQueues.Count != 1
+            || choice.EligibleLanes.Count != 1)
         {
             return null;
         }
@@ -394,7 +397,7 @@ internal sealed class PoolCoordinator
 
         Interlocked.Increment(ref BatchClaims);
         var now = _engine.Clock.Now;
-        var applied = false;
+        var applied = 0;
         var cool = false;
         var i = 0;
         foreach (var outcome in claimed.Outcomes)
@@ -403,7 +406,7 @@ internal sealed class PoolCoordinator
             switch (outcome.Status)
             {
                 case StoreStatus.Applied when outcome.Reserved is { } reserved && outcome.Begun is { } begun:
-                    applied = true;
+                    applied++;
                     var deadline = reply.Replayed ? (TimeSpan?)null : _engine.DeadlineFrom(sentAt, reserved.Lease, reply.DecidedAt);
                     _engine.Admit(this, ticket, reserved, deadline, sentAt,
                         new BeginReply(StoreReply<BegunExecution>.Applied(begun, reply.DecidedAt, reply.Replayed), null));
@@ -444,16 +447,19 @@ internal sealed class PoolCoordinator
             spare.Return();
         }
 
-        if (applied)
+        // One commit per begun job: the lane was the only candidate, so scores stay balanced and the queue's aging
+        // count advances once per admission, as n single claims would leave them.
+        for (var k = 0; k < applied; k++)
         {
             Selector.OnApplied(choice);
         }
-        else
+
+        if (applied == 0)
         {
             Selector.OnNotApplied(choice);
         }
 
-        return applied && !cool ? BatchResult.Applied : BatchResult.Stopped;
+        return applied > 0 && !cool ? BatchResult.Applied : BatchResult.Stopped;
     }
 
     enum BlockedScope
