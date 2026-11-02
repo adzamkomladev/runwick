@@ -718,3 +718,287 @@ BEGIN
     RETURN v_reply;
 END
 $fn$;
+
+-- ------------------------------------------------------------------ Begin/1 (04 §7.5, 10 §4)
+
+CREATE FUNCTION runwick.begin_v1(p_application text, p_command_id uuid, p_operation text, p_not_after timestamptz,
+    p_fingerprint bytea, p_class text, p_deadline_cap interval, p_store_id uuid, p_revisions bigint[], p_epoch integer,
+    p_capabilities jsonb, p_is_creation boolean, p_allow_drain boolean, p_staged boolean,
+    p_job_id uuid, p_attempt_id uuid, p_worker_id uuid, p_token uuid, p_generation integer,
+    p_min_defer interval, p_defer_jitter_ms integer,
+    p_faults jsonb DEFAULT NULL)
+RETURNS runwick.rw_reply_v1 LANGUAGE plpgsql VOLATILE AS $fn$
+DECLARE
+    v_reply runwick.rw_reply_v1;
+    v_found boolean;
+    v_state text;
+    v_generation integer;
+    v_revision bigint;
+    v_attempt uuid;
+    v_worker uuid;
+    v_token uuid;
+    v_lease timestamptz;
+    v_cancel timestamptz;
+    v_active_key text;
+    v_job_name text;
+    v_max_executions integer;
+    v_started integer;
+    v_executions bigint;
+    v_rated boolean;
+    v_plan text;
+    v_rate_ids uuid[];
+    v_limits integer[];
+    v_windows bigint[];
+    v_rate_revisions bigint[];
+    v_last_decisions timestamptz[];
+    v_not_befores timestamptz[];
+    v_counts integer[];
+    v_blocked uuid[];
+    v_clock timestamptz;
+    v_now timestamptz;
+    v_t timestamptz;
+    v_hint timestamptz;
+    v_oldest timestamptz;
+    v_logical timestamptz;
+    v_eligible timestamptz;
+    v_outcome text;
+    v_reason text;
+    v_new_state text;
+    v_code text;
+    v_status text;
+    v_new_revision bigint;
+    v_n integer;
+    v_i integer;
+    v_execution_number integer;
+    v_total bigint;
+    v_result jsonb;
+BEGIN
+    v_reply := runwick.rw_frame_v1(p_application, p_command_id, p_operation, p_not_after, p_fingerprint, p_class, p_deadline_cap,
+        p_store_id, p_revisions, p_epoch, p_capabilities, p_is_creation, p_allow_drain, p_staged);
+    IF v_reply.replayed THEN
+        -- A closed or deferred Begin replays its code with its receipt.
+        IF v_reply.result ? 'deferredUntil' THEN
+            v_reply.code := 'rate_limited';
+            v_reply.detail := v_reply.result ->> 'deferredUntil';
+        ELSIF v_reply.result ? 'attemptOutcome' THEN
+            v_reply.code := v_reply.result ->> 'errorCode';
+        END IF;
+
+        RETURN v_reply;
+    END IF;
+
+    IF v_reply.status IS NOT NULL THEN
+        RETURN v_reply;
+    END IF;
+
+    -- J
+    SELECT j.state, j.generation, j.revision, j.current_attempt_id, j.worker_instance_id, j.ownership_token,
+           j.lease_expires_at, j.cancel_requested_at, j.active_unique_key, j.job_name
+    INTO v_state, v_generation, v_revision, v_attempt, v_worker, v_token, v_lease, v_cancel, v_active_key, v_job_name
+    FROM runwick.jobs AS j
+    WHERE j.application = p_application AND j.job_id = p_job_id
+    FOR NO KEY UPDATE;
+    v_found := FOUND;
+
+    -- G behind J: a separate statement, so its snapshot is taken after the job lock.
+    IF v_found THEN
+        SELECT g.max_executions, g.started_count, j.execution_count,
+               EXISTS (SELECT 1 FROM runwick.job_rate_requirements AS rr WHERE rr.application = j.application AND rr.job_id = j.job_id)
+        INTO v_max_executions, v_started, v_executions, v_rated
+        FROM runwick.jobs AS j
+        JOIN runwick.job_generations AS g ON g.application = j.application AND g.job_id = j.job_id AND g.generation = j.generation
+        WHERE j.application = p_application AND j.job_id = p_job_id;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'generation row missing' USING ERRCODE = 'RWI04';
+        END IF;
+
+        v_plan := CASE WHEN v_cancel IS NOT NULL THEN 'cancel' WHEN v_started >= v_max_executions THEN 'exhausted' ELSE 'authorize' END;
+        v_rated := v_plan = 'authorize' AND v_rated;
+    ELSE
+        v_plan := 'none';
+        v_rated := false;
+    END IF;
+
+    -- K (closing plans only), S, then R (rated plans only), in lock order (04 §5, 10 §4).
+    IF v_found AND (v_plan <> 'authorize' OR v_rated) THEN
+        IF v_plan IN ('cancel', 'exhausted') AND v_active_key IS NOT NULL THEN
+            PERFORM 1
+            FROM runwick.dispatch_keys AS k
+            JOIN runwick.jobs AS j ON j.application = k.application AND j.job_name = k.job_name AND j.active_unique_key = k.key
+            WHERE j.application = p_application AND j.job_id = p_job_id AND k.key_kind = 'active'
+            FOR UPDATE OF k;
+        END IF;
+
+        PERFORM 1
+        FROM runwick.concurrency_scopes AS s
+        WHERE s.application = p_application
+          AND s.scope_id IN (SELECT r.scope_id FROM runwick.job_concurrency_requirements AS r
+                             WHERE r.application = p_application AND r.job_id = p_job_id)
+        ORDER BY s.scope_id
+        FOR UPDATE OF s;
+
+        IF v_rated THEN
+            SELECT COALESCE(pg_catalog.array_agg(x.rate_scope_id ORDER BY x.rate_scope_id), '{}'),
+                   COALESCE(pg_catalog.array_agg(x.limit_count ORDER BY x.rate_scope_id), '{}'),
+                   COALESCE(pg_catalog.array_agg(x.window_ms ORDER BY x.rate_scope_id), '{}'),
+                   COALESCE(pg_catalog.array_agg(x.policy_revision ORDER BY x.rate_scope_id), '{}'),
+                   COALESCE(pg_catalog.array_agg(x.last_decision_at ORDER BY x.rate_scope_id), '{}'),
+                   COALESCE(pg_catalog.array_agg(x.not_before ORDER BY x.rate_scope_id), '{}')
+            INTO v_rate_ids, v_limits, v_windows, v_rate_revisions, v_last_decisions, v_not_befores
+            FROM (SELECT s.rate_scope_id, s.limit_count, s.window_ms, s.policy_revision, s.last_decision_at, s.not_before
+                  FROM runwick.rate_scopes AS s
+                  WHERE s.application = p_application
+                    AND s.rate_scope_id IN (SELECT r.rate_scope_id FROM runwick.job_rate_requirements AS r
+                                            WHERE r.application = p_application AND r.job_id = p_job_id)
+                  ORDER BY s.rate_scope_id
+                  FOR UPDATE OF s) AS x;
+        END IF;
+    END IF;
+
+    PERFORM runwick.rw_fault('AfterLocksBeforeFreshTime', 0, p_faults); -- rw:fault
+    v_clock := pg_catalog.clock_timestamp();
+    v_now := runwick.ms_floor(v_clock);
+    IF v_clock >= p_not_after THEN
+        RETURN runwick.rw_no_effect_v1('CommandExpired', 'command_expired', v_now);
+    END IF;
+
+    v_reply := runwick.rw_ownership_v1(v_found, v_state, v_attempt, v_token, v_worker, v_generation, v_lease,
+        p_attempt_id, p_token, p_worker_id, p_generation, v_now, ARRAY['reserved']);
+    IF v_reply.status IS NOT NULL THEN
+        RETURN v_reply;
+    END IF;
+
+    -- Cancellation and an exhausted budget close the attempt before any charge.
+    IF v_plan IN ('cancel', 'exhausted') THEN
+        v_outcome := CASE v_plan WHEN 'cancel' THEN 'cancelled_before_start' ELSE 'abandoned_before_start' END;
+        v_reason := CASE v_plan WHEN 'cancel' THEN 'cancelled_before_start' ELSE 'execution_budget_exhausted' END;
+        v_new_state := CASE v_plan WHEN 'cancel' THEN 'cancelled' ELSE 'failed' END;
+        v_status := CASE v_plan WHEN 'cancel' THEN 'InvalidState' ELSE 'BudgetExhausted' END;
+        v_code := v_reason;
+        PERFORM runwick.rw_fault('BeforeFirstMutation', 0, p_faults); -- rw:fault
+        v_new_revision := runwick.rw_close_v1(p_application, p_command_id, v_now, p_job_id, p_attempt_id, p_token, v_generation,
+            v_revision, v_job_name, v_active_key, v_outcome, v_new_state, v_reason,
+            CASE v_plan WHEN 'cancel' THEN 'attempt_cancelled_before_start' ELSE 'attempt_finished' END,
+            NULL, NULL, NULL, NULL, NULL);
+        PERFORM runwick.rw_fault('AfterMutation', 1, p_faults); -- rw:fault
+        v_result := pg_catalog.jsonb_build_object('jobId', p_job_id, 'generation', v_generation, 'revision', v_new_revision,
+            'state', v_new_state, 'attemptOutcome', v_outcome, 'terminalReason', v_reason, 'errorCode', v_code);
+        PERFORM runwick.rw_finalize_v1(p_application, p_class, p_command_id, v_status, v_result, v_now);
+        RETURN runwick.rw_applied_v1(v_status, v_code, v_now, v_result);
+    END IF;
+
+    PERFORM runwick.rw_fault('BeforeFirstMutation', 0, p_faults); -- rw:fault
+
+    -- Rate step (10 §4): all-or-none at logical time t = max(now, the scopes' last decisions).
+    IF pg_catalog.cardinality(v_rate_ids) > 0 THEN
+        v_t := GREATEST(v_now, (SELECT max(d) FROM unnest(v_last_decisions) AS d));
+        SELECT pg_catalog.array_agg((SELECT count(*)::integer FROM runwick.rate_grants AS g
+                                     WHERE g.application = p_application AND g.rate_scope_id = r.id
+                                       AND g.authorized_at > v_t - r.w * interval '1 millisecond') ORDER BY r.ord)
+        INTO v_counts
+        FROM unnest(v_rate_ids, v_windows) WITH ORDINALITY AS r(id, w, ord);
+
+        SELECT COALESCE(pg_catalog.array_agg(r.id ORDER BY r.ord), '{}') INTO v_blocked
+        FROM unnest(v_rate_ids, v_limits, v_not_befores, v_counts) WITH ORDINALITY AS r(id, lim, nb, c, ord)
+        WHERE r.c >= r.lim OR (r.nb IS NOT NULL AND v_t < r.nb);
+
+        -- The scopes' logical time never goes backward, whichever way the decision goes.
+        UPDATE runwick.rate_scopes SET last_decision_at = v_t
+        WHERE application = p_application AND rate_scope_id = ANY (v_rate_ids)
+          AND (last_decision_at IS NULL OR last_decision_at < v_t);
+
+        IF pg_catalog.cardinality(v_blocked) = 0 THEN
+            INSERT INTO runwick.rate_grants (application, rate_scope_id, attempt_id, job_id, authorized_at, policy_revision)
+            SELECT p_application, s.id, p_attempt_id, p_job_id, v_t, s.revision
+            FROM unnest(v_rate_ids, v_rate_revisions) AS s(id, revision)
+            ORDER BY s.id;
+            GET DIAGNOSTICS v_n = ROW_COUNT;
+            IF v_n <> pg_catalog.cardinality(v_rate_ids) THEN
+                RAISE EXCEPTION 'rw:invalid_transition' USING ERRCODE = 'RWI01';
+            END IF;
+        ELSE
+            PERFORM runwick.rw_fault('AfterMutation', 1, p_faults); -- rw:fault
+
+            -- Earliest logical instant at which every blocked scope could admit (capacity-control §4); not a reservation.
+            v_hint := v_t;
+            FOR v_i IN 1 .. pg_catalog.cardinality(v_rate_ids) LOOP
+                CONTINUE WHEN NOT (v_rate_ids[v_i] = ANY (v_blocked));
+                IF v_counts[v_i] >= v_limits[v_i] THEN
+                    SELECT g.authorized_at INTO v_oldest
+                    FROM runwick.rate_grants AS g
+                    WHERE g.application = p_application AND g.rate_scope_id = v_rate_ids[v_i]
+                      AND g.authorized_at > v_t - v_windows[v_i] * interval '1 millisecond'
+                    ORDER BY g.authorized_at
+                    OFFSET v_counts[v_i] - v_limits[v_i] LIMIT 1;
+                    IF FOUND AND v_oldest + v_windows[v_i] * interval '1 millisecond' > v_hint THEN
+                        v_hint := v_oldest + v_windows[v_i] * interval '1 millisecond';
+                    END IF;
+                END IF;
+
+                IF v_not_befores[v_i] IS NOT NULL AND v_not_befores[v_i] > v_hint THEN
+                    v_hint := v_not_befores[v_i];
+                END IF;
+            END LOOP;
+
+            -- Logical hint to storage wall time: the same offset, so a backward clock defers longer, never shorter.
+            v_logical := GREATEST(v_hint, v_t + p_min_defer);
+            v_eligible := v_now + (v_logical - v_t) + p_defer_jitter_ms * interval '1 millisecond';
+            IF runwick.ms_floor(v_eligible) <> v_eligible THEN
+                v_eligible := runwick.ms_floor(v_eligible) + interval '1 millisecond';
+            END IF;
+
+            v_new_state := CASE WHEN v_started = 0 THEN 'pending' ELSE 'retrying' END;
+            v_new_revision := runwick.rw_close_v1(p_application, p_command_id, v_now, p_job_id, p_attempt_id, p_token, v_generation,
+                v_revision, v_job_name, v_active_key, 'admission_deferred', v_new_state, NULL, 'attempt_admission_deferred',
+                NULL, GREATEST(1, runwick.rw_ms_v1(v_eligible) - runwick.rw_ms_v1(v_now)), v_eligible, NULL,
+                pg_catalog.jsonb_build_object('blockingScopes', pg_catalog.to_jsonb(v_blocked), 'rateTime', runwick.rw_ms_v1(v_t)));
+            PERFORM runwick.rw_fault('AfterMutation', 2, p_faults); -- rw:fault
+            v_result := pg_catalog.jsonb_build_object('jobId', p_job_id, 'generation', v_generation, 'revision', v_new_revision,
+                'state', v_new_state, 'deferredUntil', runwick.rw_ms_v1(v_eligible), 'blockingScopes', pg_catalog.to_jsonb(v_blocked));
+            PERFORM runwick.rw_finalize_v1(p_application, p_class, p_command_id, 'RateLimited', v_result, v_now);
+            RETURN runwick.rw_applied_v1('RateLimited', 'rate_limited', v_now, v_result, (runwick.rw_ms_v1(v_eligible))::text);
+        END IF;
+    END IF;
+
+    -- The effects: the job is locked, so the execution number, total and new revision are known and checked.
+    v_execution_number := v_started + 1;
+    v_total := v_executions + 1;
+    UPDATE runwick.job_generations
+    SET started_count = started_count + 1, consecutive_unstarted_count = 0
+    WHERE application = p_application AND job_id = p_job_id AND generation = p_generation AND started_count < max_executions
+    RETURNING started_count INTO v_n;
+    IF v_n IS DISTINCT FROM v_execution_number THEN
+        RETURN runwick.rw_no_effect_v1('InvariantFault', 'invalid_transition', v_now);
+    END IF;
+
+    UPDATE runwick.jobs
+    SET state = 'running', execution_count = execution_count + 1, revision = revision + 1, updated_at = v_now
+    WHERE application = p_application AND job_id = p_job_id AND state = 'reserved'
+      AND current_attempt_id = p_attempt_id AND ownership_token = p_token
+    RETURNING execution_count, revision INTO v_executions, v_new_revision;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    IF v_n <> 1 OR v_executions <> v_total OR v_new_revision <> v_revision + 1 THEN
+        RETURN runwick.rw_no_effect_v1('InvariantFault', 'invalid_transition', v_now);
+    END IF;
+
+    UPDATE runwick.job_attempts
+    SET execution_number = v_execution_number, authorized_at = v_now
+    WHERE application = p_application AND attempt_id = p_attempt_id AND finished_at IS NULL AND execution_number IS NULL;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    IF v_n <> 1 THEN
+        RETURN runwick.rw_no_effect_v1('InvariantFault', 'invalid_transition', v_now);
+    END IF;
+
+    INSERT INTO runwick.queue_events (application, job_id, attempt_id, command_id, event_kind, occurred_at, details)
+    VALUES (p_application, p_job_id, p_attempt_id, p_command_id, 'attempt_started', v_now,
+            pg_catalog.jsonb_build_object('generation', p_generation, 'executionNumber', v_execution_number));
+
+    v_result := pg_catalog.jsonb_build_object('jobId', p_job_id, 'generation', p_generation, 'revision', v_new_revision,
+        'state', 'running', 'attemptId', p_attempt_id, 'workerInstanceId', p_worker_id, 'ownershipToken', p_token,
+        'leaseExpiresAt', runwick.rw_ms_v1(v_lease), 'executionNumber', v_execution_number, 'totalExecutionNumber', v_total,
+        'authorizedAt', runwick.rw_ms_v1(v_now));
+    PERFORM runwick.rw_finalize_v1(p_application, p_class, p_command_id, 'Applied', v_result, v_now);
+    PERFORM runwick.rw_fault('AfterMutation', 1, p_faults); -- rw:fault
+    RETURN runwick.rw_applied_v1('Applied', NULL, v_now, v_result);
+END
+$fn$;

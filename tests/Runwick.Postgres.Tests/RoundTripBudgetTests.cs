@@ -37,9 +37,9 @@ public sealed class RoundTripBudgetTests
     {
         ["Dispatch"] = 4,
         ["Reserve"] = 1,
-        ["Begin"] = 4,
-        ["Begin rated 1"] = 5,
-        ["Begin rated 8"] = 5,
+        ["Begin"] = 1,
+        ["Begin rated 1"] = 1,
+        ["Begin rated 8"] = 1,
         ["Renew"] = 1,
         ["RenewMany"] = 3,
         ["Finish"] = 4,
