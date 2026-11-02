@@ -45,6 +45,8 @@ public sealed class RoundTripBudgetTests
         ["ReserveAndBegin 2"] = 1,
         ["ReserveAndBegin 8"] = 1,
         ["Finish"] = 1,
+        ["FinishMany 2"] = 1,
+        ["FinishMany 8"] = 1,
         ["Recover"] = 1,
         ["ReleaseReservation"] = 1,
         ["ReadinessProbe"] = 1,
@@ -154,10 +156,12 @@ public sealed class RoundTripBudgetTests
             var claimed = await Count(name, () => c.ReserveAndBeginAsync(n));
             Assert.Equal(StoreStatus.Applied, claimed.Status);
             Assert.Equal(n, claimed.Value!.Outcomes.Count(o => o.Status == StoreStatus.Applied));
-            foreach (var o in claimed.Value.Outcomes)
-            {
-                Assert.Equal(StoreStatus.Applied, (await c.FinishAsync(o.Begun!.Lease.Handle, AttemptOutcome.Succeeded)).Status);
-            }
+
+            // FinishMany (PF-06 batched finish): one command settles the 2 or 8 begun jobs, each with its own receipt.
+            var finishes = claimed.Value.Outcomes.Select(o => c.FinishCommand(o.Begun!.Lease.Handle, AttemptOutcome.Succeeded)).ToList();
+            var finished = await Count(name.Replace("ReserveAndBegin", "FinishMany", StringComparison.Ordinal), () => c.FinishManyAsync(finishes));
+            Assert.Equal(StoreStatus.Applied, finished.Status);
+            Assert.All(finished.Value!.Outcomes, o => Assert.Equal((StoreStatus.Applied, false), (o.Status, o.Replayed)));
         }
 
         // Rated Begin: one scope and eight scopes.

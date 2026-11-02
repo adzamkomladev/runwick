@@ -363,6 +363,36 @@ internal sealed record FinishedAttempt(
     string? TerminalReason,
     DateTimeOffset? EligibleAt);
 
+/// <summary>
+/// FinishMany/1 (03 Changes 2026-11-02, PF-06 batched finish): up to <see cref="IFinishManyStore.MaxItems"/> complete Finish/1
+/// commands of one application, each with its own command ID, NotAfter and body, and distinct job IDs. The batch's own
+/// command ID is for correlation only (no receipt for the batch, like RenewMany); its NotAfter bounds the whole call.
+/// </summary>
+internal sealed record FinishManyRequest(IReadOnlyList<StoreCommand<FinishRequest>> Items);
+
+/// <summary>
+/// Value of an Applied FinishMany: one reply per item, in request order, each exactly the reply Finish/1 would give that
+/// command at the same decision time (Applied fresh or replayed from the item's own receipt, StaleLease, InvalidState,
+/// NotFound, CommandExpired, CommandConflict, InvalidRequest <c>deadline_too_far</c>, InvariantFault <c>receipt_incomplete</c>).
+/// </summary>
+internal sealed record FinishedMany(IReadOnlyList<StoreReply<FinishedAttempt>> Outcomes);
+
+/// <summary>
+/// Optional batched Finish (03 Changes 2026-11-02, PF-06 batched finish). Applied means every item was decided in one
+/// transaction (committed when any item applied now); each item's own reply is in <see cref="FinishedMany.Outcomes"/>, and
+/// no item's refusal or replay affects another. Every item has its own durable Finish receipt, keyed by its own command
+/// ID, so a lost batch reply is resolved per item by resubmitting that item's Finish/1 command. Any other reply status
+/// (gates, CommandExpired for the call, InvariantFault, InvalidRequest) and any transport failure applied nothing that the
+/// items' receipts do not record.
+/// </summary>
+internal interface IFinishManyStore
+{
+    /// <summary>The most Finish commands one call may carry.</summary>
+    const int MaxItems = 32;
+
+    Task<StoreReply<FinishedMany>> FinishManyAsync(StoreCommand<FinishManyRequest> command, CancellationToken ct);
+}
+
 internal sealed record RecoverRequest(Guid JobId, Guid ExpectedAttemptId, Guid ExpectedOwnershipToken);
 
 internal sealed record ReleaseRequest(LeaseHandle Lease);
@@ -608,6 +638,7 @@ internal static class Operations
     public const string Renew = "Renew";
     public const string RenewMany = "RenewMany";
     public const string Finish = "Finish";
+    public const string FinishMany = "FinishMany";
     public const string Recover = "Recover";
     public const string ReleaseReservation = "ReleaseReservation";
     public const string SetQueueState = "SetQueueState";
@@ -636,7 +667,7 @@ internal static class Operations
         RetentionClass(operation) == OwnershipClass ? TimeSpan.FromMinutes(10) : TimeSpan.FromHours(24);
 
     public static TimeSpan DeadlineCap(string operation) =>
-        operation is Reserve or ReserveAndBegin or Begin or Renew or RenewMany or Finish or Recover or ReleaseReservation ? TimeSpan.FromSeconds(60)
+        operation is Reserve or ReserveAndBegin or Begin or Renew or RenewMany or Finish or FinishMany or Recover or ReleaseReservation ? TimeSpan.FromSeconds(60)
         : operation == OutboxOperations.ReceiveOutbox ? OutboxOperations.TransportCap
         : ScheduleOperations.IsScheduler(operation) ? ScheduleOperations.SchedulerCap
         : TimeSpan.FromMinutes(10);

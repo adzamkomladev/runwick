@@ -34,6 +34,7 @@ public sealed class OperationVersionTests
         (7, "SetPoolOverride", 1), (7, "EstimateDemand", 1), (7, "RecordScalingEvent", 1),
         (8, "RenewMany", 1),
         (10, "ReserveAndBegin", 1),
+        (11, "FinishMany", 1),
     ];
 
     [Fact]
