@@ -375,85 +375,37 @@ internal sealed partial class PgStore : IReadinessDiagnostics
 
         PresenceAck? ack = null;
         var notAfter = time.GetUtcNow() + TimeSpan.FromSeconds(10);
-        var reply = await runner.ExecuteAsync<PresenceBox>(
+        var subscriptions = new System.Text.Json.Nodes.JsonArray([.. presence.SubscribedQueues.Order(StringComparer.Ordinal).Select(q => (System.Text.Json.Nodes.JsonNode?)q)]);
+        var pools = new System.Text.Json.Nodes.JsonObject();
+        foreach (var key in presence.PoolTargets.Keys.Order(StringComparer.Ordinal))
+        {
+            pools[key] = presence.PoolTargets[key];
+        }
+
+        // The clock, the instance upsert (sequence-fenced), the capability rows and the subscription rows run in
+        // runwick.publish_presence_v1 (04 §7.12, 09 §3).
+        var reply = await runner.CallAsync(
             Op(application, Guid.CreateVersion7(), "PublishPresence", notAfter, null, PgLane.Background),
-            async tx =>
+            new PgCall("publish_presence_v1").P("p_instance_id", presence.InstanceId).P("p_process_id", presence.ProcessId)
+                .P("p_host_name", presence.HostName).P("p_build_id", presence.BuildId).P("p_status", presence.Status)
+                .P("p_capability_revision", presence.CapabilityRevision).P("p_presence_sequence", presence.PresenceSequence)
+                .Json("p_subscriptions", subscriptions).Json("p_pool_targets", pools).P("p_expiry", presence.Expiry)
+                .Arr("p_names", [.. capabilities.Select(x => x.Name)], NpgsqlDbType.Text)
+                .Arr("p_versions", [.. capabilities.Select(x => x.PayloadVersion)], NpgsqlDbType.Integer)
+                .Arr("p_profile_ids", [.. capabilities.Select(x => x.SerializerProfileId)], NpgsqlDbType.Text)
+                .Arr("p_profile_versions", [.. capabilities.Select(x => x.SerializerProfileVersion)], NpgsqlDbType.Integer)
+                .Arr("p_queues", [.. presence.SubscribedQueues.Distinct().Order(StringComparer.Ordinal)], NpgsqlDbType.Text),
+            row =>
             {
-                if (!await tx.DecideAsync().ConfigureAwait(false))
+                if (row.HasValue)
                 {
-                    return new PgOutcome<PresenceBox>.Rollback(tx.Reject<PresenceBox>(StoreStatus.CommandExpired, "command_expired"));
+                    ack = new PresenceAck(PgTime.FromMs(row.Result!["expiresAt"]!.GetValue<long>()), true);
+                    return row.Applied(new PresenceBox());
                 }
 
-                var subscriptions = new System.Text.Json.Nodes.JsonArray([.. presence.SubscribedQueues.Order(StringComparer.Ordinal).Select(q => (System.Text.Json.Nodes.JsonNode?)q)]);
-                var pools = new System.Text.Json.Nodes.JsonObject();
-                foreach (var key in presence.PoolTargets.Keys.Order(StringComparer.Ordinal))
-                {
-                    pools[key] = presence.PoolTargets[key];
-                }
-
-                using var w = tx.Sql("""
-                    INSERT INTO runwick.worker_instances AS w (
-                        application, instance_id, process_id, host_name, build_id, status,
-                        capability_revision, presence_sequence, subscriptions, pool_targets, started_at, heartbeat_at, expires_at)
-                    VALUES (@application, @instance_id, @process_id, @host_name, @build_id, @status,
-                            @capability_revision, @presence_sequence, @subscriptions, @pool_targets, @now, @now, @expires)
-                    ON CONFLICT (application, instance_id) DO UPDATE
-                    SET status = EXCLUDED.status,
-                        capability_revision = EXCLUDED.capability_revision,
-                        presence_sequence = EXCLUDED.presence_sequence,
-                        subscriptions = EXCLUDED.subscriptions,
-                        pool_targets = EXCLUDED.pool_targets,
-                        heartbeat_at = EXCLUDED.heartbeat_at,
-                        expires_at = EXCLUDED.expires_at
-                    WHERE w.presence_sequence < EXCLUDED.presence_sequence
-                    RETURNING w.expires_at
-                    """).P("instance_id", presence.InstanceId).P("process_id", presence.ProcessId).P("host_name", presence.HostName)
-                        .P("build_id", presence.BuildId).P("status", presence.Status).P("capability_revision", presence.CapabilityRevision)
-                        .P("presence_sequence", presence.PresenceSequence).Json("subscriptions", subscriptions).Json("pool_targets", pools)
-                        .P("now", tx.Now).P("expires", PgTime.Floor(tx.Now + presence.Expiry));
-                var rows = await tx.QueryAsync(w, r => PgTime.Read(r, 0), mutation: true).ConfigureAwait(false);
-                if (rows.Count == 0)
-                {
-                    ack = new PresenceAck(tx.Now, false);
-                    return new PgOutcome<PresenceBox>.Rollback(tx.Reject<PresenceBox>(StoreStatus.VersionConflict, "presence_sequence_stale"));
-                }
-
-                if (capabilities.Length > 0)
-                {
-                    using var c = tx.Sql("""
-                        INSERT INTO runwick.worker_capabilities (
-                            application, instance_id, capability_revision, job_name, payload_version, serializer_profile_id, serializer_profile_version)
-                        SELECT @application, @instance_id, @capability_revision, c.name, c.version, c.profile_id, c.profile_version
-                        FROM unnest(@names::text[], @versions::integer[], @profile_ids::text[], @profile_versions::integer[])
-                             AS c(name, version, profile_id, profile_version)
-                        ON CONFLICT DO NOTHING
-                        """).P("instance_id", presence.InstanceId).P("capability_revision", presence.CapabilityRevision)
-                            .Arr("names", [.. capabilities.Select(x => x.Name)], NpgsqlDbType.Text)
-                            .Arr("versions", [.. capabilities.Select(x => x.PayloadVersion)], NpgsqlDbType.Integer)
-                            .Arr("profile_ids", [.. capabilities.Select(x => x.SerializerProfileId)], NpgsqlDbType.Text)
-                            .Arr("profile_versions", [.. capabilities.Select(x => x.SerializerProfileVersion)], NpgsqlDbType.Integer);
-                    await tx.ExecAsync(c).ConfigureAwait(false);
-                }
-
-                // 09 §3: queue subscriptions as join rows (the jsonb column stays for display). Instance IDs are never
-                // reused and subscriptions are fixed for a process lifetime, so insert-if-absent is complete.
-                if (presence.SubscribedQueues.Count > 0)
-                {
-                    using var q = tx.Sql("""
-                        INSERT INTO runwick.worker_subscriptions (application, instance_id, queue)
-                        SELECT @application, @instance_id, q.queue
-                        FROM unnest(@queues::text[]) AS q(queue)
-                        ORDER BY q.queue COLLATE "C"
-                        ON CONFLICT DO NOTHING
-                        """).P("instance_id", presence.InstanceId)
-                            .Arr("queues", [.. presence.SubscribedQueues.Distinct().Order(StringComparer.Ordinal)], NpgsqlDbType.Text);
-                    await tx.ExecAsync(q).ConfigureAwait(false);
-                }
-
-                ack = new PresenceAck(rows[0], true);
-                return new PgOutcome<PresenceBox>.Commit(StoreReply<PresenceBox>.Applied(new PresenceBox(), tx.Now), null);
+                ack = row.Code == "presence_sequence_stale" ? new PresenceAck(row.Decided, false) : null;
+                return row.Reject<PresenceBox>();
             },
-            null,
             ct).ConfigureAwait(false);
         return ack is not null && (reply.Status == StoreStatus.Applied || !ack.Accepted)
             ? ack

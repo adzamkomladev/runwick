@@ -12,7 +12,7 @@ namespace Runwick.Postgres.Tests;
 public sealed class MigrationTests
 {
     const string SpecManifest = """
-        {"manifestVersion":1,"schemaRevision":8,"protocolEpochs":[1],"receiptCodecs":[1],"commandFingerprintVersions":[1],
+        {"manifestVersion":1,"schemaRevision":9,"protocolEpochs":[1],"receiptCodecs":[1],"commandFingerprintVersions":[1],
          "windowFingerprintVersions":[1],"retryEvaluators":["exponential-v1"],
          "operations":{"Describe":[1],"RegisterApplication":[1],"RegisterQueue":[1],"RegisterScope":[1],"Dispatch":[1],
            "DispatchMany":[1],"ResolveCommand":[1],"ReadinessProbe":[1,2],"PublishPresence":[1],"ListExpiredLeases":[1],
@@ -27,7 +27,7 @@ public sealed class MigrationTests
 
     static string Ns(string prefix) => prefix + "_" + Guid.NewGuid().ToString("N")[..8];
 
-    /// <summary>Every phase of every migration, in apply order (0001_initial, 0002_controls, 0003_outbox, 0004_rates, 0005_readiness, 0006_scheduler, 0007_scaling, 0008_renew_many).</summary>
+    /// <summary>Every phase of every migration, in apply order (0001_initial, 0002_controls, 0003_outbox, 0004_rates, 0005_readiness, 0006_scheduler, 0007_scaling, 0008_renew_many, 0009_functions).</summary>
     static readonly string[] AllPhases = [.. PgMigrator.Migrations.SelectMany(m => new[] { "expand", "validate", "activate" }.Select(p => m.Id + ":" + p))];
 
     static async Task<(long Revision, int Epoch, string Mode, string Manifest, byte[] Digest)> ReadMetadataAsync(string cs)
@@ -96,6 +96,9 @@ public sealed class MigrationTests
     [InlineData("0008_renew_many:expand", 7L)]
     [InlineData("0008_renew_many:validate", 8L)]
     [InlineData("0008_renew_many:activate", 8L)]
+    [InlineData("0009_functions:expand", 8L)]
+    [InlineData("0009_functions:validate", 9L)]
+    [InlineData("0009_functions:activate", 9L)]
     public async Task Session_killed_after_a_phase_resumes_from_catalog_state(string killAfter, long revisionAfterKill)
     {
         var server = await StoreServer.SharedAsync();

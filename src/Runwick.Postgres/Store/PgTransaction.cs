@@ -110,6 +110,9 @@ internal sealed class PgTx(NpgsqlConnection connection, NpgsqlTransaction transa
         return clock < op.NotAfter;
     }
 
+    /// <summary>The decision time a server function read after its own locks (PF-05); it becomes this transaction's.</summary>
+    public void DecidedAt(DateTimeOffset now) => Now = now;
+
     /// <summary>The clock read appended to a lock batch.</summary>
     public static NpgsqlCommand ClockSql(PgTx tx) => tx.Sql("SELECT clock_timestamp()");
 

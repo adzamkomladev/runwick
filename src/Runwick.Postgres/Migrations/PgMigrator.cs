@@ -38,7 +38,123 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
     {
         /// <summary>SHA-256 of the UTF-8 bytes after normalizing line endings to LF.</summary>
         public byte[] Checksum { get; } = SHA256.HashData(Encoding.UTF8.GetBytes(Sql.Replace("\r\n", "\n", StringComparison.Ordinal)));
+
+        /// <summary>
+        /// The fault-hooks variant's checksum (04 §8.1, PF-05): the LF-normalized bytes followed by 0x00 and
+        /// <c>rw:fault-hooks</c>. Equal to <see cref="Checksum"/> for a migration without hook lines.
+        /// </summary>
+        public byte[] HooksChecksum { get; } = HasHooks(Sql)
+            ? SHA256.HashData([.. Encoding.UTF8.GetBytes(Sql.Replace("\r\n", "\n", StringComparison.Ordinal)), 0, .. "rw:fault-hooks"u8])
+            : SHA256.HashData(Encoding.UTF8.GetBytes(Sql.Replace("\r\n", "\n", StringComparison.Ordinal)));
+
+        public byte[] ChecksumFor(bool hooks) => hooks ? HooksChecksum : Checksum;
+
+        /// <summary>The SQL a variant executes: the production variant strips every hook line and hook block.</summary>
+        public string SqlFor(bool hooks) => hooks ? Sql : StripHooks(Sql);
     }
+
+    const string HookLine = "-- rw:fault";
+
+    static bool HasHooks(string sql) => sql.Contains(HookLine, StringComparison.Ordinal);
+
+    /// <summary>Removes every line ending in <c>-- rw:fault</c> and every block from <c>-- rw:fault-begin</c> to <c>-- rw:fault-end</c>.</summary>
+    internal static string StripHooks(string sql)
+    {
+        var kept = new StringBuilder(sql.Length);
+        var inBlock = false;
+        foreach (var raw in sql.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n'))
+        {
+            var line = raw.TrimEnd();
+            if (line.EndsWith(HookLine + "-begin", StringComparison.Ordinal))
+            {
+                inBlock = true;
+                continue;
+            }
+
+            if (line.EndsWith(HookLine + "-end", StringComparison.Ordinal))
+            {
+                inBlock = false;
+                continue;
+            }
+
+            if (inBlock || line.EndsWith(HookLine, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            kept.Append(raw).Append('\n');
+        }
+
+        return kept.ToString(0, Math.Max(0, kept.Length - 1));
+    }
+
+    /// <summary>
+    /// Set only by the test harness (<c>InternalsVisibleTo</c>): migrate the fault-hooks variant (04 §8.1, PF-05). The
+    /// public <see cref="RunwickPostgresMigrations.MigrateAsync"/> never sets it.
+    /// </summary>
+    internal bool FaultHooks { get; init; }
+
+    [GeneratedRegex(@"CREATE FUNCTION runwick\.([a-z0-9_]+)\(.*?AS \$fn\$(.*?)\$fn\$", RegexOptions.Singleline)]
+    private static partial Regex FunctionPattern();
+
+    /// <summary>
+    /// The server functions the migrations create and the MD5 of each body as the variant executes it (<c>prosrc</c>),
+    /// compared with <c>pg_proc</c> at validate and at Describe (04 §8.3, PF-05).
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string> ExpectedFunctions(IEnumerable<Migration> migrations, bool hooks)
+    {
+        var map = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        foreach (var m in migrations)
+        {
+            foreach (Match f in FunctionPattern().Matches(m.SqlFor(hooks)))
+            {
+#pragma warning disable CA5351 // Matches PostgreSQL md5(prosrc) for drift detection; not a security use.
+                map[f.Groups[1].Value] = Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(f.Groups[2].Value)));
+#pragma warning restore CA5351
+            }
+        }
+
+        return map;
+    }
+
+    /// <summary>The functions of every migration this binary knows, for a store of the given variant.</summary>
+    internal static IReadOnlyDictionary<string, string> CurrentFunctions(bool hooks) => hooks ? HooksFunctions.Value : ProductionFunctions.Value;
+
+    static readonly Lazy<IReadOnlyDictionary<string, string>> ProductionFunctions = new(() => ExpectedFunctions(Migrations!, false));
+    static readonly Lazy<IReadOnlyDictionary<string, string>> HooksFunctions = new(() => ExpectedFunctions(Migrations!, true));
+
+    /// <summary>
+    /// Lists the differences between the store's runwick functions and <paramref name="expected"/>: a missing or changed
+    /// body (an operator's CREATE OR REPLACE) or a function no migration of this variant creates (rw_fault in production).
+    /// </summary>
+    internal static List<string> FunctionProblems(IReadOnlyDictionary<string, string> expected, IReadOnlyDictionary<string, string> actual, IEnumerable<string> allExpected)
+    {
+        var problems = new List<string>();
+        foreach (var (name, digest) in expected)
+        {
+            if (!actual.TryGetValue(name, out var got))
+            {
+                problems.Add("missing function " + name);
+            }
+            else if (got != digest)
+            {
+                problems.Add("changed function " + name);
+            }
+        }
+
+        var known = allExpected.ToHashSet(StringComparer.Ordinal);
+        problems.AddRange(actual.Keys.Where(n => !expected.ContainsKey(n) && known.Contains(n)).Select(n => "unexpected function " + n));
+        return problems;
+    }
+
+    /// <summary>Every function name either variant creates.</summary>
+    internal static IEnumerable<string> AllFunctionNames => HooksFunctions.Value.Keys;
+
+    internal const string FunctionDigestSql = """
+        SELECT p.proname || ':' || md5(p.prosrc)
+        FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'runwick'
+        """;
 
     /// <summary>All migrations in apply order; numbers are assigned in merge order (08 Changes, plan "Migration numbering").</summary>
     internal static IReadOnlyList<Migration> Migrations { get; } =
@@ -51,6 +167,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         new("0006_scheduler", LoadSql("0006_scheduler.sql"), 6),
         new("0007_scaling", LoadSql("0007_scaling.sql"), 7),
         new("0008_renew_many", LoadSql("0008_renew_many.sql"), 8),
+        new("0009_functions", LoadSql("0009_functions.sql"), 9),
     ];
 
     /// <summary>The schema revision this binary writes to (03 §10.1): the last migration's target.</summary>
@@ -169,7 +286,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         {
             var known = Migrations.FirstOrDefault(m => m.Id == id)
                 ?? throw new PostgresMigrationException("migration_unknown", $"Applied migration {id} is not known to this binary (newer store).");
-            if (!checksum.AsSpan().SequenceEqual(known.Checksum))
+            if (!checksum.AsSpan().SequenceEqual(known.ChecksumFor(FaultHooks)))
             {
                 throw new PostgresMigrationException("migration_checksum_mismatch",
                     $"Applied migration {id} phase {phase} has a different checksum than this binary.");
@@ -186,7 +303,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
             {
                 await PhaseAsync(conn, migration, "expand", async tx =>
                 {
-                    using var ddl = new NpgsqlCommand(migration.Sql, conn, tx);
+                    using var ddl = new NpgsqlCommand(migration.SqlFor(FaultHooks), conn, tx);
                     await ddl.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                     await LedgerAsync(conn, tx, migration, "preflight", ct).ConfigureAwait(false);
                     await LedgerAsync(conn, tx, migration, "expand", ct).ConfigureAwait(false);
@@ -204,7 +321,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
                         await lockRow.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                     }
 
-                    await ValidateCatalogAsync(conn, tx, cumulative, ct).ConfigureAwait(false);
+                    await ValidateCatalogAsync(conn, tx, cumulative, FaultHooks, ct).ConfigureAwait(false);
                     var (manifest, digest) = Manifest(migration.TargetRevision);
                     using (var update = new NpgsqlCommand("""
                         UPDATE runwick.store_metadata
@@ -266,6 +383,9 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         }
     }
 
+    Task LedgerAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Migration migration, string phase, CancellationToken ct) =>
+        LedgerAsync(conn, tx, migration, migration.ChecksumFor(FaultHooks), phase, ct);
+
     static async Task<Dictionary<(string Id, string Phase), byte[]>> ReadLedgerAsync(NpgsqlConnection conn, CancellationToken ct)
     {
         using var exists = new NpgsqlCommand("""
@@ -305,7 +425,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         return ledger;
     }
 
-    static async Task PhaseAsync(NpgsqlConnection conn, Migration migration, string phase, Func<NpgsqlTransaction, Task> body, CancellationToken ct)
+    async Task PhaseAsync(NpgsqlConnection conn, Migration migration, string phase, Func<NpgsqlTransaction, Task> body, CancellationToken ct)
     {
         var tx = await conn.BeginTransactionAsync(ct).ConfigureAwait(false);
         await using (tx.ConfigureAwait(false))
@@ -326,7 +446,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
                 var code = ex is PostgresMigrationException m ? m.Code : ((PostgresException)ex).SqlState;
                 if (phase != "expand")
                 {
-                    await RecordFailureAsync(conn, migration, phase, code).ConfigureAwait(false);
+                    await RecordFailureAsync(conn, migration, migration.ChecksumFor(FaultHooks), phase, code).ConfigureAwait(false);
                 }
 
                 throw ex as PostgresMigrationException
@@ -336,7 +456,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         }
     }
 
-    static async Task LedgerAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Migration migration, string phase, CancellationToken ct)
+    static async Task LedgerAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Migration migration, byte[] checksum, string phase, CancellationToken ct)
     {
         using var cmd = new NpgsqlCommand("""
             INSERT INTO runwick.schema_migrations (
@@ -348,12 +468,12 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         cmd.Parameters.AddWithValue("id", migration.Id);
         cmd.Parameters.AddWithValue("target", migration.TargetRevision);
         cmd.Parameters.AddWithValue("phase", phase);
-        cmd.Parameters.AddWithValue("checksum", migration.Checksum);
+        cmd.Parameters.AddWithValue("checksum", checksum);
         cmd.Parameters.AddWithValue("build", RunnerBuild);
         await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
-    static async Task RecordFailureAsync(NpgsqlConnection conn, Migration migration, string phase, string code)
+    static async Task RecordFailureAsync(NpgsqlConnection conn, Migration migration, byte[] checksum, string phase, string code)
     {
         try
         {
@@ -367,7 +487,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
             cmd.Parameters.AddWithValue("id", migration.Id);
         cmd.Parameters.AddWithValue("target", migration.TargetRevision);
             cmd.Parameters.AddWithValue("phase", phase);
-            cmd.Parameters.AddWithValue("checksum", migration.Checksum);
+            cmd.Parameters.AddWithValue("checksum", checksum);
             cmd.Parameters.AddWithValue("build", RunnerBuild);
             cmd.Parameters.AddWithValue("code", code[..Math.Min(code.Length, 64)]);
             await cmd.ExecuteNonQueryAsync(CancellationToken.None).ConfigureAwait(false);
@@ -417,7 +537,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
     static readonly string[] DeferredForeignKeys = ["jobs_current_generation_fk", "jobs_current_attempt_fk"];
     static readonly string[] ReceiptTriggers = ["storage_commands_ownership_decided", "storage_commands_durable_decided"];
 
-    static async Task ValidateCatalogAsync(NpgsqlConnection conn, NpgsqlTransaction tx, IReadOnlyList<Migration> applied, CancellationToken ct)
+    static async Task ValidateCatalogAsync(NpgsqlConnection conn, NpgsqlTransaction tx, IReadOnlyList<Migration> applied, bool hooks, CancellationToken ct)
     {
         var problems = new List<string>();
         var expectedRelations = RelationsOf(applied);
@@ -451,6 +571,11 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
               AND tgenabled = 'O' AND tgdeferrable AND tginitdeferred
             """, ct).ConfigureAwait(false);
         problems.AddRange(ReceiptTriggers.Where(x => !triggers.Contains(x)).Select(x => "missing trigger " + x));
+
+        // Function bodies (04 §8.3, PF-05): every function of these migrations, with this variant's body digest.
+        var digests = (await ListAsync(conn, tx, FunctionDigestSql, ct).ConfigureAwait(false))
+            .Select(x => x.Split(':')).ToDictionary(x => x[0], x => x[1], StringComparer.Ordinal);
+        problems.AddRange(FunctionProblems(ExpectedFunctions(applied, hooks), digests, AllFunctionNames));
 
         if (problems.Count > 0)
         {
@@ -497,6 +622,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         [6] = ScheduleOperations.All,
         [7] = ["SetPoolOverride", "EstimateDemand", "RecordScalingEvent"],
         [8] = ["RenewMany"],
+        [9] = [],
     };
 
     internal static IReadOnlyList<string> OperationsAt(long revision) => [.. VersionsAt(revision).Keys];

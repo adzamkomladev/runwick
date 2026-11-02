@@ -22,8 +22,17 @@ internal sealed class PeerOutput(TextWriter writer)
 }
 
 /// <summary>Peer-side fault injector: like the in-process one, plus <c>KillProcess</c> (block and report; the fixture SIGKILLs).</summary>
-internal sealed class PeerFaultInjector(PeerOutput output) : IFaultInjector
+internal sealed class PeerFaultInjector(PeerOutput output) : IFaultInjector, IFaultPlanner
 {
+    /// <summary>Whether a fault is armed at a point for this operation at any step (server points, PF-05).</summary>
+    public bool IsArmed(FaultPoint point, string operation, Guid commandId, string application)
+    {
+        lock (_gate)
+        {
+            return _armed.Exists(a => a.Remaining > 0 && a.Point == point && (a.Operation is null || a.Operation == operation));
+        }
+    }
+
     sealed record Armed(FaultPoint Point, string Action, string? Operation, int? Step, string Kind, int DelayMs)
     {
         public int Remaining;
