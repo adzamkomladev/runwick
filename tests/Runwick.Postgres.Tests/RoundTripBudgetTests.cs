@@ -40,7 +40,7 @@ public sealed class RoundTripBudgetTests
         ["Begin"] = 4,
         ["Begin rated 1"] = 5,
         ["Begin rated 8"] = 5,
-        ["Renew"] = 3,
+        ["Renew"] = 1,
         ["RenewMany"] = 3,
         ["Finish"] = 4,
         ["Recover"] = 8,

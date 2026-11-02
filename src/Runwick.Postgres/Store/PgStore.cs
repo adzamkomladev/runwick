@@ -38,7 +38,11 @@ internal sealed partial class PgStore(PgDataSources sources, PgRunner runner, Ti
                 using var cmd = new NpgsqlCommand("""
                     SELECT s.store_id, s.schema_revision, s.protocol_epoch, s.migration_mode, s.compatibility_manifest_version,
                            s.manifest_digest, clock_timestamp(),
-                           a.revision, a.required_protocol_epoch, a.required_capabilities::text, a.admission_mode
+                           a.revision, a.required_protocol_epoch, a.required_capabilities::text, a.admission_mode,
+                           COALESCE((to_jsonb(s) ->> 'fault_hooks')::boolean, false),
+                           ARRAY(SELECT p.proname || ':' || md5(p.prosrc)
+                                 FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace
+                                 WHERE n.nspname = 'runwick')
                     FROM runwick.store_metadata AS s
                     LEFT JOIN runwick.application_controls AS a ON a.application = @application
                     WHERE s.singleton_id = 1
@@ -57,6 +61,25 @@ internal sealed partial class PgStore(PgDataSources sources, PgRunner runner, Ti
                     var descriptor = new StoreDescriptor(
                         reader.GetGuid(0), reader.GetInt64(1), reader.GetInt32(2), reader.GetString(3), reader.GetInt32(4),
                         (byte[])reader[5], gate, PgTime.Read(reader, 6));
+                    if (descriptor.SchemaRevision == Migrations.PgMigrator.CurrentRevision)
+                    {
+                        // PF-05 (Q7): the function bodies must be this binary's, for the store's variant, and a fault-hooks
+                        // (test) store is refused unless this is the harness.
+                        var hooks = reader.GetBoolean(11);
+                        if (hooks && !PgRunner.HarnessMarker)
+                        {
+                            throw new StoreIncompatibleException("The store was migrated with fault hooks (a test store): schema_incompatible (fault_hooks).");
+                        }
+
+                        var actual = ((string[])reader[12]).Select(x => x.Split(':')).ToDictionary(x => x[0], x => x[1], StringComparer.Ordinal);
+                        var problems = Migrations.PgMigrator.FunctionProblems(Migrations.PgMigrator.CurrentFunctions(hooks), actual,
+                            Migrations.PgMigrator.AllFunctionNames);
+                        if (problems.Count > 0)
+                        {
+                            throw new StoreIncompatibleException("Store functions differ from this binary's: " + string.Join("; ", problems));
+                        }
+                    }
+
                     runner.StoreId ??= descriptor.StoreId;
                     return descriptor;
                 }

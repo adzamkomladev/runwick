@@ -91,8 +91,17 @@ internal sealed class FaultHandle(FaultPoint point, FaultSpec spec, FaultTarget 
 }
 
 /// <summary>The in-process <see cref="IFaultInjector"/> used by DriverFixture clients.</summary>
-internal sealed class HarnessFaultInjector : IFaultInjector
+internal sealed class HarnessFaultInjector : IFaultInjector, IFaultPlanner
 {
+    /// <summary>Whether a fault is armed at a point for this command at any step (server points, PF-05).</summary>
+    public bool IsArmed(FaultPoint point, string operation, Guid commandId, string application)
+    {
+        lock (_gate)
+        {
+            return _armed.Exists(h => h.Point == point && (h.Target with { Step = null }).Matches(new FaultContext(point, operation, commandId, application)));
+        }
+    }
+
     readonly List<FaultHandle> _armed = [];
     readonly object _gate = new();
 

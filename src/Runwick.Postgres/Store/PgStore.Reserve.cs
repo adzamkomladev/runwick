@@ -487,59 +487,15 @@ internal sealed partial class PgStore
             return Task.FromResult(StoreReply<RenewedLease>.NoEffect(StoreStatus.InvalidRequest, new StoreError("invalid_request"), time.GetUtcNow()));
         }
 
-        return runner.ExecuteAsync<RenewedLease>(
+        // J, S, the fresh clock, the job and permit updates and their checks run in runwick.renew_v1 (04 §7.6, §7.17).
+        return runner.CallAsync(
             Op(command.Application, command.CommandId, Operations.Renew, command.NotAfter, null, PgLane.Renewal),
-            async tx =>
-            {
-                // J, S and the decision clock in one round trip (PF-04): S needs only the job ID, and when there is no
-                // job there are no requirement rows, so S locks nothing.
-                var locks = tx.Batch();
-                var jq = locks.Query(LockJobSql(tx, lease.JobId), MapJob);
-                var sq = locks.Query(LockScopesSql(tx, lease.JobId), MapScope);
-                var clock = locks.Query(PgTx.ClockSql(tx), PgTx.ReadClock);
-                await tx.RunAsync(locks).ConfigureAwait(false);
-                var job = jq.Items.Count == 1 ? jq.Items[0] : null;
-                var scopes = sq.Items;
-                if (!await tx.DecideAtAsync(clock.Items[0]).ConfigureAwait(false))
-                {
-                    return new PgOutcome<RenewedLease>.Rollback(tx.Reject<RenewedLease>(StoreStatus.CommandExpired, "command_expired"));
-                }
-
-                if (Ownership(job, lease, tx.Now, JobStates.Reserved, JobStates.Running) is { } refusal)
-                {
-                    return new PgOutcome<RenewedLease>.Rollback(tx.Reject<RenewedLease>(refusal.Status, refusal.Code));
-                }
-
-                // The job and permit updates in one round trip; both counts are checked before COMMIT.
-                var expiry = PgTime.Floor(tx.Now + command.Body.LeaseDuration);
-                var effects = tx.Batch();
-                var ju = effects.Exec(tx.Sql("""
-                    UPDATE runwick.jobs
-                    SET lease_expires_at = @expiry
-                    WHERE application = @application AND job_id = @job_id
-                      AND current_attempt_id = @attempt_id AND ownership_token = @token AND worker_instance_id = @worker
-                      AND generation = @generation AND state IN ('reserved', 'running') AND lease_expires_at > @now
-                    """).P("expiry", expiry).P("job_id", lease.JobId).P("attempt_id", lease.AttemptId).P("token", lease.OwnershipToken)
-                        .P("worker", lease.WorkerInstanceId).P("generation", lease.Generation).P("now", tx.Now));
-                var pu = effects.Query(tx.Sql("""
-                    UPDATE runwick.concurrency_permits
-                    SET lease_expires_at = @expiry
-                    WHERE application = @application AND job_id = @job_id AND attempt_id = @attempt_id AND ownership_token = @token
-                      AND lease_expires_at = @previous
-                    RETURNING scope_id
-                    """).P("expiry", expiry).P("job_id", lease.JobId).P("attempt_id", lease.AttemptId).P("token", lease.OwnershipToken)
-                    .P("previous", job!.LeaseExpiresAt), r => r.GetGuid(0), mutation: true);
-
-                var value = new RenewedLease(new LeaseGrant(lease, expiry), job.CancelRequestedAt is not null);
-                var lapsed = new PgOutcome<RenewedLease>.Rollback(tx.Reject<RenewedLease>(StoreStatus.StaleLease, "lease_expired"));
-                var mismatch = new PgOutcome<RenewedLease>.Rollback(tx.Reject<RenewedLease>(StoreStatus.InvariantFault, "permit_set_mismatch"));
-                return new PgOutcome<RenewedLease>.Commit(StoreReply<RenewedLease>.Applied(value, tx.Now), null)
-                {
-                    Effects = effects,
-                    Verify = () => ju.Affected != 1 ? lapsed : !pu.Items.ToHashSet().SetEquals(scopes.Select(s => s.ScopeId)) ? mismatch : null,
-                };
-            },
-            null,
+            new PgCall("renew_v1").P("p_job_id", lease.JobId).P("p_attempt_id", lease.AttemptId).P("p_worker_id", lease.WorkerInstanceId)
+                .P("p_token", lease.OwnershipToken).P("p_generation", lease.Generation).P("p_lease", command.Body.LeaseDuration),
+            row => row.HasValue
+                ? row.Applied(new RenewedLease(new LeaseGrant(lease, PgTime.FromMs(row.Result!["leaseExpiresAt"]!.GetValue<long>())),
+                    row.Result!["cancelRequested"]!.GetValue<bool>()))
+                : row.Reject<RenewedLease>(),
             ct);
     }
 }

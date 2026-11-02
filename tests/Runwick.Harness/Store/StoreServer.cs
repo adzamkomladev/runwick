@@ -57,7 +57,8 @@ internal sealed class StoreServer
             """).ConfigureAwait(false);
         await ExecAsync(admin, "DROP DATABASE IF EXISTS rw_template WITH (FORCE)").ConfigureAwait(false);
         await ExecAsync(admin, "CREATE DATABASE rw_template").ConfigureAwait(false);
-        await RunwickPostgresMigrations.MigrateAsync(ConnectionStringFor("rw_template", pooling: false)).ConfigureAwait(false);
+        // The template is the fault-hooks variant (04 §8.1, PF-05): server functions stop at planned fault points.
+        await new PgMigrator(ConnectionStringFor("rw_template", pooling: false)) { FaultHooks = true }.RunAsync(CancellationToken.None).ConfigureAwait(false);
         await ExecAsync(admin, "ALTER DATABASE rw_template WITH IS_TEMPLATE true ALLOW_CONNECTIONS false").ConfigureAwait(false);
     }
 

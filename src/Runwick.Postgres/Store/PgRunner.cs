@@ -36,11 +36,14 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
     /// <summary>Known store identity (from Describe); gates compare against it.</summary>
     public Guid? StoreId { get; set; }
 
-    public async Task<StoreReply<T>> ExecuteAsync<T>(
+    public Task<StoreReply<T>> ExecuteAsync<T>(
         PgOp op,
         Func<PgTx, Task<PgOutcome<T>>> body,
         Func<PgTx, ReceiptRow, Task<StoreReply<T>>>? replay,
-        CancellationToken ct) where T : class
+        CancellationToken ct) where T : class =>
+        WithRetriesAsync(op, () => RunOnceAsync(op, body, replay, ct), ct);
+
+    async Task<StoreReply<T>> WithRetriesAsync<T>(PgOp op, Func<Task<StoreReply<T>>> once, CancellationToken ct) where T : class
     {
         var gate = sources.Gate(op.Lane);
         var lap = PhaseTimings.Start();
@@ -52,7 +55,7 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
             {
                 try
                 {
-                    return await RunOnceAsync(op, body, replay, ct).ConfigureAwait(false);
+                    return await once().ConfigureAwait(false);
                 }
                 catch (TransientConflictException) when (attempt < MaxTransientRetries && time.GetUtcNow() < op.NotAfter && !ct.IsCancellationRequested)
                 {
@@ -282,6 +285,276 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         return ((PgOutcome<T>.Commit)outcome).Reply;
     }
 
+    // ------------------------------------------------------------------ server functions (04 §7.17, PF-05)
+
+    /// <summary>
+    /// Set by the test harness only (<c>InternalsVisibleTo</c>): the binary may run against a fault-hooks store, and says
+    /// so to the gate with the <c>rw:harness</c> capability marker. A production binary never sets it, so a fault-hooks
+    /// store refuses it with <c>schema_incompatible</c> / <c>fault_hooks</c>.
+    /// </summary>
+    internal static bool HarnessMarker { get; set; }
+
+    static readonly long[] AcceptedRevisions = [Migrations.PgMigrator.CurrentRevision];
+
+    static string CapabilitiesJson()
+    {
+        var o = new JsonObject();
+        foreach (var (name, version) in Hosting.RunwickRuntime.KnownCapabilities.OrderBy(c => c.Key, StringComparer.Ordinal))
+        {
+            o[name] = version;
+        }
+
+        if (HarnessMarker)
+        {
+            o["rw:harness"] = 1;
+        }
+
+        return o.ToJsonString();
+    }
+
+    /// <summary>
+    /// A driver-owned operation as one server function (04 §7.17): <c>[BEGIN, set_config, SELECT * FROM runwick.f(…)]</c>
+    /// in one round trip, then COMMIT when the function applied an effect and ROLLBACK otherwise. COMMIT stays a separate
+    /// message, so a failure before it is sent is not applied and one after it is outcome unknown (03 §9.2).
+    /// </summary>
+    public Task<StoreReply<T>> CallAsync<T>(PgOp op, PgCall call, Func<PgRow, StoreReply<T>> map, CancellationToken ct) where T : class =>
+        WithRetriesAsync(op, () => CallOnceAsync(op, call, map, ct), ct);
+
+    async Task<StoreReply<T>> CallOnceAsync<T>(PgOp op, PgCall call, Func<PgRow, StoreReply<T>> map, CancellationToken ct) where T : class
+    {
+        NpgsqlConnection connection;
+        var lap = PhaseTimings.Start();
+        try
+        {
+            connection = await sources.For(op.Lane).OpenConnectionAsync(ct).ConfigureAwait(false);
+            lap = PhaseTimings.Lap(lap, op.Operation, "open");
+        }
+        catch (Exception ex) when (ex is NpgsqlException or TimeoutException or OperationCanceledException or IOException)
+        {
+            throw new StoreNotAppliedException("store_unavailable", ex);
+        }
+
+        var commitSent = false;
+        await using (connection.ConfigureAwait(false))
+        {
+            NpgsqlTransaction? transaction = null;
+            PgFaultSession? session = null;
+            try
+            {
+                transaction = await connection.BeginTransactionAsync(PgParams.ReadCommitted, ct).ConfigureAwait(false);
+                var tx = new PgTx(connection, transaction, op, faults, ct);
+                await tx.Fault(FaultPoint.BeforeGateLock).ConfigureAwait(false);
+                session = await PgFaultSession.StartAsync(faults, op, sources.ListenConnectionString(), ct).ConfigureAwait(false);
+
+                // A planned server fault point may hold the call for as long as a test barrier: the statement timeout,
+                // which a client-side point never counted, is lifted for that call (harness only).
+                var timeouts = Timeouts(op);
+                var row = await InvokeAsync(connection, transaction, op, call, staged: false,
+                    session is null ? timeouts : (timeouts.LockMs, 0), session, ct).ConfigureAwait(false);
+                lap = PhaseTimings.Lap(lap, op.Operation, "function");
+                if (!row.Commits)
+                {
+                    await transaction.RollbackAsync(ct).ConfigureAwait(false);
+                    return map(row);
+                }
+
+                await tx.Fault(FaultPoint.BeforeCommit).ConfigureAwait(false);
+                commitSent = true;
+                await transaction.CommitAsync(ct).ConfigureAwait(false);
+                PhaseTimings.Lap(lap, op.Operation, "commit");
+                await tx.Fault(FaultPoint.AfterCommitBeforeReply).ConfigureAwait(false);
+                return map(row);
+            }
+            catch (PostgresException ex) when (ex.SqlState is "40P01" or "40001" or "55P03")
+            {
+                Interlocked.Increment(ref _transientConflicts);
+                if (ex.SqlState == "40P01")
+                {
+                    Interlocked.Increment(ref _deadlocks);
+                }
+
+                throw new TransientConflictException(ex);
+            }
+            catch (InjectedFaultException ex) when (!commitSent && ex.Kind is "Deadlock40P01" or "Serialization40001")
+            {
+                throw new TransientConflictException(ex);
+            }
+            catch (PostgresException ex) when (!commitSent && IsStalePlan(ex))
+            {
+                Interlocked.Increment(ref _stalePlans);
+                await ForgetPreparedAsync(connection, transaction).ConfigureAwait(false);
+                sources.For(op.Lane).Clear();
+                throw new TransientConflictException(ex);
+            }
+            catch (PostgresException ex) when (ex.SqlState == "40003")
+            {
+                throw new StoreOutcomeUnknownException("commit_outcome_unknown", op.CommandId, op.Operation, ex);
+            }
+            catch (PostgresException ex) when (!commitSent && FunctionInvariant(ex) is { } code)
+            {
+                return StoreReply<T>.NoEffect(StoreStatus.InvariantFault, new StoreError(code), time.GetUtcNow());
+            }
+            catch (PostgresException ex) when (!commitSent && ex.SqlState is "RWI03" or "RWI04")
+            {
+                // Q8 (PF-05 §11): an R4 that matched no row keeps today's unclassified failure.
+                throw new InvalidOperationException(ex.SqlState == "RWI03" ? "Receipt finalization updated no row." : ex.MessageText, ex);
+            }
+            catch (PostgresException ex)
+            {
+                return Classify<T>(op, ex);
+            }
+            catch (Exception ex) when (commitSent && ex is not StoreOutcomeUnknownException)
+            {
+                throw new StoreOutcomeUnknownException("commit_outcome_unknown", op.CommandId, op.Operation, ex);
+            }
+            catch (Exception ex) when (ex is NpgsqlException or IOException or TimeoutException or OperationCanceledException or InjectedFaultException)
+            {
+                throw new StoreNotAppliedException(
+                    ex is PostgresException { SqlState: "57014" } ? "statement_timeout" : "store_unavailable", ex);
+            }
+            finally
+            {
+                if (session is not null)
+                {
+                    await session.DisposeAsync().ConfigureAwait(false);
+                }
+
+                if (transaction is not null)
+                {
+                    await transaction.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+        }
+    }
+
+    /// <summary>RWI01/RWI02: a row-count check inside a function failed; nothing is committed (04 §10).</summary>
+    static string? FunctionInvariant(PostgresException ex) => ex.SqlState switch
+    {
+        "RWI01" => "invalid_transition",
+        "RWI02" => "permit_set_mismatch",
+        _ => null,
+    };
+
+    /// <summary>
+    /// Staging as one server function (04 §7.17): <c>[SAVEPOINT runwick_stage, SELECT * FROM runwick.f(…)]</c> in one round
+    /// trip on the caller's transaction, then RELEASE, or ROLLBACK TO + RELEASE. The read-only check runs inside the
+    /// function. Never begins, commits or retries the caller's transaction; PostgreSQL errors propagate unchanged.
+    /// </summary>
+    public async Task<StoreReply<T>> StageCallAsync<T>(NpgsqlTransaction transaction, PgOp op, PgCall call, Func<PgRow, StoreReply<T>> map,
+        CancellationToken ct) where T : class
+    {
+        var connection = transaction.Connection ?? throw new StagingValidationException("transaction_invalid", "The transaction is completed or has no connection.");
+        PgFaultSession? session = null;
+        PgRow row;
+        try
+        {
+            session = await PgFaultSession.StartAsync(faults, op, sources.ListenConnectionString(), ct).ConfigureAwait(false);
+            row = await InvokeAsync(connection, transaction, op, call, staged: true, null, session, ct).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Npgsql: completed transaction or closed connection.
+            throw new StagingValidationException("transaction_invalid", ex.Message);
+        }
+        catch (PostgresException ex) when (FunctionInvariant(ex) is { } code)
+        {
+            await EndStageAsync(connection, transaction, release: false, ct).ConfigureAwait(false);
+            return StoreReply<T>.NoEffect(StoreStatus.InvariantFault, new StoreError(code), time.GetUtcNow());
+        }
+        finally
+        {
+            if (session is not null)
+            {
+                await session.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+
+        if (row.Status == "TransactionInvalid")
+        {
+            await EndStageAsync(connection, transaction, release: false, ct).ConfigureAwait(false);
+            throw new StagingValidationException("transaction_invalid", "The transaction is read-only.");
+        }
+
+        await EndStageAsync(connection, transaction, release: row.Commits, ct).ConfigureAwait(false);
+        return map(row);
+    }
+
+    static async Task EndStageAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, bool release, CancellationToken ct)
+    {
+        using var end = new NpgsqlCommand(release
+            ? "RELEASE SAVEPOINT runwick_stage"
+            : "ROLLBACK TO SAVEPOINT runwick_stage; RELEASE SAVEPOINT runwick_stage", connection, transaction);
+        await end.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Sends the call batch and reads the function's reply row; an injected server fault is rethrown as injected.</summary>
+    async Task<PgRow> InvokeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, PgOp op, PgCall call, bool staged,
+        (long LockMs, long StatementMs)? timeouts, PgFaultSession? session, CancellationToken ct)
+    {
+        using var batch = new NpgsqlBatch(connection, transaction);
+        if (staged)
+        {
+            batch.BatchCommands.Add(new NpgsqlBatchCommand("SAVEPOINT runwick_stage"));
+        }
+        else if (timeouts is { } t)
+        {
+            var set = new NpgsqlBatchCommand(TimeoutsSql);
+            set.Parameters.AddWithValue("lock", NpgsqlDbType.Text, t.LockMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            set.Parameters.AddWithValue("stmt", NpgsqlDbType.Text, t.StatementMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            batch.BatchCommands.Add(set);
+        }
+
+        var cmd = new NpgsqlBatchCommand();
+        var p = cmd.Parameters;
+        p.AddWithValue("p_application", NpgsqlDbType.Text, op.Application);
+        p.AddWithValue("p_command_id", NpgsqlDbType.Uuid, op.CommandId);
+        p.AddWithValue("p_operation", NpgsqlDbType.Text, op.Operation);
+        p.AddWithValue("p_not_after", NpgsqlDbType.TimestampTz, op.NotAfter.UtcDateTime);
+        p.AddWithValue("p_fingerprint", NpgsqlDbType.Bytea, (object?)op.Fingerprint ?? DBNull.Value);
+        p.AddWithValue("p_class", NpgsqlDbType.Text, Operations.RetentionClass(op.Operation));
+        p.AddWithValue("p_deadline_cap", NpgsqlDbType.Interval, Operations.DeadlineCap(op.Operation));
+        p.AddWithValue("p_store_id", NpgsqlDbType.Uuid, (object?)(op.ExpectedStoreId ?? StoreId) ?? DBNull.Value);
+        p.AddWithValue("p_revisions", NpgsqlDbType.Array | NpgsqlDbType.Bigint, AcceptedRevisions);
+        p.AddWithValue("p_epoch", NpgsqlDbType.Integer, 1);
+        p.AddWithValue("p_capabilities", NpgsqlDbType.Jsonb, CapabilitiesJson());
+        p.AddWithValue("p_is_creation", NpgsqlDbType.Boolean, op.IsCreation);
+        p.AddWithValue("p_allow_drain", NpgsqlDbType.Boolean, op.AllowedWhileDraining);
+        p.AddWithValue("p_staged", NpgsqlDbType.Boolean, staged);
+        foreach (var arg in call.Parameters)
+        {
+            p.Add(arg.Clone());
+        }
+
+        p.AddWithValue("p_faults", NpgsqlDbType.Jsonb, (object?)session?.Json.ToJsonString() ?? DBNull.Value);
+        cmd.CommandText = "SELECT * FROM runwick." + call.Function + "("
+            + string.Join(", ", p.Select(x => x.ParameterName + " => @" + x.ParameterName)) + ")";
+        batch.BatchCommands.Add(cmd);
+        session?.Watch(connection.ProcessID);
+        try
+        {
+            var reader = await batch.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            await using (reader.ConfigureAwait(false))
+            {
+                if (!staged && timeouts is not null)
+                {
+                    await reader.NextResultAsync(ct).ConfigureAwait(false);
+                }
+
+                if (!await reader.ReadAsync(ct).ConfigureAwait(false))
+                {
+                    throw new InvalidOperationException($"runwick.{call.Function} returned no row.");
+                }
+
+                return PgRow.Read(reader);
+            }
+        }
+        catch (PostgresException ex) when (ex.SqlState == "RWF01" && session?.Thrown is { } thrown)
+        {
+            thrown.Throw();
+            throw;
+        }
+    }
+
     internal static bool IsStalePlan(PostgresException ex) =>
         ex.SqlState == "0A000" && ex.MessageText.Contains("cached plan", StringComparison.Ordinal);
 
@@ -333,7 +606,7 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         """;
 
     const string G1Sql = """
-        SELECT store_id, schema_revision, protocol_epoch, migration_mode
+        SELECT store_id, schema_revision, protocol_epoch, migration_mode, fault_hooks
         FROM runwick.store_metadata WHERE singleton_id = 1 FOR SHARE
         """;
 
@@ -387,6 +660,11 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
             if (s.Revision != Migrations.PgMigrator.CurrentRevision || s.Epoch != 1)
             {
                 return tx.Reject<T>(StoreStatus.UnsupportedVersion, "schema_incompatible");
+            }
+
+            if ((bool)rows[0][4]! && !HarnessMarker)
+            {
+                return tx.Reject<T>(StoreStatus.UnsupportedVersion, "schema_incompatible", detail: "fault_hooks");
             }
         }
 

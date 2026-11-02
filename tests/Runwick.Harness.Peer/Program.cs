@@ -6,6 +6,7 @@ using Runwick.Harness.Peer;
 using Runwick.Harness.Store;
 using Runwick.Protocol;
 
+Runwick.Postgres.Store.PgRunner.HarnessMarker = true;   // a test binary: may use fault-hooks stores (PF-05)
 var identity = args.Length > 0 ? args[0] : "peer";
 var output = new PeerOutput(Console.Out);
 var faults = new PeerFaultInjector(output);
