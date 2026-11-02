@@ -115,6 +115,12 @@ public sealed class CapacityFaultTests
         }
 
         await w.StartAsync();
+
+        // The settlement-pressure phase needs 16 Finishes queued behind the 2-wide settlement lane. A batched finish
+        // (PF-06) would settle them in one or two calls and no Finish would wait 5 s, so this worker settles each Finish
+        // alone: with the batch function hidden after startup's schema check, the first FinishMany is UnsupportedVersion
+        // and the worker turns batching off (05 §12.5). FM-08 to FM-10 cover the batch path.
+        await f.ExecAsync("ALTER FUNCTION runwick.finish_many_v1 RENAME TO finish_many_v1_hidden");
         await WorkerHost.WaitUntil(() => w.Script.Invocations.Count == 16, Wait, "16 long handlers");
         var maxRenewal = 0;
         var maxSettlement = 0;
