@@ -380,14 +380,12 @@ public sealed class FinishManyTests
         Runwick.Harness.Engine.WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults, concurrency);
 
     /// <summary>
-    /// Holds the first two settlement calls (Finish/1 or FinishMany) 1.5 s on the client, so both settlement calls are busy
-    /// and the Finishes published meanwhile queue.
+    /// Holds the first two Finish/1 calls 1.5 s on the client, so both settlement calls are busy and the Finishes published
+    /// meanwhile queue. Only Finish/1 is held: the test hosts' control timeout is 1.25 s (defaults ÷ 4), so a held
+    /// FinishMany would always time out before reaching the store, and the batches under test would never commit.
     /// </summary>
-    static void BusyLane(DriverFixture f)
-    {
+    static void BusyLane(DriverFixture f) =>
         f.ArmFault(FaultPoint.BeforeGateLock, FaultSpec.Sleep(TimeSpan.FromMilliseconds(1500)), FaultTarget.Op(Operations.Finish), times: 2);
-        f.ArmFault(FaultPoint.BeforeGateLock, FaultSpec.Sleep(TimeSpan.FromMilliseconds(1500)), FaultTarget.Op(Operations.FinishMany), times: 2);
-    }
 
     static async Task RunJobsAsync(DriverFixture f, Runwick.Harness.Engine.WorkerHost w, int jobs, bool start = true)
     {
@@ -455,7 +453,7 @@ public sealed class FinishManyTests
 
         // After startup's schema check, before any finish: the store now answers 42883 for the batched finish.
         await f.ExecAsync("ALTER FUNCTION runwick.finish_many_v1 RENAME TO finish_many_v1_hidden");
-        f.ArmFault(FaultPoint.BeforeGateLock, FaultSpec.Sleep(TimeSpan.FromMilliseconds(1500)), FaultTarget.Op(Operations.Finish), times: 2);
+        BusyLane(f);
         await RunJobsAsync(f, w, 24, start: false);
         var completion = w.Engine.Completion;
         Assert.True(Interlocked.Read(ref completion.BatchesSent) > 0);
