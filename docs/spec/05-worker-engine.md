@@ -24,6 +24,23 @@ Decision (adzamkomla, 2026-11-02): now that the wake listener ships, an idle wor
 - **Correctness.** Unchanged: a notification is a hint, never authority, and polling finds everything with every notification dropped. The engine's `NotificationsSuppressed` hook drops each notification on receipt (OBS-01, 07 Changes 2026-11-02, PF-07).
 - **Not changed.** The idle backoff cap stays 2 s. Raising it once notifications ship would lower idle cost but changes OBS-01's bound and 06 defaults; that is deferred to a separate decision.
 
+## Changes (2026-11-02, PF-06 batched claim)
+
+New **§9.6 Batched claim**, used when the store offers `ReserveAndBegin/1` (03 Changes 2026-11-02, PF-06 batched claim). Without it the engine claims exactly as before.
+
+- **When.** At each claim of a lane visit (§8.6) the pool holds one ticket. If the store offers the operation, it also takes every other free ticket of the pool at once, up to 32 in all. With two or more tickets it sends one `ReserveAndBegin` with `MaxJobs` = the number of tickets, so it never claims more jobs than it has free slots. With one ticket (one free slot) it keeps `Reserve/1` then `Begin/1`.
+- **Command.** As the Reserve command (§9.1): ownership lifetime, the lane's cursor as `After`, `LeaseDuration`, the same admission class and the same one-claim-outstanding rule per pool (§8.8). Resolution is §9.2: an unknown commit keeps every ticket and resubmits the same command; the pool is suspended past `ClaimResolutionBudget`.
+- **Applied.** Each outcome settles one ticket, in order:
+  - `Applied`: the ticket moves into a new entry (§5), its lease registered at once with `d` from the command's send time (§9.1), and its Begin reply already known. The entry skips the Begin pre-checks and the Begin command (§9.3) and settles that reply as §9.4 does (a replayed reply needs a fresh Renew before invocation). Invocation admission (§9.5) is unchanged, including the margin, the cancellation check and the drain cutoff. The pre-check "admission still open" does not apply: the attempt is already begun in storage, so it runs like an attempt whose Begin was in flight when drain started.
+  - `RateLimited`: the ticket returns; counted as a rate deferral and as a blocked admission outcome, as §9.4's committed deferral (10 §5).
+  - `InvalidState` / `BudgetExhausted`: storage closed the attempt; the ticket returns.
+  - `CapacityBlocked`: the ticket returns; recorded as a blocked outcome; `cursor := ResumeAfter`; queue or single-type lane scopes cool as in §8.6.
+  - Tickets left over (fewer candidates than slots) return.
+
+  The visit then ends (one batch per visit). Lane scores commit if any job began.
+- **Not Applied.** Every ticket but the first returns. `NoWork`, `QueuePaused`, all-`CapacityBlocked` and `CommandExpired` are handled exactly as the same Reserve result in §8.6, with the first ticket. Any other reply (`UnsupportedVersion`, `InvalidRequest`, `InvariantFault`, `CommandConflict`, `AdmissionClosed`, …) turns the batch off for the pool, adds a diagnostic, and the first ticket claims at once with `Reserve/1` then `Begin/1`. From then on the pool claims one job at a time, whose replies apply §8.6 and §9.4 as before. The four no-effect replies above do not turn the batch off: they mean "nothing to claim", and retrying them as a single Reserve would only add idle round trips.
+- **Counters.** `PoolCoordinator.BatchClaims` counts applied batches; every batch also counts once in `ReservesSent`.
+
 ## Changes (2026-11-02, PF-06)
 
 §11.2 renewal waves, when the store offers `RenewMany/1` (03 Changes 2026-11-02, PF-06). Without it the engine renews exactly as before.

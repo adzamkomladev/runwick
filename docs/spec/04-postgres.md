@@ -10,6 +10,29 @@ Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retent
 
 - The listener session of PF-07 also reports a lost or refused session (`onLost`) before its reconnect back-off. Workers, the scheduler and the relay use the longer idle caps only between a subscription and a loss (05/13/14 Changes 2026-11-02, idle caps). Nothing else changes: no SQL, migration or round trip.
 
+## Changes (2026-11-02, PF-06 batched claim)
+
+`ReserveAndBegin/1` (03 Changes 2026-11-02, PF-06 batched claim) for PostgreSQL. Stop-and-migrate: one new schema revision, no dual path. Lock order, the fresh time after the last lock, receipts, per-job fencing and `synchronous_commit` keep their rules.
+
+- **Migration `0010_reserve_and_begin` (schema revision 10).** The manifest gains `"ReserveAndBegin": [1]`. `storage_commands_operation_class_ck` is replaced by `storage_commands_operation_class_v2_ck`, which puts `ReserveAndBegin` in the ownership class. The per-job bodies of Reserve and Begin move into two shared functions, so the claim is written once: `rw_reserve_job_v1` (§7.3 from G on: capacity check, fences, attempt, job, permits, event) and `rw_begin_job_v1` (§7.5 from the ownership check on: cancel/exhausted close, the rate step with its committed deferral (10 §4), authorize). Neither takes a new lock: each re-reads its scope rows `FOR UPDATE`, which only re-confirms locks the caller holds, so a job sees the permits and grants of the jobs before it in the same transaction. A released function is never replaced in place (PF-05), so `reserve_v1` and `begin_v1` are dropped and replaced by `reserve_v2` and `begin_v2`, which run the same statements in the same order through the shared functions. Validate (§8.3) now also reads `DROP FUNCTION` lines: a dropped function is no longer expected.
+- **§7.18 ReserveAndBegin/1** (`runwick.reserve_and_begin_v1`, `RETURNS SETOF rw_reply_v1`). Frame and receipt (gates, R1–R3) as every function. Then:
+  1. **Q** queue control `FOR SHARE` (paused → `QueuePaused`, missing → `NoWork`).
+  2. **C** Reserve's candidate statement with `LIMIT n FOR NO KEY UPDATE OF j SKIP LOCKED`, `n` = the number of tokens sent (1–32). No row → `NoWork`.
+  3. Begin plans from the locked rows (cancel request, spent budget, rated).
+  4. **K** active keys of the jobs whose Begin closes, `FOR UPDATE`, ordered bytewise (rank 6).
+  5. **S** every concurrency scope any claimed job requires, one statement, `FOR UPDATE` in UUID order (rank 7).
+  6. **R** every rate scope of the rated jobs, one statement, `FOR UPDATE` in UUID order (after rank 7, as rated Begin).
+  7. Fault point `AfterLocksBeforeFreshTime`; the clock once (`now`); `CommandExpired` if `now ≥ NotAfter`; `BeforeFirstMutation`.
+  8. Per job, in candidate order: `rw_reserve_job_v1`, then (when reserved) `rw_begin_job_v1`, then fault point `AfterMutation` step *i* (job *i*, 1-based). A capacity-blocked job writes nothing and gets its own outcome. Any invariant result rolls the whole command back.
+  9. All candidates blocked → no-effect `CapacityBlocked` (first blocked scope, cursor of the last candidate). Otherwise R4 writes one receipt with `{"items": [...]}`.
+
+  The reply is one `rw_reply_v1` row for the command, then one row per begun job with `status = 'Payload'`, the job ID in `conflicting_job_id` and its payload, headers and `created_at` (the reader reads every row, PgRunner). A replay returns the recorded row plus the payload rows of the items with status `Applied`.
+- **§5.2 row** `ReserveAndBegin/1`: gates SHARE / SHARE; receipt yes; queue control FOR SHARE; jobs: up to n candidates FOR NO KEY UPDATE SKIP LOCKED, in candidate order, one statement; dispatch keys: active keys of the closing jobs FOR UPDATE, bytewise; concurrency scopes: all required scopes of all claimed jobs FOR UPDATE, UUID order, one statement; then rate scopes of rated jobs FOR UPDATE, UUID order; dependent writes per job in candidate order, each as Reserve/1 then Begin/1.
+- **Why claiming jobs in candidate order, not UUID order, cannot deadlock.** The task rule for batched locks is "all claimed jobs in UUID order". Here the jobs are taken with `SKIP LOCKED`: a row lock that is already held is skipped, never waited for. A transaction that never waits for a job row cannot be part of a wait cycle on job rows, whatever order it takes them in. Every lock that can wait (keys, scopes, rate scopes) is taken after all job locks, in rank order, each rank in one sorted statement. So the batch only waits in the global order of §5, like Reserve/1, which also claims its one job with `SKIP LOCKED` before its scopes. Taking the jobs in UUID order instead would need either a second statement (claim, then re-lock sorted) or a waiting lock, and would change which jobs are claimed. RAB-08 runs batches and single claims over shared scopes and asserts no deadlock.
+- **Plan.** `LIMIT` is a parameter, so PL/pgSQL may cache a generic plan for step C. PGX-07 checks the custom plan at a million rows (buffers ≤ 40 + 8 × 32) and the generic plan (EXPLAIN GENERIC_PLAN): both use `jobs_ready`.
+- **Fault points** (07 table): `AfterLocksBeforeFreshTime` once, `BeforeFirstMutation` once, `AfterMutation` once per job (step = the job's position).
+- **PERF-01:** `ReserveAndBegin` = 1 command (2 round trips with COMMIT) for 2 jobs and for 8 jobs. Per job, with Dispatch and Finish unchanged: 8 round trips with Reserve + Begin, 4 + 2/n with one `ReserveAndBegin` for n jobs.
+
 ## Changes (2026-11-02, PF-05)
 
 Server functions (docs/proposals/pf-05-server-functions.md, decisions §11). Stop-and-migrate: one new schema revision, no dual path, no switch. Lock order (§5), the fresh time after the last blocking lock (03 §1.3), receipts and replies, fencing and `synchronous_commit` are unchanged; the same statements run, in the same order, inside one PL/pgSQL function per operation.

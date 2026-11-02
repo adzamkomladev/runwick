@@ -6,6 +6,26 @@ This file defines the driver-neutral storage contract: internal records and inte
 
 Scope is M1 + M2 (PostgreSQL execution through gate G-1). Items marked **not in M2** are named only so that interfaces and records leave room for them; an M2 driver rejects them (§11).
 
+## Changes (2026-11-02, PF-06 batched claim)
+
+Performance plan PF-06 adds `ReserveAndBegin/1`, the batched claim that §11 left room for. `Reserve/1` and `Begin/1` are unchanged and stay the per-job operations; a driver without the new operation is used through them.
+
+- **§4 catalog row:** `ReserveAndBegin/1` | `IReserveAndBeginStore.ReserveAndBeginAsync` (optional interface) | ownership mutation | ownership | 30 s / 60 s | PF-06 batched claim (store manifest from schema revision 10, 04 Changes 2026-11-02, PF-06 batched claim).
+- **Request:** `ReserveAndBeginRequest(WorkerInstanceId, Queue, Priority, SupportedContracts, After, LeaseDuration, MaxJobs)`: Reserve/1's request plus `MaxJobs`, 1 to 32 (`IReserveAndBeginStore.MaxJobs`). The caller never asks for more jobs than it has free local slots (05 Changes 2026-11-02, PF-06 batched claim). Out of bounds is `InvalidRequest` `invalid_request` with no effect. The fingerprint covers Reserve/1's members plus `maxJobs`.
+- **Semantics.** One transaction claims up to `MaxJobs` candidates of the lane, in candidate order (`eligible_at`, `job_id`, after the cursor), and for each claimed job runs exactly Reserve/1's decision and then Begin/1's decision, all at one decision time `now`, read once after the last lock (§1.3). Each job's outcome is the one Reserve/1 then Begin/1 would give it at that time, given the jobs before it in the same command: capacity is counted with their permits, rate windows with their grants. Fencing is per job (each permit gets its own fencing value). The ownership token and the defer jitter are drawn per job.
+- **Outcomes, one per claimed job, in candidate order:** `ClaimOutcome(JobId, Status, Error, Reserved, Begun, Closed, Deferred)`:
+  - `Applied`: reserved and begun; `Reserved` is the `ReservedJob` (with payload), `Begun` the `BegunExecution`.
+  - `CapacityBlocked` `capacity_blocked`: not reserved, nothing written for it; `Error.BlockedScopeId` and `Error.ResumeAfter` as Reserve/1's.
+  - `RateLimited` `rate_limited`: reserved and then deferred (T20, 10 §4): attempt closed `admission_deferred`, no grant charged; `Deferred` as Begin/1's.
+  - `InvalidState` `cancelled_before_start` or `BudgetExhausted`: reserved and closed by Begin (T7/T8); `Closed` as Begin/1's.
+  A job that is blocked, deferred or closed never changes another job's outcome.
+- **Reply status.** `Applied` (with `ClaimedJobs(Outcomes)`) when at least one job was reserved. When no candidate exists, the reply is `NoWork`; a paused queue `QueuePaused`; when every candidate was capacity-blocked, `CapacityBlocked` with the first blocked scope and `ResumeAfter` = the last candidate's cursor, no effect, as Reserve/1. Any broken invariant in any job (`InvariantFault`) rolls the whole command back. Every other status is as Reserve/1 (gates, `CommandExpired`, `CommandConflict`).
+- **Receipt: one command receipt, ownership class (§8.1, §8.4).** The command writes one receipt whose `result` holds every outcome, not one receipt per job. Reason: the receipt model is one row per command ID (§8.2), and a resubmission must return exactly the reply the first execution gave (§8.6). A receipt per job would need N command IDs, or a second key, and a lost reply could then be resolved only partly. `DispatchMany` is the precedent: one receipt, `items[]`. The class is ownership (NotAfter cap 60 s, retained NotAfter + 10 min): the receipt carries leases and tokens that are worth nothing after the lease, exactly like Reserve and Begin.
+- **§8.5 row** `ReserveAndBegin`: `items`: [{`ordinal`, `jobId`, `status`, `code`?, `reserve`? (the Reserve row's members), `begin`? (the Begin row's members for that status), `blockedScopeId`?, `cursor`?}]. `CapacityBlocked` items have `blockedScopeId` and `cursor` and no `reserve`.
+- **Replay.** A resubmitted command returns the recorded outcomes with `Replayed = true`, rebuilding each begun job's `ReservedJob` from its receipt item plus the immutable payload row, as Reserve/1. A replayed lease is historical: the worker confirms each begun job with a fresh ownership-checked Renew before running it (§8.5 replay rules).
+- **§10.2:** allowed in `open` only, like Reserve (a creation for the drain gate).
+- **§11 row** "Batched Reserve/Renew, `ReserveAndBegin/1`": `ReserveAndBegin/1` is now specified; a batched Reserve without Begin stays reserved.
+
 ## Changes (2026-11-02, PF-05)
 
 No protocol change. The PostgreSQL driver runs the hot operations as server functions (04 Changes 2026-11-02, PF-05); every operation keeps its version, request, reply, codes, receipt shape (codec v1) and replay rule. Two clarifications that hold for every driver:
