@@ -375,4 +375,91 @@ public sealed class FinishManyTests
         Assert.Equal(48, await FinishReceipts(f));
         Assert.Empty(await f.HistoryViolations());
     }
+
+    static Runwick.Harness.Engine.WorkerHost Host(DriverFixture f, int concurrency) =>
+        Runwick.Harness.Engine.WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults, concurrency);
+
+    /// <summary>
+    /// Holds the first two settlement calls (Finish/1 or FinishMany) 1.5 s on the client, so both settlement calls are busy
+    /// and the Finishes published meanwhile queue.
+    /// </summary>
+    static void BusyLane(DriverFixture f)
+    {
+        f.ArmFault(FaultPoint.BeforeGateLock, FaultSpec.Sleep(TimeSpan.FromMilliseconds(1500)), FaultTarget.Op(Operations.Finish), times: 2);
+        f.ArmFault(FaultPoint.BeforeGateLock, FaultSpec.Sleep(TimeSpan.FromMilliseconds(1500)), FaultTarget.Op(Operations.FinishMany), times: 2);
+    }
+
+    static async Task RunJobsAsync(DriverFixture f, Runwick.Harness.Engine.WorkerHost w, int jobs, bool start = true)
+    {
+        await w.Dispatcher.DispatchManyAsync([.. Enumerable.Range(0, jobs).Select(n => new BatchDispatchItem(new Runwick.Harness.Engine.WorkJob("j" + n)))]);
+        if (start)
+        {
+            await w.StartAsync();
+        }
+
+        await Runwick.Harness.Engine.WorkerHost.WaitUntil(() => f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE state = 'succeeded'").Result == jobs,
+            TimeSpan.FromSeconds(90), "every job settled");
+        Assert.Equal(jobs, w.Script.Invocations.Count);
+        Assert.Equal(jobs, await FinishReceipts(f));
+        Assert.DoesNotContain(w.Engine.Health().Diagnostics, d => d.Contains("unconfirmed outcome", StringComparison.Ordinal));
+
+        // The held lane makes control waits long, so the pressure gate may stop admission for a while (05 §15); it
+        // reopens by itself once the lane is healthy. No admission close is latched.
+        await Runwick.Harness.Engine.WorkerHost.WaitUntil(() => w.Engine.AdmissionOpen, TimeSpan.FromSeconds(30), "admission open again");
+        Assert.DoesNotContain(w.Engine.Health().Diagnostics, d => d.Contains("admission closed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    [Trait("Item", "PF-06")]
+    [Trait("Case", "FM-08")]
+    public async Task Finishes_that_queue_behind_a_busy_lane_are_sent_in_one_call()
+    {
+        await using var f = await DriverFixture.StartAsync(Ns("fm08"));
+        await using var w = Host(f, concurrency: 16);
+        BusyLane(f);
+        await RunJobsAsync(f, w, 40);
+        Assert.True(Interlocked.Read(ref w.Engine.Completion.BatchesApplied) > 0);
+        Assert.True(Interlocked.Read(ref w.Engine.Completion.BatchedItemsSettled) >= 2);
+        Assert.Empty(await f.HistoryViolations());
+    }
+
+    [Fact]
+    [Trait("Category", "Fault")]
+    [Trait("Item", "PF-06")]
+    [Trait("Case", "FM-09")]
+    public async Task A_lost_batch_reply_in_the_worker_resolves_each_finish_by_its_receipt()
+    {
+        await using var f = await DriverFixture.StartAsync(Ns("fm09"));
+        await using var w = Host(f, concurrency: 16);
+        BusyLane(f);
+        var drop = f.ArmFault(FaultPoint.AfterCommitBeforeReply, FaultSpec.DropReply, FaultTarget.Op(Operations.FinishMany));
+        await RunJobsAsync(f, w, 24);
+        Assert.Equal(1, drop.Fired);
+
+        // The dropped call committed: its items were resolved by Finish/1 replays of their own receipts, not reapplied.
+        Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM (SELECT job_id FROM runwick.job_attempts GROUP BY job_id HAVING count(*) > 1) x"));
+        Assert.True(Interlocked.Read(ref w.Engine.Completion.BatchesSent) > Interlocked.Read(ref w.Engine.Completion.BatchesApplied));
+        Assert.Empty(await f.HistoryViolations());
+    }
+
+    [Fact]
+    [Trait("Category", "Fault")]
+    [Trait("Item", "PF-06")]
+    [Trait("Case", "FM-10")]
+    public async Task A_refused_batch_turns_batching_off_and_every_finish_settles_alone()
+    {
+        await using var f = await DriverFixture.StartAsync(Ns("fm10"));
+        await using var w = Host(f, concurrency: 16);
+        await w.StartAsync();
+
+        // After startup's schema check, before any finish: the store now answers 42883 for the batched finish.
+        await f.ExecAsync("ALTER FUNCTION runwick.finish_many_v1 RENAME TO finish_many_v1_hidden");
+        BusyLane(f);
+        await RunJobsAsync(f, w, 24, start: false);
+        Assert.True(Interlocked.Read(ref w.Engine.Completion.BatchesSent) > 0);
+        Assert.Equal(0, Interlocked.Read(ref w.Engine.Completion.BatchesApplied));
+        Assert.Contains(w.Engine.Health().Diagnostics, d => d.Contains("FinishMany returned UnsupportedVersion", StringComparison.Ordinal));
+        Assert.Empty(await f.HistoryViolations());
+    }
 }
