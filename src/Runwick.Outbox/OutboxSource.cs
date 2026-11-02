@@ -23,6 +23,16 @@ internal sealed record OutboxLease(
 internal sealed record OutboxDelivered(Guid JobId, string Disposition, string ConfirmedProfile, DateTimeOffset DeliveredAt);
 
 /// <summary>
+/// An optional wake channel of a source (14 Changes 2026-11-02, PF-07): signals after a committed stage so the relay
+/// claims before its idle poll. A hint only; the relay's polling stays the correctness path.
+/// </summary>
+internal interface IOutboxWakeSource
+{
+    /// <summary>Runs until <paramref name="ct"/>; calls <paramref name="onWake"/> per notification and after each (re)subscription.</summary>
+    Task ListenAsync(Action onWake, CancellationToken ct);
+}
+
+/// <summary>
 /// One source database (14 §4). Every method after <see cref="InitializeAsync"/> is a short transaction of its own; a
 /// <c>false</c> return means the lease token no longer matches and nothing was written.
 /// </summary>

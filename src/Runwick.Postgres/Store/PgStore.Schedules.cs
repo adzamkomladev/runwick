@@ -381,12 +381,16 @@ internal sealed partial class PgStore : IScheduleStore
                 // reads whichever row won. Cron schedules start strictly after the cutoff (no backfill); a one-time
                 // schedule has no high-water mark until its disposition.
                 var cron = r.Definition.Kind == ScheduleOperations.Cron;
+                // A new row also notifies the schedule channel (13 Changes 2026-11-02, PF-07), delivered only on commit.
                 using (var insert = tx.Sql("""
-                    INSERT INTO runwick.schedules (
-                        application, schedule_id, schedule_key, next_due_at, scan_after_at, evaluated_through, created_at, updated_at)
-                    VALUES (@application, @id, @key, @next, COALESCE(@next, @cutoff), @through,
-                            runwick.ms_floor(clock_timestamp()), runwick.ms_floor(clock_timestamp()))
-                    ON CONFLICT (application, schedule_key) DO NOTHING
+                    WITH ins AS (
+                        INSERT INTO runwick.schedules (
+                            application, schedule_id, schedule_key, next_due_at, scan_after_at, evaluated_through, created_at, updated_at)
+                        VALUES (@application, @id, @key, @next, COALESCE(@next, @cutoff), @through,
+                                runwick.ms_floor(clock_timestamp()), runwick.ms_floor(clock_timestamp()))
+                        ON CONFLICT (application, schedule_key) DO NOTHING
+                        RETURNING schedule_key)
+                    SELECT pg_notify('runwick_schedule', @application || '/' || ins.schedule_key) FROM ins
                     """).P("id", Guid.CreateVersion7()).P("key", r.Key).P("next", r.FirstDueAt).P("cutoff", r.Cutoff)
                         .P("through", cron ? r.Cutoff : (DateTimeOffset?)null))
                 {
@@ -603,13 +607,15 @@ internal sealed partial class PgStore : IScheduleStore
 
                 // Pause cancels nothing. Resume stores its policy and cutoff; the next plan applies it (13 §5.4).
                 using (var u = tx.Sql("""
+                    WITH n AS (SELECT pg_notify('runwick_schedule', @application || '/' || @key))
                     UPDATE runwick.schedules
                     SET paused = @paused, control_revision = control_revision + 1, updated_at = @now, updated_by = @subject,
                         resume_policy = CASE WHEN @paused THEN resume_policy ELSE @policy END,
                         resume_cutoff = CASE WHEN @paused THEN resume_cutoff ELSE @now END,
                         scan_after_at = CASE WHEN @paused THEN scan_after_at ELSE @now END
-                    WHERE application = @application AND schedule_id = @id
-                    """).P("paused", r.Paused).P("now", tx.Now).P("subject", r.Actor.Subject).P("policy", r.ResumePolicy).P("id", s.ScheduleId))
+                    WHERE application = @application AND schedule_id = @id AND EXISTS (SELECT FROM n)
+                    """).P("paused", r.Paused).P("now", tx.Now).P("subject", r.Actor.Subject).P("policy", r.ResumePolicy).P("id", s.ScheduleId)
+                        .P("key", s.Key))
                 {
                     Expect(await tx.ExecAsync(u).ConfigureAwait(false), 1);
                 }
@@ -689,14 +695,15 @@ internal sealed partial class PgStore : IScheduleStore
                 }
 
                 using (var u = tx.Sql("""
+                    WITH n AS (SELECT pg_notify('runwick_schedule', @application || '/' || @key))
                     UPDATE runwick.schedules
                     SET definition_revision = @revision, evaluated_through = @through, next_due_at = @next,
                         scan_after_at = COALESCE(@next, @now), needs_review = false, review_reason = NULL,
                         resume_policy = NULL, resume_cutoff = NULL, cursor_revision = cursor_revision + 1,
                         updated_at = @now, updated_by = @subject
-                    WHERE application = @application AND schedule_id = @id
+                    WHERE application = @application AND schedule_id = @id AND EXISTS (SELECT FROM n)
                     """).P("revision", revision).P("through", through).P("next", r.FirstDueAt).P("now", tx.Now)
-                        .P("subject", r.Actor.Subject).P("id", s.ScheduleId))
+                        .P("subject", r.Actor.Subject).P("id", s.ScheduleId).P("key", s.Key))
                 {
                     Expect(await tx.ExecAsync(u).ConfigureAwait(false), 1);
                 }

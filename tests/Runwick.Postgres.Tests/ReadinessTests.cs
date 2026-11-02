@@ -288,15 +288,18 @@ public sealed class ReadinessTests
     [Trait("Case", "OBS-01")]
     public async Task With_every_wake_dropped_polling_finds_work_controls_and_recovery()
     {
-        // driver-contract-suite:OBS-01. Notifications are not implemented in M3 (LISTEN is decided after G1-M1), and
-        // local wakes are suppressed here, so everything below is found by polling alone.
+        // driver-contract-suite:OBS-01. Every LISTEN notification (05 §7.2, PF-07) is dropped on receipt and local wakes
+        // are suppressed, so everything below is found by polling alone.
         await using var f = await DriverFixture.StartAsync(Ns("obs01"));
         await using var w = Host(f, configure: r => r.Queue("other"));
-        await w.StartAsync();
+        w.Engine.NotificationsSuppressed = true;
         foreach (var pool in w.Engine.Pools)
         {
             pool.Wake.Suppressed = true;
         }
+
+        await w.StartAsync();
+        await WorkerHost.WaitUntil(() => Interlocked.Read(ref w.Engine.ListenerSubscriptions) >= 1, Wait, "the listener subscribed");
 
         var producer = await f.OpenClient(configure: r =>
         {
@@ -324,6 +327,10 @@ public sealed class ReadinessTests
             () => f.CountAsync($"SELECT count(*) FROM runwick.job_attempts WHERE job_id = '{orphan}' AND outcome = 'abandoned_before_start'").Result == 1,
             Wait, "the dead owner's lease recovered by polling");
         Assert.NotEqual(first, orphan);
+
+        // The notifications were sent and received, and every one was dropped.
+        Assert.True(w.Engine.NotificationsReceived >= 2, $"notifications received: {w.Engine.NotificationsReceived}");
+        Assert.Equal(w.Engine.NotificationsReceived, w.Engine.NotificationsDropped);
         await AssertInvariants(f);
     }
 

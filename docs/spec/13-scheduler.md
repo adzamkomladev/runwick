@@ -2,6 +2,10 @@
 
 **Sources:** [scheduling-internals.md](../architecture/scheduling-internals.md) §2–§10 (primary); [scheduler-evaluator-and-defaults.md](../architecture/scheduler-evaluator-and-defaults.md) §3, §5; [postgres-schema-and-operations.md](../architecture/postgres-schema-and-operations.md) §4–§6; [storage-command-protocol.md](../architecture/storage-command-protocol.md); [management-retention-defaults.md](../architecture/management-retention-defaults.md) (command lifetimes, schedule retention); [public-api-contract.md](../architecture/public-api-contract.md) §9, §18; 12 (evaluator); 08 (actor, audit, events, receipts); 10 (rate scopes, capability activation pattern); 03 §3, §8.
 
+## Changes (2026-11-02, PF-07)
+
+Optional wake channel. RegisterSchedule (when it creates the row), UpdateSchedule and SetScheduleState notify `runwick_schedule` with `application/schedule_key`, inside their existing statements and only on commit (04 Changes 2026-11-02, PF-07). A scheduler whose store offers notifications listens on one dedicated session; a notification ends the current idle wait and resets the idle back-off to `PollInterval`. Polling is unchanged and stays the correctness path: a dropped notification only delays the next pass to the normal back-off.
+
 ## Changes (2026-10-31, SP-016)
 
 New document. It replaces 01 §18 "AddScheduler/AddSchedule reserved" and 03 §8.4 "scheduler commands not in M2".

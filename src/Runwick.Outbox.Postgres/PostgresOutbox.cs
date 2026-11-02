@@ -93,13 +93,18 @@ internal sealed class PostgresOutbox(OutboxStager stager) : IPostgresOutbox
         }
 
         var intent = OutboxStager.Freeze(sourceStoreId, messageId, prepared, now, horizon);
+        // A new row also notifies the relay's wake channel (14 Changes 2026-11-02, PF-07); PostgreSQL delivers it only
+        // when the caller's transaction commits.
         using (var insert = new NpgsqlCommand("""
+            WITH ins AS (
             INSERT INTO runwick_outbox.outbox_messages (
                 message_id, destination_store_id, destination_application, intent, business_digest, policy_digest,
                 delivery_fingerprint, proposed_job_id, staged_at, accept_until, next_attempt_at)
             VALUES (@m, @store, @app, @intent, @business, @policy, @delivery, @job, @staged, @accept, @staged)
             ON CONFLICT (message_id) DO NOTHING
-            RETURNING true
+            RETURNING true AS inserted),
+            n AS (SELECT pg_notify('runwick_outbox', '') FROM ins)
+            SELECT ins.inserted FROM ins WHERE EXISTS (SELECT FROM n)
             """, connection, transaction))
         {
             insert.Parameters.AddWithValue("m", NpgsqlDbType.Uuid, intent.MessageId);

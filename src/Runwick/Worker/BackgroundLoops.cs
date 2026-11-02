@@ -54,6 +54,26 @@ internal sealed class ReadinessCoordinator(WorkerEngine engine, IReadOnlyList<La
         }
     }
 
+    /// <summary>
+    /// A wake notification for <paramref name="queue"/> (05 §7.2, PF-07). When the cached snapshot already shows a due lane
+    /// of the queue the hint adds nothing and false is returned; otherwise the snapshot is dropped so the woken pools probe
+    /// again (still ≥ 50 ms apart, so a notification burst never forms a probe loop).
+    /// </summary>
+    public bool OnWake(string queue)
+    {
+        lock (_lock)
+        {
+            if (_current is { } c && engine.Clock.Now - c.ReceivedAt < WorkerSettings.HintMaxAge
+                && c.Snapshot.Lanes.Any(l => string.Equals(l.Lane.Queue, queue, StringComparison.Ordinal)))
+            {
+                return false;
+            }
+
+            _current = null;
+            return true;
+        }
+    }
+
     /// <summary>Drops the cached snapshot (reconnect, control change); the next request probes again.</summary>
     public void Invalidate()
     {

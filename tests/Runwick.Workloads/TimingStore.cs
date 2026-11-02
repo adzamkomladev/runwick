@@ -10,8 +10,11 @@ namespace Runwick.Workloads;
 /// (<c>controlWait</c>, from the engine's own tracking). Also derives the renewal margin (previous expiry − Renew decision,
 /// both store instants) and due-to-Begin (<c>eligible_at</c> from the Reserve cursor → Begin decision).
 /// </summary>
-internal sealed class TimingStore(IRunwickStore inner, Metrics metrics, bool detailed = false) : IRunwickStore, ILeaseBatchStore
+internal sealed class TimingStore(IRunwickStore inner, Metrics metrics, bool detailed = false) : IRunwickStore, ILeaseBatchStore, IWakeNotificationSource
 {
+    // Wake notifications pass straight through (05 §7.2, PF-07); they are not store calls and are not timed.
+    public Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, CancellationToken ct) =>
+        inner is IWakeNotificationSource source ? source.ListenAsync(application, channel, onWake, onSubscribed, ct) : Task.CompletedTask;
 
     readonly ConcurrentDictionary<Guid, DateTimeOffset> _expiry = new();
     readonly ConcurrentDictionary<Guid, DateTimeOffset> _eligible = new();

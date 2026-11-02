@@ -53,9 +53,12 @@ public static class PostgresOutboxSchema
 /// The relay's view of one PostgreSQL source (14 §4). Two source connections per relay group: one lane for claims,
 /// one reserved for renewal and marks, so a slow claim never delays a renewal.
 /// </summary>
-internal sealed class PostgresOutboxSource : IOutboxSource, IAsyncDisposable
+internal sealed class PostgresOutboxSource : IOutboxSource, IOutboxWakeSource, IAsyncDisposable
 {
+    internal const string Channel = "runwick_outbox";
+
     readonly NpgsqlDataSource _data;
+    readonly string _listen;
     readonly SemaphoreSlim _claimLane = new(1, 1);
     readonly SemaphoreSlim _controlLane = new(1, 1);
     Guid? _sourceStoreId;
@@ -69,6 +72,74 @@ internal sealed class PostgresOutboxSource : IOutboxSource, IAsyncDisposable
         }
 
         _data = NpgsqlDataSource.Create(builder.ConnectionString);
+        _listen = new NpgsqlConnectionStringBuilder(builder.ConnectionString)
+        {
+            Pooling = false, Enlist = false, ApplicationName = builder.ApplicationName + ":listen", KeepAlive = 15,
+        }.ConnectionString;
+    }
+
+    /// <summary>Notifications received (tests and diagnostics).</summary>
+    internal long Notifications;
+
+    /// <summary>
+    /// The wake listener (14 Changes 2026-11-02, PF-07): one unpooled session outside the two-connection pool; a lost
+    /// session is replaced after a back-off of 1 s doubling to 30 s. Polling covers every gap.
+    /// </summary>
+    public async Task ListenAsync(Action onWake, CancellationToken ct)
+    {
+        var backoff = TimeSpan.FromSeconds(1);
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                var connection = new NpgsqlConnection(_listen);
+                await using (connection.ConfigureAwait(false))
+                {
+                    await connection.OpenAsync(ct).ConfigureAwait(false);
+                    connection.Notification += (_, e) =>
+                    {
+                        if (e.Channel == Channel)
+                        {
+                            Interlocked.Increment(ref Notifications);
+                            onWake();
+                        }
+                    };
+                    using (var subscribe = new NpgsqlCommand("LISTEN " + Channel, connection))
+                    {
+                        await subscribe.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                    }
+
+                    backoff = TimeSpan.FromSeconds(1);
+                    onWake();
+                    while (!ct.IsCancellationRequested)
+                    {
+                        if (!await connection.WaitAsync(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false))
+                        {
+                            using var ping = new NpgsqlCommand("SELECT 1", connection);
+                            await ping.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                        }
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex) when (ex is NpgsqlException or IOException or TimeoutException or InvalidOperationException
+                or System.Net.Sockets.SocketException or OperationCanceledException)
+            {
+                try
+                {
+                    await Task.Delay(backoff, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+
+                backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, TimeSpan.FromSeconds(30).Ticks));
+            }
+        }
     }
 
     public Guid SourceStoreId => _sourceStoreId ?? throw new InvalidOperationException("The outbox source is not initialized.");

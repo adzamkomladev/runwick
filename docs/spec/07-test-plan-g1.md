@@ -4,6 +4,15 @@
 
 This document defines the test harness built in SP-003, the exact case list that gate **G-1** (milestone M2, PostgreSQL execution) requires, the first performance measurements recorded by SP-010, and the G-1 pass rule. Every case listed in §4–§13 is mandatory for G-1 unless this document marks a named sub-part as deferred to a later SP item.
 
+## Changes (2026-11-02, PF-07)
+
+LISTEN/NOTIFY wake (05/04/13/14 "Changes (2026-11-02, PF-07)").
+
+- **OBS-01** now runs with the listener active and every notification dropped on receipt (`NotificationsSuppressed`), in addition to suppressed local wakes. It also asserts that notifications were received (≥ 2) and that every one was dropped, so the case proves polling alone, not an absent listener.
+- **WAKE-01** (Contract): a committed driver-owned dispatch notifies `application/queue` once; a rolled-back staged dispatch and a delayed dispatch notify nothing; a staged dispatch notifies on the caller's COMMIT, not before.
+- **WAKE-02** (Contract): the worker's listener wakes its pools; after its session is terminated it resubscribes (fresh probe) and wakes again; no duplicate invocation and no history violation. This is the WRK-16 "LISTEN reconnect" sub-part, which applies now that the listener ships.
+- PERF-01 is unchanged: the notification rides in an existing Dispatch statement.
+
 ## Changes (2026-11-02, PF-06)
 
 `RenewMany/1` (03/04/05 "Changes (2026-11-02, PF-06)") adds three Postgres cases in `RenewManyTests`; no existing case changes and no fault point moves (RenewMany has Renew/1's two per-batch points).

@@ -238,6 +238,60 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
         }
     }
 
+    // ------------------------------------------------------------------ wake notifications (05 §7.2, PF-07)
+
+    /// <summary>Wake notifications received for a queue this worker serves.</summary>
+    public long NotificationsReceived;
+
+    /// <summary>Notifications dropped while <see cref="NotificationsSuppressed"/> was set.</summary>
+    public long NotificationsDropped;
+
+    /// <summary>Listener (re)subscriptions.</summary>
+    public long ListenerSubscriptions;
+
+    /// <summary>
+    /// Drops every wake notification (harness hook for driver-contract-suite:OBS-01): the worker then finds work, control
+    /// changes and recovery only by polling, which stays the correctness path.
+    /// </summary>
+    public bool NotificationsSuppressed { get; set; }
+
+    void OnWakeNotification(string queue)
+    {
+        var pools = Pools.Where(p => p.Settings.Queues.Any(q => string.Equals(q.Queue, queue, StringComparison.Ordinal))).ToList();
+        if (pools.Count == 0)
+        {
+            return;
+        }
+
+        Interlocked.Increment(ref NotificationsReceived);
+        if (NotificationsSuppressed)
+        {
+            Interlocked.Increment(ref NotificationsDropped);
+            return;
+        }
+
+        if (Readiness.OnWake(queue))
+        {
+            foreach (var pool in pools)
+            {
+                pool.Wake.Set();
+            }
+        }
+    }
+
+    /// <summary>(Re)subscribed: anything committed while unsubscribed was not notified, so look once now.</summary>
+    void OnListenerSubscribed()
+    {
+        Interlocked.Increment(ref ListenerSubscriptions);
+        if (NotificationsSuppressed)
+        {
+            return;
+        }
+
+        Readiness.Invalidate();
+        WakePools();
+    }
+
     public void Track(AttemptEntry entry) => _entries[entry.AttemptId] = entry;
 
     public void Untrack(AttemptEntry entry) => _entries.TryRemove(entry.AttemptId, out _);
@@ -313,6 +367,13 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
         foreach (var pool in Pools)
         {
             Supervise("pool:" + pool.Settings.Name, pool.RunAsync, critical: true);
+        }
+
+        // Optional wake channel (05 §7.2, PF-07): a hint only; losing it costs latency, never correctness.
+        if (Store is IWakeNotificationSource notifications)
+        {
+            Supervise("listener", () => notifications.ListenAsync(Application, WakeChannels.Work, OnWakeNotification, OnListenerSubscribed, LoopStop),
+                critical: false);
         }
 
         if (_lifetime is not null)

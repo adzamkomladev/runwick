@@ -6,6 +6,16 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-02, PF-07)
+
+Replaces §5 "Notification: … LISTEN/NOTIFY is not in M2". Polling remains sufficient for correctness; notifications are an optional wake hint (05 Changes 2026-11-02, PF-07). No migration, no new operation, no new round trip.
+
+- **Work channel `runwick_wake`.** The Dispatch core (driver-owned Dispatch/DispatchMany, staged dispatch, `ReceiveOutbox/1` and schedule materialization all share it) appends `pg_notify('runwick_wake', application || '/' || queue)` for each distinct queue with a created job eligible now (no `NotBefore`, or one at or before the decision time). It rides in the step-9 events statement as a CTE, so PERF-01 counts are unchanged. PostgreSQL delivers it only when the transaction commits (a staged dispatch: the caller's COMMIT), and folds identical payloads of one transaction. A rolled-back or delayed dispatch never notifies.
+- **Schedule channel `runwick_schedule`.** A newly inserted schedule row (RegisterSchedule `created`), UpdateSchedule and SetScheduleState notify `application || '/' || schedule_key`, inside their existing statements (13 Changes 2026-11-02, PF-07).
+- **Session.** One dedicated unpooled connection per listening component (worker, scheduler), application name `<prefix>:listen`, `KeepAlive` 15 s, no auto-prepare. It is the 05 §18 / 06 "Optional listener" session: per worker process the budget becomes control 6 + work 8 + 1 listener.
+- **Cost under load.** A committing transaction that notified takes PostgreSQL's notify-queue lock briefly at commit, so notifying commits serialize on it. Dispatches that create no eligible-now job (delayed, deduplicated, rejected) do not notify and pay nothing.
+- Lock order, fresh time after locks, receipts and `synchronous_commit` are untouched: `pg_notify` takes no row lock and reads no time.
+
 ## Changes (2026-11-02, PF-06)
 
 `RenewMany/1` (03 Changes 2026-11-02, PF-06) for PostgreSQL.

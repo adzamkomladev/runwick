@@ -227,6 +227,31 @@ internal interface IJobReservationStore
     Task<StoreReply<RenewedLease>> RenewAsync(StoreCommand<RenewRequest> command, CancellationToken ct);
 }
 
+/// <summary>Wake channels (05 §7.2, PF-07). A wake is a hint only: polling stays the correctness path (OBS-01).</summary>
+internal static class WakeChannels
+{
+    /// <summary>Committed Dispatch/DispatchMany (driver-owned, staged, scheduler and outbox deliveries); key = queue.</summary>
+    public const string Work = "runwick_wake";
+
+    /// <summary>Committed schedule edits (register, update, pause/resume); key = schedule key.</summary>
+    public const string Schedule = "runwick_schedule";
+}
+
+/// <summary>
+/// Optional store notifications (05 §7.2 "optional LISTEN notifications", PF-07). One dedicated session per caller,
+/// never a pooled connection. Notifications are sent only by committed transactions, can be lost (reconnects, overflow)
+/// and are never required: every consumer keeps its polling.
+/// </summary>
+internal interface IWakeNotificationSource
+{
+    /// <summary>
+    /// Listens on <paramref name="channel"/> until <paramref name="ct"/> ends, reconnecting with backoff. Calls
+    /// <paramref name="onWake"/> with the key of each notification for <paramref name="application"/>, and
+    /// <paramref name="onSubscribed"/> after every successful (re)subscription, when notifications may have been missed.
+    /// </summary>
+    Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, CancellationToken ct);
+}
+
 /// <summary>RenewMany/1 (03 Changes 2026-11-02, PF-06): distinct leases of one worker, each renewed as Renew/1 would.</summary>
 internal sealed record RenewManyRequest(IReadOnlyList<LeaseHandle> Leases, TimeSpan LeaseDuration);
 

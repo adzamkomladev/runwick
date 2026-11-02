@@ -2,6 +2,10 @@
 
 **Sources:** [transactional-outbox.md](../architecture/transactional-outbox.md) (all sections, OUTBOX-01 … OUTBOX-07); [storage-command-protocol.md](../architecture/storage-command-protocol.md) "Outbox destination extension"; [driver-contract-suite.md](../architecture/driver-contract-suite.md) §4 (TX), OUT-01, OUT-02, CMD-01 … CMD-05, ISO-01; [performance-acceptance-plan.md](../architecture/performance-acceptance-plan.md) (P-09); 02 §7–§9; 03 §2.1, §4, §10; 04 §5, §6, §8; 06 §1.4, §1.7; 07 §4 (CMD), §8 (TX), §9 (ISO-01); 15 §10–§11.
 
+## Changes (2026-11-02, PF-07)
+
+Optional wake channel on the PostgreSQL source. Stage's INSERT notifies `runwick_outbox` (empty payload) when it inserts a row; PostgreSQL delivers it only when the caller's transaction commits, so a rolled-back stage never wakes the relay. A relay whose source offers notifications listens on one dedicated unpooled session (outside the source's two-connection pool, application name `<name>:listen`), reconnecting after 1 s doubling to 30 s. A notification, and every (re)subscription, ends the claim loop's idle wait (`IdlePoll`) early. The SQLite source has no notifications. Claims, leases and polling are unchanged; with every notification lost the relay delivers on its normal idle poll.
+
 ## Changes (2026-11-01, SP-017 owed items)
 
 - (2026-11-01) §10 item 2 is closed: the §7 golden vectors are frozen in `tests/vectors/wire/outbox.json`, cases OB-0 … OB-8. `tests/vectors/tools/canonical.mjs` generates them from this section, independently of the C# code. OB-0 is the GV-B0 intent with a 7-day horizon from 2026-10-30T10:00Z. OB-1 … OB-6 each change one hashed member; OB-7 and OB-8 change only the transport command, so they keep the OB-0 delivery digest. They are checked by `OutboxVectorTests` (Core) and, on both sources, by `HashDomainTests`. That test has the Node encoder recompute the stored `delivery_fingerprint`, the destination mapping and the `ReceiveOutbox` receipt fingerprint from a delivered row.
