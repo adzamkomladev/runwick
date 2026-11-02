@@ -335,6 +335,7 @@ internal sealed partial class PgStore
                 // the fresh clock go in one batch, in lock order.
                 var rated = job is not null && plan == "authorize" && read!.Rated;
                 List<RateScopeRow> rateScopes = [];
+                PgBatch.Rows<RateWindowRow>? windows = null;
                 if (job is not null && (plan != "authorize" || rated))
                 {
                     var more = tx.Batch();
@@ -345,12 +346,22 @@ internal sealed partial class PgStore
 
                     more.Query(LockScopesSql(tx, lease.JobId), MapScope);
                     var rq = rated ? more.Query(LockRateScopesSql(tx, lease.JobId), MapRateScope) : null;
-                    clock = more.Query(PgTx.ClockSql(tx), PgTx.ReadClock);
+                    if (rated)
+                    {
+                        // A rated plan reads the clock in the same statement as the window counts it decides on (PF-04
+                        // leftover): behind the rate-scope lock, so both are fresh after the last blocking lock.
+                        windows = more.Query(RateClockAndWindowsSql(tx, lease.JobId), MapRateWindow);
+                    }
+                    else
+                    {
+                        clock = more.Query(PgTx.ClockSql(tx), PgTx.ReadClock);
+                    }
+
                     await tx.RunAsync(more).ConfigureAwait(false);
                     rateScopes = rq?.Items ?? [];
                 }
 
-                if (!await tx.DecideAtAsync(clock.Items[0]).ConfigureAwait(false))
+                if (!await tx.DecideAtAsync(windows is not null ? windows.Items[0].Clock : clock.Items[0]).ConfigureAwait(false))
                 {
                     return new PgOutcome<BegunExecution>.Rollback(tx.Reject<BegunExecution>(StoreStatus.CommandExpired, "command_expired"));
                 }
@@ -380,7 +391,7 @@ internal sealed partial class PgStore
                 Action? charged = null;
                 if (rateScopes.Count > 0)
                 {
-                    (deferred, charged) = await ChargeRatesAsync(tx, job!, gen!, lease, rateScopes, effects).ConfigureAwait(false);
+                    (deferred, charged) = await ChargeRatesAsync(tx, job!, gen!, lease, rateScopes, windows!.Items, effects).ConfigureAwait(false);
                     if (deferred is not null)
                     {
                         return new PgOutcome<BegunExecution>.Commit(

@@ -121,30 +121,52 @@ internal sealed partial class PgStore : IRateControlStore
     static RateScopeRow MapRateScope(Npgsql.NpgsqlDataReader r) =>
         new(r.GetGuid(0), r.GetInt32(1), r.GetInt64(2), r.GetInt64(3), PgTime.ReadNullable(r, 4), PgTime.ReadNullable(r, 5));
 
+    /// <summary>One row per rate scope of the job: the decision clock, the logical time t, and the scope's window count.</summary>
+    internal sealed record RateWindowRow(DateTimeOffset Clock, DateTimeOffset T, Guid? ScopeId, int Count);
+
+    /// <summary>
+    /// The decision clock and, per rate scope, the grants inside (t - W, t], where t = max(floor_ms(clock), last
+    /// decisions), in one statement. It runs in the rate-lock batch behind <see cref="LockRateScopesSql"/>, so the scopes
+    /// are already locked by this transaction and the clock is read after the last blocking lock (04 §5; PF-04
+    /// leftover, 04 Changes 2026-11-02). The driver recomputes t from the locked rows and the clock, and they must match.
+    /// </summary>
+    static Npgsql.NpgsqlCommand RateClockAndWindowsSql(PgTx tx, Guid jobId) => tx.Sql("""
+        WITH c AS MATERIALIZED (SELECT clock_timestamp() AS now),
+             s AS (SELECT rs.rate_scope_id, rs.window_ms, rs.last_decision_at
+                   FROM runwick.rate_scopes AS rs
+                   WHERE rs.application = @application
+                     AND rs.rate_scope_id IN (SELECT r.rate_scope_id FROM runwick.job_rate_requirements AS r
+                                              WHERE r.application = @application AND r.job_id = @job_id)),
+             t AS (SELECT c.now, greatest(date_trunc('milliseconds', c.now), (SELECT max(s.last_decision_at) FROM s)) AS t FROM c)
+        SELECT t.now, t.t, s.rate_scope_id,
+               (SELECT count(*)::int FROM runwick.rate_grants AS g
+                WHERE g.application = @application AND g.rate_scope_id = s.rate_scope_id
+                  AND g.authorized_at > t.t - s.window_ms * interval '1 millisecond')
+        FROM t LEFT JOIN s ON true
+        ORDER BY s.rate_scope_id
+        """).P("job_id", jobId);
+
+    static RateWindowRow MapRateWindow(Npgsql.NpgsqlDataReader r) =>
+        new(PgTx.ReadClock(r), PgTime.Read(r, 1), r.IsDBNull(2) ? null : r.GetGuid(2), r.IsDBNull(3) ? 0 : r.GetInt32(3));
+
     /// <summary>
     /// Charges one grant per scope at logical time t = max(now, last decisions), or charges nothing and closes the
     /// attempt as <c>admission_deferred</c> (T20). Returns a null deferral when every scope admitted: the charge writes
     /// are then added to <paramref name="effects"/> (PF-04) and the returned check verifies the grant count after it ran.
+    /// The window counts arrive with the rate-scope lock (<see cref="RateClockAndWindowsSql"/>).
     /// </summary>
     static async Task<(RateDeferral? Deferral, Action? Check)> ChargeRatesAsync(PgTx tx, JobRow job, GenerationRow gen, LeaseHandle lease,
-        IReadOnlyList<RateScopeRow> scopes, PgBatch effects)
+        IReadOnlyList<RateScopeRow> scopes, IReadOnlyList<RateWindowRow> windows, PgBatch effects)
     {
         var now = tx.Now;
         var t = scopes.Select(s => s.LastDecisionAt ?? now).Append(now).Max();
         var ids = scopes.Select(s => s.Id).ToArray();
 
-        // Fresh statements after the locks: grants inside (t - W, t] per scope.
-        Dictionary<Guid, int> counts;
-        using (var c = tx.Sql("""
-            SELECT s.rate_scope_id,
-                   (SELECT count(*)::int FROM runwick.rate_grants AS g
-                    WHERE g.application = s.application AND g.rate_scope_id = s.rate_scope_id
-                      AND g.authorized_at > @t - s.window_ms * interval '1 millisecond')
-            FROM runwick.rate_scopes AS s
-            WHERE s.application = @application AND s.rate_scope_id = ANY (@ids::uuid[])
-            """).P("t", t).Arr("ids", ids, NpgsqlDbType.Uuid))
+        // The counts were taken after the locks, at the same t; a mismatch is a broken invariant, never a decision.
+        var counts = windows.Where(w => w.ScopeId is not null).ToDictionary(w => w.ScopeId!.Value, w => w.Count);
+        if (windows.Count == 0 || windows[0].T != t || counts.Count != scopes.Count || !scopes.All(s => counts.ContainsKey(s.Id)))
         {
-            counts = (await tx.QueryAsync(c, r => (r.GetGuid(0), r.GetInt32(1))).ConfigureAwait(false)).ToDictionary(x => x.Item1, x => x.Item2);
+            throw new InvariantViolationException("invalid_transition");
         }
 
         var blocked = scopes.Where(s => counts[s.Id] >= s.Limit || (s.NotBefore is { } nb && t < nb)).ToList();

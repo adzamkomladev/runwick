@@ -6,6 +6,10 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-02, PF-04 leftover: rated Begin)
+
+A rated Begin's window counts (10 §4) move into the rate-lock batch. The batch is K, R, then one statement that reads the decision clock and, per locked rate scope, the grants inside (t − W, t] with t = max(floor_ms(clock), the scopes' `last_decision_at`), computed in SQL from the same clock value. It replaces the bare clock read that ended the batch. The statement runs after R's `FOR UPDATE` in the same batch, so the scopes are locked by this transaction and the clock is still read after the last blocking lock (03 §1.3, rule 1 of "Changes (2026-11-01, PF-04)"); it is a separate statement, not R's target list. The driver recomputes t from R's rows and the clock it received and rolls back with `invalid_transition` on any mismatch. Lock order, the charge, the deferral (T20 and its hint reads) and `synchronous_commit` are unchanged. PERF-01: Begin rated 6 → 5 commands (7 → 6 round trips), for 1 and 8 scopes.
+
 ## Changes (2026-11-01, PF-03)
 
 Performance plan PF-03: automatic statement preparation and a warm control pool, in §9.2. Round trips are unchanged (PERF-01).
