@@ -209,9 +209,23 @@ public sealed class CapacityShareTests
         var during = (await Order(f, w, "queue")).Skip(pausedAt + 8).Take(30).ToList(); // the first may come from a hint that predates the pause
         Assert.All(during, k => Assert.Equal('o', k));
         await f.SetQueuePaused(f.Application, "default", false);
+        var resumedTime = await f.StoreNow();
         var resumedAt = (await Order(f, w, "queue")).Count;
-        await WaitAdmissions(f, w, resumedAt + 48, "48 admissions after resume");
-        var after = (await Order(f, w, "queue")).Skip(resumedAt + 8).Take(40).ToList();
+
+        // A resume by another process is not notified (05 Changes 2026-11-02, idle caps): the worker learns of it from
+        // its next probe, after the current hint (≤ 2 s) expires. Until then "default" is not in the eligible set and
+        // every admission goes to "other"; how many fit in that window is throughput, not shares (05 Changes 2026-11-03).
+        // The share window therefore starts at the first admission a post-resume snapshot allowed.
+        await WorkerHost.WaitUntil(() => Order(f, w, "queue").Result.Skip(resumedAt).Contains('d'), Wait, "default admitted after resume");
+        var firstD = resumedAt + (await Order(f, w, "queue")).Skip(resumedAt).TakeWhile(k => k == 'o').Count();
+        var seenAfter = TimeSpan.FromSeconds(await f.CountAsync("""
+            SELECT ceil(extract(epoch FROM min(a.reserved_at) - @r))::bigint
+            FROM runwick.job_attempts AS a JOIN runwick.jobs AS j ON j.application = a.application AND j.job_id = a.job_id
+            WHERE a.worker_instance_id = @i AND j.queue = 'default' AND a.reserved_at > @r
+            """, ("i", w.Engine.WorkerInstanceId), ("r", resumedTime)));
+        Assert.True(seenAfter <= WorkerSettings.HintMaxAge + TimeSpan.FromSeconds(8), $"default first admitted {seenAfter} after resume");
+        await WaitAdmissions(f, w, firstD + 40, "40 admissions from the return");
+        var after = (await Order(f, w, "queue")).Skip(firstD).Take(40).ToList();
         Assert.InRange(after.Count(k => k == 'd'), 9, 11);
         Assert.DoesNotContain(after.Zip(after.Skip(1)), p => p.First == 'd' && p.Second == 'd');
         await w.StopAsync();

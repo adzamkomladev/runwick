@@ -54,10 +54,10 @@ internal sealed class EngineFixture : IAsyncDisposable
 
     /// <summary>Builds (not starts) an engine with default timing unless <paramref name="options"/> changes it.</summary>
     public static EngineFixture Create(int concurrency = 4, Action<JobBuilder<WorkJob>>? jobs = null, Action<WorkerOptions>? options = null,
-        Action<RunwickBuilder>? configure = null, Action<IServiceCollection>? services = null)
+        Action<RunwickBuilder>? configure = null, Action<IServiceCollection>? services = null, Action<PoolBuilder>? pool = null, bool batch = false)
     {
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 30, 12, 0, 0, TimeSpan.Zero));
-        var store = new ScriptedStore(time);
+        var store = batch ? new ScriptedBatchStore(time) : new ScriptedStore(time);
         var sc = new ServiceCollection();
         sc.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
         sc.AddSingleton<TimeProvider>(time);
@@ -70,7 +70,11 @@ internal sealed class EngineFixture : IAsyncDisposable
             var work = r.AddJob<WorkJob>().Named("test.work").ToQueue("default").WithMaxExecutions(3);
             jobs?.Invoke(work);
             r.AddHandler<WorkJob, ScriptedWorkHandler>();
-            r.AddWorker(w => w.Pool("main", p => p.Queues("default").FixedConcurrency(concurrency)).Configure(o => options?.Invoke(o)));
+            r.AddWorker(w => w.Pool("main", p =>
+            {
+                p.Queues("default").FixedConcurrency(concurrency);
+                pool?.Invoke(p);
+            }).Configure(o => options?.Invoke(o)));
             configure?.Invoke(r);
         });
         return new EngineFixture(sc.BuildServiceProvider(), time, store);
@@ -102,6 +106,13 @@ internal sealed class EngineFixture : IAsyncDisposable
     {
         var preparer = _provider.GetRequiredService<DispatchPreparer>();
         return Store.Add(preparer.Prepare(Store.StoreId, job ?? new WorkJob(key), null).Intent);
+    }
+
+    /// <summary>Adds a job routed to <paramref name="queue"/> (a dispatch-time queue override).</summary>
+    public Guid AddTo(string queue, string key)
+    {
+        var preparer = _provider.GetRequiredService<DispatchPreparer>();
+        return Store.Add(preparer.Prepare(Store.StoreId, new WorkJob(key), new DispatchOptions { Queue = queue }).Intent);
     }
 
     public Guid JobIdOf(string key) =>
