@@ -4,6 +4,15 @@
 
 Numeric values are restated here where the engine behavior depends on them; [06-defaults.md](06-defaults.md) is the single table of defaults, derived formulas and startup inequalities. Where the two disagree, 06 is authoritative for the number and this file for the behavior.
 
+## Changes (2026-11-02, PF-06 batched finish)
+
+New **§12.5 Batched finish**, used when the store offers `FinishMany/1` (03 Changes 2026-11-02, PF-06 batched finish). Without it the engine settles exactly as before. The settlement lane stays 2 concurrent calls (06).
+
+- **When.** A completion worker that takes a Finish from the ready channel also takes every other Finish already waiting there, up to 32. With two or more it sends one `FinishMany`; with one it sends `Finish/1` as before. There is no coalescing delay. *[choice]* Reason: batching matters only when the lane is the bottleneck, and then Finishes are already waiting, because both lane calls are busy while new ones are published. A wait of a few milliseconds would add latency to every Finish on an idle worker and would not make batches larger under load.
+- **Command.** Each item is the entry's frozen Finish command (§12.2), unchanged: same command ID, same body, same NotAfter. The call gets a new command ID and NotAfter = the latest item NotAfter. Every member holds its own arbiter slot (§6) for the whole call, as a single Finish does; the slots are taken in turn (members are distinct attempts, and no other holder of an arbiter waits for a second one). The call timeout is min(`ControlRequestTimeout`, the earliest member's remaining budget). An entry whose budget already ran out is not batched; it takes the single path, which latches it. Each item counts once in `FinishesSent`; `CompletionCoordinator.BatchesSent` counts calls.
+- **Applied.** Each item's reply is applied exactly as the same Finish/1 reply in §12.4 (Applied, replayed or not; `StaleLease`/`InvalidState`; `CommandExpired`; `InvalidRequest`/`InvariantFault`/`CommandConflict`). An item reply that §12.4 retries (for example `NotFound` or a closed gate) resolves alone, as below.
+- **Not Applied, or no reply.** Each item resolves alone through the existing path: the same Finish/1 command, at resolution priority after one control backoff, within its own `CompletionResolutionBudget` (still measured from its own publication, so the budget means what it meant). An item that the lost call committed replays its own receipt; one it did not commit is decided now. `UnsupportedVersion` or `InvalidRequest` also turns batching off for this worker, with a diagnostic; `InvariantFault` (one item broke an invariant and rolled the call back) resolves each item alone so the faulty one reports its own fault.
+
 ## Changes (2026-11-02, idle caps)
 
 Decision (adzamkomla, 2026-11-02): now that the wake listener ships, an idle worker polls less often while its listener is healthy. This replaces the "Not changed" bullet of the PF-07 entry below.

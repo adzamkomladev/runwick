@@ -132,6 +132,25 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
             () => Store.FinishAsync(cmd, CancellationToken.None), _ => (lease.JobId, lease.AttemptId));
     }
 
+    /// <summary>One Finish/1 command as a batch item carries it (its own ID and NotAfter); not sent, not recorded.</summary>
+    internal StoreCommand<FinishRequest> FinishCommand(LeaseHandle lease, AttemptOutcome outcome, TimeSpan? elapsed = null,
+        TimeSpan? requestedDelay = null, AttemptError? error = null, Guid? commandId = null, DateTimeOffset? notAfter = null) =>
+        Command(new FinishRequest(lease, outcome, elapsed ?? TimeSpan.FromMilliseconds(5), requestedDelay, error), commandId, notAfter);
+
+    /// <summary>Finish/1 for a prepared command (the same ID and body a batch item carried): a per-item resolution.</summary>
+    internal Task<StoreReply<FinishedAttempt>> FinishAsync(StoreCommand<FinishRequest> cmd) =>
+        Record(new StoreCommand<object>(application, cmd.CommandId, cmd.NotAfter, cmd.Body), Operations.Finish,
+            () => Store.FinishAsync(cmd, CancellationToken.None), _ => (cmd.Body.Lease.JobId, cmd.Body.Lease.AttemptId));
+
+    /// <summary>FinishMany/1 (PF-06 batched finish) over prepared Finish commands; one history entry for the call.</summary>
+    internal Task<StoreReply<FinishedMany>> FinishManyAsync(IReadOnlyList<StoreCommand<FinishRequest>> items, Guid? commandId = null,
+        DateTimeOffset? notAfter = null)
+    {
+        var cmd = Command(new FinishManyRequest(items), commandId, notAfter ?? (items.Count == 0 ? null : items.Max(i => i.NotAfter)));
+        return Record(new StoreCommand<object>(application, cmd.CommandId, cmd.NotAfter, cmd.Body), Operations.FinishMany,
+            () => ((IFinishManyStore)Store).FinishManyAsync(cmd, CancellationToken.None));
+    }
+
     internal Task<StoreReply<FinishedAttempt>> RecoverAsync(ExpiredLease expired, Guid? commandId = null, DateTimeOffset? notAfter = null)
     {
         var cmd = Command(new RecoverRequest(expired.JobId, expired.AttemptId, expired.OwnershipToken), commandId, notAfter);

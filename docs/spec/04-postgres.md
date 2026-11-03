@@ -6,6 +6,25 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-02, PF-06 batched finish)
+
+`FinishMany/1` (03 Changes 2026-11-02, PF-06 batched finish) for PostgreSQL. Stop-and-migrate: one new schema revision, no dual path. Lock order, the fresh time after the last lock, receipts, fencing and `synchronous_commit` keep their rules.
+
+- **Migration `0011_finish_many` (schema revision 11).** The manifest gains `"FinishMany": [1]`. Finish's per-job body moves into shared functions, so the Finish decision is written once: `rw_finish_plan_v1` (the 03 §6.4 precedence table: new state and terminal reason) and `rw_finish_job_v1` (§7.7 from the ownership check on: retry decision and the §7.10 close; it takes no lock). `rw_discard_receipt_v1` deletes a receipt placeholder this transaction inserted (an undecided row whose `xmin` is the current transaction) for an item that ends without effect. A released function is never replaced in place (PF-05), so `finish_v1` is dropped and replaced by `finish_v2`, which runs the same statements in the same order through the shared functions (Finish/1 and the staged `StageFinishAsync` call it). No table changes: item receipts are ordinary `Finish` receipts (durable class).
+- **§7.19 FinishMany/1** (`runwick.finish_many_v1`, one `rw_reply_v1` row). Items arrive as parallel arrays (command IDs, NotAfters, fingerprints, leases, outcomes, elapsed, requested delays, errors, retry entropy). Then:
+  1. Bounds (1–32, equal lengths, distinct command IDs and job IDs; otherwise `RWI04`); gates (G1, G2) once; no receipt for the call (`p_fingerprint` NULL).
+  2. **Rank 3:** for each item, in command-ID order, R1–R3 of §6.3 with operation `Finish` and the item's own fingerprint and NotAfter. A replay is that item's outcome; a refusal (`CommandConflict`, `CommandExpired`, `deadline_too_far`, `receipt_incomplete`) is that item's outcome and its placeholder, if inserted, is discarded.
+  3. **J** every job still to decide, one statement, `FOR NO KEY UPDATE` in UUID order (rank 5).
+  4. The plans from the locked rows (`rw_finish_plan_v1`); **K** the active keys of the jobs whose plan is terminal, `FOR UPDATE`, bytewise (rank 6).
+  5. **S** every concurrency scope those jobs require, one statement, `FOR UPDATE` in UUID order (rank 7). Finish has no rate step, so there is no rate rank.
+  6. Fault point `AfterLocksBeforeFreshTime`; the clock once (`now`); `CommandExpired` for the whole call if `now ≥` the call's NotAfter; `BeforeFirstMutation`.
+  7. Per item, in request order: `CommandExpired` if `now ≥` the item's NotAfter; otherwise `rw_finish_job_v1`. Applied → R4 on the item's receipt, then fault point `AfterMutation` step *k* (the item's 1-based position). Refused → the placeholder is discarded.
+  8. The reply: `Applied` with `{"items": [{commandId, status, effect, replayed, code, decidedAt, result}]}`; `replayed = true` when no item applied now, so the client rolls back instead of committing.
+- **Discarding a placeholder instead of rolling back.** A single operation rolls its whole transaction back when it has no effect. Inside a batch the other items commit, and a function has no subtransactions (no `EXCEPTION` blocks, PF-05), so the refused item's own uncommitted placeholder is deleted. Nobody else ever saw it; a concurrent R1 of the same command waits on it and, when this transaction ends, finds no row and inserts its own, exactly as after a rollback. The receipt-placeholder trigger (§4.10) re-reads by key, so a deleted placeholder passes it.
+- **§5.2 row** `FinishMany/1`: gates SHARE / SHARE; receipts: one per item, command-ID order; jobs FOR NO KEY UPDATE, UUID order, one statement; dispatch keys of terminal plans FOR UPDATE, bytewise; scopes FOR UPDATE, UUID order, one statement; dependent writes per item in request order, each as Finish/1. Receipts are the only rank with several rows taken one by one; their sort order (command ID) makes two batches that share commands, or a batch and a single Finish resubmission, wait in one order.
+- **Fault points** (07 table): `AfterLocksBeforeFreshTime` and `BeforeFirstMutation` once, `AfterMutation` once per applied item (step = its position). `finish_v2` keeps Finish/1's points and steps.
+- **PERF-01:** `FinishMany` = 1 command (2 round trips with COMMIT) for 2 items and for 8 items. Per job with one `ReserveAndBegin` and one `FinishMany` over *n* jobs: Dispatch 2 + 2/*n* + 2/*n*.
+
 ## Changes (2026-11-02, idle caps)
 
 - The listener session of PF-07 also reports a lost or refused session (`onLost`) before its reconnect back-off. Workers, the scheduler and the relay use the longer idle caps only between a subscription and a loss (05/13/14 Changes 2026-11-02, idle caps). Nothing else changes: no SQL, migration or round trip.

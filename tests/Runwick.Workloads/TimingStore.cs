@@ -10,7 +10,7 @@ namespace Runwick.Workloads;
 /// (<c>controlWait</c>, from the engine's own tracking). Also derives the renewal margin (previous expiry − Renew decision,
 /// both store instants) and due-to-Begin (<c>eligible_at</c> from the Reserve cursor → Begin decision).
 /// </summary>
-internal sealed class TimingStore(IRunwickStore inner, Metrics metrics, bool detailed = false) : IRunwickStore, ILeaseBatchStore, IReserveAndBeginStore, IWakeNotificationSource
+internal sealed class TimingStore(IRunwickStore inner, Metrics metrics, bool detailed = false) : IRunwickStore, ILeaseBatchStore, IReserveAndBeginStore, IFinishManyStore, IWakeNotificationSource
 {
     // Wake notifications pass straight through (05 §7.2, PF-07); they are not store calls and are not timed.
     public Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, Action onLost, CancellationToken ct) =>
@@ -197,6 +197,36 @@ internal sealed class TimingStore(IRunwickStore inner, Metrics metrics, bool det
         if (reply.Status is StoreStatus.Applied or StoreStatus.StaleLease or StoreStatus.InvalidState)
         {
             Forget(command.Body.Lease.AttemptId);
+        }
+
+        return reply;
+    }
+
+    /// <summary>
+    /// FinishMany (PF-06 batched finish): timed as <c>finishMany</c>, with the item count as <c>finishManySize</c> and each
+    /// item's status counted as <c>finishMany.item:{status}</c>. An inner store without the operation answers
+    /// UnsupportedVersion, and the engine falls back to Finish/1 per item.
+    /// </summary>
+    public async Task<StoreReply<FinishedMany>> FinishManyAsync(StoreCommand<FinishManyRequest> command, CancellationToken ct)
+    {
+        if (inner is not IFinishManyStore batch)
+        {
+            return StoreReply<FinishedMany>.NoEffect(StoreStatus.UnsupportedVersion, new StoreError("operation_unsupported"), DateTimeOffset.UtcNow);
+        }
+
+        var reply = await Timed("finishMany", () => batch.FinishManyAsync(command, ct), S).ConfigureAwait(false);
+        metrics.Observe("finishManySize", command.Body.Items.Count);
+        if (reply is { Status: StoreStatus.Applied, Value: { } value })
+        {
+            for (var i = 0; i < value.Outcomes.Count && i < command.Body.Items.Count; i++)
+            {
+                var o = value.Outcomes[i];
+                metrics.Count($"finishMany.item:{S(o)}");
+                if (o.Status is StoreStatus.Applied or StoreStatus.StaleLease or StoreStatus.InvalidState)
+                {
+                    Forget(command.Body.Items[i].Body.Lease.AttemptId);
+                }
+            }
         }
 
         return reply;
