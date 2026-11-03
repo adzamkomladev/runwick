@@ -35,7 +35,7 @@ internal enum CallEffect
 /// command ID (so resubmissions replay), leases, executions and finishes. The script decides each call's fate
 /// before (<see cref="Before"/>) and after (<see cref="DropReply"/>) the effect.
 /// </summary>
-internal sealed class ScriptedStore(TimeProvider time) : IRunwickStore, IWakeNotificationSource
+internal class ScriptedStore(TimeProvider time) : IRunwickStore, IWakeNotificationSource
 {
     readonly Lock _lock = new();
     readonly Dictionary<Guid, object> _receipts = [];
@@ -63,6 +63,9 @@ internal sealed class ScriptedStore(TimeProvider time) : IRunwickStore, IWakeNot
 
     /// <summary>Every call, in arrival order.</summary>
     public ConcurrentQueue<StoreCall> Calls { get; } = new();
+
+    /// <summary>The queue of every reservation, in store admission order (Reserve and ReserveAndBegin alike).</summary>
+    public ConcurrentQueue<string> Admissions { get; } = new();
 
     /// <summary>Decides each call before it is applied; null proceeds.</summary>
     public Func<StoreCall, Task<CallEffect>>? Before { get; set; }
@@ -123,7 +126,7 @@ internal sealed class ScriptedStore(TimeProvider time) : IRunwickStore, IWakeNot
         }
     }
 
-    async Task<T> Run<T>(string operation, Guid commandId, object body, Func<DateTimeOffset, T> apply, CancellationToken ct) where T : class
+    private protected async Task<T> Run<T>(string operation, Guid commandId, object body, Func<DateTimeOffset, T> apply, CancellationToken ct) where T : class
     {
         int submission;
         lock (_lock)
@@ -182,6 +185,7 @@ internal sealed class ScriptedStore(TimeProvider time) : IRunwickStore, IWakeNot
         StoreReply<ReservedJob> r => r.Effect == StoreEffect.Applied,
         StoreReply<FinishedAttempt> r => r.Effect == StoreEffect.Applied,
         StoreReply<ReleasedReservation> r => r.Effect == StoreEffect.Applied,
+        StoreReply<ClaimedJobs> r => r.Effect == StoreEffect.Applied,
         _ => false,
     };
 
@@ -191,6 +195,7 @@ internal sealed class ScriptedStore(TimeProvider time) : IRunwickStore, IWakeNot
         StoreReply<ReservedJob> r => (T)(object)(r with { Replayed = true }),
         StoreReply<FinishedAttempt> r => (T)(object)(r with { Replayed = true }),
         StoreReply<ReleasedReservation> r => (T)(object)(r with { Replayed = true }),
+        StoreReply<ClaimedJobs> r => (T)(object)(r with { Replayed = true }),
         _ => stored,
     };
 
@@ -240,44 +245,57 @@ internal sealed class ScriptedStore(TimeProvider time) : IRunwickStore, IWakeNot
         Run(Operations.Reserve, command.CommandId, command.Body, now =>
         {
             var r = command.Body;
-            var job = _jobs.FirstOrDefault(j => j.State is JobStates.Pending or JobStates.Retrying && j.Intent.Queue == r.Queue
-                && j.Intent.Priority == r.Priority && r.SupportedContracts.Any(c => c.Name == j.Intent.JobName && c.PayloadVersion == j.Intent.PayloadVersion));
-            if (job is null)
-            {
-                return Fail<ReservedJob>(StoreStatus.NoWork, "no_work", now);
-            }
-
-            job.State = JobStates.Reserved;
-            job.Reservations++;
-            job.Lease = new LeaseHandle(job.Id, Guid.CreateVersion7(), r.WorkerInstanceId, Guid.NewGuid(), 1);
-            job.ExpiresAt = now + r.LeaseDuration;
-            job.History.Add("reserved");
-            var i = job.Intent;
-            return StoreReply<ReservedJob>.Applied(new ReservedJob(Position(job), new LeaseGrant(job.Lease, job.ExpiresAt),
-                new JobContract(i.JobName, i.PayloadVersion, i.SerializerProfileId, i.SerializerProfileVersion), new CandidateCursor(job.CreatedAt, job.Id),
-                job.Reservations, i.PayloadUtf8, i.BusinessMetadata, i.DiagnosticMetadata, i.Queue, i.Priority, i.Policy, [], job.CreatedAt), now);
+            return ReserveNext(r.WorkerInstanceId, r.Queue, r.Priority, r.SupportedContracts, r.LeaseDuration, now) is { } reserved
+                ? StoreReply<ReservedJob>.Applied(reserved, now)
+                : Fail<ReservedJob>(StoreStatus.NoWork, "no_work", now);
         }, ct);
+
+    /// <summary>Reserves the lane's next claimable job (caller holds the lock); null when the lane is empty.</summary>
+    private protected ReservedJob? ReserveNext(Guid worker, string queue, string priority, IReadOnlyList<JobContract> contracts, TimeSpan leaseDuration,
+        DateTimeOffset now)
+    {
+        var job = _jobs.FirstOrDefault(j => j.State is JobStates.Pending or JobStates.Retrying && j.Intent.Queue == queue
+            && j.Intent.Priority == priority && contracts.Any(c => c.Name == j.Intent.JobName && c.PayloadVersion == j.Intent.PayloadVersion));
+        if (job is null)
+        {
+            return null;
+        }
+
+        job.State = JobStates.Reserved;
+        job.Reservations++;
+        job.Lease = new LeaseHandle(job.Id, Guid.CreateVersion7(), worker, Guid.NewGuid(), 1);
+        job.ExpiresAt = now + leaseDuration;
+        job.History.Add("reserved");
+        Admissions.Enqueue(queue);
+        var i = job.Intent;
+        return new ReservedJob(Position(job), new LeaseGrant(job.Lease, job.ExpiresAt),
+            new JobContract(i.JobName, i.PayloadVersion, i.SerializerProfileId, i.SerializerProfileVersion), new CandidateCursor(job.CreatedAt, job.Id),
+            job.Reservations, i.PayloadUtf8, i.BusinessMetadata, i.DiagnosticMetadata, i.Queue, i.Priority, i.Policy, [], job.CreatedAt);
+    }
 
     public Task<BeginReply> BeginExecutionAsync(StoreCommand<BeginRequest> command, CancellationToken ct) =>
-        Run(Operations.Begin, command.CommandId, command.Body, now =>
+        Run(Operations.Begin, command.CommandId, command.Body, now => BeginOwned(command.Body.Lease, now), ct);
+
+    /// <summary>Begins the reserved attempt <paramref name="lease"/> owns (caller holds the lock).</summary>
+    private protected BeginReply BeginOwned(LeaseHandle lease, DateTimeOffset now)
+    {
+        var job = Owned(lease);
+        if (job is null || job.ExpiresAt <= now)
         {
-            var job = Owned(command.Body.Lease);
-            if (job is null || job.ExpiresAt <= now)
-            {
-                return new BeginReply(Fail<BegunExecution>(StoreStatus.StaleLease, "stale_lease", now), null);
-            }
+            return new BeginReply(Fail<BegunExecution>(StoreStatus.StaleLease, "stale_lease", now), null);
+        }
 
-            if (job.State != JobStates.Reserved)
-            {
-                return new BeginReply(Fail<BegunExecution>(StoreStatus.InvalidState, "not_reserved", now), null);
-            }
+        if (job.State != JobStates.Reserved)
+        {
+            return new BeginReply(Fail<BegunExecution>(StoreStatus.InvalidState, "not_reserved", now), null);
+        }
 
-            job.State = JobStates.Running;
-            job.Executions++;
-            job.History.Add("begun");
-            return new BeginReply(StoreReply<BegunExecution>.Applied(new BegunExecution(Position(job), new LeaseGrant(job.Lease!, job.ExpiresAt),
-                job.Executions, job.Executions, now), now), null);
-        }, ct);
+        job.State = JobStates.Running;
+        job.Executions++;
+        job.History.Add("begun");
+        return new BeginReply(StoreReply<BegunExecution>.Applied(new BegunExecution(Position(job), new LeaseGrant(job.Lease!, job.ExpiresAt),
+            job.Executions, job.Executions, now), now), null);
+    }
 
     public Task<StoreReply<RenewedLease>> RenewAsync(StoreCommand<RenewRequest> command, CancellationToken ct) =>
         Run(Operations.Renew, command.CommandId, command.Body, now =>
@@ -389,6 +407,29 @@ internal sealed class ScriptedStore(TimeProvider time) : IRunwickStore, IWakeNot
             return Task.FromResult(expired);
         }
     }
+}
+
+/// <summary>
+/// The scripted store with the batched claim (ReserveAndBegin/1, 05 §9.6): up to MaxJobs of the lane's next jobs are
+/// reserved and begun in one call, each exactly as Reserve then Begin would leave it. An empty lane is NoWork.
+/// </summary>
+internal sealed class ScriptedBatchStore(TimeProvider time) : ScriptedStore(time), IReserveAndBeginStore
+{
+    public Task<StoreReply<ClaimedJobs>> ReserveAndBeginAsync(StoreCommand<ReserveAndBeginRequest> command, CancellationToken ct) =>
+        Run(Operations.ReserveAndBegin, command.CommandId, command.Body, now =>
+        {
+            var r = command.Body;
+            var outcomes = new List<ClaimOutcome>();
+            while (outcomes.Count < r.MaxJobs && ReserveNext(r.WorkerInstanceId, r.Queue, r.Priority, r.SupportedContracts, r.LeaseDuration, now) is { } reserved)
+            {
+                var begun = BeginOwned(reserved.Lease.Handle, now).Reply.Value!;
+                outcomes.Add(new ClaimOutcome(reserved.Position.JobId, StoreStatus.Applied, null, reserved, begun, null, null));
+            }
+
+            return outcomes.Count > 0
+                ? StoreReply<ClaimedJobs>.Applied(new ClaimedJobs(outcomes), now)
+                : StoreReply<ClaimedJobs>.NoEffect(StoreStatus.NoWork, new StoreError("no_work"), now);
+        }, ct);
 }
 
 /// <summary>A scripted wake listener session: the test decides when it subscribes, loses its session and notifies.</summary>

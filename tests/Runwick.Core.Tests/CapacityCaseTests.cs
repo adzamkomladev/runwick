@@ -119,6 +119,58 @@ public sealed class CapacityCaseTests
         Assert.Equal(TimeSpan.Zero, lease.OldestWait(e.Engine.Clock.Now));
     }
 
+    // ------------------------------------------------------------------ CAP-02 (batched claim)
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    [Trait("Item", "PF-06")]
+    [Trait("Case", "CAP-02")]
+    public async Task A_queue_hidden_by_a_stale_hint_returns_at_zero_with_its_exact_share_while_batches_run()
+    {
+        // Queues 1:3 in one pool of four slots, over the batched claim. Only "other" has work at first, so every free
+        // slot is claimed in one ReserveAndBegin. Then "default" gets work behind the worker's back, as a queue resumed
+        // by another process does (no wake: 05 Changes 2026-11-02, idle caps). Until the hint expires (2 s) the snapshot
+        // still hides "default", so every admission goes to "other": that is §8.3 over the snapshot, not a share error.
+        await using var e = EngineFixture.Create(concurrency: 4, batch: true, configure: r => r.Queue("other"), pool: p => p.Queue("other", 3));
+
+        // Each handler takes 200 ms of fake time, so four slots admit about 20 jobs a second and neither queue runs dry.
+        e.Script.Default = (_, _, _) => Task.Delay(TimeSpan.FromMilliseconds(200), e.Time, CancellationToken.None);
+        for (var i = 0; i < 400; i++)
+        {
+            e.AddTo("other", "o" + i);
+        }
+
+        await e.StartAsync();
+        await e.RunUntilAsync(() => e.Store.Admissions.Count >= 20, Long, "20 admissions");
+        Assert.True(e.Engine.Pools.Single().BatchClaims > 0, "the single-queue phase claims in batches");
+
+        // Right after a fresh probe, so the hint that hides "default" has its full 2 s to live.
+        var probes = Interlocked.Read(ref e.Engine.Readiness.Probes);
+        await e.RunUntilAsync(() => Interlocked.Read(ref e.Engine.Readiness.Probes) > probes, Long, "a fresh probe", TimeSpan.FromMilliseconds(5));
+        await EngineFixture.SettleAsync();
+        var mark = e.Store.Admissions.Count;
+        for (var i = 0; i < 60; i++)
+        {
+            e.AddTo("default", "d" + i);
+        }
+
+        await e.RunUntilAsync(() => e.Store.Admissions.Skip(mark).Contains("default"), Long, "first admission of the returning queue");
+        var firstD = mark + e.Store.Admissions.Skip(mark).TakeWhile(q => q == "other").Count();
+        await e.RunUntilAsync(() => e.Store.Admissions.Count >= firstD + 48, Long, "48 admissions after the return");
+        var order = e.Store.Admissions.Select(q => q[0]).ToList();
+
+        // The stale hint admitted more than the 8 that CAP-02 (real store) used to skip: measured from the change, the old
+        // window under-counts "default" exactly as the real-store failure did.
+        Assert.True(firstD - mark > 8, $"{firstD - mark} admissions under the stale hint");
+        Assert.InRange(order.Skip(mark + 8).Take(40).Count(k => k == 'd'), 0, 8);
+
+        // Measured from the first admission a fresh snapshot allowed: the returning queue starts at zero and gets exactly
+        // one of every four admissions, never two in a row (no banked credit).
+        var after = order.Skip(firstD).Take(40).ToList();
+        Assert.Equal(10, after.Count(k => k == 'd'));
+        Assert.DoesNotContain(after.Zip(after.Skip(1)), p => p.First == 'd' && p.Second == 'd');
+    }
+
     // ------------------------------------------------------------------ CAP-03
 
     static LaneSelector Selector(LaneSelectionMode mode) => new(new PoolSettings("p", [("default", 1)], 4, mode, (6, 3, 1)));

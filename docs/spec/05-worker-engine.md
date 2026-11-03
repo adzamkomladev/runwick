@@ -4,6 +4,15 @@
 
 Numeric values are restated here where the engine behavior depends on them; [06-defaults.md](06-defaults.md) is the single table of defaults, derived formulas and startup inequalities. Where the two disagree, 06 is authoritative for the number and this file for the behavior.
 
+## Changes (2026-11-03)
+
+Clarification of §9.6 (batched claim) against §8.3 and §8.4. No engine behavior changes.
+
+- **Shares are over the snapshot.** The eligible set `E` of §8.3 is computed from the readiness snapshot, which may be up to 2 s old (§7.2). A queue that is missing from the snapshot (for example a queue resumed by another process, which is not notified: Changes 2026-11-02, idle caps) is not in `E` until the next probe. Every admission made from that snapshot goes to the queues it shows. This was already true for single claims.
+- **A batch is n admissions from one snapshot.** With one eligible queue and one eligible lane, a batch of n makes the same n choices that n single claims from the same snapshot would make, and the selector commits once per begun job, so scores and aging counts end where n single claims leave them. A returning queue still starts at 0 (§8.4 step 4) and gets no burst.
+- **What batching changes.** Only throughput: more admissions fit in the life of one snapshot, so more jobs of the visible queue are admitted before a hidden queue is seen. The bound on *when* a hidden queue is seen does not change (hint age + one probe + one claim). A test that measures shares after a membership change must start counting from the first admission a fresh snapshot allowed, not after a fixed number of admissions (15, CAP-02 real-store half; Core case `A_queue_hidden_by_a_stale_hint_…`).
+- **Not chosen.** Turning the batch off whenever a pool serves more than one queue would keep the pre-batch admission count per snapshot, but it would remove the batched claim from every multi-queue pool and still not make the count exact: single claims on a fast store also admit many jobs per snapshot.
+
 ## Changes (2026-11-02, PF-06 batched finish)
 
 New **§12.5 Batched finish**, used when the store offers `FinishMany/1` (03 Changes 2026-11-02, PF-06 batched finish). Without it the engine settles exactly as before. The settlement lane stays 2 concurrent calls (06).
