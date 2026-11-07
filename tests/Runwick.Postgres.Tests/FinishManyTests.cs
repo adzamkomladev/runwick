@@ -1,3 +1,4 @@
+using Npgsql;
 using Runwick.Harness.Faults;
 using Runwick.Harness.Jobs;
 using Runwick.Harness.Store;
@@ -452,7 +453,7 @@ public sealed class FinishManyTests
         await w.StartAsync();
 
         // After startup's schema check, before any finish: the store now answers 42883 for the batched finish.
-        await f.ExecAsync("ALTER FUNCTION runwick.finish_many_v1 RENAME TO finish_many_v1_hidden");
+        await f.ExecAsync("ALTER FUNCTION runwick.finish_many_v2 RENAME TO finish_many_v2_hidden");
         BusyLane(f);
         await RunJobsAsync(f, w, 24, start: false);
         var completion = w.Engine.Completion;
@@ -461,5 +462,120 @@ public sealed class FinishManyTests
         Assert.True(w.Engine.Health().Diagnostics.Any(d => d.Contains("FinishMany returned UnsupportedVersion", StringComparison.Ordinal)),
             $"last batch failure: {completion.LastBatchFailure}");
         Assert.Empty(await f.HistoryViolations());
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    [Trait("Item", "PF-06")]
+    [Trait("Case", "FM-11")]
+    public async Task The_set_based_finish_writes_exactly_what_the_per_job_finish_writes()
+    {
+        // 04 Changes (2026-11-07, set-based finish): runs of plain succeeded items are closed by a few statements each, the
+        // others one by one. From the same rows, the same batch with the set path off (the fault-hooks variant's switch) and
+        // on must leave identical rows in every table the finish writes and give an identical reply, apart from the decision
+        // time. Runs of plain items (one keyed) sit around a scoped item, a permanent failure and a stale item.
+        await using var f = await DriverFixture.StartAsync(Ns("fm11"));
+        var c = await f.OpenClient(configure: r => TestJobs.Register(r));
+        var leases = await RunningAsync(c, new PingJob("a"), new PingJob("b"), new ResourceJob("c", "r"), new KeyedJob("d", "key-11"),
+            new PingJob("e"), new PingJob("f"), new PingJob("g"), new PingJob("h"));
+        var real = leases[5];
+        leases[5] = real with { OwnershipToken = Guid.NewGuid() };
+        var outcomes = leases.Select((_, i) => i == 4 ? "permanent_failure" : "succeeded").ToArray();
+        var commands = leases.Select(_ => Guid.CreateVersion7()).ToArray();
+
+        var perJob = await FinishInRolledBackTransactionAsync(f, leases, outcomes, commands, perJob: true);
+        var setBased = await FinishInRolledBackTransactionAsync(f, leases, outcomes, commands, perJob: false);
+        Assert.Equal(perJob.Dump, setBased.Dump);
+        Assert.Equal(7, perJob.Dump.Split("\"attempt_finished\"").Length - 1);
+        Assert.Contains("\"ownership_mismatch\"", perJob.Dump, StringComparison.Ordinal);
+
+        // Which path ran: per job, rw_finish_job_v1 eight times; set-based, three runs ([a, b], [d], [g, h]) and c, e, f alone.
+        Assert.Equal((0L, 8L), perJob.Calls);
+        Assert.Equal((3L, 3L), setBased.Calls);
+
+        // Committed through the store, the history is one the ReferenceModel accepts.
+        leases[5] = real;
+        var reply = await c.FinishManyAsync([.. leases.Select(l => c.FinishCommand(l, AttemptOutcome.Succeeded))]);
+        Assert.All(reply.Value!.Outcomes, x => Assert.Equal(StoreStatus.Applied, x.Status));
+        Assert.Empty(await f.HistoryViolations());
+    }
+
+    /// <summary>
+    /// Calls finish_many_v2 directly in a transaction that is rolled back, so both paths start from the same rows. Returns
+    /// the reply and every row the finish writes as normalized JSON, and the calls of the two finish functions.
+    /// </summary>
+    static async Task<(string Dump, (long Plain, long Job) Calls)> FinishInRolledBackTransactionAsync(
+        DriverFixture f, LeaseHandle[] leases, string[] outcomes, Guid[] commands, bool perJob)
+    {
+        await using var conn = new NpgsqlConnection(f.AdminConnectionString);
+        await conn.OpenAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+        var ids = leases.Select(l => l.JobId).ToArray();
+
+        async Task<string> Scalar(string sql)
+        {
+            await using var cmd = new NpgsqlCommand(sql, conn, tx);
+            cmd.Parameters.AddWithValue("app", f.Application);
+            cmd.Parameters.AddWithValue("cmds", commands);
+            cmd.Parameters.AddWithValue("ids", ids);
+            cmd.Parameters.AddWithValue("attempts", leases.Select(l => l.AttemptId).ToArray());
+            cmd.Parameters.AddWithValue("workers", leases.Select(l => l.WorkerInstanceId).ToArray());
+            cmd.Parameters.AddWithValue("tokens", leases.Select(l => l.OwnershipToken).ToArray());
+            cmd.Parameters.AddWithValue("generations", leases.Select(l => l.Generation).ToArray());
+            cmd.Parameters.AddWithValue("outcomes", outcomes);
+            cmd.Parameters.AddWithValue("perjob", perJob ? "on" : "off");
+            return (await cmd.ExecuteScalarAsync())?.ToString() ?? "";
+        }
+
+        // The backend's unflushed function counts may include an earlier transaction's: count the difference.
+        const string CallsSql = """
+            SELECT concat_ws(',', coalesce(pg_stat_get_xact_function_calls('runwick.rw_finish_plain_v1'::regproc), 0),
+                coalesce(pg_stat_get_xact_function_calls('runwick.rw_finish_job_v1'::regproc), 0))
+            """;
+        static long[] Parse(string s) => [.. s.Split(',').Select(x => long.Parse(x, System.Globalization.CultureInfo.InvariantCulture))];
+        await Scalar("SELECT set_config('runwick.finish_per_job', @perjob, true) || set_config('track_functions', 'pl', true)");
+        var before = Parse(await Scalar(CallsSql));
+        var reply = await Scalar("""
+            SELECT jsonb_pretty(to_jsonb(r))
+            FROM runwick.finish_many_v2(@app, gen_random_uuid(), 'FinishMany', runwick.ms_floor(clock_timestamp() + interval '30 seconds'),
+                NULL, 'durable', interval '60 seconds', NULL, ARRAY[(SELECT schema_revision FROM runwick.store_metadata)],
+                (SELECT protocol_epoch FROM runwick.store_metadata), '{"rw:harness": 1}'::jsonb, false, false, false,
+                @cmds, array_fill(runwick.ms_floor(clock_timestamp() + interval '30 seconds'), ARRAY[cardinality(@cmds)]),
+                ARRAY(SELECT sha256(c::text::bytea) FROM unnest(@cmds) AS c), @ids, @attempts, @workers, @tokens, @generations,
+                @outcomes, array_fill(5::bigint, ARRAY[cardinality(@cmds)]), array_fill(NULL::bigint, ARRAY[cardinality(@cmds)]),
+                array_fill(NULL::jsonb, ARRAY[cardinality(@cmds)]), array_fill(7::bigint, ARRAY[cardinality(@cmds)])) AS r
+            """);
+        var calls = Parse(await Scalar(CallsSql)).Zip(before, (a, b) => a - b).ToArray();
+        var dump = await Scalar("""
+            SELECT jsonb_pretty(jsonb_build_object(
+                'jobs', (SELECT jsonb_agg(to_jsonb(j) ORDER BY j.job_id) FROM runwick.jobs AS j WHERE j.job_id = ANY (@ids)),
+                'generations', (SELECT jsonb_agg(to_jsonb(g) ORDER BY g.job_id) FROM runwick.job_generations AS g WHERE g.job_id = ANY (@ids)),
+                'attempts', (SELECT jsonb_agg(to_jsonb(a) ORDER BY a.job_id) FROM runwick.job_attempts AS a WHERE a.job_id = ANY (@ids)),
+                'events', (SELECT jsonb_agg(to_jsonb(e) - 'event_id' || jsonb_build_object('seq', e.event_id - m.first) ORDER BY e.event_id)
+                           FROM runwick.queue_events AS e,
+                                (SELECT min(x.event_id) AS first FROM runwick.queue_events AS x WHERE x.command_id = ANY (@cmds)) AS m
+                           WHERE e.command_id = ANY (@cmds)),
+                'keys', (SELECT jsonb_agg(to_jsonb(k) ORDER BY k.job_name, k.key_kind, k.key) FROM runwick.dispatch_keys AS k),
+                'scopes', (SELECT jsonb_agg(to_jsonb(s) ORDER BY s.scope_id) FROM runwick.concurrency_scopes AS s),
+                'permits', (SELECT jsonb_agg(to_jsonb(p) ORDER BY p.scope_id, p.job_id) FROM runwick.concurrency_permits AS p),
+                'receipts', (SELECT jsonb_agg(jsonb_build_object('command', s.command_id, 'operation', s.operation, 'status', s.status,
+                                 'result', s.result, 'decided_at', s.decided_at) ORDER BY s.command_id)
+                             FROM runwick.storage_commands AS s WHERE s.command_id = ANY (@cmds))))
+            """);
+        var names = await Scalar("""
+            SELECT jsonb_build_object('now', to_jsonb(s.decided_at) #>> '{}', 'nowMs', runwick.rw_ms_v1(s.decided_at)::text,
+                'tx', '"tx_id": "' || pg_current_xact_id() || '"')::text
+            FROM runwick.storage_commands AS s WHERE s.command_id = ANY (@cmds) AND s.decided_at IS NOT NULL LIMIT 1
+            """);
+        await tx.RollbackAsync();
+
+        var n = System.Text.Json.Nodes.JsonNode.Parse(names)!;
+        var text = reply + "\n" + dump;
+        foreach (var key in new[] { "now", "nowMs", "tx" })
+        {
+            text = text.Replace(n[key]!.GetValue<string>(), "<" + key + ">", StringComparison.Ordinal);
+        }
+
+        return (text, (calls[0], calls[1]));
     }
 }

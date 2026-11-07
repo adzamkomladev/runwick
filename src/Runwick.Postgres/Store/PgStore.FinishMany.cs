@@ -8,7 +8,7 @@ internal sealed partial class PgStore : IFinishManyStore
     // ------------------------------------------------------------------ FinishMany/1 (04 §7.19, PF-06 batched finish)
 
     /// <summary>
-    /// Settles up to 32 Finish/1 commands in one transaction (runwick.finish_many_v1). Each item keeps its own command ID,
+    /// Settles up to 32 Finish/1 commands in one transaction (runwick.finish_many_v2). Each item keeps its own command ID,
     /// NotAfter and fingerprint (exactly the ones Finish/1 would send for it) and gets its own durable Finish receipt, so
     /// a single Finish/1 resubmission of an item replays what the batch recorded for it. Items are validated here as
     /// Finish/1 validates its request; an item Finish/1 would refuse before the call makes the whole call InvalidRequest.
@@ -25,14 +25,15 @@ internal sealed partial class PgStore : IFinishManyStore
         }
 
         // Gates; each item's receipt (R1-R3) in command-ID order; J (UUID order), K (terminal plans), S (UUID order); one
-        // fresh clock; then per item rw_finish_job_v1 and its own R4, run in runwick.finish_many_v1.
+        // fresh clock; then runs of plain succeeded items set-based (rw_finish_plain_v1) and every other item through
+        // rw_finish_job_v1 and its own R4, in request order, run in runwick.finish_many_v2.
         var fingerprints = items.Select(i => CommandEnvelopes.Fingerprint(StoreId, i.Application, Operations.Finish, i.CommandId, i.NotAfter,
             CommandEnvelopes.Finish(i.Body))).ToArray();
         var entropy = new long[items.Count];
         System.Security.Cryptography.RandomNumberGenerator.Fill(System.Runtime.InteropServices.MemoryMarshal.AsBytes(entropy.AsSpan()));
         return runner.CallAsync(
             Op(command.Application, command.CommandId, Operations.FinishMany, command.NotAfter, null, PgLane.Settlement),
-            new PgCall("finish_many_v1")
+            new PgCall("finish_many_v2")
                 .Arr("p_command_ids", [.. items.Select(i => i.CommandId)], NpgsqlDbType.Uuid)
                 .Arr("p_not_afters", [.. items.Select(i => PgTime.Floor(i.NotAfter).UtcDateTime)], NpgsqlDbType.TimestampTz)
                 .Arr("p_fingerprints", fingerprints, NpgsqlDbType.Bytea)
