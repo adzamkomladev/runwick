@@ -23,7 +23,7 @@ namespace Runwick.Workloads;
 /// finish per job; then wait up to 60 s for the rest to finish.</item>
 /// </list>
 /// Usage: <c>bench --mode drain|steady [--n 20000] [--rate 100] [--seconds 120] [--workers 16] [--payload 1024]
-/// [--calls 1] [--conn admin-cs] [--db bench_runwick] [--out file.json]</c>. Writes the same JSON shape as the River and pg-boss
+/// [--calls 1] [--conn admin-cs] [--db bench_runwick] [--out file.json] [--trace]</c> (--trace adds per-job stage gaps, held-job and settlement-queue samples, and store call phases). Writes the same JSON shape as the River and pg-boss
 /// benches: <c>system</c>, <c>mode</c>, <c>completionsPerSec</c>, <c>latencyMs {p50, p95, p99, max}</c> (steady).
 /// </summary>
 internal static class BenchMode
@@ -85,9 +85,43 @@ internal static class BenchMode
         var dispatchedAt = new ConcurrentDictionary<Guid, long>(); // steady: dispatch call start (clock ticks)
         var finishedAt = new ConcurrentDictionary<Guid, long>();   // steady: finish seen before the receipt returned
         var latency = new LatencyReservoir();
+        // --trace: per-job stage gaps (reserved -> handler invoked -> finish confirmed) and per-call store phases.
+        var trace = a.Has("trace");
+        var stages = new Metrics();
+        using var phases = trace ? PhaseListener.Attach(stages) : null;
+        var reservedAt = new ConcurrentDictionary<Guid, long>();
+        var invokedAt = new ConcurrentDictionary<Guid, long>();
+        long reservedCount = 0;
         engine.Hooks.Event = (name, entry) =>
         {
             var now = clock.ElapsedTicks;
+            if (trace && entry is not null)
+            {
+                var id = entry.Reserved.Position.JobId;
+                if (name == "reserved")
+                {
+                    Interlocked.Increment(ref reservedCount);
+                    reservedAt[id] = now;
+                }
+                else if (name == "handlerInvoked" && reservedAt.TryGetValue(id, out var r))
+                {
+                    invokedAt[id] = now;
+                    stages.Observe("stage:reserved->handlerInvoked", Ms(now - r));
+                }
+                else if (name is "finished" or "finishReplayed")
+                {
+                    if (invokedAt.TryRemove(id, out var h))
+                    {
+                        stages.Observe("stage:handlerInvoked->finished", Ms(now - h));
+                    }
+
+                    if (reservedAt.TryRemove(id, out var r2))
+                    {
+                        stages.Observe("stage:reserved->finished", Ms(now - r2));
+                    }
+                }
+            }
+
             if (name is "reserved" or "started" or "handlerInvoked")
             {
                 Interlocked.CompareExchange(ref firstClaimTicks, now, -1);
@@ -142,12 +176,25 @@ internal static class BenchMode
             var expected = n - failedDispatch;
             var startTicks = clock.ElapsedTicks;
             await hosted.StartAsync(CancellationToken.None).ConfigureAwait(false);
+            using var sampling = new CancellationTokenSource();
+            var sampler = trace ? Task.Run(async () =>
+            {
+                // Every 10 ms: jobs held by the worker (reserved, not yet confirmed finished) and the settlement queue depth.
+                while (!sampling.IsCancellationRequested)
+                {
+                    stages.Observe("sample:heldJobs", Interlocked.Read(ref reservedCount) - Interlocked.Read(ref finished));
+                    stages.Observe("sample:settlementQueue", engine.Completion.Pending);
+                    await Task.Delay(10).ConfigureAwait(false);
+                }
+            }) : Task.CompletedTask;
             var deadline = Stopwatch.StartNew();
             while (Interlocked.Read(ref finished) < expected && deadline.Elapsed < TimeSpan.FromMinutes(30))
             {
                 await Task.Delay(5).ConfigureAwait(false);
             }
 
+            await sampling.CancelAsync().ConfigureAwait(false);
+            await sampler.ConfigureAwait(false);
             var done = Interlocked.Read(ref finished);
             var first = Interlocked.Read(ref firstClaimTicks);
             var elapsed = Ms(Interlocked.Read(ref lastFinishTicks) - (first < 0 ? startTicks : first)) / 1000;
@@ -253,6 +300,13 @@ internal static class BenchMode
         result["batchClaims"] = engine.Pools.Sum(p => Interlocked.Read(ref p.BatchClaims));
         result["reservesSent"] = engine.Pools.Sum(p => Interlocked.Read(ref p.ReservesSent));
         result["invocations"] = Interlocked.Read(ref engine.Invocations);
+        if (trace)
+        {
+            result["finishesSent"] = Interlocked.Read(ref engine.FinishesSent);
+            result["finishManyCalls"] = Interlocked.Read(ref engine.Completion.BatchesSent);
+            result["trace"] = stages.LatenciesJson();
+        }
+
         result["diagnostics"] = new JsonArray([.. engine.Health().Diagnostics.Select(x => (JsonNode?)x)]);
 
         using (var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
