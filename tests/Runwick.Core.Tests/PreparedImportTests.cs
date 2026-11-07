@@ -318,6 +318,36 @@ public sealed class PreparedImportTests
     // ------------------------------------------------------------------ batch
 
     [Fact]
+    public void Batch_digests_match_the_unshared_02_envelope()
+    {
+        var preparer = TestHost.Preparer(b =>
+        {
+            b.AddJob<PlainJob>();
+            b.AddJob<OtherJob>();
+        });
+        var batch = preparer.PrepareMany(TestHost.StoreId, [new BatchDispatchItem(new PlainJob("a")), new BatchDispatchItem(new OtherJob(2)), new BatchDispatchItem(new PlainJob("c"))], null);
+
+        // The 02 §8.3 envelope built from plain trees, every value encoded where it appears.
+        var bodies = batch.Items.Select((intent, ordinal) => CanonicalValue.Object()
+            .Add("business", Fingerprints.Business("billing", intent))
+            .Add("diagnosticMetadata", Fingerprints.StringMap(intent.DiagnosticMetadata))
+            .Add("ordinal", ordinal)
+            .Add("policy", Fingerprints.Policy(intent.Policy))
+            .Add("proposedJobId", Fingerprints.Uuid(intent.ProposedJobId))
+            .Build());
+        var body = CanonicalValue.Object().Add("continueOnConflict", false).Add("items", CanonicalValue.Array(bodies)).Build();
+        var command = Fingerprints.Digest(Fingerprints.CommandDomain,
+            Fingerprints.Command(TestHost.StoreId, "billing", "DispatchMany", 1, batch.OperationId.Value, batch.NotAfterMs, body));
+
+        Assert.Equal(TestHost.Hex(command), TestHost.Hex(batch.CommandDigest));
+        for (var i = 0; i < batch.Items.Count; i++)
+        {
+            Assert.Equal(TestHost.Hex(Fingerprints.Digest(Fingerprints.BusinessDomain, Fingerprints.Business("billing", batch.Items[i]))), TestHost.Hex(batch.ItemDigests[i].Business));
+            Assert.Equal(TestHost.Hex(Fingerprints.Digest(Fingerprints.PolicyDomain, Fingerprints.Policy(batch.Items[i].Policy))), TestHost.Hex(batch.ItemDigests[i].Policy));
+        }
+    }
+
+    [Fact]
     [Trait("Case", "SER-10")]
     public void Batch_round_trip_and_batch_rules()
     {

@@ -73,15 +73,6 @@ internal static class Fingerprints
         return builder.Build();
     }
 
-    /// <summary>The body of a <c>Dispatch</c>/1 command (spec 02 §8.3).</summary>
-    public static CanonicalValue DispatchBody(CanonicalValue business, DispatchIntent intent) =>
-        CanonicalValue.Object()
-            .Add("business", business)
-            .Add("diagnosticMetadata", StringMap(intent.DiagnosticMetadata))
-            .Add("policy", Policy(intent.Policy))
-            .Add("proposedJobId", Uuid(intent.ProposedJobId))
-            .Build();
-
     /// <summary>The command envelope hashed under <c>runwick.command.v1</c>.</summary>
     public static CanonicalValue Command(Guid storeId, string application, string operation, int operationVersion,
         Guid commandId, long notAfterMs, CanonicalValue body) =>
@@ -100,34 +91,51 @@ internal static class Fingerprints
 
     public static byte[] Digest(string domain, CanonicalValue value) => CanonicalEncoder.Digest(domain, value);
 
+    /// <summary>Digests of a <c>Dispatch</c>/1 item and command (spec 02 §8.3); the business and policy values are encoded once.</summary>
     public static DispatchDigests ForDispatch(Guid storeId, string application, Guid commandId, long notAfterMs, DispatchIntent intent)
     {
-        var business = Business(application, intent);
-        var body = DispatchBody(business, intent);
+        var business = new CanonicalEncoded(CanonicalEncoder.Encode(Business(application, intent)));
+        var policy = new CanonicalEncoded(CanonicalEncoder.Encode(Policy(intent.Policy)));
+        var body = CanonicalValue.Object()
+            .Add("business", business)
+            .Add("diagnosticMetadata", StringMap(intent.DiagnosticMetadata))
+            .Add("policy", policy)
+            .Add("proposedJobId", Uuid(intent.ProposedJobId))
+            .Build();
         return new DispatchDigests(
             Digest(BusinessDomain, business),
-            Digest(PolicyDomain, Policy(intent.Policy)),
+            Digest(PolicyDomain, policy),
             Digest(CommandDomain, Command(storeId, application, "Dispatch", 1, commandId, notAfterMs, body)));
     }
 
-    /// <summary>Digests for each item plus the <c>DispatchMany</c>/1 command digest.</summary>
+    /// <summary>
+    /// Digests for each item plus the <c>DispatchMany</c>/1 command digest. Each item's business value is encoded once
+    /// (for its own digest and inside the command), and each distinct policy instance once for the whole batch.
+    /// </summary>
     public static (IReadOnlyList<DispatchDigests> Items, byte[] Command) ForBatch(
         Guid storeId, string application, Guid commandId, long notAfterMs, bool continueOnConflict, IReadOnlyList<DispatchIntent> items)
     {
         var digests = new List<DispatchDigests>(items.Count);
         var bodies = new List<CanonicalValue>(items.Count);
+        var policies = new Dictionary<ExecutionPolicy, (CanonicalEncoded Value, byte[] Digest)>(ReferenceEqualityComparer.Instance);
         for (var ordinal = 0; ordinal < items.Count; ordinal++)
         {
             var intent = items[ordinal];
-            var business = Business(application, intent);
+            var business = new CanonicalEncoded(CanonicalEncoder.Encode(Business(application, intent)));
+            if (!policies.TryGetValue(intent.Policy, out var policy))
+            {
+                var encoded = new CanonicalEncoded(CanonicalEncoder.Encode(Policy(intent.Policy)));
+                policies[intent.Policy] = policy = (encoded, Digest(PolicyDomain, encoded));
+            }
+
             bodies.Add(CanonicalValue.Object()
                 .Add("business", business)
                 .Add("diagnosticMetadata", StringMap(intent.DiagnosticMetadata))
                 .Add("ordinal", ordinal)
-                .Add("policy", Policy(intent.Policy))
+                .Add("policy", policy.Value)
                 .Add("proposedJobId", Uuid(intent.ProposedJobId))
                 .Build());
-            digests.Add(new DispatchDigests(Digest(BusinessDomain, business), Digest(PolicyDomain, Policy(intent.Policy)), []));
+            digests.Add(new DispatchDigests(Digest(BusinessDomain, business), policy.Digest, []));
         }
 
         var body = CanonicalValue.Object()

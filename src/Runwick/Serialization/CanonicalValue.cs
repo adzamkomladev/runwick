@@ -43,6 +43,10 @@ internal sealed record CanonicalArray(IReadOnlyList<CanonicalValue> Items) : Can
 
 internal sealed record CanonicalObject(IReadOnlyList<KeyValuePair<string, CanonicalValue>> Properties) : CanonicalValue;
 
+/// <summary>A value already encoded by <see cref="CanonicalEncoder.Encode"/>, written verbatim (a value hashed alone and
+/// inside a larger envelope is encoded once).</summary>
+internal sealed record CanonicalEncoded(byte[] Bytes) : CanonicalValue;
+
 internal sealed class CanonicalObjectBuilder
 {
     readonly List<KeyValuePair<string, CanonicalValue>> _properties = [];
@@ -87,12 +91,16 @@ internal static class CanonicalEncoder
         return buffer.ToArray();
     }
 
-    public static byte[] Digest(string domain, CanonicalValue value)
+    public static byte[] Digest(string domain, CanonicalValue value) =>
+        DigestEncoded(domain, value is CanonicalEncoded e ? e.Bytes : Encode(value));
+
+    /// <summary>The digest of a value already encoded by <see cref="Encode"/>.</summary>
+    public static byte[] DigestEncoded(string domain, byte[] encoded)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         hash.AppendData(Encoding.ASCII.GetBytes(domain));
         hash.AppendData([0]);
-        hash.AppendData(Encode(value));
+        hash.AppendData(encoded);
         return hash.GetHashAndReset();
     }
 
@@ -100,6 +108,9 @@ internal static class CanonicalEncoder
     {
         switch (value)
         {
+            case CanonicalEncoded e:
+                output.Write(e.Bytes);
+                break;
             case CanonicalNull:
                 output.WriteByte(TagNull);
                 break;
