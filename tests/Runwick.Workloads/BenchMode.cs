@@ -16,7 +16,7 @@ namespace Runwick.Workloads;
 /// dropped and recreated for every run (so leftovers from earlier runs never count). The worker uses the shipped
 /// PostgreSQL store directly, so it claims with the batched ReserveAndBegin command whenever several slots are free.
 /// <list type="bullet">
-/// <item><c>drain</c>: dispatch <c>--n</c> jobs first (DispatchMany, 100 per call), then start the worker and time the
+/// <item><c>drain</c>: dispatch <c>--n</c> jobs first (DispatchMany, 100 per call, <c>--calls n</c> callers side by side), then start the worker and time the
 /// first claim to the last confirmed finish.</item>
 /// <item><c>steady</c>: start the worker, dispatch single jobs at <c>--rate</c>/s for <c>--seconds</c> (one call at a time
 /// like the River and pg-boss benches, or open loop with <c>--calls n</c>), and measure dispatch call start to confirmed
@@ -163,16 +163,22 @@ internal static class BenchMode
 
         if (mode == "drain")
         {
+            // --calls n: n callers send DispatchMany chunks side by side (the producer admits n concurrent calls).
             var insertWatch = Stopwatch.StartNew();
-            for (var i = 0; i < n; i += Chunk)
+            var nextChunk = -1;
+            await Task.WhenAll(Enumerable.Range(0, calls).Select(_ => Task.Run(async () =>
             {
-                var items = Enumerable.Range(0, Math.Min(Chunk, n - i))
-                    .Select(_ => new BatchDispatchItem(LoadJob.Create(++sequence, payload))).ToList();
-                var receipt = await dispatcher.DispatchManyAsync(items).ConfigureAwait(false);
-                failedDispatch += receipt.Items.Count(x => x.Receipt is null);
-            }
+                for (var c = Interlocked.Increment(ref nextChunk); c * Chunk < n; c = Interlocked.Increment(ref nextChunk))
+                {
+                    var items = Enumerable.Range(0, Math.Min(Chunk, n - c * Chunk))
+                        .Select(_ => new BatchDispatchItem(LoadJob.Create(Interlocked.Increment(ref sequence), payload))).ToList();
+                    var receipt = await dispatcher.DispatchManyAsync(items).ConfigureAwait(false);
+                    Interlocked.Add(ref failedDispatch, receipt.Items.Count(x => x.Receipt is null));
+                }
+            }))).ConfigureAwait(false);
 
             result["insertSeconds"] = Math.Round(insertWatch.Elapsed.TotalSeconds, 3);
+            result["insertCalls"] = calls;
             var expected = n - failedDispatch;
             var startTicks = clock.ElapsedTicks;
             await hosted.StartAsync(CancellationToken.None).ConfigureAwait(false);
