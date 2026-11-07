@@ -115,6 +115,49 @@ How to read it:
 - **The 100/s row is not a worker problem.** The test only managed to *add* 6,431 jobs in 120 s (about 54 a second), and every job it added finished, with a median of 53 ms. Adding jobs one at a time is the limit here. The drain runs show it too: adding the 20,000 jobs took Runwick 19 to 22 s, against 1 to 2 s for River.
 - Full test suites passed on the set-based code: Core 388 of 388, Postgres 321 of 321.
 
+## Update: set-based finish and adding (2026-11-07, `c0dd23d`)
+
+Three more changes went into main:
+
+- **Set-based finish:** ordinary successful jobs are closed with one statement per table (schema revision 13).
+- **Finish lane 2 to 4:** up to four finish calls at once. The control pool went from 6 to 8 connections.
+- **Set-based adding:** a group of jobs is written with one statement per table, and the client computes each job's digest once (schema revision 14).
+
+Rows recorded per job are unchanged. A check of the claim loop found no avoidable waits.
+
+A one-trip add, with the commit sent in the same trip, was also built and measured. It gave no gain on this machine and was not merged.
+
+Full suites on the merged code: Core 389 of 389, Outbox 36 of 36, Postgres 328 of 328.
+
+**Old main against new main, back to back** (load 6 to 38):
+
+| Run | Before | After |
+|---|---|---|
+| Drain, 16 workers | 92, 132 | 126, 161 |
+| Drain, 64 workers | 264, 297 | 301, 346 |
+| Steady 100/s | 44, 34 | 41, 31 |
+
+**Comparison rerun on `c0dd23d`** (load 10 to 22, busier than the previous rerun):
+
+| Run | Previous rerun | This rerun |
+|---|---|---|
+| River, default, 16 workers | 142 | 145 |
+| River, cooldown 1 ms | 956 | 663 |
+| River, 100/s arriving | 99.4 | 99.6 (kept up) |
+| pg-boss, 1 per fetch | 31.6 | 31.4 |
+| pg-boss, batch of 16 | 721 | 416 |
+| pg-boss, 100/s arriving | 31.8 | 31.2 (fell far behind) |
+| Runwick, 16 workers | 143 | 108 |
+| Runwick, 64 workers | 312 | 283 |
+| Runwick, 100/s arriving | 53.5 | 33.6 (only 4,035 jobs added) |
+
+How to read it:
+
+- The machine was much busier during this rerun. The tuned River and batched pg-boss rows fell by 30 to 40 percent, and neither of those changed at all. Read the drop in the Runwick rows the same way.
+- The back-to-back test above is the fairer measure of the new changes: new main was faster in every drain run.
+- With 64 workers, Runwick still runs about twice as fast as River's default settings. Tuned River is still well ahead.
+- The 100/s steady test is still limited by how fast jobs can be added one at a time, not by running them.
+
 ## What is not done
 
 - 100 jobs a second is not reached (P-01, P-09, and the steady 100/s comparison). For the steady comparison the limit is now adding jobs, not running them.
