@@ -68,19 +68,19 @@ public sealed class ReadinessPlanTests
     /// Reserve's candidate claim, step C of <c>runwick.reserve_v2</c> (04 Changes 2026-11-02, PF-05 and PF-06 batched claim),
     /// as a plain statement: the INTO list is dropped and each function argument <c>p_x</c> becomes the parameter <c>@x</c>.
     /// </summary>
-    static string ReserveCandidateSql => CandidateSql("reserve_v2", "-- C: the candidate claim.");
+    static string ReserveCandidateSql => CandidateSql("0010_reserve_and_begin.sql", "reserve_v2", "-- C: the candidate claim.");
 
     /// <summary>
-    /// ReserveAndBegin/1's claim, step C of <c>runwick.reserve_and_begin_v1</c> (PF-06 batched claim): the same statement with
+    /// ReserveAndBegin/1's claim, step C of <c>runwick.reserve_and_begin_v2</c> (PF-06 batched claim): the same statement with
     /// <c>LIMIT v_max</c>, which becomes the parameter <c>@max</c>.
     /// </summary>
-    static string ClaimCandidateSql => CandidateSql("reserve_and_begin_v1", "-- C: the candidate claim (").Replace("v_max", "@max", StringComparison.Ordinal);
+    static string ClaimCandidateSql => CandidateSql("0012_set_claim.sql", "reserve_and_begin_v2", "-- C: the candidate claim (").Replace("v_max", "@max", StringComparison.Ordinal);
 
-    static string CandidateSql(string function, string marker)
+    static string CandidateSql(string file, string function, string marker)
     {
-        var text = SqlFile("0010_reserve_and_begin.sql");
+        var text = SqlFile(file);
         var at = text.IndexOf("CREATE FUNCTION runwick." + function + "(", StringComparison.Ordinal);
-        Assert.True(at >= 0, function + " not found in 0010_reserve_and_begin.sql");
+        Assert.True(at >= 0, function + " not found in " + file);
         var start = text.IndexOf("SELECT j.job_id", text.IndexOf(marker, at, StringComparison.Ordinal), StringComparison.Ordinal);
         var end = text.IndexOf("SKIP LOCKED", start, StringComparison.Ordinal) + "SKIP LOCKED".Length;
         var sql = Regex.Replace(text[start..end], @"^\s*INTO [^\n]*\n", "", RegexOptions.Multiline);
