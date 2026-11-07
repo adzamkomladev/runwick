@@ -14,12 +14,12 @@ internal sealed class DispatchPreparer(JobRegistry registry, ProducerOptions opt
     public PreparedDispatch Prepare(Guid storeId, IQueueJob job, DispatchOptions? dispatchOptions)
     {
         ArgumentNullException.ThrowIfNull(job);
-        var (intent, scopes) = PrepareItem(job, dispatchOptions);
+        var (intent, scopes, payload) = PrepareItem(job, dispatchOptions);
         var operationId = Guid.CreateVersion7();
         var notAfter = NotAfterMs();
-        var digests = Fingerprints.ForDispatch(storeId, registry.Application, operationId, notAfter, intent);
+        var digests = Fingerprints.ForDispatch(storeId, registry.Application, operationId, notAfter, intent, payload);
         var prepared = new PreparedDispatch(storeId, registry.Application, operationId, notAfter, intent, digests) { Scopes = scopes };
-        if (prepared.Export().Length > PayloadBounds.MaxEnvelopeBytes)
+        if (PreparedEnvelopeCodec.UpperBound(prepared) > PayloadBounds.MaxEnvelopeBytes && prepared.Export().Length > PayloadBounds.MaxEnvelopeBytes)
         {
             throw new DispatchValidationException(RunwickErrorCodes.EnvelopeTooLarge,
                 $"The prepared envelope exceeds {PayloadBounds.MaxEnvelopeBytes} bytes.");
@@ -42,6 +42,7 @@ internal sealed class DispatchPreparer(JobRegistry registry, ProducerOptions opt
         }
 
         var intents = new List<DispatchIntent>(items.Count);
+        var payloads = new List<CanonicalValue>(items.Count);
         var scopes = new List<IReadOnlyList<ScopeRequirement>>(items.Count);
         var failures = new List<BatchItemFailure>();
         for (var ordinal = 0; ordinal < items.Count; ordinal++)
@@ -49,8 +50,9 @@ internal sealed class DispatchPreparer(JobRegistry registry, ProducerOptions opt
             try
             {
                 var item = items[ordinal] ?? throw new DispatchValidationException(RunwickErrorCodes.InvalidPolicy, "Batch item is null.");
-                var (intent, s) = PrepareItem(item.Job, item.Options);
+                var (intent, s, payload) = PrepareItem(item.Job, item.Options);
                 intents.Add(intent);
+                payloads.Add(payload);
                 scopes.Add(s);
             }
             catch (DispatchValidationException ex)
@@ -68,12 +70,13 @@ internal sealed class DispatchPreparer(JobRegistry registry, ProducerOptions opt
         var operationId = Guid.CreateVersion7();
         var notAfter = NotAfterMs();
         var continueOnConflict = batchOptions?.ContinueOnConflict ?? false;
-        var (digests, command) = Fingerprints.ForBatch(storeId, registry.Application, operationId, notAfter, continueOnConflict, intents);
+        var (digests, command) = Fingerprints.ForBatch(storeId, registry.Application, operationId, notAfter, continueOnConflict, intents, payloads);
         var prepared = new PreparedBatch(storeId, registry.Application, operationId, notAfter, continueOnConflict, intents, digests, command)
         {
             Scopes = scopes,
         };
-        if (prepared.Export().Length > PayloadBounds.MaxEnvelopeBytes)
+        // The exact envelope is built only when the cheap upper bound does not already prove it fits.
+        if (PreparedEnvelopeCodec.UpperBound(prepared) > PayloadBounds.MaxEnvelopeBytes && prepared.Export().Length > PayloadBounds.MaxEnvelopeBytes)
         {
             throw new DispatchValidationException(RunwickErrorCodes.BatchEnvelopeTooLarge,
                 $"The batch envelope exceeds {PayloadBounds.MaxEnvelopeBytes} bytes; split the batch.");
@@ -126,7 +129,8 @@ internal sealed class DispatchPreparer(JobRegistry registry, ProducerOptions opt
         })];
     }
 
-    internal (DispatchIntent Intent, IReadOnlyList<ScopeRequirement> Scopes) PrepareItem(IQueueJob job, DispatchOptions? o)
+    /// <summary>Validates one job; also returns the payload's canonical value (02 §8.1), so digests need not rescan it.</summary>
+    internal (DispatchIntent Intent, IReadOnlyList<ScopeRequirement> Scopes, CanonicalValue Payload) PrepareItem(IQueueJob job, DispatchOptions? o)
     {
         ArgumentNullException.ThrowIfNull(job);
         var compiled = registry.ByType(job.GetType())
@@ -315,7 +319,7 @@ internal sealed class DispatchPreparer(JobRegistry registry, ProducerOptions opt
             compiled.Name, compiled.CurrentVersion, RunwickJsonProfile.ProfileId, RunwickJsonProfile.ProfileVersion,
             payload.Utf8, queue, priority, notBefore, scopeRefs, ScopeRef.Normalize(rateRefs), activeKey, windowKey, windowMs,
             business, diagnostic, compiled.Policy, Guid.CreateVersion7());
-        return (intent, scopes);
+        return (intent, scopes, payload.Canonical);
     }
 
     static string? RunSelector(Func<object, string> selector, object job, bool required)

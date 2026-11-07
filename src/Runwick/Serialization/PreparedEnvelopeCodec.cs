@@ -68,6 +68,46 @@ internal static partial class PreparedEnvelopeCodec
         return w.ToArray();
     }
 
+    // ---------------------------------------------------------------- size bound
+    // An upper bound on the UTF-8 length of Write(...), from lengths alone, so Prepare can skip building the envelope
+    // when it surely fits. Quote writes at most 6 bytes per UTF-16 unit ("\u00XX"; a plain unit is at most 3 UTF-8
+    // bytes); base64 is exactly 4·ceil(n/3) ASCII bytes. Fixed text (member names, punctuation, numbers ≤ 20 digits,
+    // UUIDs, hex digests, enum words) is covered by generous constants: header 1,024 and item 4,096 bytes.
+
+    const long HeaderBound = 1024;
+    const long ItemBound = 4096;
+    const long EntryBound = 64;
+
+    static long Text(string? value) => value is null ? 4 : 6L * value.Length + 2;
+
+    static long ItemUpperBound(DispatchIntent intent)
+    {
+        var n = ItemBound + 4L * ((intent.PayloadUtf8.Length + 2) / 3)
+            + Text(intent.JobName) + Text(intent.SerializerProfileId) + Text(intent.Queue) + Text(intent.Priority)
+            + Text(intent.ActiveKey) + Text(intent.WindowKey)
+            + Text(intent.Policy.Retry.Backoff) + Text(intent.Policy.Retry.JitterKind)
+            + Text(intent.Policy.UnstartedRetry.Backoff) + Text(intent.Policy.UnstartedRetry.JitterKind);
+        foreach (var s in intent.ConcurrencyScopes.Concat(intent.RateScopes))
+        {
+            n += EntryBound + Text(s.Kind) + Text(s.Key);
+        }
+
+        foreach (var (k, v) in intent.BusinessMetadata.Concat(intent.DiagnosticMetadata))
+        {
+            n += EntryBound + Text(k) + Text(v);
+        }
+
+        return n;
+    }
+
+    /// <summary>At least the byte length of <see cref="Write(PreparedDispatch)"/>.</summary>
+    public static long UpperBound(PreparedDispatch prepared) =>
+        HeaderBound + Text(prepared.Application) + ItemUpperBound(prepared.Intent);
+
+    /// <summary>At least the byte length of <see cref="Write(PreparedBatch)"/>.</summary>
+    public static long UpperBound(PreparedBatch prepared) =>
+        HeaderBound + Text(prepared.Application) + prepared.Items.Sum(ItemUpperBound);
+
     static void WriteHeader(EnvelopeWriter w, string format, Guid storeId, string application, string operation, Guid operationId, long notAfterMs)
     {
         w.Member("format").String(format);
