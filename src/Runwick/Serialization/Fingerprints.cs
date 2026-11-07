@@ -91,10 +91,15 @@ internal static class Fingerprints
 
     public static byte[] Digest(string domain, CanonicalValue value) => CanonicalEncoder.Digest(domain, value);
 
-    /// <summary>Digests of a <c>Dispatch</c>/1 item and command (spec 02 §8.3); the business and policy values are encoded once.</summary>
-    public static DispatchDigests ForDispatch(Guid storeId, string application, Guid commandId, long notAfterMs, DispatchIntent intent)
+    /// <summary>
+    /// Digests of a <c>Dispatch</c>/1 item and command (spec 02 §8.3); the business and policy values are encoded once.
+    /// <c>payload</c> is the payload's canonical value when the caller already has it (from serialization); otherwise it
+    /// is scanned from <see cref="DispatchIntent.PayloadUtf8"/>. Either way it is the same value of the same bytes.
+    /// </summary>
+    public static DispatchDigests ForDispatch(Guid storeId, string application, Guid commandId, long notAfterMs, DispatchIntent intent,
+        CanonicalValue? payload = null)
     {
-        var business = new CanonicalEncoded(CanonicalEncoder.Encode(Business(application, intent)));
+        var business = new CanonicalEncoded(CanonicalEncoder.Encode(payload is null ? Business(application, intent) : Business(application, intent, payload)));
         var policy = new CanonicalEncoded(CanonicalEncoder.Encode(Policy(intent.Policy)));
         var body = CanonicalValue.Object()
             .Add("business", business)
@@ -113,7 +118,8 @@ internal static class Fingerprints
     /// (for its own digest and inside the command), and each distinct policy instance once for the whole batch.
     /// </summary>
     public static (IReadOnlyList<DispatchDigests> Items, byte[] Command) ForBatch(
-        Guid storeId, string application, Guid commandId, long notAfterMs, bool continueOnConflict, IReadOnlyList<DispatchIntent> items)
+        Guid storeId, string application, Guid commandId, long notAfterMs, bool continueOnConflict, IReadOnlyList<DispatchIntent> items,
+        IReadOnlyList<CanonicalValue>? payloads = null)
     {
         var digests = new List<DispatchDigests>(items.Count);
         var bodies = new List<CanonicalValue>(items.Count);
@@ -121,7 +127,8 @@ internal static class Fingerprints
         for (var ordinal = 0; ordinal < items.Count; ordinal++)
         {
             var intent = items[ordinal];
-            var business = new CanonicalEncoded(CanonicalEncoder.Encode(Business(application, intent)));
+            var business = new CanonicalEncoded(CanonicalEncoder.Encode(
+                payloads is null ? Business(application, intent) : Business(application, intent, payloads[ordinal])));
             if (!policies.TryGetValue(intent.Policy, out var policy))
             {
                 var encoded = new CanonicalEncoded(CanonicalEncoder.Encode(Policy(intent.Policy)));

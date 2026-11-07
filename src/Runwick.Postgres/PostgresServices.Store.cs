@@ -15,7 +15,8 @@ internal static partial class PostgresServices
         {
             var registration = sp.GetRequiredService<PostgresStoreRegistration>();
             var application = sp.GetRequiredService<JobRegistry>().Application;
-            return new PgDataSources(registration.ConnectionString, "runwick:" + application);
+            return new PgDataSources(registration.ConnectionString, "runwick:" + application,
+                sp.GetRequiredService<ProducerOptions>().MaxConcurrentCalls);
         });
         services.AddSingleton(sp => new PgRunner(
             sp.GetRequiredService<PgDataSources>(), sp.GetRequiredService<IFaultInjector>(), sp.GetRequiredService<TimeProvider>()));

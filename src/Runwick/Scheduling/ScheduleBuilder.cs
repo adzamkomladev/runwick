@@ -260,7 +260,7 @@ internal static class ScheduleCompiler
             throw Fail("schedule_delay_unsupported", d.Key, "A schedule template cannot carry NotBefore.");
         }
 
-        var (intent, scopes) = preparer.PrepareItem(d.Job, d.Options);
+        var (intent, scopes, _) = preparer.PrepareItem(d.Job, d.Options);
         if (intent.WindowKey is not null)
         {
             throw Fail("schedule_window_unsupported", d.Key, "Window uniqueness on scheduled jobs is not supported in M3.");

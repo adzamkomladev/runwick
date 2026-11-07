@@ -12,7 +12,10 @@ internal enum PgLane
     Background,
 }
 
-/// <summary>Runwick-owned data sources (control 8, work 8) and their call-class gates (04 §9).</summary>
+/// <summary>
+/// Runwick-owned data sources and their call-class gates (04 §9): control 8; work = admission 4 + producer/admin
+/// (<c>ProducerOptions.MaxConcurrentCalls</c>, default 4) + background 2, so V-16 holds by construction.
+/// </summary>
 internal sealed class PgDataSources : IAsyncDisposable
 {
     /// <summary>Idle connections the control pool keeps open (04 §9.2, PF-03); half the settlement lane since 2026-11-07.</summary>
@@ -27,23 +30,28 @@ internal sealed class PgDataSources : IAsyncDisposable
     readonly string _applicationNamePrefix;
     readonly Lazy<NpgsqlDataSource> _control;
     readonly Lazy<NpgsqlDataSource> _work;
-    readonly Dictionary<PgLane, SemaphoreSlim> _lanes = new()
-    {
-        [PgLane.Renewal] = new SemaphoreSlim(4, 4),
-        [PgLane.Settlement] = new SemaphoreSlim(4, 4),
-        [PgLane.Admission] = new SemaphoreSlim(4, 4),
-        [PgLane.Producer] = new SemaphoreSlim(2, 2),
-        [PgLane.Background] = new SemaphoreSlim(2, 2),
-    };
+    readonly Dictionary<PgLane, SemaphoreSlim> _lanes;
 
-    public PgDataSources(string connectionString, string applicationNamePrefix)
+    public PgDataSources(string connectionString, string applicationNamePrefix, int producerCalls)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(producerCalls, 1);
         _connectionString = connectionString;
         _applicationNamePrefix = applicationNamePrefix;
+        _lanes = new()
+        {
+            [PgLane.Renewal] = new SemaphoreSlim(4, 4),
+            [PgLane.Settlement] = new SemaphoreSlim(4, 4),
+            [PgLane.Admission] = new SemaphoreSlim(4, 4),
+            [PgLane.Producer] = new SemaphoreSlim(producerCalls, producerCalls),
+            [PgLane.Background] = new SemaphoreSlim(2, 2),
+        };
         _control = new(() => Build("control", 8));
-        _work = new(() => Build("work", 8));
+        _work = new(() => Build("work", WorkPoolMax(producerCalls)));
         Live.TryAdd(this, 0);
     }
+
+    /// <summary>The work data source's maximum: admission 4 + producer/admin lane + background 2 (06 §1.7, V-16).</summary>
+    internal static int WorkPoolMax(int producerCalls) => 4 + producerCalls + 2;
 
     /// <summary>
     /// Drops every idle pooled connection of every live store in this process on the migrated database, and with them their prepared

@@ -65,6 +65,11 @@ public static class RunwickServiceCollectionExtensions
                 action(options);
             }
 
+            if (options.MaxConcurrentCalls < 1)
+            {
+                throw new InvalidOperationException("ProducerOptions.MaxConcurrentCalls must be at least 1 (06 V-16).");
+            }
+
             return options;
         });
         services.AddSingleton(sp => new RunwickRuntime(

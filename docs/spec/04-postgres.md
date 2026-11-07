@@ -6,6 +6,10 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-07, wider producer lane)
+
+§9.1: the producer/admin class is **4** concurrent calls by default and follows `ProducerOptions.MaxConcurrentCalls`; the work data source maximum is admission 4 + producer/admin + background 2 (**10** by default, 8 before). Per worker group the planning ceiling becomes `8 + 10 = 18` (+1 listener). See 06 Changes 2026-11-07, wider producer lane.
+
 ## Changes (2026-11-07, set-based finish)
 
 `FinishMany/1` settles its common items with a few statements per run of items instead of about ten statements per item. Stop-and-migrate: one new schema revision, no dual path. Nothing changes on the wire or in the manifest: the rows written, their values, the events and their order, each item's own receipt, the reply, the lock order, the fresh time after the last lock, fencing and `synchronous_commit` keep their rules.
@@ -116,7 +120,7 @@ Replaces §5 "Notification: … LISTEN/NOTIFY is not in M2". Polling remains suf
 
 - **Work channel `runwick_wake`.** The Dispatch core (driver-owned Dispatch/DispatchMany, staged dispatch, `ReceiveOutbox/1` and schedule materialization all share it) appends `pg_notify('runwick_wake', application || '/' || queue)` for each distinct queue with a created job eligible now (no `NotBefore`, or one at or before the decision time). It rides in the step-9 events statement as a CTE, so PERF-01 counts are unchanged. PostgreSQL delivers it only when the transaction commits (a staged dispatch: the caller's COMMIT), and folds identical payloads of one transaction. A rolled-back or delayed dispatch never notifies.
 - **Schedule channel `runwick_schedule`.** A newly inserted schedule row (RegisterSchedule `created`), UpdateSchedule and SetScheduleState notify `application || '/' || schedule_key`, inside their existing statements (13 Changes 2026-11-02, PF-07).
-- **Session.** One dedicated unpooled connection per listening component (worker, scheduler), application name `<prefix>:listen`, `KeepAlive` 15 s, no auto-prepare. It is the 05 §18 / 06 "Optional listener" session: per worker process the budget becomes control 6 + work 8 + 1 listener.
+- **Session.** One dedicated unpooled connection per listening component (worker, scheduler), application name `<prefix>:listen`, `KeepAlive` 15 s, no auto-prepare. It is the 05 §18 / 06 "Optional listener" session: per worker process the budget becomes control 8 + work 10 + 1 listener (06 F-13).
 - **Cost under load.** A committing transaction that notified takes PostgreSQL's notify-queue lock briefly at commit, so notifying commits serialize on it. Dispatches that create no eligible-now job (delayed, deduplicated, rejected) do not notify and pay nothing.
 - Lock order, fresh time after locks, receipts and `synchronous_commit` are untouched: `pg_notify` takes no row lock and reads no time.
 
@@ -1871,18 +1875,18 @@ Rate tables, `management_audit`, outbox, scheduler, retention and pool records (
 
 | Data source / class | Max connections or calls | Operations |
 |---|---|---|
-| **Control** data source | **6** connections, minimum 0 | Ownership operations only |
+| **Control** data source | **8** connections (6 before 2026-11-07), minimum 2 (06 §1.7) | Ownership operations only |
 | — renewal lane | 4 concurrent calls | Renew (earliest local safety deadline first) |
 | — settlement lane | 4 concurrent calls (2026-11-07) | Finish, ReleaseReservation and their resolution |
-| **Work** data source | **8** connections, minimum 0 | Everything else |
+| **Work** data source | admission + producer/admin + background: **10** connections by default (8 before 2026-11-07), minimum 0 | Everything else |
 | — admission class | 4 concurrent calls | Reserve, Begin and their resolution |
-| — producer/admin class | 2 concurrent calls | Dispatch/DispatchMany, Register*, ResolveCommand for dispatch |
+| — producer/admin class | `MaxConcurrentCalls` concurrent calls, default 4 (2 before 2026-11-07) | Dispatch/DispatchMany, Register*, ResolveCommand for dispatch |
 | — background class | 2 concurrent calls (heavy work ≤ 1) | ReadinessProbe, PublishPresence, ListExpiredLeases, Recover, receipt cleanup (SP-021) |
 | **Migration** session | 1 dedicated physical session per runner, `Pooling=false` | Migration runner only; not counted in worker budgets |
 | Listener | — | Not in M2 |
 | Caller transaction | caller's connection | StageAsync/StageManyAsync (caller's budget) |
 
-Class ceilings are partitions of the data-source maximum, not additions. No borrowing between renewal and settlement. A call keeps its slot until the provider task has ended and the connection is disposed, even after its local deadline. Producer-only processes create no control data source. Planning ceiling per worker group: 6 + 8 = 14 connections (+1 listener later); six workers + one runner = 6 × 14 + 1 = 85 (91 once listeners exist).
+Class ceilings are partitions of the data-source maximum, not additions. No borrowing between renewal and settlement. A call keeps its slot until the provider task has ended and the connection is disposed, even after its local deadline. Producer-only processes create no control data source. Planning ceiling per worker group: 8 + 10 = 18 connections by default (+1 listener; work = 4 + `MaxConcurrentCalls` + 2); six workers + one runner = 6 × 19 + 1 = 115 with listeners (06 F-13).
 
 ### 9.2 Npgsql settings (driver-owned data sources)
 

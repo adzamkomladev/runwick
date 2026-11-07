@@ -76,6 +76,37 @@ public sealed class PreparedStatementTests
     [Fact]
     [Trait("Category", "Contract")]
     [Trait("Item", "PF-03")]
+    public async Task Producer_lane_and_work_pool_follow_MaxConcurrentCalls()
+    {
+        // 06 Changes 2026-11-07, wider producer lane: default 4; work pool = admission 4 + producer + background 2 (V-16).
+        await using var f = await DriverFixture.StartAsync("lane_" + Guid.NewGuid().ToString("N")[..8]);
+        foreach (var (configured, lane) in new[] { ((int?)null, 4), (6, 6) })
+        {
+            var c = await f.OpenClient(configure: r =>
+            {
+                TestJobs.Register(r);
+                if (configured is { } n)
+                {
+                    r.Producer(o => o.MaxConcurrentCalls = n);
+                }
+            });
+            var sources = (PgDataSources)c.Services.GetService(typeof(PgDataSources))!;
+            Assert.Equal(lane, sources.Gate(PgLane.Producer).CurrentCount);
+            Assert.Equal(4 + lane + 2, new NpgsqlConnectionStringBuilder(sources.For(PgLane.Producer).ConnectionString).MaxPoolSize);
+            Assert.Equal(8, new NpgsqlConnectionStringBuilder(sources.For(PgLane.Renewal).ConnectionString).MaxPoolSize);
+        }
+
+        var bad = await Assert.ThrowsAnyAsync<Exception>(() => f.OpenClient(configure: r =>
+        {
+            TestJobs.Register(r);
+            r.Producer(o => o.MaxConcurrentCalls = 0);
+        }));
+        Assert.Contains("MaxConcurrentCalls", bad.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    [Trait("Item", "PF-03")]
     [Trait("Case", "DEP-08")]
     public async Task A_schema_change_under_load_is_a_transient_retry_never_a_failure()
     {

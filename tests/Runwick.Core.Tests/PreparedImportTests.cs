@@ -348,6 +348,56 @@ public sealed class PreparedImportTests
     }
 
     [Fact]
+    public void Prepare_digests_equal_a_rescan_and_the_envelope_size_bound_holds()
+    {
+        var preparer = TestHost.Preparer(b =>
+        {
+            b.AddJob<PlainJob>();
+            b.AddJob<OtherJob>();
+        });
+
+        // Prepare reuses the payload's canonical value from serialization: the digests equal a fresh scan of the bytes.
+        var nasty = "\u0001\"\\\n\u2028é\uD83D\uDE00" + new string('\u001f', 40);
+        var single = preparer.Prepare(new PlainJob(nasty), null);
+        var rescan = Fingerprints.ForDispatch(TestHost.StoreId, "billing", single.OperationId.Value, single.NotAfterMs, single.Intent);
+        Assert.Equal(TestHost.Hex(rescan.Business), TestHost.Hex(single.Digests.Business));
+        Assert.Equal(TestHost.Hex(rescan.Policy), TestHost.Hex(single.Digests.Policy));
+        Assert.Equal(TestHost.Hex(rescan.Command), TestHost.Hex(single.Digests.Command));
+
+        // The size bound Prepare uses to skip building the envelope is never below the real length, even when every
+        // string field needs the widest escape.
+        var batch = preparer.PrepareMany(TestHost.StoreId,
+            [.. Enumerable.Range(0, 100).Select(i => new BatchDispatchItem(i % 2 == 0 ? new PlainJob(nasty + i) : new OtherJob(i)))], null);
+        Assert.InRange(batch.Export().Length, 1, PreparedEnvelopeCodec.UpperBound(batch));
+        Assert.InRange(single.Export().Length, 1, PreparedEnvelopeCodec.UpperBound(single));
+
+        var retry = new RetryPolicy(nasty, int.MinValue, nasty, long.MinValue, long.MinValue);
+        var worst = single.Intent with
+        {
+            JobName = nasty,
+            Queue = nasty,
+            Priority = nasty,
+            SerializerProfileId = nasty,
+            ActiveKey = nasty,
+            WindowKey = nasty,
+            WindowMs = long.MinValue,
+            NotBeforeMs = long.MinValue,
+            BusinessMetadata = new Dictionary<string, string> { [nasty] = nasty, ["b" + nasty] = nasty },
+            DiagnosticMetadata = new Dictionary<string, string> { [nasty] = nasty },
+            ConcurrencyScopes = [new ScopeRef(nasty, nasty), new ScopeRef("q", nasty)],
+            RateScopes = [new ScopeRef(nasty, nasty)],
+            PayloadVersion = int.MinValue,
+            SerializerProfileVersion = int.MinValue,
+            Policy = new ExecutionPolicy(int.MinValue, long.MinValue, retry, int.MinValue, retry),
+        };
+        var worstSingle = new PreparedDispatch(TestHost.StoreId, nasty, single.OperationId.Value, long.MinValue, worst, single.Digests);
+        Assert.InRange(PreparedEnvelopeCodec.Write(worstSingle).Length, 1, PreparedEnvelopeCodec.UpperBound(worstSingle));
+        var worstBatch = new PreparedBatch(TestHost.StoreId, nasty, batch.OperationId.Value, long.MinValue, true,
+            [worst, worst, worst], [single.Digests, single.Digests, single.Digests], batch.CommandDigest);
+        Assert.InRange(PreparedEnvelopeCodec.Write(worstBatch).Length, 1, PreparedEnvelopeCodec.UpperBound(worstBatch));
+    }
+
+    [Fact]
     [Trait("Case", "SER-10")]
     public void Batch_round_trip_and_batch_rules()
     {
