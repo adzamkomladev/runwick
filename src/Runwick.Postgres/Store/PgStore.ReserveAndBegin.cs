@@ -22,7 +22,8 @@ internal sealed partial class PgStore : IReserveAndBeginStore
             CommandEnvelopes.ReserveAndBegin(request));
 
         // Q, C (up to MaxJobs candidates, SKIP LOCKED), K/S/R across the claimed jobs in lock order, one fresh clock, then
-        // per job rw_reserve_job_v1 and rw_begin_job_v1, and one R4 for the command, run in runwick.reserve_and_begin_v1.
+        // runs of plain jobs set-based (rw_claim_plain_v1) and every other job through rw_reserve_job_v1 and rw_begin_job_v1, in
+        // candidate order, and one R4 for the command, run in runwick.reserve_and_begin_v2.
         // One ownership token and one defer jitter per possible job are drawn here and sent with the call.
         var tokens = new Guid[request.MaxJobs];
         var jitters = new int[request.MaxJobs];
@@ -34,7 +35,7 @@ internal sealed partial class PgStore : IReserveAndBeginStore
 
         return runner.CallAsync(
             Op(command.Application, command.CommandId, Operations.ReserveAndBegin, command.NotAfter, fingerprint, PgLane.Admission),
-            new PgCall("reserve_and_begin_v1").P("p_queue", request.Queue).P("p_priority", request.Priority)
+            new PgCall("reserve_and_begin_v2").P("p_queue", request.Queue).P("p_priority", request.Priority)
                 .P("p_after_eligible_at", request.After?.EligibleAt).P("p_after_job_id", request.After?.JobId)
                 .Arr("p_names", [.. contracts.Select(x => x.Name)], NpgsqlDbType.Text)
                 .Arr("p_versions", [.. contracts.Select(x => x.PayloadVersion)], NpgsqlDbType.Integer)
