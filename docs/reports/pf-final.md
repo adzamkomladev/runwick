@@ -8,6 +8,7 @@ Date: 2026-11-07. Code tested: `799766d` (main). Every speed number below was ta
 - It still does **not** reach the goal of 100 jobs a second on this machine. Two of the three speed tests below fell behind and built up a backlog.
 - Nothing was lost or delivered twice in any run, and no guarantee was weakened.
 - Against River and pg-boss on the same database, Runwick is ahead of pg-boss and behind River in this setup. The comparison is rough (see the caveats).
+- **Update, same day:** a later change (set-based claim, `0243c17`) roughly doubled Runwick's drain speed. Runwick now matches River's default settings at 16 workers and passes it at 64. See "Update: set-based claim" below.
 
 ## What changed
 
@@ -73,13 +74,50 @@ How to read it:
 
 - Runwick beats pg-boss's default way of working and loses to pg-boss when pg-boss uses batches.
 - Runwick is behind River, both at default and tuned, even with more workers.
-- Runwick's difference is deliberate: it waits for each change to reach disk, rejects stale workers' late writes, and keeps a record that makes retries safe. River and pg-boss skip some of that.
+- A later trace showed the gap was mostly how Runwick claimed jobs (one database function call per job), not its safety rules. River also waits for each change to reach disk.
 - Caveats: Runwick's default is 4 workers, so the 16 and 64 worker rows are not its defaults. The pg-boss batch row uses 1 worker. The numbers come from one run each, on a noisy host.
 - The first attempt at this comparison failed because the `runwick-pg` container was stopped. It was restarted and the comparison rerun in full.
 
+## Update: set-based claim (2026-11-07, `0243c17`)
+
+A trace of the drain run showed that claiming jobs, not finishing them, was what held Runwick back. Workers sat idle waiting for claims, while the queue of jobs waiting to be finished was nearly empty. The fix: ordinary jobs (no scope, no rate limit, no cancel request) are now claimed and started with one SQL statement for the whole group, instead of one function call per job. Jobs with special rules still take the old path. Schema revision 12.
+
+Two other ideas were tried and not kept:
+
+- **Several claims in flight at once:** it helped a little on its own, but on top of the set-based claim it was slower, and one shutdown test failed once.
+- **Changing the claim default:** that idea was dropped together with the one above.
+
+**Drain test, 20,000 jobs, two rounds each (load average 12 to 26):**
+
+| Build | 16 workers | 64 workers |
+|---|---|---|
+| Before | 86 to 89 | 118 to 119 |
+| Set-based claim | 111 to 120 | 209 to 270 |
+
+**Comparison rerun on `0243c17`** (all three systems back to back; load average 4 to 10):
+
+| Run | Before | Now | Notes |
+|---|---|---|---|
+| River, default, 16 workers | 149 | 142 | |
+| River, fetch cooldown 1 ms, 16 workers | 823 | 956 | |
+| River, 100/s arriving | 99.8 | 99.4 | kept up; median 213 ms |
+| pg-boss, 1 per fetch, 16 workers | 31 | 31.6 | |
+| pg-boss, batch of 16, 1 worker | 543 | 721 | |
+| pg-boss, 100/s arriving | 31.6 | 31.8 | fell far behind; median 62 s |
+| **Runwick, 16 workers** | 81 | **143** | all 20,000 done |
+| **Runwick, 64 workers** | 136 | **312** | all 20,000 done |
+| Runwick, 100/s arriving | 50.1 | 53.5 | see below |
+
+How to read it:
+
+- Runwick now matches River's default settings at 16 workers and is about twice as fast at 64. Tuned River is still about three times faster.
+- Runwick is now well ahead of pg-boss's default mode, but still behind pg-boss in batch mode.
+- **The 100/s row is not a worker problem.** The test only managed to *add* 6,431 jobs in 120 s (about 54 a second), and every job it added finished, with a median of 53 ms. Adding jobs one at a time is the limit here. The drain runs show it too: adding the 20,000 jobs took Runwick 19 to 22 s, against 1 to 2 s for River.
+- Full test suites passed on the set-based code: Core 388 of 388, Postgres 321 of 321.
+
 ## What is not done
 
-- 100 jobs a second is not reached (P-01, P-09, and the steady 100/s comparison).
+- 100 jobs a second is not reached (P-01, P-09, and the steady 100/s comparison). For the steady comparison the limit is now adding jobs, not running them.
 - The finish path allows only two finishes at once. That default is unchanged. Widening it would likely help P-01 and P-09 and is your call.
 - Batching only happens when a worker pool has one queue ready. Pools that serve several queues still claim one job at a time.
 - Memory per job went from 331 to 302 KiB; the goal of 40 KiB is not met.
