@@ -21,7 +21,7 @@ This document defines the test harness built in SP-003, the exact case list that
 - **Fault points:** `FinishMany` has `AfterLocksBeforeFreshTime` and `BeforeFirstMutation` once and `AfterMutation` once per applied item (step = the item's 1-based position). Finish/1 keeps its points and steps.
 - **MIG** kill-phase rows gain migration 0011; the manifest test expects schema revision 11 with `FinishMany: [1]`.
 - **PERF-01** gains `FinishMany` = 1 command for 2 items and for 8 items.
-- **CAP-10** keeps its premise (16 Finishes queued behind the 2-wide settlement lane, so the oldest waits ≥ 5 s and admission stops): its worker settles each Finish alone. The batch function is hidden after startup, so the first `FinishMany` is `UnsupportedVersion` and the worker turns batching off (05 §12.5). With batching, the 16 Finishes settle in one or two calls and the settlement stop no longer happens reliably.
+- **CAP-10** keeps its premise (16 Finishes queued behind the settlement lane, so the oldest waits ≥ 5 s and admission stops; with the 4-wide lane of 06 Changes 2026-11-07 the settlement phase holds COMMIT replies 2 s instead of 1 s, and the phase ends only when the worker has every Finish reply): its worker settles each Finish alone. The batch function is hidden after startup, so the first `FinishMany` is `UnsupportedVersion` and the worker turns batching off (05 §12.5). With batching, the 16 Finishes settle in one or two calls and the settlement stop no longer happens reliably.
 
 ## Changes (2026-11-02, idle caps)
 

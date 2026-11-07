@@ -116,7 +116,7 @@ public sealed class CapacityFaultTests
 
         await w.StartAsync();
 
-        // The settlement-pressure phase needs 16 Finishes queued behind the 2-wide settlement lane. A batched finish
+        // The settlement-pressure phase needs 16 Finishes queued behind the 4-wide settlement lane. A batched finish
         // (PF-06) would settle them in one or two calls and no Finish would wait 5 s, so this worker settles each Finish
         // alone: with the batch function hidden after startup's schema check, the first FinishMany is UnsupportedVersion
         // and the worker turns batching off (05 §12.5). FM-08 to FM-10 cover the batch path.
@@ -138,7 +138,9 @@ public sealed class CapacityFaultTests
         await WorkerHost.WaitUntil(() => w.EventCount("renewed") >= 16, Wait, "one renewal per attempt");
 
         // Concurrent Finishes through the settlement lane: the oldest published Finish waits ≥ 5 s, which stops
-        // admission; the jobs dispatched now must not be reserved until three healthy checks resume it.
+        // admission; the jobs dispatched now must not be reserved until three healthy checks resume it. With 4 lanes
+        // (06 Changes 2026-11-07) 2 s replies keep the oldest waiting ≥ 6 s, as 1 s replies did through 2 lanes.
+        f.Proxy.SetCommitReplyLatency(TimeSpan.FromSeconds(2), PgFaultProxy.Role("control"));
         release.SetResult();
         for (var i = 0; i < 4; i++)
         {
@@ -147,6 +149,10 @@ public sealed class CapacityFaultTests
 
         await WaitCount(f, "SELECT count(*) FROM runwick.jobs WHERE state = 'succeeded'", 20, "all 20 succeeded");
         f.Proxy.SetCommitReplyLatency(TimeSpan.Zero);
+
+        // A committed Finish whose COMMIT reply is still held by the proxy is still a slow control call: the phase ends
+        // when the worker has every reply, or that call's wait lands in the calm phase as a controlWait stop.
+        await WorkerHost.WaitUntil(() => w.EventCount("finished") >= 20, Wait, "all 20 finishes confirmed");
         await sampler.DisposeAsync();
 
         // A stop raised by the last slow Finishes resumes only after three healthy checks, so the events are read once
@@ -154,13 +160,13 @@ public sealed class CapacityFaultTests
         await WorkerHost.WaitUntil(() => !w.Engine.PressureStopped, Wait, "admission resumed");
         var events = w.Events.ToList();
         Assert.InRange(maxRenewal, 1, 4);
-        Assert.Equal(2, maxSettlement);
+        Assert.Equal(WorkerSettings.SettlementLane, maxSettlement);
         Assert.True(maxControlWait > TimeSpan.Zero, "no renewal queued behind the lane");
         Assert.Contains(events, e => e.Name.StartsWith("pressureStop", StringComparison.Ordinal));
         CheckStops(w, events);
 
         // Without latency the gates do not flap: 16 handlers started together through two renewal waves. Their Finishes
-        // are 1 s apart: 16 simultaneous Finishes through two settlement lanes are the overload of the first phase, not
+        // are 1 s apart: 16 simultaneous Finishes through the settlement lanes are the overload of the first phase, not
         // ordinary jitter, and queue ≥ 5 s on a host whose Finish takes 0.6-1 s (G-1 run 3).
         var calmFrom = w.Engine.Clock.Now;
         for (var i = 0; i < 16; i++)

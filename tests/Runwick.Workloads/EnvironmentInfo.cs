@@ -56,7 +56,7 @@ internal static class EnvironmentInfo
             ["arguments"] = string.Join(' ', Environment.GetCommandLineArgs().Skip(1)),
             ["topology"] = "direct primary, PostgreSQL in a local Docker container on the same host as the worker and producer",
             ["rttMs"] = rtt,
-            ["connectionBudgets"] = "control 6, work 8, listener 0 (no notifications in M2)",
+            ["connectionBudgets"] = "control 8, work 8, listener 0 (no notifications in M2)",
             ["referenceEnvironment"] = false,
         };
     }

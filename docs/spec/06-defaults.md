@@ -4,6 +4,15 @@
 
 Every numeric default used by milestone M2 is in this file. Behavior that uses each value is specified in [05-worker-engine.md](05-worker-engine.md) (cited as `05 §n`) and the storage/protocol specs. A value listed here is the default; a host may change configurable values only within the startup inequalities of §3. Values marked *profile constant* are not host-configurable (raising them requires a new serializer profile/format version).
 
+## Changes (2026-11-07, wider settlement lane)
+
+The settlement lane is widened so more Finish calls run at once (with the set-based finish, 04 Changes 2026-11-07). Measured on the 20,000-job drain bench (busy host, 4 rounds each against the same build with lane 2): 325 → 364 completions/s on average at 64 slots (+12 %, 3 of 4 rounds faster), 148 → 157 at 16 slots (2 of 4 rounds faster, within noise).
+
+- §1.7 settlement lane: 2 → **4** concurrent calls. The completion workers (05 §12) follow it.
+- §1.7 control data source: maximum 6 → **8** connections, so V-16 holds (`4 + 4 ≤ 8`); the warm minimum stays 2.
+- F-13 connection ceiling per worker group: 15 → **17**.
+- Not changed: `FinishMany/1` stays 1–32 items. A 64-item batch was measured and gave no clear gain (at 16 slots no more than 16 Finishes can wait anyway).
+
 ## Changes (2026-11-02, idle caps)
 
 Idle polling backs off further while a wake listener is healthy (05/13/14 Changes 2026-11-02, idle caps). Every value below applies only from a successful (re)subscription until the session is lost or refused. Otherwise the earlier value stays in force.
@@ -167,9 +176,9 @@ Implementation choices (marked *[choice]* below): whole-millisecond durations (V
 
 | Name | Value | Unit | Where used | Source | Validation |
 |---|---|---|---|---|---|
-| Control data source | 6 max, 0 min | connections | Ownership operations only (`Maximum Pool Size=6;Minimum Pool Size=0`) | CDB §6 | V-16 |
+| Control data source | 8 max (6 before 2026-11-07), 2 min | connections | Ownership operations only (`Maximum Pool Size=8;Minimum Pool Size=2`) | CDB §6 | V-16 |
 | Renewal lane | 4 | concurrent calls | Renew (earliest safety deadline first) | CDB §6 | V-16 |
-| Settlement lane | 2 | concurrent calls | Finish, Finish resolution, ReleaseReservation | CDB §6 | V-16 |
+| Settlement lane | 4 (2 before 2026-11-07) | concurrent calls | Finish, Finish resolution, ReleaseReservation | CDB §6 | V-16 |
 | Work data source | 8 max, 0 min | connections | All non-control operations | CDB §6 | V-16 |
 | Admission class | 4 | concurrent calls | Reserve, Begin, their resolution | CDB §1, §6 | V-16 |
 | Producer/admin mutation class | 2 | concurrent calls | Dispatch | CDB §6 | V-16 |
@@ -341,7 +350,7 @@ effective budget end = min(ControlStopCutoff, host token cancellation)
 
 **F-12 Lane age** = `(snapshot.ObservedAt − OldestEligibleAt) + monotonic elapsed since snapshot receipt`; aged iff `age >= AgingThreshold`.
 
-**F-13 Connection ceiling.** Per worker group: `6 control + 8 work + 1 listener = 15`. Six such workers plus one migration runner: `6 × 15 + 1 = 91`. Deployment ceiling = Σ worker/producer/management pool ceilings + listeners + migration runners + business connections (plus administration/failover headroom).
+**F-13 Connection ceiling.** Per worker group: `8 control + 8 work + 1 listener = 17`. Six such workers plus one migration runner: `6 × 17 + 1 = 103`. Deployment ceiling = Σ worker/producer/management pool ceilings + listeners + migration runners + business connections (plus administration/failover headroom).
 
 **F-14 Renewal-wave check** (planning, not proof): `ceil(GroupMaximum / RenewalLane) = ceil(16/4) = 4` service waves; at `ControlRequestTimeout` each, `4 × 5 s = 20 s`; plus `RenewalIntervalMax + SchedulerAllowance = 20 s` → 40 s of the 50 s usable authority. A second full timeout wave would exceed it; hence the pressure gates.
 
@@ -368,7 +377,7 @@ Startup rejects any violation with an error naming the setting(s) and the inequa
 | V-13 | `0 < RecoveryScanMin ≤ RecoveryScanNominal ≤ RecoveryScanMax` | 4 ≤ 5 ≤ 6 s |
 | V-14 | Per generation policy: `MaxExecutions ≥ 1`; `MaxConsecutiveUnstartedAbandonments ≥ 1`; `ExecutionTimeout` absent or > 0; for both retry policies `0 < InitialDelay ≤ MaximumDelay`, evaluator `exponential-v1` version 1, jitter `equal`; all within int32 counts / int64 ms | 3; 5; none; 5 s ≤ 60 s; 1 s ≤ 30 s |
 | V-15 | Each pool subscribes ≥ 1 queue; `FixedConcurrency(n)` with `n ≥ 1`; `AutoConcurrency(min, max)` with `0 ≤ min ≤ max`, `max ≥ 1`, not both modes (SP-014); `Σ pool maxima ≤ GroupMaximum`; queue weights integers in [1, 1,000] | 4 ≤ 16 |
-| V-16 | `RenewalLane + SettlementLane ≤ ControlPoolMax`; `Admission + ProducerAdmin + Background ≤ WorkPoolMax`; `1 ≤ BackgroundHeavy ≤ Background − 1` *[choice]*; all > 0 | 4 + 2 ≤ 6; 4 + 2 + 2 ≤ 8; 1 ≤ 1 |
+| V-16 | `RenewalLane + SettlementLane ≤ ControlPoolMax`; `Admission + ProducerAdmin + Background ≤ WorkPoolMax`; `1 ≤ BackgroundHeavy ≤ Background − 1` *[choice]*; all > 0 | 4 + 4 ≤ 8; 4 + 2 + 2 ≤ 8; 1 ≤ 1 |
 | V-17 | Deduplicated capability tuples per polling group ≤ 512 *[choice]* | registry-dependent |
 | V-18 | `LocalAdmissionWaiters ≥ 1`; `0 < LocalAdmissionWait` | 64; 1 s |
 | V-19 | `PresenceHeartbeat × 1.1 < PresenceExpiry` *[choice]* | 5.5 s < 20 s |

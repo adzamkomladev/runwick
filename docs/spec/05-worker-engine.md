@@ -619,7 +619,7 @@ Stop renewal; never submit a new Finish, Begin or ReleaseReservation; continue r
 - At most one frozen completion per entry; the authoritative outcome stays on the entry until acknowledged.
 - Ready-ID channel: `Channel.CreateBounded<AttemptKey>` with capacity = group attempt maximum (16), `BoundedChannelFullMode.Wait` (authoritative; never drops). It holds IDs only.
 - Wake hints (coalesced) use a separate capacity-1 channel with `DropWrite`; registry scanning recovers anything a dropped hint would have signalled.
-- A bounded worker set equal to the settlement lane (2 concurrent calls) processes ready IDs; failed writes are retried with backoff by re-enqueueing the ID, never by an unbounded sleeping task per failure.
+- A bounded worker set equal to the settlement lane (4 concurrent calls, 06) processes ready IDs; failed writes are retried with backoff by re-enqueueing the ID, never by an unbounded sleeping task per failure.
 
 ### 12.2 Finish command
 
@@ -733,7 +733,7 @@ During drain readiness is unhealthy while liveness stays healthy. Zero backlog, 
 | Operation | Data source / class | Limit |
 |---|---|---|
 | Renew | Control / renewal lane | 4 concurrent |
-| Finish, Finish resolution, ReleaseReservation *[choice]* | Control / settlement lane | 2 concurrent |
+| Finish, Finish resolution, ReleaseReservation *[choice]* | Control / settlement lane | 4 concurrent |
 | Reserve, Begin, their resolution | Work / admission class | 4 concurrent (per pool ≤ 1 outstanding Reserve) |
 | Dispatch (producer in same process) | Work / producer-admin class | 2 concurrent; 64 waiters, 1 s admission wait, else `local_capacity_exceeded` |
 | Probe, presence, recovery, receipt cleanup | Work / background class | 2 concurrent; heavy work ≤ 1 of 2 |

@@ -313,7 +313,7 @@ internal static class Analysis
     /// Correctness during a workload (07 §14.1): ReferenceModel snapshot invariants; at most one succeeded attempt per job
     /// and every succeeded attempt matches a succeeded job (no false durable success); handler invocations never exceed
     /// begun executions (no double invocation); every accepted dispatch is stored; drained runs leave no open job;
-    /// per-process resources within the declared caps (tickets, control 6 / work 8 connections).
+    /// per-process resources within the declared caps (tickets, control 8 / work 8 connections).
     /// </summary>
     static async Task<JsonObject> CorrectnessAsync(string cs, JsonArray workers, JsonNode? producer, WorkloadSpec spec, RunContext c)
     {
@@ -367,7 +367,7 @@ internal static class Analysis
 
         foreach (var (app, count) in c.Sampler.Samples.SelectMany(s => s.Connections))
         {
-            if ((app.EndsWith(":control", StringComparison.Ordinal) && count > 6) || (app.EndsWith(":work", StringComparison.Ordinal) && count > 8))
+            if ((app.EndsWith(":control", StringComparison.Ordinal) && count > 8) || (app.EndsWith(":work", StringComparison.Ordinal) && count > 8))
             {
                 violations.Add($"{app}: {count} connections above its cap");
                 break;

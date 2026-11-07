@@ -1863,7 +1863,7 @@ Rate tables, `management_audit`, outbox, scheduler, retention and pool records (
 |---|---|---|
 | **Control** data source | **6** connections, minimum 0 | Ownership operations only |
 | — renewal lane | 4 concurrent calls | Renew (earliest local safety deadline first) |
-| — settlement lane | 2 concurrent calls | Finish, ReleaseReservation and their resolution |
+| — settlement lane | 4 concurrent calls (2026-11-07) | Finish, ReleaseReservation and their resolution |
 | **Work** data source | **8** connections, minimum 0 | Everything else |
 | — admission class | 4 concurrent calls | Reserve, Begin and their resolution |
 | — producer/admin class | 2 concurrent calls | Dispatch/DispatchMany, Register*, ResolveCommand for dispatch |
@@ -1880,7 +1880,7 @@ Class ceilings are partitions of the data-source maximum, not additions. No borr
 |---|---|
 | `Enlist` | `false` (ambient `TransactionScope` never captures worker transitions) |
 | `Pooling` | `true` (control/work); `false` (migration) |
-| `Minimum Pool Size` / `Maximum Pool Size` | 2 / 6 (control; 2 is the settlement lane width), 0 / 8 (work) (2026-11-01, PF-03) |
+| `Minimum Pool Size` / `Maximum Pool Size` | 2 / 8 (control; 2 warm, half the settlement lane since 2026-11-07), 0 / 8 (work) (2026-11-01, PF-03) |
 | `Multiplexing` | `false` |
 | `Max Auto Prepare` | `64`, at Npgsql's default of 2 usages (2026-11-01, PF-03; `0` until then). The migration connection stays at `0`. |
 | `Options` | `-c plan_cache_mode=force_custom_plan` appended to any configured options (2026-11-01, PF-03) |

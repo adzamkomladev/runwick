@@ -12,10 +12,10 @@ internal enum PgLane
     Background,
 }
 
-/// <summary>Runwick-owned data sources (control 6, work 8) and their call-class gates (04 §9).</summary>
+/// <summary>Runwick-owned data sources (control 8, work 8) and their call-class gates (04 §9).</summary>
 internal sealed class PgDataSources : IAsyncDisposable
 {
-    /// <summary>Settlement lane width: the control pool keeps this many idle connections open (04 §9.2, PF-03).</summary>
+    /// <summary>Idle connections the control pool keeps open (04 §9.2, PF-03); half the settlement lane since 2026-11-07.</summary>
     internal const int ControlWarm = 2;
 
     /// <summary>Statements prepared automatically per physical connection (04 §9.2, PF-03).</summary>
@@ -30,7 +30,7 @@ internal sealed class PgDataSources : IAsyncDisposable
     readonly Dictionary<PgLane, SemaphoreSlim> _lanes = new()
     {
         [PgLane.Renewal] = new SemaphoreSlim(4, 4),
-        [PgLane.Settlement] = new SemaphoreSlim(2, 2),
+        [PgLane.Settlement] = new SemaphoreSlim(4, 4),
         [PgLane.Admission] = new SemaphoreSlim(4, 4),
         [PgLane.Producer] = new SemaphoreSlim(2, 2),
         [PgLane.Background] = new SemaphoreSlim(2, 2),
@@ -40,7 +40,7 @@ internal sealed class PgDataSources : IAsyncDisposable
     {
         _connectionString = connectionString;
         _applicationNamePrefix = applicationNamePrefix;
-        _control = new(() => Build("control", 6));
+        _control = new(() => Build("control", 8));
         _work = new(() => Build("work", 8));
         Live.TryAdd(this, 0);
     }

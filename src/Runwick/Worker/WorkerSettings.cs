@@ -27,7 +27,7 @@ internal sealed class WorkerSettings
     public const int BlockedCandidatesPerLaneVisit = 8;
     public const int ReservesPerRound = 32;
     public const int RecoveryBatch = 32;
-    public const int SettlementLane = 2;
+    public const int SettlementLane = 4;
     public static readonly TimeSpan AgingThreshold = TimeSpan.FromSeconds(60);
     public static readonly TimeSpan HintMaxAge = TimeSpan.FromSeconds(2);
     public static readonly TimeSpan ProbeSpacing = TimeSpan.FromMilliseconds(50);

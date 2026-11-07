@@ -159,7 +159,7 @@ internal static class G2Orchestrator
         await using var db = await TestDatabase.StartAsync().ConfigureAwait(false);
         var admin = Conn(db, "postgres", "wl:admin");
         var env = await EnvironmentInfo.CaptureAsync(db, admin, a).ConfigureAwait(false);
-        env["connectionBudgets"] = "control 6, work 8, listener 0/1 per worker; outbox relay 2 source connections";
+        env["connectionBudgets"] = "control 8, work 8, listener 0/1 per worker; outbox relay 2 source connections";
         await File.WriteAllTextAsync(Path.Combine(root, "env.json"), env.ToJsonString(Json.Indented)).ConfigureAwait(false);
         var result = new JsonObject { ["workload"] = workload, ["startedAt"] = DateTimeOffset.UtcNow.ToString("O") };
         var runs = new JsonArray();
