@@ -8,7 +8,7 @@ Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retent
 
 ## Changes (2026-11-07, wider producer lane)
 
-§9.1: the producer/admin class is **4** concurrent calls by default and follows `ProducerOptions.MaxConcurrentCalls`; the work data source maximum is admission 4 + producer/admin + background 2 (**10** by default, 8 before). Per worker group the planning ceiling becomes `8 + 10 = 18` (+1 listener). See 06 Changes 2026-11-07, wider producer lane.
+§9.1: the producer/admin class is **8** concurrent calls by default and follows `ProducerOptions.MaxConcurrentCalls`; the work data source maximum is admission 4 + producer/admin + background 2 (**14** by default, 8 before). Per worker group the planning ceiling becomes `8 + 14 = 22` (+1 listener). See 06 Changes 2026-11-07, wider producer lane.
 
 ## Changes (2026-11-07, set-based finish)
 
@@ -1878,15 +1878,15 @@ Rate tables, `management_audit`, outbox, scheduler, retention and pool records (
 | **Control** data source | **8** connections (6 before 2026-11-07), minimum 2 (06 §1.7) | Ownership operations only |
 | — renewal lane | 4 concurrent calls | Renew (earliest local safety deadline first) |
 | — settlement lane | 4 concurrent calls (2026-11-07) | Finish, ReleaseReservation and their resolution |
-| **Work** data source | admission + producer/admin + background: **10** connections by default (8 before 2026-11-07), minimum 0 | Everything else |
+| **Work** data source | admission + producer/admin + background: **14** connections by default (8 before 2026-11-07), minimum 0 | Everything else |
 | — admission class | 4 concurrent calls | Reserve, Begin and their resolution |
-| — producer/admin class | `MaxConcurrentCalls` concurrent calls, default 4 (2 before 2026-11-07) | Dispatch/DispatchMany, Register*, ResolveCommand for dispatch |
+| — producer/admin class | `MaxConcurrentCalls` concurrent calls, default 8 (2 before 2026-11-07) | Dispatch/DispatchMany, Register*, ResolveCommand for dispatch |
 | — background class | 2 concurrent calls (heavy work ≤ 1) | ReadinessProbe, PublishPresence, ListExpiredLeases, Recover, receipt cleanup (SP-021) |
 | **Migration** session | 1 dedicated physical session per runner, `Pooling=false` | Migration runner only; not counted in worker budgets |
 | Listener | — | Not in M2 |
 | Caller transaction | caller's connection | StageAsync/StageManyAsync (caller's budget) |
 
-Class ceilings are partitions of the data-source maximum, not additions. No borrowing between renewal and settlement. A call keeps its slot until the provider task has ended and the connection is disposed, even after its local deadline. Producer-only processes create no control data source. Planning ceiling per worker group: 8 + 10 = 18 connections by default (+1 listener; work = 4 + `MaxConcurrentCalls` + 2); six workers + one runner = 6 × 19 + 1 = 115 with listeners (06 F-13).
+Class ceilings are partitions of the data-source maximum, not additions. No borrowing between renewal and settlement. A call keeps its slot until the provider task has ended and the connection is disposed, even after its local deadline. Producer-only processes create no control data source. Planning ceiling per worker group: 8 + 14 = 22 connections by default (+1 listener; work = 4 + `MaxConcurrentCalls` + 2); six workers + one runner = 6 × 23 + 1 = 139 with listeners (06 F-13).
 
 ### 9.2 Npgsql settings (driver-owned data sources)
 

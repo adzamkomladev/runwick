@@ -298,7 +298,7 @@ public sealed class CapacityFaultTests
     [Trait("Case", "CAP-11")]
     public async Task Waiting_dispatch_beyond_the_bound_is_known_not_submitted()
     {
-        // (b) Four calls in flight (MaxConcurrentCalls, default 4 since 2026-11-07) held at a barrier, 64 waiting (MaxWaitingOperations 64):
+        // (b) Eight calls in flight (MaxConcurrentCalls, default 8 since 2026-11-07) held at a barrier, 64 waiting (MaxWaitingOperations 64):
         // one more waiting dispatch returns local_capacity_exceeded at once and never reaches the store.
         await using var f = await DriverFixture.StartAsync(Ns("cap11b"));
         var c = await f.OpenClient(configure: r =>
@@ -307,9 +307,9 @@ public sealed class CapacityFaultTests
             r.Producer(o => o.AdmissionWait = TimeSpan.FromSeconds(120));
         });
         var admission = c.Services.GetRequiredService<LocalAdmission>();
-        var hold = f.ArmFault(FaultPoint.BeforeGateLock, FaultSpec.Barrier, FaultTarget.Op(Operations.Dispatch), times: 4);
-        var calls = Enumerable.Range(0, 68).Select(i => c.Dispatcher.DispatchAsync(new PingJob("p" + i))).ToList();
-        await WorkerHost.WaitUntil(() => hold.Fired == 4 && admission.Waiting == 64, Wait, "4 in flight and 64 waiting");
+        var hold = f.ArmFault(FaultPoint.BeforeGateLock, FaultSpec.Barrier, FaultTarget.Op(Operations.Dispatch), times: 8);
+        var calls = Enumerable.Range(0, 72).Select(i => c.Dispatcher.DispatchAsync(new PingJob("p" + i))).ToList();
+        await WorkerHost.WaitUntil(() => hold.Fired == 8 && admission.Waiting == 64, Wait, "8 in flight and 64 waiting");
 
         var overflow = c.Prepared.Prepare(new PingJob("overflow"));
         var ex = await Assert.ThrowsAsync<LocalCapacityExceededException>(() => c.Prepared.DispatchAsync(overflow));
@@ -319,7 +319,7 @@ public sealed class CapacityFaultTests
 
         DriverFixture.ReleaseBarrier(hold);
         await Task.WhenAll(calls);
-        Assert.Equal(68, await f.CountAsync("SELECT count(*) FROM runwick.jobs"));
+        Assert.Equal(72, await f.CountAsync("SELECT count(*) FROM runwick.jobs"));
         Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM runwick.storage_commands WHERE command_id = @id", ("id", overflow.OperationId.Value)));
         Assert.Equal(0, admission.Waiting);
     }

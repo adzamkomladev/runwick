@@ -78,9 +78,9 @@ public sealed class PreparedStatementTests
     [Trait("Item", "PF-03")]
     public async Task Producer_lane_and_work_pool_follow_MaxConcurrentCalls()
     {
-        // 06 Changes 2026-11-07, wider producer lane: default 4; work pool = admission 4 + producer + background 2 (V-16).
+        // 06 Changes 2026-11-07, wider producer lane: default 8; work pool = admission 4 + producer + background 2 (V-16).
         await using var f = await DriverFixture.StartAsync("lane_" + Guid.NewGuid().ToString("N")[..8]);
-        foreach (var (configured, lane) in new[] { ((int?)null, 4), (6, 6) })
+        foreach (var (configured, lane) in new[] { ((int?)null, 8), (6, 6) })
         {
             var c = await f.OpenClient(configure: r =>
             {

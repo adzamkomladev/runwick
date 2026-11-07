@@ -6,11 +6,11 @@ Every numeric default used by milestone M2 is in this file. Behavior that uses e
 
 ## Changes (2026-11-07, wider producer lane)
 
-More producer calls may reach the database at once, and an application that raises `ProducerOptions.MaxConcurrentCalls` now gets that many in the PostgreSQL store too (before, the store's producer lane stayed at 2 whatever the option said). Measured on the 20,000-job drain bench (4 callers): insert 9.6 s with lane 2, 6.6–7.4 s with a wider lane (trace-adding report, 2026-11-07).
+More producer calls may reach the database at once, and an application that raises `ProducerOptions.MaxConcurrentCalls` now gets that many in the PostgreSQL store too (before, the store's producer lane stayed at 2 whatever the option said). Measured on the 20,000-job drain bench (4 callers): insert 9.6 s with lane 2, 6.6–7.4 s with a wider lane (trace-adding report, 2026-11-07). The default was first set to 4 and raised to 8 the same day at the owner's request.
 
-- §1.7 producer/admin mutation class: 2 → **4** concurrent calls by default, and it **follows `MaxConcurrentCalls`** (the local admission gate and the PostgreSQL producer lane are the same number). `MaxConcurrentCalls` must be at least 1 (startup error otherwise).
-- §1.7 work data source: maximum 8 → **admission 4 + producer/admin + background 2** = **10** by default, so V-16 holds by construction for any `MaxConcurrentCalls`.
-- F-13 connection ceiling per worker group: 17 → **19** by default (`8 + 10 + 1`); a group that raises `MaxConcurrentCalls` adds the same number of work connections.
+- §1.7 producer/admin mutation class: 2 → **8** concurrent calls by default, and it **follows `MaxConcurrentCalls`** (the local admission gate and the PostgreSQL producer lane are the same number). `MaxConcurrentCalls` must be at least 1 (startup error otherwise).
+- §1.7 work data source: maximum 8 → **admission 4 + producer/admin + background 2** = **14** by default, so V-16 holds by construction for any `MaxConcurrentCalls`.
+- F-13 connection ceiling per worker group: 17 → **23** by default (`8 + 14 + 1`); a group that raises `MaxConcurrentCalls` adds the same number of work connections.
 - Not changed: admission class 4, background class 2, control data source 8, local admission waiters 64 and wait 1 s; producer-only processes still create no control data source.
 
 ## Changes (2026-11-07, wider settlement lane)
@@ -188,9 +188,9 @@ Implementation choices (marked *[choice]* below): whole-millisecond durations (V
 | Control data source | 8 max (6 before 2026-11-07), 2 min | connections | Ownership operations only (`Maximum Pool Size=8;Minimum Pool Size=2`) | CDB §6 | V-16 |
 | Renewal lane | 4 | concurrent calls | Renew (earliest safety deadline first) | CDB §6 | V-16 |
 | Settlement lane | 4 (2 before 2026-11-07) | concurrent calls | Finish, Finish resolution, ReleaseReservation | CDB §6 | V-16 |
-| Work data source | admission + producer/admin + background = 10 max by default (8 before 2026-11-07), 0 min | connections | All non-control operations | CDB §6 | V-16 |
+| Work data source | admission + producer/admin + background = 14 max by default (8 before 2026-11-07), 0 min | connections | All non-control operations | CDB §6 | V-16 |
 | Admission class | 4 | concurrent calls | Reserve, Begin, their resolution | CDB §1, §6 | V-16 |
-| Producer/admin mutation class | 4 (2 before 2026-11-07); follows `ProducerOptions.MaxConcurrentCalls` (≥ 1) | concurrent calls | Dispatch | CDB §6 | V-16 |
+| Producer/admin mutation class | 8 (2 before 2026-11-07); follows `ProducerOptions.MaxConcurrentCalls` (≥ 1) | concurrent calls | Dispatch | CDB §6 | V-16 |
 | Background class | 2 | concurrent calls | Presence, probes, recovery, cleanup | CDB §6 | V-16 |
 | Background heavy work | ≤ 1 of the 2 | concurrent calls | Cleanup/history | CDB §6 | V-16 |
 | Optional listener | 1 | dedicated session | LISTEN | CDB §6 | — |
@@ -359,7 +359,7 @@ effective budget end = min(ControlStopCutoff, host token cancellation)
 
 **F-12 Lane age** = `(snapshot.ObservedAt − OldestEligibleAt) + monotonic elapsed since snapshot receipt`; aged iff `age >= AgingThreshold`.
 
-**F-13 Connection ceiling.** Per worker group: `8 control + 10 work + 1 listener = 19` (work = 4 + `MaxConcurrentCalls` + 2; default 4). Six such workers plus one migration runner: `6 × 19 + 1 = 115`. Deployment ceiling = Σ worker/producer/management pool ceilings + listeners + migration runners + business connections (plus administration/failover headroom).
+**F-13 Connection ceiling.** Per worker group: `8 control + 14 work + 1 listener = 23` (work = 4 + `MaxConcurrentCalls` + 2; default 8). Six such workers plus one migration runner: `6 × 23 + 1 = 139`. Deployment ceiling = Σ worker/producer/management pool ceilings + listeners + migration runners + business connections (plus administration/failover headroom).
 
 **F-14 Renewal-wave check** (planning, not proof): `ceil(GroupMaximum / RenewalLane) = ceil(16/4) = 4` service waves; at `ControlRequestTimeout` each, `4 × 5 s = 20 s`; plus `RenewalIntervalMax + SchedulerAllowance = 20 s` → 40 s of the 50 s usable authority. A second full timeout wave would exceed it; hence the pressure gates.
 
@@ -386,7 +386,7 @@ Startup rejects any violation with an error naming the setting(s) and the inequa
 | V-13 | `0 < RecoveryScanMin ≤ RecoveryScanNominal ≤ RecoveryScanMax` | 4 ≤ 5 ≤ 6 s |
 | V-14 | Per generation policy: `MaxExecutions ≥ 1`; `MaxConsecutiveUnstartedAbandonments ≥ 1`; `ExecutionTimeout` absent or > 0; for both retry policies `0 < InitialDelay ≤ MaximumDelay`, evaluator `exponential-v1` version 1, jitter `equal`; all within int32 counts / int64 ms | 3; 5; none; 5 s ≤ 60 s; 1 s ≤ 30 s |
 | V-15 | Each pool subscribes ≥ 1 queue; `FixedConcurrency(n)` with `n ≥ 1`; `AutoConcurrency(min, max)` with `0 ≤ min ≤ max`, `max ≥ 1`, not both modes (SP-014); `Σ pool maxima ≤ GroupMaximum`; queue weights integers in [1, 1,000] | 4 ≤ 16 |
-| V-16 | `RenewalLane + SettlementLane ≤ ControlPoolMax`; `Admission + ProducerAdmin + Background ≤ WorkPoolMax`; `1 ≤ BackgroundHeavy ≤ Background − 1` *[choice]*; all > 0 | 4 + 4 ≤ 8; 4 + 4 + 2 ≤ 10 (the work maximum is this sum); 1 ≤ 1 |
+| V-16 | `RenewalLane + SettlementLane ≤ ControlPoolMax`; `Admission + ProducerAdmin + Background ≤ WorkPoolMax`; `1 ≤ BackgroundHeavy ≤ Background − 1` *[choice]*; all > 0 | 4 + 4 ≤ 8; 4 + 8 + 2 ≤ 14 (the work maximum is this sum); 1 ≤ 1 |
 | V-17 | Deduplicated capability tuples per polling group ≤ 512 *[choice]* | registry-dependent |
 | V-18 | `LocalAdmissionWaiters ≥ 1`; `0 < LocalAdmissionWait` | 64; 1 s |
 | V-19 | `PresenceHeartbeat × 1.1 < PresenceExpiry` *[choice]* | 5.5 s < 20 s |

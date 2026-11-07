@@ -56,7 +56,7 @@ public sealed class ProducerOptions
 
     /// <summary>
     /// Producer/admin mutations in flight at once; the PostgreSQL store's producer lane and work pool follow it (06 §1.7).
-    /// Default 4; at least 1.
+    /// Default 8; at least 1.
     /// </summary>
-    public int MaxConcurrentCalls { get; set; } = 4;
+    public int MaxConcurrentCalls { get; set; } = 8;
 }

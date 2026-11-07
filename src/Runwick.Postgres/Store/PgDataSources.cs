@@ -14,7 +14,7 @@ internal enum PgLane
 
 /// <summary>
 /// Runwick-owned data sources and their call-class gates (04 §9): control 8; work = admission 4 + producer/admin
-/// (<c>ProducerOptions.MaxConcurrentCalls</c>, default 4) + background 2, so V-16 holds by construction.
+/// (<c>ProducerOptions.MaxConcurrentCalls</c>, default 8) + background 2, so V-16 holds by construction.
 /// </summary>
 internal sealed class PgDataSources : IAsyncDisposable
 {

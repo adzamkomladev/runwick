@@ -1,6 +1,6 @@
 namespace Runwick.Dispatching;
 
-/// <summary>Bounded local admission for producer/admin mutations (spec 01 §10.5, 06 defaults 4/64/1 s).</summary>
+/// <summary>Bounded local admission for producer/admin mutations (spec 01 §10.5, 06 defaults 8/64/1 s).</summary>
 internal sealed class LocalAdmission(int concurrency, int maxWaiting, TimeSpan wait, TimeProvider time) : IDisposable
 {
     readonly SemaphoreSlim _slots = new(concurrency, concurrency);

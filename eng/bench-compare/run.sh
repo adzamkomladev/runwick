@@ -32,8 +32,8 @@ run pgboss-drain-b16      node pgboss/bench.mjs --mode drain --n "$n" --concurre
 run pgboss-steady-100     node pgboss/bench.mjs --mode steady --rate 100 --seconds "$secs" --concurrency 16 --batch 1
 fi
 if want runwick; then
-run runwick-drain-16      runwick --mode drain --n "$n" --workers 16
-run runwick-drain-64      runwick --mode drain --n "$n" --workers 64
+run runwick-drain-16      runwick --mode drain --n "$n" --workers 16 --calls 8
+run runwick-drain-64      runwick --mode drain --n "$n" --workers 64 --calls 8
 run runwick-steady-100    runwick --mode steady --rate 100 --seconds "$secs" --workers 16
 fi
 python3 - "$out" <<'PY'
