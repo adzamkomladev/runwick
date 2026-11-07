@@ -6,6 +6,16 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-07, set dispatch)
+
+`Dispatch/1` and `DispatchMany/1` (and the outbox and schedule operations that share the dispatch core) do less work per item inside the database and in the client. Stop-and-migrate: one new schema revision, no dual path. Nothing changes on the wire or in the manifest: the rows written, their values, the events and their order, the receipt, the reply row, the lock order, the fresh time after the last lock, the round trips (still `[BEGIN, set_config, SELECT f(…)]` then a separate `COMMIT`, 03 §9.2) and `synchronous_commit` keep their rules.
+
+- **Migration `0014_set_dispatch` (schema revision 14).** `rw_dispatch_core_v1` is dropped and replaced by `rw_dispatch_core_v2`; its callers `dispatch_v1`, `receive_outbox_v1` and `materialize_occurrences_v1` are dropped and replaced by `dispatch_v2`, `receive_outbox_v2` and `materialize_occurrences_v2`, which differ only in the core they call (a released function is never replaced in place, PF-05). The store and `DispatchCoreAsync` call the v2 functions. The manifest gains nothing.
+- **§7.2 step 5, batch without keys.** When no item has an active or a window key, every item is created, so the created list and the per-item results (`Created`, match `None`, no drift, ordinal order) are built in one statement instead of the ordinal loop. A batch with any key keeps the loop unchanged (a later item can reuse the job an earlier item bound).
+- **§7.2 steps 7 and 9, set-based reads.** The `jobs`, `job_payloads`, `job_generations` and `dispatched` event inserts and the wake-queue list read each item's fields from one `unnest` of the parallel arrays `WITH ORDINALITY`, filtered to the created ordinals, instead of indexing every array once per item. Same rows, same `job_id` order for the three inserts, same ordinal order for the events. One statement per table for the whole batch, as before.
+- **Batch size.** `MaxBatchItems` stays 100: 02 §4 fixes it ("100 accepted; 101 rejected") and 01 §12 tells callers to split larger inputs.
+- **Client digests (02 §8.3 unchanged).** The command digest of `Dispatch`/`DispatchMany` embeds each item's business and policy values; the client now encodes each item's business value once and each distinct policy instance once per batch, and reuses those bytes inside the command envelope. The bytes hashed are identical (a Core test recomputes the batch digests from plain trees).
+
 ## Changes (2026-11-07, set-based claim)
 
 `ReserveAndBegin/1` claims its common jobs with a few statements per run of jobs instead of about thirty statements per job (approved 2026-11-07). Stop-and-migrate: one new schema revision, no dual path. Nothing changes on the wire or in the manifest: the rows written, their values, the events and their order, the receipt (one per command, `items[]`), the reply rows, the lock order, the fresh time after the last lock, fencing and `synchronous_commit` keep their rules.
