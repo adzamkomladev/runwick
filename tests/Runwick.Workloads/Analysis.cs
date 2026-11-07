@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using Npgsql;
 using Runwick.Harness.Store;
+using Runwick.Postgres.Store;
+using Runwick.Registration;
 using Runwick.ReferenceModel;
 
 namespace Runwick.Workloads;
@@ -367,7 +369,7 @@ internal static class Analysis
 
         foreach (var (app, count) in c.Sampler.Samples.SelectMany(s => s.Connections))
         {
-            if ((app.EndsWith(":control", StringComparison.Ordinal) && count > 8) || (app.EndsWith(":work", StringComparison.Ordinal) && count > 8))
+            if ((app.EndsWith(":control", StringComparison.Ordinal) && count > 8) || (app.EndsWith(":work", StringComparison.Ordinal) && count > PgDataSources.WorkPoolMax(new ProducerOptions().MaxConcurrentCalls)))
             {
                 violations.Add($"{app}: {count} connections above its cap");
                 break;

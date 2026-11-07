@@ -2,6 +2,10 @@
 
 **Sources:** docs/architecture/public-api-contract.md §2–§10 (primary), docs/architecture/identity-and-serialization.md, docs/uniqueness-and-execution.md, docs/review-2026-10-30.md, docs/runwick-explained.md (examples; superseded where it conflicts), docs/architecture/dispatch-wire-contract.md, docs/architecture/execution-defaults-and-timing.md, docs/architecture/worker-engine-internals.md, docs/architecture/capacity-defaults-and-budgets.md, docs/architecture/management-retention-defaults.md, docs/architecture/platform-and-packages.md.
 
+## Changes (2026-11-07, wider producer lane)
+
+`ProducerOptions.MaxConcurrentCalls` defaults to **4** (was 2) and must be at least 1; the PostgreSQL store's producer lane and work pool follow it (06 Changes 2026-11-07, wider producer lane).
+
 ## Changes (2026-10-31, SP-016)
 
 - §18: `AddScheduler()`, `AddSchedule<TJob>(...)` and `IScheduleControl` (preview) leave the reserved list; they are specified in 13 §2. New codes in §14: the schedule codes of 13 (`scheduler_not_active`, `duplicate_schedule`, `episode_unresolved`, `plan_too_large`, …).
@@ -486,7 +490,7 @@ public sealed class ProducerOptions
     public TimeSpan CommandLifetime { get; set; }      // default 5 min; maximum 5 min
     public int MaxWaitingOperations { get; set; }      // default 64
     public TimeSpan AdmissionWait { get; set; }        // default 1 s
-    public int MaxConcurrentCalls { get; set; }        // default 2 (producer/admin mutation class)
+    public int MaxConcurrentCalls { get; set; }        // default 4 (producer/admin mutation class; the PostgreSQL producer lane follows it), ≥ 1
 }
 ```
 
@@ -801,7 +805,7 @@ The payload is serialized with `runwick.json` v1 (02-serialization-and-wire) int
 
 ### 10.5 Local admission
 
-Producer/admin mutations pass a bounded local admission gate before any storage command is sent (budgets in 06-defaults: 2 concurrent calls, at most 64 waiting operations, 1 s admission wait, or the caller's earlier cancellation). When the gate rejects, the call throws `LocalCapacityExceededException` with stable code **`local_capacity_exceeded`** and disposition known-not-submitted (`ErrorDisposition.KnownNotApplied`): no storage command was sent and no `DispatchReceipt` exists. It is never reported as a durable queue rejection or an unknown commit.
+Producer/admin mutations pass a bounded local admission gate before any storage command is sent (budgets in 06-defaults: 4 concurrent calls by default, `MaxConcurrentCalls`, at most 64 waiting operations, 1 s admission wait, or the caller's earlier cancellation). When the gate rejects, the call throws `LocalCapacityExceededException` with stable code **`local_capacity_exceeded`** and disposition known-not-submitted (`ErrorDisposition.KnownNotApplied`): no storage command was sent and no `DispatchReceipt` exists. It is never reported as a durable queue rejection or an unknown commit.
 
 - The convenience dispatcher acquires admission **before** preparing, so a rejected call allocates no envelope; its exception carries no prepared request.
 - `IPreparedJobDispatcher.DispatchAsync(prepared)` keeps the caller's envelope; the exception references it and the caller may retry the same prepared request later.

@@ -206,7 +206,7 @@ internal sealed class DriverFixture : IAsyncDisposable
 
     internal PgStore NewStore(string identity = "harness")
     {
-        var sources = new PgDataSources(ClientConnectionString(identity), "runwick:" + Application);
+        var sources = new PgDataSources(ClientConnectionString(identity), "runwick:" + Application, new ProducerOptions().MaxConcurrentCalls);
         var runner = new PgRunner(sources, Faults, TimeProvider.System);
         return new PgStore(sources, runner, TimeProvider.System);
     }
