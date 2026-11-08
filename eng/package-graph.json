@@ -24,6 +24,7 @@
     "Npgsql": "10.0.3",
     "Microsoft.Extensions.*": "10.0.14",
     "Microsoft.Extensions.TimeProvider.Testing": "10.11.0",
+    "Microsoft.AspNetCore.TestHost": "10.0.14",
     "xunit.v3": "4.0.2",
     "Testcontainers.PostgreSql": "4.16.0",
     "Cronos": "0.13.0",

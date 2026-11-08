@@ -17,6 +17,7 @@
     <Project Path="tests/Runwick.Postgres.Tests/Runwick.Postgres.Tests.csproj" />
     <Project Path="tests/Runwick.Outbox.Tests/Runwick.Outbox.Tests.csproj" />
     <Project Path="tests/Runwick.Workloads/Runwick.Workloads.csproj" />
+    <Project Path="tests/Runwick.AspNetCore.Tests/Runwick.AspNetCore.Tests.csproj" />
   </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/Runwick.Samples.Contracts/Runwick.Samples.Contracts.csproj" />
