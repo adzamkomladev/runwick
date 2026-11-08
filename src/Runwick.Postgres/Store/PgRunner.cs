@@ -432,6 +432,7 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
     {
         "RWI01" => "invalid_transition",
         "RWI02" => "permit_set_mismatch",
+        "RWI05" => "key_row_missing",
         _ => null,
     };
 
@@ -588,6 +589,7 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         var (status, code) = ex.SqlState switch
         {
             "RWR01" => (StoreStatus.InvariantFault, "receipt_incomplete"),
+            "RWI05" => (StoreStatus.InvariantFault, "key_row_missing"),
             "23505" when ex.ConstraintName is "jobs_pk" or "job_attempts_pk" or "concurrency_scopes_pk" => (StoreStatus.InvariantFault, "id_collision"),
             "23505" when ex.ConstraintName == "job_attempts_one_open" => (StoreStatus.InvariantFault, "invalid_transition"),
             var s when s.StartsWith("23", StringComparison.Ordinal) => (StoreStatus.InvariantFault, "constraint_violation"),

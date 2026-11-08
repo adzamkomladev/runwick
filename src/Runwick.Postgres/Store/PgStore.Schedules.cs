@@ -488,7 +488,7 @@ internal sealed partial class PgStore : IScheduleStore
         static DateTime? T(DateTimeOffset? t) => t?.UtcDateTime;
         const NpgsqlDbType A = NpgsqlDbType.Array;
         var a = r.After;
-        var call = new PgCall("materialize_occurrences_v2")
+        var call = new PgCall("materialize_occurrences_v3")
             .P("p_schedule_id", r.ScheduleId).P("p_expected_definition", r.ExpectedDefinitionRevision)
             .P("p_expected_control", r.ExpectedControlRevision).P("p_expected_cursor", r.ExpectedCursorRevision)
             .P("p_expected_episode", r.ExpectedEpisodeId).P("p_cutoff", r.Cutoff).P("p_max_plan_bytes", (long)ScheduleBounds.MaxPlanPayloadBytes)

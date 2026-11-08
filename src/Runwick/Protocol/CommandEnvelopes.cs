@@ -150,6 +150,23 @@ internal static class CommandEnvelopes
         .Add("kind", r.ScopeKind)
         .Build();
 
+    public static CanonicalValue RetentionPolicy(RetentionPolicyRequest r)
+    {
+        var h = r.Policy.Hours();
+        static CanonicalValue V(int? hours) => hours is { } v ? CanonicalValue.Int(v) : CanonicalValue.Null;
+        return CanonicalValue.Object()
+            .Add("actor", Actor(r.Actor))
+            .Add("auditHours", V(h[3]))
+            .Add("completedDetailHours", V(h[0]))
+            .Add("expectedRevision", r.ExpectedRevision)
+            .Add("failedDetailHours", V(h[1]))
+            .Add("jobHistoryHours", V(h[2]))
+            .Add("scalingEventsHours", V(h[4]))
+            .Add("scheduleOccurrencesHours", V(h[5]))
+            .Add("workerPresenceHours", V(h[6]))
+            .Build();
+    }
+
     /// <summary>Deduplicated, sorted by (name bytes, version, profile id bytes, profile version) — 02 IC-18.</summary>
     public static IReadOnlyList<JobContract> SortContracts(IEnumerable<JobContract> contracts) =>
         [.. contracts.Distinct()
