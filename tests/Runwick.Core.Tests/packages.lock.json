@@ -540,6 +540,12 @@
           "Runwick": "[0.1.0-m1, )"
         }
       },
+      "runwick.outbox": {
+        "type": "Project",
+        "dependencies": {
+          "Runwick": "[0.1.0-m1, )"
+        }
+      },
       "runwick.postgres": {
         "type": "Project",
         "dependencies": {

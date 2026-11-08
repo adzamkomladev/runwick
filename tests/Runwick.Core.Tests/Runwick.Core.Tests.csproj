@@ -9,6 +9,7 @@
     <ProjectReference Include="..\Runwick.Harness\Runwick.Harness.csproj" />
     <ProjectReference Include="..\..\samples\Runwick.Samples.Contracts\Runwick.Samples.Contracts.csproj" />
     <ProjectReference Include="..\..\src\Runwick.OpenTelemetry\Runwick.OpenTelemetry.csproj" />
+    <ProjectReference Include="..\..\src\Runwick.Outbox\Runwick.Outbox.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="xunit.v3" />
