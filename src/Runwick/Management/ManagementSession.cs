@@ -32,6 +32,13 @@ public interface IManagementSession
 
     Task<ManagementSettings> GetSettingsAsync(ManagementCaller caller, CancellationToken cancellationToken = default);
 
+    /// <summary>The retention policy and per-class cleanup progress (17 §7). Needs <c>Settings.Read</c>.</summary>
+    Task<RetentionView> GetRetentionAsync(ManagementCaller caller, CancellationToken cancellationToken = default);
+
+    /// <summary>A revisioned, audited policy edit (17 §2.2). Needs <c>Retention.Manage</c>; an invalid policy is <c>invalid_retention_policy</c>.</summary>
+    Task<RetentionPolicyResult> EditRetentionPolicyAsync(ManagementCaller caller, Guid commandId, long expectedRevision, RetentionPolicy policy,
+        string? reason = null, CancellationToken cancellationToken = default);
+
     Task<RevealedPayload> RevealPayloadAsync(ManagementCaller caller, Guid jobId, string? reason = null, CancellationToken cancellationToken = default);
 
     Task<RevealedError> RevealErrorAsync(ManagementCaller caller, Guid attemptId, string? reason = null, CancellationToken cancellationToken = default);
@@ -76,7 +83,11 @@ internal sealed class ManagementSession(
     public const int DefaultPageSize = 50, MaxPageSize = 200, MaxBulkItems = 100;
     static readonly TimeSpan DefaultRange = TimeSpan.FromDays(7), MaxRange = TimeSpan.FromDays(31);
     static readonly string[] JobStateNames = ["pending", "reserved", "running", "retrying", "succeeded", "failed", "cancelled"];
-    static readonly string[] AllowedAuditDetails = ["effect", "previousState", "previous", "capacity", "livePermits", "generation", "revision", "policyRevision"];
+    static readonly string[] AllowedAuditDetails =
+    [
+        "effect", "previousState", "previous", "capacity", "livePermits", "generation", "revision", "policyRevision",
+        "before", "after", "day", "rows", "batches", "failures",
+    ];
 
     IManagementQueryStore Store => store ?? throw new InvalidOperationException("The configured store does not support the management API.");
 
@@ -276,6 +287,7 @@ internal sealed class ManagementSession(
             roles.Add("scheduler");
         }
 
+        var retention = Store is IRetentionStore r ? (await Read(() => r.GetRetentionAsync(App, cancellationToken)).ConfigureAwait(false)).Value.Policy.Revision : 0;
         return new ManagementSettings(App, builder.StoreProviders.FirstOrDefault()?.Name ?? "unknown", descriptor.SchemaRevision,
             runtime.Store.AcknowledgementProfile, roles, new Dictionary<string, long>
             {
@@ -283,7 +295,38 @@ internal sealed class ManagementSession(
                 ["readsPerMinute"] = options.ReadsPerMinute, ["mutationsPerMinute"] = options.MutationsPerMinute,
                 ["revealsPerMinute"] = options.RevealsPerMinute, ["maxActiveRequests"] = options.MaxActiveRequests,
                 ["maxWaitingRequests"] = options.MaxWaitingRequests,
-            });
+            }, retention);
+    }
+
+    // ------------------------------------------------------------------ retention (17 §7)
+
+    IRetentionStore Retention => Store as IRetentionStore ?? throw new InvalidOperationException("The configured store does not support retention.");
+
+    public async Task<RetentionView> GetRetentionAsync(ManagementCaller caller, CancellationToken cancellationToken = default)
+    {
+        Require(caller, ManagementPermissions.SettingsRead);
+        await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+        var read = await Read(() => Retention.GetRetentionAsync(App, cancellationToken)).ConfigureAwait(false);
+        return new RetentionView(read.Value.Policy.Policy, read.Value.Policy.Revision, read.Value.Classes, read.ObservedAt);
+    }
+
+    public async Task<RetentionPolicyResult> EditRetentionPolicyAsync(ManagementCaller caller, Guid commandId, long expectedRevision, RetentionPolicy policy,
+        string? reason = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        ManagementText.Reason(reason);
+        Require(caller, ManagementPermissions.RetentionManage);
+        if (policy.Problem() is { } problem)
+        {
+            throw new ManagementValidationException("invalid_retention_policy", problem);
+        }
+
+        var seed = await SeedAsync(commandId, Operations.AdministrativeLifetime, cancellationToken).ConfigureAwait(false);
+        var r = await controls.SendAsync(Actor(caller, reason), a => new RetentionPolicyRequest(policy, expectedRevision, a), Retention.EditRetentionPolicyAsync,
+            seed, cancellationToken).ConfigureAwait(false);
+        return r.Value is { } v
+            ? new RetentionPolicyResult(true, null, v.Revision, v.Policy, r.Replayed)
+            : new RetentionPolicyResult(false, Map(r.Error?.Code), r.Error?.ActualRevision, null, false);
     }
 
     // ------------------------------------------------------------------ reveal (16 §3)
@@ -497,6 +540,7 @@ internal sealed class ManagementSession(
     {
         "job_not_found" or "queue_not_registered" or "scope_not_registered" or "schedule_not_found" => throw new ManagementNotFoundException(),
         "invalid_request" => throw new ManagementValidationException("invalid_request", "The store rejected the request."),
+        "invalid_retention_policy" => throw new ManagementValidationException("invalid_retention_policy", "The retention policy is not valid."),
         "command_expired" => throw new StoreUnavailableException("The command expired before it applied."),
         "revision_conflict" => "stale_revision",
         "job_terminal" or "schedule_disabled" or "episode_unresolved" or "cutoff_in_future" => "invalid_state",

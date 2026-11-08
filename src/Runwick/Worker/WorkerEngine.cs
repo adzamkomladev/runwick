@@ -410,6 +410,7 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
         Supervise("recovery", RecoveryLoopAsync, critical: false);
         Supervise("presence", PresenceLoopAsync, critical: false);
         Supervise("scaler", ScalerLoopAsync, critical: false);
+        Supervise("retention", RetentionLoopAsync, critical: false);
         Supervise("supervisor", SupervisorLoopAsync, critical: true);
         foreach (var pool in Pools)
         {

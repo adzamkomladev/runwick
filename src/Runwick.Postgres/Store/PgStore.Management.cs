@@ -44,13 +44,13 @@ internal sealed partial class PgStore : IManagementQueryStore
 
     const string JobColumns = """
         job_id, job_name, payload_version, queue, priority, state, generation, revision, created_at, updated_at, eligible_at,
-        terminal_at, terminal_reason, cancel_requested_at IS NOT NULL, execution_count
+        terminal_at, terminal_reason, cancel_requested_at IS NOT NULL, execution_count, detail_expired_at
         """;
 
     static JobSummary ReadJob(NpgsqlDataReader r) => new(
         r.GetGuid(0), r.GetString(1), r.GetInt32(2), r.GetString(3), r.GetString(4), r.GetString(5), r.GetInt32(6), r.GetInt64(7),
         PgTime.Read(r, 8), PgTime.Read(r, 9), PgTime.Read(r, 10), PgTime.ReadNullable(r, 11), r.IsDBNull(12) ? null : r.GetString(12),
-        r.GetBoolean(13), r.GetInt64(14));
+        r.GetBoolean(13), r.GetInt64(14), PgTime.ReadNullable(r, 15));
 
     public Task<StoreRead<IReadOnlyList<JobSummary>>> ListJobsAsync(string application, IReadOnlyList<string>? queues, JobListFilter filter,
         (DateTimeOffset CreatedAt, Guid JobId)? after, int limit, CancellationToken ct) =>

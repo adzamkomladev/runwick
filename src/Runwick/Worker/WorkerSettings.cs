@@ -43,14 +43,17 @@ internal sealed class WorkerSettings
     public static readonly TimeSpan PresenceExpiry = TimeSpan.FromSeconds(20);
     public const double JitterFraction = 0.20;
 
-    WorkerSettings(WorkerOptions options, IReadOnlyList<PoolSettings> pools, int groupMaximum)
+    WorkerSettings(WorkerOptions options, IReadOnlyList<PoolSettings> pools, int groupMaximum, RetentionOptions retention)
     {
+        Retention = retention;
         Options = options;
         Pools = pools;
         GroupMax = groupMaximum;
     }
 
     public WorkerOptions Options { get; }
+
+    public RetentionOptions Retention { get; }
 
     public IReadOnlyList<PoolSettings> Pools { get; }
 
@@ -88,7 +91,21 @@ internal sealed class WorkerSettings
         }
 
         var pools = ValidatePools(builder, knownQueues, groupMax, errors);
-        return errors.Count > 0 ? throw new RunwickConfigurationException(errors) : new WorkerSettings(options, pools, groupMax);
+        var retention = new RetentionOptions();
+        foreach (var action in builder.RetentionActions)
+        {
+            action(retention);
+        }
+
+        if (retention.BatchRows is < 1 or > 1000 || retention.BatchDetailBytes is < 64 * 1024 or > 16 * 1024 * 1024
+            || retention.BatchTarget < TimeSpan.FromMilliseconds(50) || retention.BatchTarget > TimeSpan.FromSeconds(2)
+            || retention.BatchPause < TimeSpan.Zero || retention.BatchPause > TimeSpan.FromSeconds(60)
+            || retention.IdlePoll < TimeSpan.FromSeconds(1) || retention.IdlePoll > TimeSpan.FromHours(1))
+        {
+            errors.Add(new(RunwickErrorCodes.InvalidTiming, "Retention", "17 §4.4: a retention option is outside its bounds."));
+        }
+
+        return errors.Count > 0 ? throw new RunwickConfigurationException(errors) : new WorkerSettings(options, pools, groupMax, retention);
     }
 
     /// <summary>06 §3 V-01 … V-13 on the effective options, in whole milliseconds with checked arithmetic.</summary>

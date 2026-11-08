@@ -330,6 +330,39 @@ public sealed class WorkerBuilder
         OptionActions.Add(configure);
         return this;
     }
+
+    internal List<Action<RetentionOptions>> RetentionActions { get; } = [];
+
+    /// <summary>The background cleanup loop of this worker process (17 §4.4).</summary>
+    public WorkerBuilder Retention(Action<RetentionOptions> configure)
+    {
+        RetentionActions.Add(configure);
+        return this;
+    }
+}
+
+/// <summary>
+/// Cleanup budgets (17 §4.4). One batch at a time per process; a class waits <see cref="BatchPause"/> between its batches
+/// and <see cref="IdlePoll"/> after a pass that found nothing. A failed batch backs off 5 s, doubling to 5 min.
+/// </summary>
+public sealed class RetentionOptions
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Root rows per batch, 1 – 1,000.</summary>
+    public int BatchRows { get; set; } = 100;
+
+    /// <summary>Decoded detail bytes per batch, 64 KiB – 16 MiB.</summary>
+    public int BatchDetailBytes { get; set; } = 1024 * 1024;
+
+    /// <summary>Database time a batch aims at, 50 ms – 2 s; the statement timeout is 4 × target, at least 2 s.</summary>
+    public TimeSpan BatchTarget { get; set; } = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>0 – 60 s.</summary>
+    public TimeSpan BatchPause { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>1 s – 1 h.</summary>
+    public TimeSpan IdlePoll { get; set; } = TimeSpan.FromSeconds(60);
 }
 
 public sealed class PoolBuilder
