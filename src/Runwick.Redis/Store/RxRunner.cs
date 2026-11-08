@@ -106,7 +106,10 @@ internal sealed class RxRunner(RxClient client, TimeProvider time)
     /// <summary>Script calls that answered Recovering (tests).</summary>
     public long RecoveringReplies;
 
-    public async Task<RxReply> WriteAsync(RxOp op, RxScript script, RedisValue[] args, CancellationToken ct)
+    public Task<RxReply> WriteAsync(RxOp op, RxScript script, RedisValue[] args, CancellationToken ct) =>
+        Telemetry.Telemetry.MeasureStorage(op.Operation, (int)op.Lane, () => WriteCoreAsync(op, script, args, ct), r => Runwick.Worker.WorkerEngine.Snake(r.Status)); // 18 §3.1
+
+    async Task<RxReply> WriteCoreAsync(RxOp op, RxScript script, RedisValue[] args, CancellationToken ct)
     {
         if (HistoryFailure is { } h)
         {
