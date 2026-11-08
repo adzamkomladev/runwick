@@ -125,7 +125,7 @@ internal sealed class RxClient : IAsyncDisposable
     public async Task<(IServer Server, IDatabase Db)> AdminAsync()
     {
         var mux = await _admin.Value.ConfigureAwait(false);
-        var ep = mux.GetEndPoints().Single();
+        var ep = mux.GetEndPoints(configuredOnly: true).Single();
         return (mux.GetServer(ep), mux.GetDatabase());
     }
 
