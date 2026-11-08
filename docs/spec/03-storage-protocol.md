@@ -592,7 +592,9 @@ All three are observational: no receipt, no ownership authority. The probe retur
 | `SetPoolOverride/1` | IScalingStore | administrative | durable | 5 min / 10 min | M3 (11 §5) |
 | `EstimateDemand/1` | IScalingStore | query | — | — | M3 (11 §4) |
 | `RecordScalingEvent/1` | IScalingStore | history append, no receipt | — | 10 s | M3 (11 §6) |
-| `RerunSucceeded/1`, `UpdateConcurrencyPolicy/1`, `SetApplicationMode/1`, `CleanupBatch/1`, `RecordDisclosure/1` | — | — | durable | per family | not in M2 (RerunSucceeded: 08) |
+| `RerunSucceeded/1`, `UpdateConcurrencyPolicy/1`, `SetApplicationMode/1`, `RecordDisclosure/1` | — | — | durable | per family | not in M2 (RerunSucceeded: 08; RecordDisclosure: 16) |
+| `CleanupBatch/1` | IRetentionStore | maintenance, **no receipt** (predicate re-checked under lock; 17 §4.1) | — | 2 s statement budget | M4 (17) |
+| `EditRetentionPolicy/1` | IRetentionStore | administrative | durable | 5 min / 10 min | M4 (17 §2.2) |
 
 Effects and preconditions:
 
