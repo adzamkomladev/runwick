@@ -4,6 +4,10 @@
 
 Every numeric default used by milestone M2 is in this file. Behavior that uses each value is specified in [05-worker-engine.md](05-worker-engine.md) (cited as `05 §n`) and the storage/protocol specs. A value listed here is the default; a host may change configurable values only within the startup inequalities of §3. Values marked *profile constant* are not host-configurable (raising them requires a new serializer profile/format version).
 
+## Changes (2026-11-08, SP-025 spec)
+
+The Redis store's own numbers (intent limits 256 keys / 1,024 after-images / 4 MiB, 100 after-images per call, 5,000-entry management page bound, profile recheck 30 s, migration lock 60 s, renewal-wait test bound p99 ≤ 250 ms) are in 22 §10. The call-class ceilings of §1.7 apply to it unchanged, as logical in-flight limits (22 §5.1).
+
 ## Changes (2026-11-08, SP-019 spec)
 
 The SQLite store's own numbers (writer busy timeout 2 s, reader threads 2, one writer thread, WAL size limit 64 MiB, migration lock wait 60 s) are in 20 §10. The call-class ceilings of §1.7 apply to it unchanged.

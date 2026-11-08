@@ -6,6 +6,26 @@ This file defines the driver-neutral storage contract: internal records and inte
 
 Scope is M1 + M2 (PostgreSQL execution through gate G-1). Items marked **not in M2** are named only so that interfaces and records leave room for them; an M2 driver rejects them (§11).
 
+## Changes (2026-11-08, SP-025)
+
+The Redis spike (SP-018, [docs/reports/sp-018.md](../reports/sp-018.md) "Spec changes needed") asks for a store-level "Recovering" outcome and new stable codes. They are added here for every driver; only the Redis store ([22-redis.md](22-redis.md)) produces the Redis-specific ones.
+
+- **§9.1: a fourth ending, Recovering.** `StoreRecoveringException(Code = "store_recovering", PendingCommandId)`, with `StoreFailureKind.Recovering`. It means: the application's data holds a command that the store has accepted but not yet published (a Redis intent, 22 §4.2), so the store decided nothing for this call and shows no state. It is neither a decision nor "known not applied": if the pending command is this call's own, it is accepted and will be published by recovery. It is not a `StoreStatus`, because a status is a decision. Caller action: a receipt-bearing command is treated as outcome unknown and resolved later by resending the **same** command (06 F-7 backoff), never a new ID; a Renew counts as not renewed (send a new Renew); a read has no answer and must never be shown as empty. The engine pauses admission for that application while it lasts. PostgreSQL and SQLite never raise it.
+- **§2.1:** any call, read or write, may end with `StoreRecoveringException` on a driver whose descriptor says it uses intents. No `StoreStatus` value changes.
+- **§8.6: a resolution finding.** "Intent pending for this command or another (Redis)" → `ReceiptResolution.Recovering(PendingCommandId)`; public `DispatchResolutionStatus.Recovering` (01 §13). It is checked before the receipt rows: a pending intent hides them.
+- **§9.2: a classification row.** "Store reply says an intent is pending" → Recovering, `store_recovering`.
+- **§9.3: new codes.**
+
+  | Code | Status / exception | Meaning |
+  |---|---|---|
+  | `store_recovering` | StoreRecoveringException | An accepted command is not yet published; nothing is shown until it is (Redis) |
+  | `intent_too_many_keys` | InvalidRequest | The command would write more distinct keys than the driver allows (Redis: 256); refused before any write |
+  | `intent_too_large` | InvalidRequest | The command's recorded decision would exceed the driver's size limit (Redis: 4 MiB); refused before any write |
+  | `intent_too_many_mutations` | InvalidRequest | The command would need more write steps than the driver allows (Redis: 1,024); refused before any write |
+  | `counter_limit` | InvariantFault | A counter, fence, revision or ID would pass its exact range (int64; 2^53 − 1 for IDs used as sorted-set scores); no effect |
+  | `history_discontinuity` | UnsupportedVersion | Same store ID, but the store's history went back (a restore, a lossy failover); admission stops and local authority is invalidated |
+  | `store_profile_mismatch` | UnsupportedVersion | The store's durability or topology settings are not the selected profile, or cannot be read. Already used by SQLite (20 §2.2); listed here now |
+
 ## Changes (2026-11-02, PF-06 batched finish)
 
 Performance plan PF-06 adds `FinishMany/1`, a batched Finish. `Finish/1` is unchanged and stays the per-attempt operation; a driver without the new operation is used through it.
