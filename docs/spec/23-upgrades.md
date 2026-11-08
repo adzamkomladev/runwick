@@ -15,6 +15,7 @@ Four things are new in code:
 
 ## Changes
 
+- (2026-11-08, SP-028) §3.6: the public path to activate `scheduler` and `rate_admission` (library calls on the three migration classes and `runwick store activate-capability`); closes the SP-027 gap.
 - (2026-11-08, SP-027) A process started while its application is drained now fails with `AdmissionClosedException` and a message that names the fix, instead of `StoreIncompatibleException "Store handshake failed"`; the order migrate, reopen, start is documented in the runbook (§4 step 5). Scenarios SCN-25 to SCN-27 run it on all three stores.
 - (2026-11-08) Written for SP-026. Decisions where the sources were silent, each marked [choice] below: one revision per binary and an empty `expandCompatibleBinaries` list are stated as the v1 rule (§1); `open` to `maintenance` directly is refused (§3.2); admission and identity commands run as the migration role and record only `actor_subject`, no management-audit row (§3.4); an identity change is refused unless every application is in maintenance and no live lease or presence is recorded (§7.2); CLI support covers PostgreSQL and SQLite only, because `Runwick.Cli` does not reference `Runwick.Redis` (§3.5).
 - (2026-11-08) 03 §10.2's wording "unless the migration manifest lists them" for settlement paths in `maintenance` is made concrete: no manifest lists any, so `maintenance` rejects Renew, Finish, Recover and ReleaseReservation (§3.1). This matches the code and PGX-01.
@@ -82,9 +83,16 @@ Task<StoreIdentityChange> ReassignStoreIdAsync(string connection, CancellationTo
 runwick store status      --provider postgres|sqlite --connection-env VAR
 runwick store admission   --mode open|drain|maintenance [--application NAME] --provider … --connection-env VAR
 runwick store reidentify  --confirm --provider … --connection-env VAR
+runwick store activate-capability --name scheduler|rate_admission [--application NAME] --provider … --connection-env VAR
 ```
 
 Redis is not offered: `Runwick.Cli` references only the PostgreSQL and SQLite packages (19 §1, `eng/package-graph.json`), and `migrate --provider redis` is likewise absent. A Redis operator uses the library calls. [choice]
+
+### 3.6 Activating a capability [choice]
+
+Specs 10 §6.1 and 13 §5 name `ActivateCapabilities/1` but no caller. The operator path is `RunwickPostgresMigrations.ActivateCapabilityAsync`, `RunwickSqliteMigrations.ActivateCapabilityAsync` and `RunwickRedisMigrations.ActivateCapabilityAsync` (`connection, application?, capability, actor`) and the CLI command above. Only `scheduler` and `rate_admission` are accepted (`invalid_capability` otherwise); the version is the binary's own. Like `store admission` it runs as the migration role, merges into `required_capabilities`, never lowers one, bumps the application's gate revision and returns one `CapabilityChange` per application (`changed: false` when already active). Without `--application` every registered application is raised. An unregistered application is `application_not_registered`: a fresh application is registered by its first start, so start it once (the scheduler's startup error then names this command), activate, restart. Redis refuses an application with a pending intent (`intent_pending`).
+
+Difference from the store operation: this path writes no `capabilities_activated` event and no audit row (the actor is kept in the row's actor field), the same as `store admission`. Proof: `CapabilityActivationContractTests` (all three drivers) and `CliUpgradeTests.Activate_capability_*`.
 
 ## 4. The upgrade, in order
 

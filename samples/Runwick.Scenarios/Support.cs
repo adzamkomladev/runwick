@@ -99,6 +99,14 @@ sealed class Scratch : IAsyncDisposable
         _ => RunwickRedisMigrations.SetAdmissionModeAsync(Conn, App, mode, "scenarios"),
     };
 
+    /// <summary>The operator call a user runs once before the first schedule (spec 13 §6.1, 23 §3.6; CLI: <c>store activate-capability</c>).</summary>
+    public Task ActivateSchedulerAsync() => Kind switch
+    {
+        StoreKind.Pg => RunwickPostgresMigrations.ActivateCapabilityAsync(Conn, App, "scheduler", "scenarios"),
+        StoreKind.Sqlite => RunwickSqliteMigrations.ActivateCapabilityAsync(Conn, App, "scheduler", "scenarios"),
+        _ => RunwickRedisMigrations.ActivateCapabilityAsync(Conn, App, "scheduler", "scenarios"),
+    };
+
     public async ValueTask DisposeAsync()
     {
         try

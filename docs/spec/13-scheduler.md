@@ -40,6 +40,10 @@ Implementation choices *[choice]*:
 4. Resume stores a pending policy (§5.4) instead of evaluating in the store; the scheduler applies it at the next materialization. An edit needs no pending policy: the caller sends the new first due instant, and the store records the skipped interval directly (§6.4).
 5. Capability `scheduler` (version 1) gates RegisterSchedule, MaterializeOccurrences and TriggerSchedule (`UnsupportedVersion` / `scheduler_not_active`) until `ActivateCapabilities/1` raises it (10 §6.1). Control operations on existing schedules are not gated.
 
+## Changes (2026-11-08, SP-028)
+
+- §1 item 5: who raises `scheduler`. The operator runs `runwick store activate-capability --name scheduler --application NAME` (PostgreSQL, SQLite) or `RunwickRedisMigrations.ActivateCapabilityAsync` once per application (23 §3.6). The scheduler's startup error for `scheduler_not_active` names this command.
+
 ## Changes (2026-11-01, SP-016 owed cases)
 
 - `IJobContext.Schedule` (01 §9) is populated for jobs the store builds from a schedule; it is null for every other job. Inferred details:

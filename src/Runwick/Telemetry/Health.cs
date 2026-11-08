@@ -186,6 +186,10 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
             tracker.Failed(ex);
             Telemetry.RunwickLog.StoreUnavailable(_logger, role, ex is RunwickException r ? r.Code : ex.GetType().Name);
         }
+        catch (OperationCanceledException)
+        {
+            // Stopping while a read was in flight is not a failure.
+        }
     }
 
     public async Task StopAsync(CancellationToken ct)

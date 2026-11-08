@@ -150,6 +150,10 @@ internal static class CliCommands
             options: [Opt("--mode", V.String, "Target admission mode.", required: true, allowed: ["open", "drain", "maintenance"]),
                       Opt("--application", V.String, "Application name; every registered application when absent."), Provider, ConnectionEnv, ConnectionStdin],
             permission: "migration role"),
+        Local("store activate-capability", "Raise capability scheduler or rate_admission for an application (never lowers one); schedules and rate scopes are refused until then.", typeof(CapabilityResult), StoreActivateCapabilityAsync,
+            options: [Opt("--name", V.String, "Capability to activate.", required: true, allowed: [.. StoreAdminRules.ActivatableCapabilities]),
+                      Opt("--application", V.String, "Application name; every registered application when absent."), Provider, ConnectionEnv, ConnectionStdin],
+            permission: "migration role"),
         Local("store reidentify", "Give a restored or copied store a new logical identity (offline: every application in maintenance, no live leases).", typeof(StoreIdentityChange), StoreReidentifyAsync,
             options: [Opt("--confirm", V.Flag, "Required: old prepared envelopes and in-flight commands stop resolving.", required: true), Provider, ConnectionEnv, ConnectionStdin],
             permission: "migration role"),
@@ -671,6 +675,17 @@ internal static class CliCommands
             ? await RunwickSqliteMigrations.SetAdmissionModeAsync(cs, application, mode, "cli", ct)
             : await RunwickPostgresMigrations.SetAdmissionModeAsync(cs, application, mode, "cli", ct)));
     }
+
+    static Task<CommandOutcome> StoreActivateCapabilityAsync(CliInvocation inv, CancellationToken ct)
+    {
+        var name = inv.Opt("--name")!;
+        var application = inv.Opt("--application");
+        return StoreAsync(inv, async (cs, sqlite) => new CapabilityResult(sqlite
+            ? await RunwickSqliteMigrations.ActivateCapabilityAsync(cs, application, name, "cli", ct)
+            : await RunwickPostgresMigrations.ActivateCapabilityAsync(cs, application, name, "cli", ct)));
+    }
+
+    internal sealed record CapabilityResult(IReadOnlyList<CapabilityChange> Changes);
 
     internal sealed record AdmissionResult(IReadOnlyList<AdmissionChange> Changes);
 

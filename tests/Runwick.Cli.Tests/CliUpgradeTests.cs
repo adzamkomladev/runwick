@@ -68,6 +68,27 @@ public sealed class CliUpgradeTests
         Fails(await RunAsync("Host=127.0.0.1;Port=1;Timeout=1", Store(StoreKind.Postgres, "store", "status")), "store_unavailable", 4);
     }
 
+    [Theory]
+    [MemberData(nameof(Kinds))]
+    [Trait("Case", "CLI-UPG")]
+    public async Task Activate_capability_raises_scheduler_once_and_refuses_bad_names(StoreKind kind)
+    {
+        await using var f = await DriverFixture.StartAsync("clicap_" + Guid.NewGuid().ToString("N")[..8], kind);
+        await using var c = await f.OpenClient(configure: r => TestJobs.Register(r));
+        var cs = f.AdminConnectionString;
+
+        var first = await RunAsync(cs, [.. Store(kind, "store", "activate-capability"), "--name", "scheduler", "--application", f.Application]);
+        Assert.Equal(0, first.Exit);
+        Assert.True(first.Result!["changes"]![0]!["changed"]!.GetValue<bool>());
+        var again = await RunAsync(cs, [.. Store(kind, "store", "activate-capability"), "--name", "scheduler"]);
+        Assert.False(again.Result!["changes"]![0]!["changed"]!.GetValue<bool>());
+        var status = await RunAsync(cs, Store(kind, "store", "status"));
+        Assert.Contains("scheduler", status.Result!["applications"]![0]!["requiredCapabilities"]!.GetValue<string>(), StringComparison.Ordinal);
+
+        Fails(await RunAsync(cs, [.. Store(kind, "store", "activate-capability"), "--name", "execution"]), "usage_error", 2);
+        Fails(await RunAsync(cs, [.. Store(kind, "store", "activate-capability"), "--name", "scheduler", "--application", "nobody"]), "application_not_registered", 1);
+    }
+
     static void Fails(CliRun r, string code, int exit) =>
         Assert.True((r.Code, r.Exit) == (code, exit), $"expected {code}/{exit}, got {r.Code}/{r.Exit}\n{r.Out}");
 }

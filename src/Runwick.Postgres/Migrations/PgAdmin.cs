@@ -70,6 +70,71 @@ public static partial class RunwickPostgresMigrations
         }, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Raises one capability (<c>scheduler</c> or <c>rate_admission</c>) for one application, or every registered application when
+    /// <paramref name="application"/> is null (10 §6.1, 23 §3.6). Never lowers one; a repeat reports <c>Changed = false</c>. Unlike the
+    /// store operation this writes no audit row or event, like <see cref="SetAdmissionModeAsync"/>; it records <paramref name="actor"/>.
+    /// </summary>
+    public static async Task<IReadOnlyList<CapabilityChange>> ActivateCapabilityAsync(
+        string connectionString, string? application, string capability, string actor, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+        if (StoreAdminRules.CheckCapability(capability) is { } bad)
+        {
+            throw new PostgresMigrationException(bad, "The capability must be scheduler or rate_admission.");
+        }
+
+        var version = StoreAdminRules.CapabilityVersion(capability);
+        return await PgAdmin.InTransactionAsync(connectionString, "capability", async (conn, tx) =>
+        {
+            await PgAdmin.LockStoreAsync(conn, tx, cancellationToken).ConfigureAwait(false);
+            var rows = new List<(string App, long Revision, string Required)>();
+            using (var select = new NpgsqlCommand("""
+                SELECT application, revision, required_capabilities::text FROM runwick.application_controls
+                WHERE @app::text IS NULL OR application = @app ORDER BY application FOR UPDATE
+                """, conn, tx))
+            {
+                select.Parameters.AddWithValue("app", (object?)application ?? DBNull.Value);
+                var r = await select.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                await using (r.ConfigureAwait(false))
+                {
+                    while (await r.ReadAsync(cancellationToken).ConfigureAwait(false))
+                    {
+                        rows.Add((r.GetString(0), r.GetInt64(1), r.GetString(2)));
+                    }
+                }
+            }
+
+            if (application is not null && rows.Count == 0)
+            {
+                throw new PostgresMigrationException("application_not_registered", $"Application {application} is not registered.");
+            }
+
+            var changes = new List<CapabilityChange>();
+            foreach (var (app, revision, required) in rows)
+            {
+                if (StoreAdminRules.Raise(required, capability, version) is not { } raised)
+                {
+                    changes.Add(new CapabilityChange(app, capability, version, revision, false));
+                    continue;
+                }
+
+                using var update = new NpgsqlCommand("""
+                    UPDATE runwick.application_controls
+                    SET required_capabilities = @caps::jsonb, revision = revision + 1, updated_at = runwick.ms_floor(clock_timestamp()), actor_subject = @actor
+                    WHERE application = @app
+                    RETURNING revision
+                    """, conn, tx);
+                update.Parameters.AddWithValue("caps", raised);
+                update.Parameters.AddWithValue("actor", actor);
+                update.Parameters.AddWithValue("app", app);
+                changes.Add(new CapabilityChange(app, capability, version, (long)(await update.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!, true));
+            }
+
+            return changes;
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>Reads the store's revision, mode, application gates and the lease and presence rows an operator checks before acting (23 §6).</summary>
     public static async Task<StoreAdminStatus> GetStatusAsync(string connectionString, CancellationToken cancellationToken = default) =>
         await PgAdmin.InTransactionAsync(connectionString, "status", async (conn, tx) =>

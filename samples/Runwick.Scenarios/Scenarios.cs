@@ -163,23 +163,18 @@ static class Catalogue
     }
 
     /// <summary>
-    /// A schedule cannot be registered until the application raises capability "scheduler" (spec 13 §6.1). There is no public API or CLI
-    /// command for that yet (gap recorded in docs/reports/sp-027.md), so the sample uses the internal store call, as the tests do.
+    /// A schedule cannot be registered until the application raises capability "scheduler" (spec 13 §6.1). A fresh application is
+    /// registered by its first start, so start one producer once, then make the operator call (CLI: <c>store activate-capability</c>).
     /// </summary>
     static async Task ActivateSchedulerAsync(Scratch sc)
     {
-        using var host = NodeHost.Create(Opts(sc, "activate", Role.Producer));
-        await host.StartAsync();
-        var reply = await host.Services.GetRequiredService<Runwick.Protocol.IRateControlStore>().ActivateCapabilitiesAsync(
-            new Runwick.Protocol.StoreCommand<Runwick.Protocol.ActivateCapabilitiesRequest>(sc.App, Guid.CreateVersion7(), DateTimeOffset.UtcNow.AddMinutes(1),
-                new Runwick.Protocol.ActivateCapabilitiesRequest(new Dictionary<string, int> { ["scheduler"] = 1 }, new Runwick.Protocol.ControlActor("scenarios", null, "host", "SCN schedule"))),
-            CancellationToken.None);
-        if (reply.Status != Runwick.Protocol.StoreStatus.Applied)
+        using (var host = NodeHost.Create(Opts(sc, "activate", Role.Producer)))
         {
-            throw new InvalidOperationException($"activating the scheduler capability: {reply.Status} {reply.Error?.Code}");
+            await host.StartAsync();
+            await host.StopAsync();
         }
 
-        await host.StopAsync();
+        await sc.ActivateSchedulerAsync();
     }
 
     // ---- SCN-22..24: capacity ----

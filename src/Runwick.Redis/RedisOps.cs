@@ -66,6 +66,46 @@ namespace Runwick
             }, cancellationToken);
         }
 
+        /// <summary>
+        /// Raises one capability (<c>scheduler</c> or <c>rate_admission</c>) in each application's <c>meta</c> hash with one script per
+        /// application (10 §6.1, 23 §3.6). Never lowers one; a repeat reports <c>Changed = false</c>. An application with a pending intent
+        /// is refused with <c>intent_pending</c>. Like admission, no audit row or event is written; <paramref name="actor"/> is recorded.
+        /// </summary>
+        public static Task<IReadOnlyList<CapabilityChange>> ActivateCapabilityAsync(
+            string configuration, string? application, string capability, string actor, CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+            if (StoreAdminRules.CheckCapability(capability) is { } bad)
+            {
+                throw new RedisMigrationException(bad, "The capability must be scheduler or rate_admission.");
+            }
+
+            var version = StoreAdminRules.CapabilityVersion(capability);
+            return RedisMigrator.WithLockAsync<IReadOnlyList<CapabilityChange>>(configuration, async (db, server) =>
+            {
+                await RedisOps.RequireStoreAsync(db).ConfigureAwait(false);
+                var apps = await RedisOps.ApplicationsAsync(server, db, application, cancellationToken).ConfigureAwait(false);
+                if (application is not null && apps.Count == 0)
+                {
+                    throw new RedisMigrationException("application_not_registered", $"Application {application} is not registered.");
+                }
+
+                var changes = new List<CapabilityChange>();
+                foreach (var (name, meta) in apps)
+                {
+                    var result = (RedisResult[])(await db.ScriptEvaluateAsync(RedisOps.ActivateCapability, new { meta, capability, version, actor }).ConfigureAwait(false))!;
+                    if ((string?)result[0] == "PENDING")
+                    {
+                        throw new RedisMigrationException("intent_pending", $"Application {name} has a pending intent; let recovery finish and retry.");
+                    }
+
+                    changes.Add(new CapabilityChange(name, capability, version, (long)result[1], (long)result[2] == 1));
+                }
+
+                return changes;
+            }, cancellationToken);
+        }
+
         /// <summary>Reads the store's layout revision, mode and application gates (23 §6). Redis reports no lease or presence counts.</summary>
         public static Task<StoreAdminStatus> GetStatusAsync(string configuration, CancellationToken cancellationToken = default) =>
             RedisMigrator.WithLockAsync(configuration, async (db, server) =>
@@ -133,6 +173,14 @@ namespace Runwick.Redis
             "local i = redis.call('HGET', @meta, 'intent') if i and i ~= '' then return {'PENDING', 0} end " +
             "local rev = tonumber(redis.call('HGET', @meta, 'gaterev') or '1') + 1 " +
             "redis.call('HSET', @meta, 'admission', @mode, 'gaterev', rev, 'actor', @actor) return {'OK', rev}");
+
+        internal static readonly LuaScript ActivateCapability = LuaScript.Prepare(
+            "local i = redis.call('HGET', @meta, 'intent') if i and i ~= '' then return {'PENDING', 0, 0} end " +
+            "local rev = tonumber(redis.call('HGET', @meta, 'gaterev') or '1') " +
+            "local caps = cjson.decode(redis.call('HGET', @meta, 'caps') or '{}') " +
+            "if (caps[@capability] or 0) >= tonumber(@version) then return {'OK', rev, 0} end " +
+            "caps[@capability] = tonumber(@version) rev = rev + 1 " +
+            "redis.call('HSET', @meta, 'caps', cjson.encode(caps), 'gaterev', rev, 'actor', @actor) return {'OK', rev, 1}");
 
         internal static readonly LuaScript SetStore = LuaScript.Prepare(
             "local i = redis.call('HGET', @meta, 'intent') if i and i ~= '' then return {'PENDING', 0} end " +
