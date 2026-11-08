@@ -36,5 +36,26 @@ internal static partial class RedisAdmin
         row["lease"] = row["lease"]!.GetValue<long>() + ms;
         await (await Db()).HashSetAsync(P(application) + "permits", permit.Field, row.ToJsonString());
     }
+
+    /// <summary>Records a cancellation request on a job (the job hash field Cancel/1 sets), for cases that need the request without the engine.</summary>
+    public static async Task SetCancelRequested(string application, Guid job) =>
+        await (await Db()).HashSetAsync(P(application) + "job:" + job.ToString("N"), "cancelat", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+    /// <summary>Gives a waiting job a spent execution budget: its generation's started count reaches the maximum.</summary>
+    public static async Task SpendBudget(string application, Guid job)
+    {
+        var db = await Db();
+        var key = P(application) + "job:" + job.ToString("N");
+        await db.HashSetAsync(key, "g:1:started", await db.HashGetAsync(key, "g:1:max"));
+    }
+
+    /// <summary>Scopes holding more live permits (lease after <paramref name="nowMs"/>) than their capacity.</summary>
+    public static async Task<long> OverCapacityScopes(string application, long nowMs)
+    {
+        var permits = (await Hash(application, "permits")).GroupBy(p => p.Key.Split(':')[0])
+            .ToDictionary(g => g.Key, g => g.Count(p => JsonNode.Parse(p.Value)!["lease"]!.GetValue<long>() > nowMs));
+        var scopes = (await Hash(application, "scopes")).Where(p => !p.Key.StartsWith("k:", StringComparison.Ordinal));
+        return scopes.Count(s => permits.GetValueOrDefault(s.Key) > JsonNode.Parse(s.Value)!["capacity"]!.GetValue<int>());
+    }
 }
 
