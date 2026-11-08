@@ -181,6 +181,33 @@ elseif SUB == 'audit' then
       end
     end
   end
+elseif SUB == 'scaling' then
+  -- 2 instance id ('' = any), 3 pool ('' = any), 4 from ms, 5 to ms, 6 after created ms ('' = none), 7 after id, 8 limit
+  local inst, pool, limit = ARGS(2), ARGS(3), tonumber(ARGS(8))
+  local from, to, afterAt, afterId = tonumber(ARGS(4)), tonumber(ARGS(5)), ARGS(6), ARGS(7)
+  local top = to
+  if afterAt ~= '' and tonumber(afterAt) < top then top = tonumber(afterAt) end
+  local examined, offset = 0, 0
+  while #out - 3 < limit and top >= from do
+    local page = redis.call('ZRANGE', P .. 'scaling', U.S(top), U.S(from), 'BYSCORE', 'REV', 'LIMIT', offset, 100, 'WITHSCORES')
+    if #page == 0 then break end
+    offset = offset + #page / 2
+    for i = 1, #page, 2 do
+      local id, score = page[i], page[i + 1]
+      examined = examined + 1
+      if examined > BUDGET then return { 'BUDGET' } end
+      if not (afterAt ~= '' and score == afterAt and not U.blt(id, afterId)) then
+        local raw = redis.call('HGET', P .. 'scaling:data', id)
+        if raw then
+          local e = cjson.decode(raw)
+          if (inst == '' or e.instanceId == inst) and (pool == '' or e.pool == pool) then
+            add(raw)
+            if #out - 3 >= limit then break end
+          end
+        end
+      end
+    end
+  end
 else
   return { 'NONE', 'invalid_request' }
 end

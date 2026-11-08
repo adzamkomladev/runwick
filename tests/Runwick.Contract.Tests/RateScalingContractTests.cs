@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Runwick.Harness.Engine;
+using Runwick.Management;
 using Runwick.Harness.Jobs;
 using Runwick.Harness.Store;
 using Runwick.Protocol;
@@ -655,6 +656,46 @@ public sealed class RateScalingContractTests
         await WorkerHost.WaitUntil(() => w.Script.Completed.Count == 4, Wait, "backlog drains after the override is removed");
         Assert.Equal(2, await Count(f, "SELECT count(*) FROM runwick.scaling_events"));
         Assert.Empty(SnapshotInvariants.Violations((await f.ReadCommittedSnapshot()).Model));
+    }
+
+    [Theory]
+    [MemberData(nameof(CoreContractTests.Kinds), MemberType = typeof(CoreContractTests))]
+    [Trait("Case", "DSH-02")]
+    public async Task Scaling_events_list_newest_first_in_keyset_pages_with_filters(StoreKind kind)
+    {
+        await using var f = await DriverFixture.StartAsync(Ns("dsh02"), kind);
+        var c = await f.OpenClient();
+        var (i1, i2) = (Guid.NewGuid(), Guid.NewGuid());
+        for (var k = 0; k < 5; k++)
+        {
+            Assert.True(await Scaling(c).RecordScalingEventAsync(f.Application,
+                new ScalingEventRecord(k < 3 ? i1 : i2, k < 3 ? "default" : "batch", 1, 2, 2, 2, "grow", null, null), Ct));
+            await Task.Delay(5, Ct);
+        }
+
+        var reads = ControlContractTests.Reads(c);
+        var wide = new ScalingEventFilter(null, null, DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddMinutes(1));
+        var seen = new List<ScalingEventSummary>();
+        (DateTimeOffset, Guid)? after = null;
+        while (true)
+        {
+            var page = (await reads.ListScalingEventsAsync(f.Application, wide, after, 2, Ct)).Value;
+            seen.AddRange(page);
+            if (page.Count < 2)
+            {
+                break;
+            }
+
+            after = (page[^1].CreatedAt, page[^1].EventId);
+        }
+
+        Assert.Equal(5, seen.Count);
+        Assert.Equal(5, seen.Select(e => e.EventId).Distinct().Count());
+        Assert.Equal(seen.OrderByDescending(e => e.CreatedAt).ThenByDescending(e => e.EventId), seen);
+        Assert.Equal(3, (await reads.ListScalingEventsAsync(f.Application, wide with { InstanceId = i1 }, null, 10, Ct)).Value.Count);
+        Assert.Equal(2, (await reads.ListScalingEventsAsync(f.Application, wide with { Pool = "batch" }, null, 10, Ct)).Value.Count);
+        Assert.Empty((await reads.ListScalingEventsAsync(f.Application, new ScalingEventFilter(null, null, DateTimeOffset.UtcNow.AddDays(-9),
+            DateTimeOffset.UtcNow.AddDays(-8)), null, 10, Ct)).Value);
     }
 
     [Theory]

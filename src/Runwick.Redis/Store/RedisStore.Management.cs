@@ -137,6 +137,15 @@ internal sealed partial class RedisStore : IManagementQueryStore
                 o["scheme"]!.GetValue<string>(), o["reason"]?.GetValue<string>(), o["expectedRevision"]?.GetValue<long>(), o["resultingRevision"]?.GetValue<long>(),
                 o["details"]!.AsObject(), MsTime(o["at"])))], ct);
 
+    public Task<StoreRead<IReadOnlyList<ScalingEventSummary>>> ListScalingEventsAsync(string application, ScalingEventFilter filter,
+        (DateTimeOffset CreatedAt, Guid EventId)? after, int limit, CancellationToken ct) =>
+        ManagementReadAsync<IReadOnlyList<ScalingEventSummary>>(application, "scaling",
+            [filter.InstanceId is { } i ? Hex(i) : "", filter.Pool ?? "", CeilMsOf(filter.From), FloorMs(filter.To),
+                after is { } a ? FloorMs(a.CreatedAt) : "", after is { } b ? Hex(b.EventId) : "", limit],
+            r => [.. Rows(r).Select(o => new ScalingEventSummary(Guid.Parse(o["eventId"]!.GetValue<string>()), Guid.Parse(o["instanceId"]!.GetValue<string>()),
+                o["pool"]!.GetValue<string>(), o["oldTarget"]!.GetValue<int>(), o["newTarget"]!.GetValue<int>(), o["desired"]?.GetValue<int>(),
+                o["candidate"]?.GetValue<int>(), o["reason"]!.GetValue<string>(), MsTimeN(o["snapshotAt"]), MsTime(o["createdAt"])))], ct);
+
     // ------------------------------------------------------------------ RecordDisclosure/1 (16 §3)
 
     public async Task<StoreReply<Disclosure>> RecordDisclosureAsync(StoreCommand<DisclosureRequest> command, CancellationToken ct)
