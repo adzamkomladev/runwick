@@ -14,6 +14,15 @@ using static Runwick.Workloads.G2Orchestrator;
 namespace Runwick.Workloads;
 
 /// <summary>
+/// P-03 payload: one JSON string may hold at most 256 KiB (PayloadBounds.MaxStringBytes), so payloads above that are
+/// carried as several strings.
+/// </summary>
+public sealed record G2Big(string Id, string[] Pads) : IQueueJob
+{
+    public const int MaxString = 262_000;
+}
+
+/// <summary>
 /// SP-029 workloads the G-1/G-2 runners did not have (performance plan P-03, P-07, P-10), built on the G-2 repetition
 /// (<see cref="G2Orchestrator.RunOnceAsync"/>): same provisioning, sampling, analysis and result layout.
 /// <list type="bullet">
@@ -89,7 +98,9 @@ internal static class Sp029Workloads
 
     static double? Div(double? x, double? y) => x is { } n && y is { } d && d != 0 ? Math.Round(n / d, 1) : null;
 
-    static double? Num(JsonNode? n) => n?.GetValue<double>();
+    static double? Num(JsonNode? n) => n is null ? null : double.Parse(n.ToJsonString(), CultureInfo.InvariantCulture);
+
+    static long L(JsonNode? n) => n is null ? 0 : (long)Num(n)!.Value;
 
     /// <summary>
     /// The G-1 analysis compares producer-accepted dispatches with the jobs in the store. Seeded jobs (P-07), scheduler
@@ -105,9 +116,9 @@ internal static class Sp029Workloads
             list.Remove(v);
         }
 
-        var accepted = run["producer"]?["accepted"]?.GetValue<long>() ?? 0;
-        var unresolved = run["producer"]?["outcomeUnresolved"]?.GetValue<long>() ?? 0;
-        var produced = correctness["jobs"]!.GetValue<long>() + deleted - extra;
+        var accepted = L(run["producer"]?["accepted"]);
+        var unresolved = L(run["producer"]?["outcomeUnresolved"]);
+        var produced = L(correctness["jobs"]) + deleted - extra;
         if (produced < accepted || produced > accepted + unresolved + upperSlack)
         {
             list.Add($"producer accepted {accepted} ({unresolved} unresolved) but stored + deleted − seeded/scheduled is {produced}");
@@ -208,13 +219,13 @@ internal static class Sp029Workloads
     {
         summary["limitCheck"] = await LimitCheckAsync(db).ConfigureAwait(false);
         var handlerMs = a.Int("handler-ms", 100);
-        foreach (var (label, payload, rate) in new[] { ("64k", 65_536, a.Double("rate-64k", 16)), ("1m", 1_048_576, a.Double("rate-1m", 1)) })
+        foreach (var (label, payload, rate) in new[] { ("64k", 65_536, a.Double("rate-64k", 16)), ("1m", 1_048_400, a.Double("rate-1m", 1)) })
         {
             var reps = new JsonArray();
             for (var rep = 1; rep <= a.Int("reps", 3); rep++)
             {
-                var spec = new G2Spec("P-03", $"{label}-rep{rep}", [], [Worker(a, "pu:1", "work", handlerMs)],
-                    ["--mode", "poisson", "--job", "work", "--rate", D(rate), "--payload", I(payload)], a.Int("concurrency", 16), handlerMs,
+                var spec = new G2Spec("P-03", $"{label}-rep{rep}", [], [Worker(a, "pu:1", "big", handlerMs)],
+                    ["--mode", "poisson", "--job", "big", "--rate", D(rate), "--payload", I(payload)], a.Int("concurrency", 16), handlerMs,
                     Drain: true, Capabilities: []);
                 var run = await RunOnceAsync(db, root, spec, c => MeasureAsync(c, a, 2, 15), drainMinutes: a.Double("drain-min", 30)).ConfigureAwait(false);
                 runs.Add(run);
@@ -295,7 +306,7 @@ internal static class Sp029Workloads
                 await c.WaitAsync(Min(a, "warmup-min", 5)).ConfigureAwait(false);
                 c.Mark("seedStart");
                 var seed = await SeedAsync(store, a.Int("terminal-jobs", 1_000_000), a.Double("seed-span-days", 30)).ConfigureAwait(false);
-                seeded = seed["seeded"]!.GetValue<long>();
+                seeded = L(seed["seeded"]);
                 c.Mark("seedEnd");
                 c.Extra["seed"] = seed;
                 await c.WaitAsync(Min(a, "settle-min", 1)).ConfigureAwait(false);
@@ -341,11 +352,12 @@ internal static class Sp029Workloads
                     ["latencies"] = viewers.Metrics.LatenciesJson(),
                     ["jobRows"] = s2.Rows,
                     ["extraSeqRowsReadPerPoll"] = viewers.Polls == 0 ? null : Math.Round((double)extraSeq / viewers.Polls, 1),
-                    ["cleanup"] = new JsonObject(retention.Classes.Select(x => KeyValuePair.Create(x.RecordClass, (JsonNode?)x.TotalRows))),
+                    ["cleanupRowsByClass"] = new JsonObject(retention.Classes.Select(x => KeyValuePair.Create(x.RecordClass, (JsonNode?)x.TotalRows))),
+                    ["jobsWithDetailExpired"] = await ScalarAsync(store, "SELECT count(*) FROM runwick.jobs WHERE detail_expired_at IS NOT NULL").ConfigureAwait(false),
                 };
             }, async c => c.Extra["jobsDeleted"] = await JobsDeletedAsync(c.StoreConnection("wl:analysis")).ConfigureAwait(false),
                 a.Double("drain-min", 60)).ConfigureAwait(false);
-            Reconcile(run, seeded, 0, run["extra"]?["jobsDeleted"]?.GetValue<long>() ?? 0);
+            Reconcile(run, seeded, 0, L(run["extra"]?["jobsDeleted"]));
             runs.Add(run);
             summary[$"rep{rep}"] = run["extra"]?["management"]?.DeepClone();
         }
@@ -612,7 +624,7 @@ internal static class Sp029Workloads
             c.Extra["scheduledJobs"] = File.Exists(scheduler) ? JsonNode.Parse(await File.ReadAllTextAsync(scheduler).ConfigureAwait(false))?["materializations"]?.DeepClone() : null;
             c.Extra["growth"] = Growth(Path.Combine(c.Dir, "worker1.gc.jsonl"), c.Inner.Marks["measureStart"], c.Inner.Marks["measureEnd"], concurrency);
         }, a.Double("drain-min", 60)).ConfigureAwait(false);
-        Reconcile(run, 0, run["extra"]?["scheduledJobs"]?.GetValue<long>() ?? 0, run["extra"]?["jobsDeleted"]?.GetValue<long>() ?? 0);
+        Reconcile(run, 0, L(run["extra"]?["scheduledJobs"]), L(run["extra"]?["jobsDeleted"]));
         runs.Add(run);
         summary["growth"] = run["extra"]?["growth"]?.DeepClone();
         summary["confirmedFinishesPerSec"] = run["window"]?["confirmedFinishesPerSec"]?.DeepClone();
@@ -651,12 +663,12 @@ internal static class Sp029Workloads
             return s.Count % 2 == 1 ? s[s.Count / 2] : (s[(s.Count / 2) - 1] + s[s.Count / 2]) / 2;
         }
 
-        double Med(List<(DateTimeOffset At, JsonNode N)> q, string k) => Median(q.Select(x => x.N[k]!.GetValue<double>()));
-        double Mean(List<(DateTimeOffset At, JsonNode N)> q, string k) => q.Average(x => x.N[k]!.GetValue<double>());
+        double Med(List<(DateTimeOffset At, JsonNode N)> q, string k) => Median(q.Select(x => Num(x.N[k])!.Value));
+        double Mean(List<(DateTimeOffset At, JsonNode N)> q, string k) => q.Average(x => Num(x.N[k])!.Value);
         var heapRatio = Med(q4, "heapAfterFullGcBytes") / Med(q1, "heapAfterFullGcBytes");
         var cachesBounded = Mean(q4, "attemptEntries") <= (1.1 * Mean(q1, "attemptEntries")) + 1
             && Mean(q4, "scopeMap") <= (1.1 * Mean(q1, "scopeMap")) + 1
-            && samples.Max(x => x.N["attemptEntries"]!.GetValue<long>()) <= concurrency;
+            && samples.Max(x => L(x.N["attemptEntries"])) <= concurrency;
         o["samples"] = samples.Count;
         o["firstQuarter"] = new JsonObject
         {
