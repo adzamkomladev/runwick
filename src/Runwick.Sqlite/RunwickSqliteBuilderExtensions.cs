@@ -67,5 +67,6 @@ internal sealed class SqliteStoreRegistration(string connectionString, SqliteOpt
         services.AddSingleton<IReadinessDiagnostics>(sp => sp.GetRequiredService<SqliteStore>());
         services.AddScoped<Runwick.Sqlite.ISqliteJobCompletion, SqliteJobCompletion>();
         services.AddSingleton<Runwick.Sqlite.ISqliteJobDispatcher, SqliteJobDispatcher>();
+        services.AddSingleton<IScheduleStore>(sp => sp.GetRequiredService<SqliteStore>());
     }
 }
