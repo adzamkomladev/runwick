@@ -57,7 +57,8 @@ internal sealed class PeerClient : IAsyncDisposable
             : throw new FileNotFoundException("Build tests/Runwick.Harness.Peer before running peer tests.", candidate);
     }
 
-    public static Task<PeerClient> StartAsync(string identity)
+    /// <summary>Starts a peer; <paramref name="options"/> are its command-line options (<c>--store sqlite --path &lt;file&gt;</c>).</summary>
+    public static Task<PeerClient> StartAsync(string identity, params string[] options)
     {
         var psi = new ProcessStartInfo("dotnet")
         {
@@ -68,6 +69,10 @@ internal sealed class PeerClient : IAsyncDisposable
         };
         psi.ArgumentList.Add(PeerAssembly());
         psi.ArgumentList.Add(identity);
+        foreach (var option in options)
+        {
+            psi.ArgumentList.Add(option);
+        }
         var process = Process.Start(psi) ?? throw new InvalidOperationException("Could not start the peer process.");
         return Task.FromResult(new PeerClient(identity, process));
     }
@@ -125,7 +130,7 @@ internal sealed class PeerClient : IAsyncDisposable
     /// <summary>Sends without waiting for the reply (used when the command will block at a barrier or be killed).</summary>
     public Task<JsonObject> SendInBackground(string cmd, JsonObject? args = null) => SendAsync(cmd, args, TimeSpan.FromMinutes(5));
 
-    public Task OpenAsync(string connectionString, string application, int maxExecutions) =>
+    public Task OpenAsync(string? connectionString, string application, int maxExecutions) =>
         SendAsync("open", new JsonObject { ["cs"] = connectionString, ["app"] = application, ["maxExecutions"] = maxExecutions });
 
     /// <summary>As <see cref="OpenAsync"/>, with the rated contracts registered (SP-013).</summary>

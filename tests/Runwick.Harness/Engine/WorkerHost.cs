@@ -91,7 +91,7 @@ internal sealed class WorkerHost : IAsyncDisposable
     public static WorkerHost Create(string connectionString, string application, IFaultInjector faults, int concurrency = 4,
         Action<JobBuilder<WorkJob>>? jobs = null, Action<WorkerOptions>? options = null, Action<RunwickBuilder>? configure = null,
         Action<IServiceCollection>? services = null, int? divisor = null, string queue = "default", Action<PoolBuilder>? pool = null,
-        Action<WorkerBuilder>? worker = null)
+        Action<WorkerBuilder>? worker = null, Action<IServiceCollection>? overrides = null)
     {
         var sc = new ServiceCollection();
         sc.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
@@ -126,6 +126,7 @@ internal sealed class WorkerHost : IAsyncDisposable
             });
             configure?.Invoke(r);
         });
+        overrides?.Invoke(sc);   // after AddRunwick: replaces store registrations (SQL-12 single-operation runs)
         var host = new WorkerHost(sc.BuildServiceProvider());
         host.Engine.Hooks.Event = (name, entry) => host.Events.Enqueue((name, entry?.AttemptId, host.Engine.Clock.Now));
         return host;
@@ -142,6 +143,15 @@ internal sealed class WorkerHost : IAsyncDisposable
             .WithRetryDelay(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(1));
         jobs?.Invoke(work);
     }
+
+    /// <summary>
+    /// SQL-01 contention: a capacity-1 permit per resource (the job key up to its first '-') and a job-type rate of
+    /// <see cref="ContendedRate"/> per second.
+    /// </summary>
+    public static void Contended(JobBuilder<WorkJob> jobs) =>
+        jobs.PerResource(j => j.Id[..Math.Max(0, j.Id.IndexOf('-', StringComparison.Ordinal))], 1).RollingWindow(ContendedRate, TimeSpan.FromSeconds(1));
+
+    public const int ContendedRate = 100;
 
     public async Task StartAsync()
     {

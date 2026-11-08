@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Npgsql;
 using Runwick.ReferenceModel;
 
@@ -72,15 +73,74 @@ internal static class CommittedHistory
                     ORDER BY event_id
                     """, r => new Cancel(r.GetString(0), r.GetGuid(1), r.GetInt32(2), T(r, 3))).ConfigureAwait(false)).ToLookup(c => (c.Application, c.JobId));
 
-                var errors = new List<string>();
-                foreach (var job in jobs)
-                {
-                    Check(job, [.. gens[(job.Application, job.JobId)]], attempts[(job.Application, job.JobId)], cancels[(job.Application, job.JobId)], errors);
-                }
-
-                return errors;
+                return Evaluate(jobs, gens, attempts, cancels);
             }
         }
+    }
+
+    /// <summary>The same check over a SQLite file (20 §12): UUID blobs, epoch-millisecond instants, <c>runwick_</c> tables.</summary>
+    public static IReadOnlyList<string> SqliteViolations(string path)
+    {
+        using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ConnectionString);
+        conn.Open();
+        using var tx = conn.BeginTransaction(deferred: true);
+        List<TRow> Query<TRow>(string sql, Func<SqliteDataReader, TRow> map)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = sql;
+            using var r = cmd.ExecuteReader();
+            var list = new List<TRow>();
+            while (r.Read())
+            {
+                list.Add(map(r));
+            }
+
+            return list;
+        }
+
+        static Guid G(SqliteDataReader r, int i) => new((byte[])r.GetValue(i), bigEndian: true);
+        static Guid? Gq(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : G(r, i);
+        static DateTimeOffset Tq(SqliteDataReader r, int i) => DateTimeOffset.FromUnixTimeMilliseconds(r.GetInt64(i));
+        static DateTimeOffset? Tqn(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : Tq(r, i);
+        static string? Sq(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
+
+        var jobs = Query("""
+            SELECT application, job_id, generation, state, current_attempt_id, ownership_token, cancel_requested_at IS NOT NULL, execution_count
+            FROM runwick_jobs ORDER BY application, job_id
+            """, r => new Job(r.GetString(0), G(r, 1), r.GetInt32(2), r.GetString(3), Gq(r, 4), Gq(r, 5), r.GetInt64(6) != 0, r.GetInt64(7)));
+        var gens = Query("""
+            SELECT application, job_id, generation, created_at, max_executions, max_unstarted_abandonments, started_count, consecutive_unstarted_count
+            FROM runwick_job_generations ORDER BY application, job_id, generation
+            """, r => (Key: (r.GetString(0), G(r, 1)), Gen: new Gen(r.GetInt32(2), Tq(r, 3), r.GetInt32(4), r.GetInt32(5), r.GetInt32(6), r.GetInt32(7))))
+            .ToLookup(x => x.Key, x => x.Gen);
+        var attempts = Query("""
+            SELECT a.application, a.attempt_id, a.job_id, a.generation, a.reservation_number, a.ownership_token,
+                   a.reserved_at, a.authorized_at, a.finished_at, a.outcome, c.operation
+            FROM runwick_job_attempts AS a
+            LEFT JOIN runwick_storage_commands AS c ON c.application = a.application AND c.command_id = a.closed_by_command_id
+            ORDER BY a.application, a.job_id, a.reservation_number
+            """, r => new Attempt(r.GetString(0), G(r, 1), G(r, 2), r.GetInt32(3), r.GetInt64(4), G(r, 5), Tq(r, 6), Tqn(r, 7), Tqn(r, 8), Sq(r, 9), Sq(r, 10)))
+            .ToLookup(a => (a.Application, a.JobId));
+        var cancels = Query("""
+            SELECT application, job_id, CAST(json_extract(details, '$.generation') AS INTEGER), occurred_at
+            FROM runwick_queue_events
+            WHERE event_kind IN ('job_cancelled', 'job_cancel_requested') AND job_id IS NOT NULL
+            ORDER BY event_id
+            """, r => new Cancel(r.GetString(0), G(r, 1), r.GetInt32(2), Tq(r, 3))).ToLookup(c => (c.Application, c.JobId));
+        return Evaluate(jobs, gens, attempts, cancels);
+    }
+
+    static List<string> Evaluate(List<Job> jobs, ILookup<(string, Guid), Gen> gens, ILookup<(string, Guid), Attempt> attempts,
+        ILookup<(string, Guid), Cancel> cancels)
+    {
+        var errors = new List<string>();
+        foreach (var job in jobs)
+        {
+            Check(job, [.. gens[(job.Application, job.JobId)]], attempts[(job.Application, job.JobId)], cancels[(job.Application, job.JobId)], errors);
+        }
+
+        return errors;
     }
 
     static void Check(Job job, List<Gen> generations, IEnumerable<Attempt> attempts, IEnumerable<Cancel> cancels, List<string> errors)
