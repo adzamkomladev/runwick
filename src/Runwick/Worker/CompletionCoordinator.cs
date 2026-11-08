@@ -1,6 +1,9 @@
+using System.Diagnostics;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Runwick.Protocol;
+using Runwick.Telemetry;
+using T = Runwick.Telemetry.Telemetry;
 
 namespace Runwick.Worker;
 
@@ -63,8 +66,41 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
             return SettlementResult.Unresolved;
         }
 
-        await _ready.Writer.WriteAsync(entry, engine.ControlStop).ConfigureAwait(false);
-        return await entry.Settled.Task.ConfigureAwait(false);
+        var started = Stopwatch.GetTimestamp();
+        using var span = T.Span("settle " + entry.Reserved.Queue);
+        span.Activity?.SetTag("messaging.system", "runwick").SetTag("messaging.operation.type", "settle").SetTag("messaging.operation.name", "finish")
+            .SetTag("messaging.destination.name", entry.Reserved.Queue);
+        SettlementResult? result = null;
+        try
+        {
+            await _ready.Writer.WriteAsync(entry, engine.ControlStop).ConfigureAwait(false);
+            result = await entry.Settled.Task.ConfigureAwait(false);
+            return result.Value;
+        }
+        finally
+        {
+            // After the decision: the measurement never shapes it (18 §1).
+            var name = result switch
+            {
+                SettlementResult.Applied => "confirmed",
+                SettlementResult.Stale => "lost",
+                _ => "unresolved",
+            };
+            T.SettlementDuration.Record(Stopwatch.GetElapsedTime(started).TotalSeconds, name);
+            span.Activity?.SetTag("runwick.settlement.result", name).SetTag("runwick.storage.attempts", Volatile.Read(ref entry.FinishAttempts));
+            entry.Span?.SetTag("runwick.settlement.result", name);
+            if (result != SettlementResult.Applied)
+            {
+                span.Activity?.SetStatus(ActivityStatusCode.Error);
+                entry.Span?.SetStatus(ActivityStatusCode.Error);
+            }
+
+            if (name == "unresolved")
+            {
+                RunwickLog.SettlementUnresolved(engine.Logger, entry.Lease.JobId, entry.AttemptId, WorkerEngine.OutcomeName(finish.Outcome),
+                    (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            }
+        }
     }
 
     async Task WorkerAsync()
@@ -139,6 +175,7 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
                     slots.Add(await e.Arbiter.AcquireAsync(ControlPriority.Settlement, engine.ControlStop).ConfigureAwait(false));
                     e.SettlementInFlight = true;
                     e.CommandUnresolved = true;
+                    Interlocked.Increment(ref e.FinishAttempts);
                 }
 
                 now = engine.Clock.Now;
@@ -252,6 +289,7 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
             {
                 entry.SettlementInFlight = true;
                 entry.CommandUnresolved = true;
+                Interlocked.Increment(ref entry.FinishAttempts);
                 var timeout = detached ? engine.Options.ControlRequestTimeout : WorkerEngine.Min(engine.Options.ControlRequestTimeout, budgetEnd - now);
                 try
                 {

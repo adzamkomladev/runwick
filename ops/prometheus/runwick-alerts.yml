@@ -1,0 +1,83 @@
+# Runwick alert rules (docs/spec/18-telemetry.md §9), telemetry schema 1.
+# Every threshold below is a STARTING POINT: tune it for your workload. Global series (runwick_queue_*,
+# runwick_schedule_*, runwick_collector_*) are aggregated with max, never sum, so duplicate collectors do not add up.
+groups:
+  - name: runwick
+    rules:
+      - alert: RunwickLeaseMarginLow
+        expr: histogram_quantile(0.05, sum by (le, runwick_pool) (rate(runwick_lease_margin_seconds_bucket[5m]))) < 25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pool {{ $labels.runwick_pool }}: 5th percentile lease margin below StopMargin (25 s)."
+          description: "Starting-point threshold; tune it to your StopMargin and workload."
+      - alert: RunwickAuthorityLost
+        expr: increase(runwick_lease_authority_lost_total[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Attempts lost lease authority ({{ $labels.runwick_loss_reason }})."
+          description: "Starting-point threshold; tune it to your workload."
+      - alert: RunwickSettlementOld
+        expr: runwick_worker_oldest_unsettled_age_seconds > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pool {{ $labels.runwick_pool }}: a settlement has been unconfirmed for more than 60 s."
+          description: "Starting-point threshold; tune it to your workload."
+      - alert: RunwickDueAgeRising
+        expr: max by (runwick_queue) (runwick_queue_oldest_due_age_seconds) > 600
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue {{ $labels.runwick_queue }}: oldest due job has waited more than 10 minutes."
+          description: "Starting-point threshold; tune it to your workload. Due is not runnable: capacity, rates and pauses are ignored."
+      - alert: RunwickFailuresRepeated
+        # error.type is a span attribute only; the metric form groups failures by queue and job name.
+        expr: >-
+          sum by (runwick_queue, runwick_job_name) (rate(runwick_execution_duration_seconds_count{runwick_outcome!="succeeded"}[15m]))
+          / sum by (runwick_queue, runwick_job_name) (rate(runwick_execution_duration_seconds_count[15m])) > 0.10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.runwick_job_name }} on {{ $labels.runwick_queue }}: more than 10 % of executions do not succeed."
+          description: "Starting-point threshold; tune it to your workload. Find the error types in the process spans."
+      - alert: RunwickScheduleLag
+        expr: max(runwick_schedule_oldest_overdue_age_seconds) > 120 or max(runwick_schedule_needs_review) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Schedules are overdue by more than 2 minutes or need review."
+          description: "Starting-point threshold; tune it to your workload."
+      - alert: RunwickRetentionFailing
+        expr: >-
+          increase(runwick_retention_batches_total{runwick_result="failed"}[1h]) > 3
+          or max by (runwick_retention_class) (runwick_retention_caught_up_age_seconds) > 86400
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Retention class {{ $labels.runwick_retention_class }} is failing or has not caught up for 24 h."
+          description: "Starting-point threshold; tune it to your retention policy."
+      - alert: RunwickCollectorStale
+        expr: max(runwick_collector_snapshot_age_seconds) > 60 or absent(runwick_collector_snapshot_age_seconds)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The application-wide collector has no fresh snapshot (or none is running); global numbers are missing."
+          description: "Starting-point threshold; tune it to your ApplicationSamplePeriod."
+      - alert: RunwickStoreIncompatible
+        # Host-provided metric: Runwick emits no readiness metric. The host must export this gauge (1 while any
+        # runwick-* readiness check reports reason "incompatible", else 0) from its health checks.
+        expr: runwick_host_readiness_incompatible > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "A Runwick role reports an incompatible store schema or persistence profile."
+          description: "Requires the host-exported runwick_host_readiness_incompatible gauge."

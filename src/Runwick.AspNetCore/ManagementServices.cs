@@ -68,6 +68,7 @@ public static class RunwickManagementServiceCollectionExtensions
         configure(builder);
         services.AddSingleton(builder);
         services.AddSingleton(builder.Options);
+        services.AddSingleton<Runwick.ManagementRoleMarker>();
         services.AddSingleton(sp => new ManagementLimiter(builder.Options, sp.GetService<TimeProvider>() ?? TimeProvider.System));
         services.AddAntiforgery();
         services.AddDataProtection();

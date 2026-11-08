@@ -960,6 +960,6 @@ public sealed class WorkerEngineTests
         await e.AdvanceAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(AttemptOutcome.Succeeded, Assert.Single(e.Store.JobOf(id).Finishes).Outcome);
         Assert.Equal(1, e.Script.InvocationsOf("j"));
-        Assert.Contains(e.Engine.Health().Diagnostics, d => d.Contains("dispose fault", StringComparison.Ordinal));
+        Assert.Contains(e.Engine.Health().Diagnostics, d => d.Contains("threw InvalidOperationException", StringComparison.Ordinal));
     }
 }

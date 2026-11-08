@@ -8,11 +8,13 @@
   <ItemGroup>
     <ProjectReference Include="..\Runwick.Harness\Runwick.Harness.csproj" />
     <ProjectReference Include="..\..\samples\Runwick.Samples.Contracts\Runwick.Samples.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\Runwick.OpenTelemetry\Runwick.OpenTelemetry.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="OpenTelemetry.Exporter.InMemory" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

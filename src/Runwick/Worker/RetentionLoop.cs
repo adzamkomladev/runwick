@@ -43,6 +43,10 @@ internal sealed partial class WorkerEngine
                 continue;
             }
 
+            // A new root span per batch (18 §2.1); tagged and measured once the outcome is known.
+            System.Diagnostics.Activity.Current = null;
+            using var span = Telemetry.Telemetry.Span("runwick.retention.batch");
+            var started = Clock.Now;
             CleanupBatchResult result;
             try
             {
@@ -58,6 +62,16 @@ internal sealed partial class WorkerEngine
             Interlocked.Increment(ref CleanupBatches);
             Interlocked.Add(ref CleanupRows, result.Rows);
             now = Clock.Now;
+            var outcome = result.Status == "done" ? (result.Rows > 0 ? "completed" : "empty") : result.Status;
+            span.Activity?.SetTag("runwick.retention.class", recordClass);
+            span.Activity?.SetTag("runwick.result", outcome);
+            span.Activity?.SetTag("runwick.rows", result.Rows);
+            Telemetry.Telemetry.RetentionBatch(recordClass, outcome, result.Rows, now - started);
+            if (result.CaughtUp)
+            {
+                Telemetry.Telemetry.RetentionCaughtUpAt(recordClass, Clock.WallNow);
+            }
+
             switch (result.Status)
             {
                 case "failed":
@@ -65,7 +79,7 @@ internal sealed partial class WorkerEngine
                     var n = failures[recordClass] = failures.GetValueOrDefault(recordClass) + 1;
                     var backoff = CleanupBackoffBase * Math.Pow(2, Math.Min(n - 1, 10));
                     due[recordClass] = now + Min(backoff, CleanupBackoffCap);
-                    Logger.LogDebug("Runwick cleanup of {RecordClass} failed ({Code}); backing off.", recordClass, result.ErrorCode);
+                    Telemetry.RunwickLog.RetentionBatchFailed(Logger, recordClass, result.ErrorCode ?? "unknown");
                     break;
                 case "skipped_locked":
                     Interlocked.Increment(ref CleanupSkipped);

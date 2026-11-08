@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Runwick.Registration;
 
 namespace Runwick.Hosting;
@@ -17,7 +18,14 @@ internal sealed class RunwickHostedService(IServiceProvider services, IEnumerabl
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        services.GetRequiredService<JobRegistry>();
+        var registry = services.GetRequiredService<JobRegistry>();
+
+        // Telemetry is process-wide (18 §1): the last host started sets the bounds; names accumulate.
+        var telemetry = services.GetRequiredService<RunwickTelemetryOptions>();
+        Telemetry.Telemetry.MaxSeries = telemetry.MaxSeriesPerInstrument;
+        Telemetry.Telemetry.RecordExceptionDetails = telemetry.RecordExceptionDetails;
+        Telemetry.Telemetry.Logger ??= services.GetService<ILoggerFactory>()?.CreateLogger("Runwick.Telemetry");
+        Telemetry.Telemetry.RegisterNames(registry.Queues, registry.Compiled.Select(j => j.Name));
         await services.GetRequiredService<RunwickRuntime>().EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
         foreach (var component in components)
         {

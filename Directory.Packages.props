@@ -13,6 +13,8 @@
     <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.14" />
     <PackageVersion Include="Cronos" Version="0.13.0" />
     <PackageVersion Include="NodaTime" Version="3.3.7" />
+    <!-- SP-022 Runwick.OpenTelemetry: latest stable on 2026-11-08 that is at least two weeks old (published 2026-10-20). -->
+    <PackageVersion Include="OpenTelemetry" Version="1.20.1" />
   </ItemGroup>
   <ItemGroup Label="Hosts, tests and tools">
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.14" />
@@ -33,5 +35,7 @@
     <PackageVersion Include="StackExchange.Redis" Version="3.4.20" />
     <!-- SP-023 dashboard: the Inertia adapter (named mounts since 1.7.0). -->
     <PackageVersion Include="Inertia.Net" Version="1.7.0" />
+    <!-- SP-022 telemetry tests (test projects only); same release as the OpenTelemetry pin. -->
+    <PackageVersion Include="OpenTelemetry.Exporter.InMemory" Version="1.20.1" />
   </ItemGroup>
 </Project>

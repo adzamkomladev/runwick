@@ -44,7 +44,15 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         _artifact = TzdbArtifact.Pinned;
         _tokens = declarations.Options.Burst;
         _refilledAt = _time.GetTimestamp();
+        Health = new RoleTracker(_time);
     }
+
+    /// <summary>Scheduler readiness (18 §7): each pass's due read and cursor writes.</summary>
+    internal RoleTracker Health { get; }
+
+    internal TimeSpan PollInterval => _declarations.Options.PollInterval;
+
+    internal TimeSpan MaxIdle => _declarations.Options.IdlePollInterval * ListeningIdleFactor;
 
     /// <summary>Local diagnostics by schedule ID (SCHED-11): profiles this process cannot evaluate. Never written to the store.</summary>
     internal IReadOnlyDictionary<Guid, string> LocalDiagnostics
@@ -275,6 +283,8 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
                 {
                     worked |= await MaterializeOneAsync(store, schedule, due.ObservedAt, ct).ConfigureAwait(false);
                 }
+
+                Health.Ok();
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -282,7 +292,9 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
             }
             catch (Exception ex) when (ex is StoreUnavailableException or StoreNotAppliedException or StoreOutcomeUnknownException or TimeoutException)
             {
-                _logger.LogWarning(ex, "Scheduler pass failed; retrying after back-off.");
+                Health.Failed(ex);
+                _logger.LogDebug(ex, "Scheduler pass failed; retrying after back-off.");
+                Telemetry.RunwickLog.StoreUnavailable(_logger, "scheduler", ex is RunwickException r ? r.Code : ex.GetType().Name);
             }
 
             // Idle back-off to IdleCap (5 s, or 15 s while the schedule listener is healthy), never past the next due
@@ -343,7 +355,29 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
 
         await TakeAllowanceAsync(plan.Occurrences.Count, ct).ConfigureAwait(false);
         var command = new StoreCommand<MaterializeRequest>(Application, Guid.CreateVersion7(), _time.GetUtcNow() + ScheduleOperations.SchedulerLifetime, plan);
+        System.Diagnostics.Activity.Current = null;
+        using var span = Telemetry.Telemetry.Span("runwick.schedule.materialize");
         var reply = await SendAsync(() => store.MaterializeOccurrencesAsync(command, ct), command.CommandId, ct).ConfigureAwait(false);
+        span.Activity?.SetTag("runwick.schedule.result", Worker.WorkerEngine.Snake(reply.Status.ToString())).SetTag("runwick.schedule.occurrences", plan.Occurrences.Count);
+        if (reply is { Status: StoreStatus.Applied, Value: { } materialized })
+        {
+            var now = _time.GetUtcNow();
+            foreach (var due in plan.Occurrences)
+            {
+                Telemetry.Telemetry.ScheduleMaterializationDelay.Record(Math.Max(0, (now - due.ScheduledAt).TotalSeconds));
+            }
+
+            foreach (var occurrence in materialized.Occurrences)
+            {
+                Telemetry.Telemetry.ScheduleOccurrences.Add(1, occurrence.Disposition);
+            }
+
+            if (plan.AuditRanges.Count > 0)
+            {
+                Telemetry.Telemetry.ScheduleOccurrences.Add(plan.AuditRanges.Count, "skipped");
+            }
+        }
+
         switch (reply.Status)
         {
             case StoreStatus.Applied:

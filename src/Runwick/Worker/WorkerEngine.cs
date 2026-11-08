@@ -6,6 +6,7 @@ using Runwick.Hosting;
 using Runwick.Internal;
 using Runwick.Protocol;
 using Runwick.Registration;
+using Runwick.Telemetry;
 
 namespace Runwick.Worker;
 
@@ -209,7 +210,8 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
         {
         }
 
-        Logger.LogWarning("Runwick worker: {Diagnostic}", message);
+        // Free text stays at Debug: operators get the fixed events of 18 §5 instead.
+        Logger.LogDebug("Runwick worker: {Diagnostic}", message);
     }
 
     /// <summary>Critical fault / incompatibility (05 §2 rule 3, §15.2): admission closes; renewal and settlement continue.</summary>
@@ -227,6 +229,7 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
         }
 
         Diagnose("admission closed: " + reason);
+        RunwickLog.AdmissionClosed(Logger, "*", reason.StartsWith("critical task", StringComparison.Ordinal) ? "critical_task_fault" : "incompatible");
         WakePools();
     }
 
@@ -433,6 +436,8 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
             _started = true;
         }
 
+        PublishGauges();
+        Telemetry.Telemetry.AddWorkerSource(this, () => _gauges);
         WakePools();
         Emit("started");
     }
@@ -454,6 +459,7 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
             _lastTick = now;
             Interlocked.Increment(ref _progressTick);
             EvaluatePressure(now, lag);
+            PublishGauges();
         }
     }
 
@@ -479,8 +485,6 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
             {
                 if (!_pressureStopped)
                 {
-                    Logger.LogWarning("Runwick worker pressure stop: margin {Margin}, oldest finish {Finish}, control wait {Wait}, lag {Lag}.",
-                        minMargin, oldestFinish, controlWait, lag);
                     transition = "pressureStop:" + (minMargin < Settings.StopMargin ? "margin" : oldestFinish >= TimeSpan.FromSeconds(5) ? "finish"
                         : controlWait >= TimeSpan.FromSeconds(1) ? "controlWait" : arbiterBlocked ? "arbiter" : "lag");
                 }
@@ -503,6 +507,23 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
         if (transition is not null)
         {
             Emit(transition);
+            if (transition == "pressureResume")
+            {
+                RunwickLog.PressureResume(Logger);
+            }
+            else
+            {
+                var trigger = transition["pressureStop:".Length..];
+                var value = trigger switch
+                {
+                    "margin" => minMargin,
+                    "finish" => oldestFinish,
+                    "controlWait" => controlWait,
+                    "lag" => lag,
+                    _ => TimeSpan.Zero,
+                };
+                RunwickLog.PressureStop(Logger, Snake(trigger), (long)value.TotalMilliseconds);
+            }
         }
 
         // Only the resume transition wakes the pools: a wake on every healthy tick would cut the idle backoff
@@ -564,6 +585,7 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
         }
 
         Emit("draining");
+        RunwickLog.DrainStarted(Logger, _entries.Count);
         WakePools();
         Lease.Wake();
         foreach (var entry in _entries.Values)
@@ -640,6 +662,8 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
                 Diagnose("some worker loops did not stop within 2 s of control stop");
             }
 
+            Telemetry.Telemetry.RemoveWorkerSource(this);
+            RunwickLog.DrainCompleted(Logger, _entries.Values.Count(e => e.Phase != AttemptPhase.Retired));
             Emit("stopped");
         }
     }
@@ -657,6 +681,7 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
             await _controlStop.CancelAsync().ConfigureAwait(false);
         }
 
+        Telemetry.Telemetry.RemoveWorkerSource(this);
         Lease.Dispose();
         _loops.Dispose();
         _controlStop.Dispose();

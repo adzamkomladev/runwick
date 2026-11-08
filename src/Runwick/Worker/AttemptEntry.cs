@@ -145,6 +145,15 @@ internal sealed class AttemptEntry : IDisposable
 
     public string? Diagnostic { get; set; }
 
+    /// <summary>The attempt's <c>process</c> span (18 §2.1); null when nothing listens.</summary>
+    public System.Diagnostics.Activity? Span { get; set; }
+
+    /// <summary>The <c>runwick.begin</c> result code (18 §2.1).</summary>
+    public string? BeginResult { get; set; }
+
+    /// <summary>Finish submissions of this attempt (<c>runwick.storage.attempts</c>).</summary>
+    public int FinishAttempts;
+
     public int Renewals;
 
     /// <summary>Captured once so it stays readable after the entry is disposed.</summary>

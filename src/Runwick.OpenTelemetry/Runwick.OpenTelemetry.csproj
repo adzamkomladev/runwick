@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>OpenTelemetry wiring for Runwick: AddRunwickInstrumentation() for tracing and metrics, with Runwick's attribute filters and cardinality limits. No exporter.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Runwick\Runwick.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The shipped operations assets (18 §9). -->
+    <Content Include="..\..\ops\grafana\runwick-overview.json" Pack="true" PackagePath="content\grafana\" CopyToOutputDirectory="Never" />
+    <Content Include="..\..\ops\prometheus\runwick-alerts.yml" Pack="true" PackagePath="content\prometheus\" CopyToOutputDirectory="Never" />
+  </ItemGroup>
+</Project>

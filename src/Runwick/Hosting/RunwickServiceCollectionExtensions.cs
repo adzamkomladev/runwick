@@ -102,13 +102,28 @@ public static class RunwickServiceCollectionExtensions
         services.TryAddSingleton(new global::Runwick.Management.ManagementOptions());
         services.TryAddSingleton<global::Runwick.Management.IManagementCursorProtector>(sp =>
             new global::Runwick.Management.HmacCursorProtector(sp.GetRequiredService<global::Runwick.Management.ManagementOptions>().CursorKey));
-        services.AddSingleton<global::Runwick.Management.IManagementSession>(sp => new global::Runwick.Management.ManagementSession(
+        services.AddSingleton<global::Runwick.Management.IManagementSession>(sp => new global::Runwick.Management.MeteredManagementSession(
+            new global::Runwick.Management.ManagementSession(
             sp.GetRequiredService<RunwickRuntime>(), builder, sp.GetService<IManagementQueryStore>(),
             sp.GetRequiredService<global::Runwick.Management.ControlService>(), sp.GetRequiredService<global::Runwick.Management.ScheduleControlService>(),
             new global::Runwick.Management.ManagementCursors(sp.GetRequiredService<global::Runwick.Management.IManagementCursorProtector>(),
                 sp.GetRequiredService<TimeProvider>()),
             sp.GetRequiredService<global::Runwick.Management.ManagementOptions>(), sp.GetRequiredService<TimeProvider>(),
-            sp.GetRequiredService<DispatchPreparer>(), sp.GetRequiredService<LocalAdmission>()));
+            sp.GetRequiredService<DispatchPreparer>(), sp.GetRequiredService<LocalAdmission>())));
+
+        // Telemetry and health (18): options validated here, applied at host start.
+        builder.TelemetryOptions.Validate();
+        services.AddSingleton(builder.TelemetryOptions);
+        services.AddSingleton(sp => new RunwickHealthService(sp, sp.GetRequiredService<RunwickRuntime>(), sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton<IRunwickHealth>(sp => sp.GetRequiredService<RunwickHealthService>());
+        services.AddSingleton<IRunwickComponent>(sp => sp.GetRequiredService<RunwickHealthService>());
+        if (builder.TelemetryOptions.CollectApplicationMetrics)
+        {
+            services.AddSingleton<IRunwickComponent>(sp => new global::Runwick.Telemetry.ApplicationMetricsCollector(sp.GetRequiredService<RunwickRuntime>(),
+                builder.TelemetryOptions, sp.GetRequiredService<TimeProvider>(),
+                sp.GetService<ILoggerFactory>()?.CreateLogger("Runwick.Telemetry") ?? NullLogger.Instance));
+        }
+
         if (isWorker)
         {
             // Worker settings validate with the registry (06 §3); the engine starts after the handshake.

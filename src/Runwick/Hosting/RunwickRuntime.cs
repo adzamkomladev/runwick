@@ -32,6 +32,11 @@ internal sealed class RunwickRuntime(JobRegistry registry, IRunwickStore store, 
 
     public TimeProvider Time => time;
 
+    public ILogger Logger => logger;
+
+    /// <summary>Producer readiness (18 §7): dispatch calls and the 10 s compatibility refresh feed it.</summary>
+    public RoleTracker Producer { get; } = new(time);
+
     public bool IsReady => _descriptor is not null;
 
     public Guid StoreId => _descriptor?.StoreId
@@ -51,7 +56,14 @@ internal sealed class RunwickRuntime(JobRegistry registry, IRunwickStore store, 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            return _descriptor ??= await HandshakeAsync(ct).ConfigureAwait(false);
+            _descriptor ??= await HandshakeAsync(ct).ConfigureAwait(false);
+            Producer.Ok();
+            return _descriptor;
+        }
+        catch (Exception ex) when (ex is StoreIncompatibleException or RunwickConfigurationException)
+        {
+            Producer.Failed(new StoreIncompatibleException(ex.Message));
+            throw;
         }
         finally
         {

@@ -222,6 +222,16 @@ internal sealed partial class WorkerEngine
 
     async Task RecoverAsync(ExpiredLease lease)
     {
+        // A new root span per Recover command (18 §2.1); measured after the outcome is known.
+        System.Diagnostics.Activity.Current = null;
+        using var span = Telemetry.Telemetry.Span("runwick.recover");
+        var result = await RecoverOnceAsync(lease).ConfigureAwait(false);
+        span.Activity?.SetTag("runwick.result", result);
+        Telemetry.Telemetry.Recoveries.Add(1, result);
+    }
+
+    async Task<string> RecoverOnceAsync(ExpiredLease lease)
+    {
         var command = Command(new RecoverRequest(lease.JobId, lease.AttemptId, lease.OwnershipToken));
         for (var attempt = 0; !ControlStop.IsCancellationRequested; attempt++)
         {
@@ -232,21 +242,24 @@ internal sealed partial class WorkerEngine
                 if (reply.Status == StoreStatus.Applied)
                 {
                     Emit("recovered");
+                    return "recovered";
                 }
 
-                return;
+                return Snake(reply.Status.ToString());
             }
             catch (Exception ex) when (!ControlStop.IsCancellationRequested)
             {
                 // Unknown or not applied: resubmit the same command (the receipt makes it idempotent).
                 if (Clock.WallNow > command.NotAfter)
                 {
-                    return;
+                    return "unresolved";
                 }
 
                 Logger.LogDebug(ex, "Runwick Recover {Job} retry.", lease.JobId);
                 await Clock.Delay(Backoff(attempt), ControlStop).ConfigureAwait(false);
             }
         }
+
+        return "unresolved";
     }
 }

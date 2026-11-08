@@ -21,6 +21,12 @@ Not in SP-022: exporters, a hosted metrics backend, collector failover or electi
 - (2026-11-08) New document.
 - (2026-11-08) Contradiction: `eng/package-graph.json` lists `Runwick.OpenTelemetry` with no allowed packages and milestone M5; 00 §6 says "OpenTelemetry SDK", M4. 00 wins: the package may reference `OpenTelemetry` (the SDK package, no exporter); the graph file is updated with the pin when the package is created.
 - (2026-11-08) The architecture's `runwick.cleanup.duration` (attempt-scope cleanup) is renamed `runwick.attempt.cleanup.duration` so it is not confused with retention cleanup (17).
+- (2026-11-08) SP-022 re-pin: semantic conventions 1.37.0 → 1.44.0 (1.45.0 was published 2026-11-02, under two weeks old); the messaging attributes Runwick uses are unchanged and still Development. OpenTelemetry SDK pinned at 1.20.1 (and `OpenTelemetry.Exporter.InMemory` 1.20.1 for tests).
+- (2026-11-08) Listener exceptions are now caught at the instrument and span call instead of passing through: a throwing listener reached Begin, Finish and drain paths in OBS-01 (c). Failures are counted and logged once at Debug.
+- (2026-11-08) `runwick.execution.authorized` and `runwick.execution.start_delay` count once per attempt, including when the Begin receipt was replayed in the same process (OBS-02). A replay after a restart is a new process with a new attempt; OBS-08 checks it.
+- (2026-11-08) Alert `RunwickStoreIncompatible` reads a host-provided `runwick_host_readiness_incompatible` gauge (health is not a Runwick metric); `RunwickFailuresRepeated` groups by queue and job name with `runwick_outcome != "succeeded"`, because `error.type` is not a metric attribute.
+- (2026-11-08) New option `RunwickTelemetryOptions.CollectorName` (default `default`) gives the `runwick.collector` value of §4.
+- (2026-11-08) The worker's free-text diagnostics (`Diagnose`) are logged at Debug; the fixed event IDs of §5 carry the operator-facing records.
 
 ## 1. Sources, scope and options
 
@@ -40,9 +46,9 @@ public sealed class RunwickTelemetryOptions          // services.AddRunwick(r =>
 }
 ```
 
-- `ActivitySource` and `Meter` are created once per process with name `Runwick`, version = the `Runwick` assembly informational version, the scope tag `runwick.telemetry.schema = 1`, and `TelemetrySchemaUrl = https://opentelemetry.io/schemas/1.37.0` (the pinned conventions, §2.3).
+- `ActivitySource` and `Meter` are created once per process with name `Runwick`, version = the `Runwick` assembly informational version, the scope tag `runwick.telemetry.schema = 1`, and `TelemetrySchemaUrl = https://opentelemetry.io/schemas/1.44.0` (the pinned conventions, §2.3).
 - Core uses only `System.Diagnostics` and `Microsoft.Extensions.Logging.Abstractions`; no package is added to `Runwick`. Histogram bucket boundaries are given through `InstrumentAdvice<double>` in core, so they apply with or without the OpenTelemetry SDK.
-- **Isolation from the hot path.** No instrument call happens while a storage lock or a database transaction is open in the caller's thread, or inside a lease, ticket or completion critical section. Calls are made after the state change is decided. Listener exceptions are not caught by Runwick (that would hide host bugs) but cannot affect ownership: Renew, Finish and Recover decisions are taken before the measurement and do not depend on it (OBS-01). Runwick owns no exporter queue.
+- **Isolation from the hot path.** No instrument call happens while a storage lock or a database transaction is open in the caller's thread, or inside a lease, ticket or completion critical section. Calls are made after the state change is decided. Listener exceptions are caught at the instrument call and counted (a Debug log once per process), so they cannot reach the caller; they cannot affect ownership either: Renew, Finish and Recover decisions are taken before the measurement and do not depend on it (OBS-01). Runwick owns no exporter queue.
 
 ## 2. Traces
 
@@ -79,7 +85,7 @@ Rules:
 
 ### 2.3 Messaging-conventions mapping (pinned)
 
-Pinned to OpenTelemetry semantic conventions **1.37.0** [choice; rechecked and re-pinned when SP-022 starts], whose messaging spans are marked Development. Runwick does not claim compatibility with later revisions.
+Pinned to OpenTelemetry semantic conventions **1.44.0** (published 2026-08-04; re-pinned by SP-022 on 2026-11-08 as the latest release at least two weeks old), whose messaging spans are marked Development. Runwick does not claim compatibility with later revisions.
 
 | Attribute | Value |
 |---|---|
@@ -268,7 +274,7 @@ builder.Services.AddOpenTelemetry()
 ```
 
 - `TracerProviderBuilder.AddRunwickInstrumentation()` adds the `Runwick` source. `MeterProviderBuilder.AddRunwickInstrumentation()` adds the `Runwick` meter and one view per instrument that keeps only the attributes of §3.1 and sets `CardinalityLimit = MaxSeriesPerInstrument + 1` (Runwick's own bound plus its overflow series), so the SDK's overflow attribute (`otel.metric.overflow`) appears only if Runwick's bound failed.
-- Dependency: the `OpenTelemetry` SDK package, pinned exactly when the package is created (latest stable at that date, at least 1.10.0, where per-view cardinality limits are stable [checked at pin time]). No exporter, no instrumentation package, no `OpenTelemetry.Extensions.Hosting`. DEP-01 checks the graph.
+- Dependency: the `OpenTelemetry` SDK package, pinned exactly at **1.20.1** (published 2026-10-20, the latest stable at least two weeks old on 2026-11-08; per-view cardinality limits are stable since 1.10.0). No exporter, no instrumentation package, no `OpenTelemetry.Extensions.Hosting`. DEP-01 checks the graph.
 - Tests use `OpenTelemetry.Exporter.InMemory` (test projects only).
 
 ## 9. Shipped dashboard and alert rules

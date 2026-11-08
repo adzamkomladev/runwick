@@ -1,7 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Runwick.Protocol;
 using Runwick.Serialization;
+using Runwick.Telemetry;
+using T = Runwick.Telemetry.Telemetry;
 
 namespace Runwick.Worker;
 
@@ -43,6 +46,8 @@ internal sealed partial class WorkerEngine
             Lease.Unregister(entry);
             entry.Changed.Set();
             Emit("lost:" + cause, entry);
+            entry.Span?.AddEvent(new ActivityEvent("runwick.authority_lost", tags: new ActivityTagsCollection { ["runwick.loss.reason"] = LossName(cause) }));
+            RunwickLog.AuthorityLost(Logger, entry.Lease.JobId, entry.AttemptId, LossName(cause), entry.PipelineLive);
         }
     }
 
@@ -61,6 +66,7 @@ internal sealed partial class WorkerEngine
     async Task DriveAsync(AttemptEntry entry)
     {
         await Task.Yield();
+        StartProcessSpan(entry);
         try
         {
             if (entry.Job is null)
@@ -85,6 +91,7 @@ internal sealed partial class WorkerEngine
         finally
         {
             await RetireAsync(entry).ConfigureAwait(false);
+            EndProcessSpan(entry);
         }
     }
 
@@ -127,7 +134,11 @@ internal sealed partial class WorkerEngine
                 return;
             }
 
-            begun = HandleBegin(entry, pre.Reply, pre.SentAt);
+            using (var span = T.Span("runwick.begin"))
+            {
+                begun = HandleBegin(entry, pre.Reply, pre.SentAt);
+                span.Activity?.SetTag("runwick.result", entry.BeginResult);
+            }
         }
         else
         {
@@ -154,7 +165,11 @@ internal sealed partial class WorkerEngine
                 return;
             }
 
-            begun = await BeginAsync(entry).ConfigureAwait(false);
+            using (var span = T.Span("runwick.begin"))
+            {
+                begun = await BeginAsync(entry).ConfigureAwait(false);
+                span.Activity?.SetTag("runwick.result", entry.BeginResult ?? "stale");
+            }
         }
 
         if (begun is null)
@@ -226,6 +241,7 @@ internal sealed partial class WorkerEngine
         }
 
         var finish = OutcomeClassifier.Classify(entry.Lease, observation, entry.Causes, timeout);
+        RecordExecution(entry, observation, finish);
         if (!entry.IsLost)
         {
             await Completion.SettleAsync(entry, finish).ConfigureAwait(false);
@@ -354,6 +370,8 @@ internal sealed partial class WorkerEngine
                 }
 
                 Emit(r.Replayed ? "begunReplayed" : "begun", entry);
+                entry.BeginResult = "authorized";
+                RecordBegin(entry, begun);
                 if (!r.Replayed)
                 {
                     // One final admission outcome per cycle (capacity-defaults §5): the Begin, not its Reserve.
@@ -365,6 +383,7 @@ internal sealed partial class WorkerEngine
             case StoreStatus.BudgetExhausted:
                 // Storage closed the unstarted attempt (cancelled before start / budget exhausted): no scope, no invocation.
                 Emit("beginClosed", entry);
+                entry.BeginResult = r.Status == StoreStatus.BudgetExhausted ? "exhausted" : "cancelled";
                 return null;
             case StoreStatus.StaleLease:
                 LoseAuthority(entry, LossCause.StaleLease);
@@ -376,6 +395,8 @@ internal sealed partial class WorkerEngine
                 // T20 (10 §4): storage closed the unstarted attempt and restored the waiting state until EligibleAt. No
                 // scope, no middleware, no unstarted-guard increment; the ticket returns to the pool now (10 §5).
                 Interlocked.Increment(ref RateDeferrals);
+                entry.BeginResult = "deferred";
+                T.AdmissionDeferred.Add(1, "rate");
                 entry.Pool.Outcomes.Record(Clock.Now, blocked: true);
                 Emit("beginRateDeferred", entry);
                 return null;
@@ -557,6 +578,7 @@ internal sealed partial class WorkerEngine
             // Never a cleanup-induced retry and never a safe success: unconfirmed completion.
             LoseAuthority(entry, LossCause.CleanupExpired);
             Diagnose($"unconfirmed completion: scope disposal of {entry} exceeded {Options.CleanupBudget}");
+            RunwickLog.CleanupBudgetExceeded(Logger, entry.Lease.JobId, entry.AttemptId, (long)Options.CleanupBudget.TotalMilliseconds);
             await cleaned.Task.ConfigureAwait(false);
             return null;
         }
@@ -621,8 +643,25 @@ internal sealed partial class WorkerEngine
                 holder.Engine = this;
                 Interlocked.Increment(ref Invocations);
                 Emit("handlerInvoked", entry);
+
+                // The runner's flow is suppressed (no ambient activity or baggage); the handler sees its own execute span
+                // as Activity.Current, parented explicitly to this attempt's process span (18 §2.2, OBS-05).
+                using var execute = T.Span("runwick.execute", ActivityKind.Internal, entry.Span?.Context ?? default);
                 var (value, error, misuse) = await pipeline.RunAsync(scope.Value.ServiceProvider, context, payload, entry.ExecutionToken).ConfigureAwait(false);
                 result = new JobPipelineResult(value, error, misuse);
+                if (execute.Activity is { } span)
+                {
+                    span.SetTag("runwick.outcome", error is null && misuse is null && value?.Kind is null or JobExecutionResultKind.Succeeded or JobExecutionResultKind.Completed
+                        ? "succeeded" : "failed");
+                    if (error is not null)
+                    {
+                        span.SetTag("error.type", T.ErrorType(error.GetType().FullName ?? error.GetType().Name)).SetStatus(ActivityStatusCode.Error);
+                        if (T.RecordExceptionDetails)
+                        {
+                            span.SetTag("exception.message", T.Sanitize(error.Message));
+                        }
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -640,18 +679,23 @@ internal sealed partial class WorkerEngine
             if (scope is { } s)
             {
                 entry.CleanupLive = true;
+                var cleanupStart = Stopwatch.GetTimestamp();
+                using var cleanup = T.Span("runwick.attempt.cleanup", ActivityKind.Internal, entry.Span?.Context ?? default);
                 try
                 {
                     await s.DisposeAsync().ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
-                    // A cleanup exception after a timely success is a diagnostic only.
-                    entry.Diagnostic = "scope disposal failed: " + ex.Message;
-                    Diagnose($"scope disposal of {entry} threw {ex.GetType().Name}: {ex.Message}");
+                    // A cleanup exception after a timely success is a diagnostic only; its message never reaches telemetry (18 §6).
+                    entry.Diagnostic = "scope disposal failed: " + ex.GetType().Name;
+                    Diagnose($"scope disposal of {entry} threw {ex.GetType().Name}");
                 }
 
                 entry.CleanupLive = false;
+                var cleanupResult = entry.Loss == LossCause.CleanupExpired ? "budget_exceeded" : "completed";
+                cleanup.Activity?.SetTag("runwick.result", cleanupResult);
+                T.AttemptCleanupDuration.Record(Stopwatch.GetElapsedTime(cleanupStart).TotalSeconds, cleanupResult);
             }
 
             ended.TrySetResult(null);
