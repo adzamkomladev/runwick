@@ -10,6 +10,7 @@
     <InternalsVisibleTo Include="Runwick.Outbox.Tests" />
     <InternalsVisibleTo Include="Runwick.AspNetCore.Tests" />
     <InternalsVisibleTo Include="Runwick.Cli.Tests" />
+    <InternalsVisibleTo Include="Runwick.Dashboard.Tests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Runwick.Postgres\Runwick.Postgres.csproj" />

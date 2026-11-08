@@ -202,7 +202,7 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
         }
     }
 
-    static ManagementActor DefaultActor(ClaimsPrincipal p, string scheme)
+    internal static ManagementActor DefaultActor(ClaimsPrincipal p, string scheme)
     {
         var subject = p.FindFirstValue(ClaimTypes.NameIdentifier) ?? p.Identity?.Name
             ?? throw new InvalidOperationException("The principal has no NameIdentifier or Name; configure Actor(...).");
@@ -302,6 +302,10 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
         ? DateTimeOffset.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var v) ? v : throw Invalid(name)
         : null;
 
+    static Guid? QGuid(HttpContext ctx, string name) => Q(ctx, name) is { } s
+        ? Guid.TryParse(s, out var v) ? v : throw Invalid(name)
+        : null;
+
     static ManagementValidationException Invalid(string name) => new("invalid_request", $"Query parameter '{name}' is not valid.");
 
     // Every async handler takes a second parameter so it binds as a Delegate, not as a RequestDelegate whose result is dropped.
@@ -365,6 +369,9 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
 
         g.MapGet("audit", async (HttpContext ctx, CancellationToken _) => Ok(await Session(ctx).ListAuditAsync(Caller(ctx),
             new AuditQuery(Q(ctx, "targetKind"), Q(ctx, "targetId"), QTime(ctx, "from"), QTime(ctx, "to"), QInt(ctx, "limit"), Q(ctx, "cursor")),
+            ctx.RequestAborted)));
+        g.MapGet("scaling-events", async (HttpContext ctx, CancellationToken _) => Ok(await Session(ctx).ListScalingEventsAsync(Caller(ctx),
+            new ScalingEventQuery(QGuid(ctx, "instance"), Q(ctx, "pool"), QTime(ctx, "from"), QTime(ctx, "to"), QInt(ctx, "limit"), Q(ctx, "cursor")),
             ctx.RequestAborted)));
         g.MapGet("settings", async (HttpContext ctx, CancellationToken _) => Ok(await Session(ctx).GetSettingsAsync(Caller(ctx), ctx.RequestAborted)));
 

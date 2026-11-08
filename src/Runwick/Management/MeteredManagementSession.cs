@@ -69,6 +69,10 @@ internal sealed class MeteredManagementSession(IManagementSession inner, Microso
     public Task<ManagementPage<JobSummary>> ListJobsAsync(ManagementCaller caller, JobListQuery query, CancellationToken cancellationToken = default) =>
         Measure("ListJobs", false, () => inner.ListJobsAsync(caller, query, cancellationToken));
 
+    public Task<ManagementPage<ScalingEventSummary>> ListScalingEventsAsync(ManagementCaller caller, ScalingEventQuery query,
+        CancellationToken cancellationToken = default) =>
+        Measure("ListScalingEvents", false, () => inner.ListScalingEventsAsync(caller, query, cancellationToken));
+
     public Task<JobDetail> GetJobAsync(ManagementCaller caller, Guid jobId, CancellationToken cancellationToken = default) =>
         Measure("GetJob", false, () => inner.GetJobAsync(caller, jobId, cancellationToken));
 
