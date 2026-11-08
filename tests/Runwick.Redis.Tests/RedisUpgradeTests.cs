@@ -99,6 +99,44 @@ public sealed class RedisUpgradeTests
     }
 
     [Fact]
+    [Trait("Case", "UPG-08")]
+    public async Task Status_reports_no_lease_counts_but_the_notice_and_an_expired_lease_is_neither_proof_nor_permission()
+    {
+        await FreshAsync();
+        var app = "redisupg08_" + Guid.NewGuid().ToString("N")[..8];
+        await using var c = await ClientAsync(app);
+        await c.Dispatcher.DispatchAsync(new PingJob("a"), cancellationToken: Ct);
+        var lease = (await c.ReserveAsync(lease: TimeSpan.FromSeconds(3))).Value!.Lease.Handle;
+        Assert.Equal(StoreStatus.Applied, (await c.BeginAsync(lease)).Reply.Status);
+        Assert.True((await c.Driver.PublishPresenceAsync(c.Application, new PresenceRecord(c.WorkerInstanceId, 1, 1, "ready", Environment.ProcessId,
+            "host", "build", ["default"], new Dictionary<string, int>(), c.Contracts, TimeSpan.FromSeconds(3)), Ct)).Accepted);
+
+        // A running handler does not hold up drain or maintenance, and a live lease is not what refuses the identity change:
+        // the admission mode is (Redis cannot count leases or presences, 23 §2).
+        Assert.Equal("store_not_quiescent", (await Assert.ThrowsAsync<RedisMigrationException>(() => RunwickRedisMigrations.ReassignStoreIdAsync(Config, Ct))).Code);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        await RunwickRedisMigrations.SetAdmissionModeAsync(Config, app, "drain", "ops", Ct);
+        await RunwickRedisMigrations.SetAdmissionModeAsync(Config, app, "maintenance", "ops", Ct);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(2), $"drain and maintenance took {clock.Elapsed}");
+
+        var status = await RunwickRedisMigrations.GetStatusAsync(Config, Ct);
+        Assert.Equal((null, null, null), (status.OwnedLeases, status.WorkerPresences, status.ExpiredWorkerPresences));
+        Assert.Equal(StoreAdminRules.QuiescenceNotice, status.Quiescence);
+        Assert.StartsWith("unverified", status.Quiescence, StringComparison.Ordinal);
+
+        // The lease has expired, and it is still a lease row until Recover moves the job: expiry is reported, not acted on.
+        await Task.Delay(3500, Ct);
+        Assert.Single(await c.Driver.ListExpiredLeasesAsync(app, 10, Ct));
+        var changed = await RunwickRedisMigrations.ReassignStoreIdAsync(Config, Ct);
+        Assert.NotEqual(changed.OldStoreId, changed.NewStoreId);
+        // The holder, still bound to the old identity, is refused rather than trusted.
+        Assert.NotEqual(StoreStatus.Applied, (await c.FinishAsync(lease, AttemptOutcome.Succeeded)).Status);
+
+        var mux = await RedisServer.AdminAsync();
+        await mux.GetServer(mux.GetEndPoints()[0]).FlushDatabaseAsync(Database);
+    }
+
+    [Fact]
     [Trait("Case", "UPG-10")]
     public async Task Admission_changes_during_renewal_load_stay_bounded()
     {

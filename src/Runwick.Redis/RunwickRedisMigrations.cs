@@ -72,7 +72,7 @@ namespace Runwick.Redis.Migrations
                 }
 
                 var db = mux.GetDatabase();
-                var server = mux.GetServer(mux.GetEndPoints().Single());
+                var server = mux.GetServer(mux.GetEndPoints(configuredOnly: true).Single());
                 RxProfileReport report;
                 try
                 {
