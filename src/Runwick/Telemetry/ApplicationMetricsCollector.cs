@@ -11,7 +11,8 @@ namespace Runwick.Telemetry;
 /// with a 1 s budget, at most 64 queues per sample (round-robin beyond). Gauge callbacks only read the immutable state;
 /// a queue whose sample is older than 3 periods reports nothing, while <c>runwick.collector.snapshot.age</c> keeps growing.
 /// </summary>
-internal sealed class ApplicationMetricsCollector(RunwickRuntime runtime, RunwickTelemetryOptions options, TimeProvider time, ILogger logger)
+internal sealed class ApplicationMetricsCollector(RunwickRuntime runtime, RunwickTelemetryOptions options, TimeProvider time, ILogger logger,
+    ITelemetrySampleStore? sampleStore = null)
     : IRunwickComponent, IDisposable
 {
     public const int QueuesPerSample = 64;
@@ -31,7 +32,7 @@ internal sealed class ApplicationMetricsCollector(RunwickRuntime runtime, Runwic
 
     public Task StartAsync(CancellationToken ct)
     {
-        if (runtime.Store is not ITelemetrySampleStore store)
+        if ((sampleStore ?? runtime.Store as ITelemetrySampleStore) is not { } store)
         {
             return Task.CompletedTask;
         }

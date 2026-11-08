@@ -36,6 +36,9 @@ internal static class Telemetry
     static readonly double[] LongBuckets = [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60, 300, 900, 3600, 14400];
     static readonly double[] MarginBuckets = [0, 1, 2, 5, 10, 15, 20, 25, 30, 45, 60, 120];
 
+    // Boxed once: an overflow measurement allocates nothing.
+    internal static readonly object True = true;
+
     static int _maxSeries = 1_000;
 
     /// <summary>The admission-set size of every instrument (18 §3.3); set once from the options at host start.</summary>
@@ -163,6 +166,60 @@ internal static class Telemetry
 
     public static string JobName(string? name) => name is not null && Volatile.Read(ref _jobs).Contains(name) ? name : "_other";
 
+    // ---- spans: a listener that throws never changes Runwick's control flow (18 §1, OBS-01)
+
+    /// <summary>Starts a span; null when nothing listens or a listener threw. The parent defaults to <c>Activity.Current</c>.</summary>
+    public static Activity? StartActivity(string name, ActivityKind kind = ActivityKind.Internal, ActivityContext parent = default,
+        IEnumerable<ActivityLink>? links = null)
+    {
+        if (!Source.HasListeners())
+        {
+            return null;
+        }
+
+        try
+        {
+            return Source.StartActivity(name, kind, parent, null, links);
+        }
+        catch (Exception ex)
+        {
+            ListenerFailed(ex);
+            return null;
+        }
+    }
+
+    /// <summary>A disposable span whose stop never throws.</summary>
+    public static Span Span(string name, ActivityKind kind = ActivityKind.Internal, ActivityContext parent = default) => new(StartActivity(name, kind, parent));
+
+    public static void Stop(Activity? activity)
+    {
+        try
+        {
+            activity?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            ListenerFailed(ex);
+        }
+    }
+
+    static int _listenerFailures;
+
+    /// <summary>Listener exceptions caught at the instrumentation boundary (tests and diagnostics).</summary>
+    public static int ListenerFailures => Volatile.Read(ref _listenerFailures);
+
+    /// <summary>
+    /// A listener threw. Runwick's decision was already taken; the exception is counted and logged once at Debug so the
+    /// renewal, settlement or recovery path that made the call continues unchanged.
+    /// </summary>
+    internal static void ListenerFailed(Exception ex)
+    {
+        if (Interlocked.Increment(ref _listenerFailures) == 1)
+        {
+            Logger?.LogDebug(ex, "A telemetry listener threw; Runwick continues without that measurement.");
+        }
+    }
+
     // ---- retention (SP-021 calls these; 17 §4.1)
 
     /// <summary>One retention cleanup batch (18 §3.1): span attributes and metrics after the batch committed or failed.</summary>
@@ -240,18 +297,43 @@ internal sealed class Series(Instrument instrument, string[] keys)
 
     public void Add(long value, string? a = null, string? b = null, string? c = null)
     {
-        if (instrument.Enabled)
+        if (!instrument.Enabled)
+        {
+            return;
+        }
+
+        try
         {
             ((Counter<long>)instrument).Add(value, Tags(a, b, c));
+        }
+        catch (Exception ex)
+        {
+            Telemetry.ListenerFailed(ex);
         }
     }
 
     public void Record(double value, string? a = null, string? b = null, string? c = null)
     {
-        if (instrument.Enabled)
+        if (!instrument.Enabled)
+        {
+            return;
+        }
+
+        try
         {
             ((Histogram<double>)instrument).Record(value, Tags(a, b, c));
         }
+        catch (Exception ex)
+        {
+            Telemetry.ListenerFailed(ex);
+        }
+    }
+
+    /// <summary>Clears the admission set (tests only: the instruments are process-wide).</summary>
+    internal void ResetForTests()
+    {
+        _admitted.Clear();
+        Volatile.Write(ref _count, 0);
     }
 
     TagList Tags(string? a, string? b, string? c)
@@ -260,7 +342,7 @@ internal sealed class Series(Instrument instrument, string[] keys)
         var key = (a, b, c);
         if (!_admitted.ContainsKey(key) && !Admit(key))
         {
-            tags.Add("runwick.overflow", true);
+            tags.Add("runwick.overflow", Telemetry.True);
             Telemetry.Overflowed(instrument.Name);
             return tags;
         }
@@ -298,6 +380,14 @@ internal sealed class Series(Instrument instrument, string[] keys)
 
         return true;
     }
+}
+
+/// <summary>A span scope for <c>using</c>; its stop never throws (<see cref="Telemetry.Stop"/>).</summary>
+internal readonly struct Span(Activity? activity) : IDisposable
+{
+    public Activity? Activity => activity;
+
+    public void Dispose() => Telemetry.Stop(activity);
 }
 
 /// <summary>A worker's local gauge values, rebuilt by its supervisor tick (18 §3.4).</summary>

@@ -134,10 +134,10 @@ internal sealed partial class WorkerEngine
                 return;
             }
 
-            using (var span = T.Source.StartActivity("runwick.begin"))
+            using (var span = T.Span("runwick.begin"))
             {
                 begun = HandleBegin(entry, pre.Reply, pre.SentAt);
-                span?.SetTag("runwick.result", entry.BeginResult);
+                span.Activity?.SetTag("runwick.result", entry.BeginResult);
             }
         }
         else
@@ -165,10 +165,10 @@ internal sealed partial class WorkerEngine
                 return;
             }
 
-            using (var span = T.Source.StartActivity("runwick.begin"))
+            using (var span = T.Span("runwick.begin"))
             {
                 begun = await BeginAsync(entry).ConfigureAwait(false);
-                span?.SetTag("runwick.result", entry.BeginResult ?? "stale");
+                span.Activity?.SetTag("runwick.result", entry.BeginResult ?? "stale");
             }
         }
 
@@ -371,7 +371,7 @@ internal sealed partial class WorkerEngine
 
                 Emit(r.Replayed ? "begunReplayed" : "begun", entry);
                 entry.BeginResult = "authorized";
-                RecordBegin(entry, begun, r.Replayed);
+                RecordBegin(entry, begun);
                 if (!r.Replayed)
                 {
                     // One final admission outcome per cycle (capacity-defaults §5): the Begin, not its Reserve.
@@ -646,19 +646,19 @@ internal sealed partial class WorkerEngine
 
                 // The runner's flow is suppressed (no ambient activity or baggage); the handler sees its own execute span
                 // as Activity.Current, parented explicitly to this attempt's process span (18 §2.2, OBS-05).
-                using var execute = T.Source.StartActivity("runwick.execute", ActivityKind.Internal, entry.Span?.Context ?? default);
+                using var execute = T.Span("runwick.execute", ActivityKind.Internal, entry.Span?.Context ?? default);
                 var (value, error, misuse) = await pipeline.RunAsync(scope.Value.ServiceProvider, context, payload, entry.ExecutionToken).ConfigureAwait(false);
                 result = new JobPipelineResult(value, error, misuse);
-                if (execute is not null)
+                if (execute.Activity is { } span)
                 {
-                    execute.SetTag("runwick.outcome", error is null && misuse is null && value?.Kind is null or JobExecutionResultKind.Succeeded or JobExecutionResultKind.Completed
+                    span.SetTag("runwick.outcome", error is null && misuse is null && value?.Kind is null or JobExecutionResultKind.Succeeded or JobExecutionResultKind.Completed
                         ? "succeeded" : "failed");
                     if (error is not null)
                     {
-                        execute.SetTag("error.type", T.ErrorType(error.GetType().FullName ?? error.GetType().Name)).SetStatus(ActivityStatusCode.Error);
+                        span.SetTag("error.type", T.ErrorType(error.GetType().FullName ?? error.GetType().Name)).SetStatus(ActivityStatusCode.Error);
                         if (T.RecordExceptionDetails)
                         {
-                            execute.SetTag("exception.message", T.Sanitize(error.Message));
+                            span.SetTag("exception.message", T.Sanitize(error.Message));
                         }
                     }
                 }
@@ -680,7 +680,7 @@ internal sealed partial class WorkerEngine
             {
                 entry.CleanupLive = true;
                 var cleanupStart = Stopwatch.GetTimestamp();
-                using var cleanup = T.Source.StartActivity("runwick.attempt.cleanup", ActivityKind.Internal, entry.Span?.Context ?? default);
+                using var cleanup = T.Span("runwick.attempt.cleanup", ActivityKind.Internal, entry.Span?.Context ?? default);
                 try
                 {
                     await s.DisposeAsync().ConfigureAwait(false);
@@ -694,7 +694,7 @@ internal sealed partial class WorkerEngine
 
                 entry.CleanupLive = false;
                 var cleanupResult = entry.Loss == LossCause.CleanupExpired ? "budget_exceeded" : "completed";
-                cleanup?.SetTag("runwick.result", cleanupResult);
+                cleanup.Activity?.SetTag("runwick.result", cleanupResult);
                 T.AttemptCleanupDuration.Record(Stopwatch.GetElapsedTime(cleanupStart).TotalSeconds, cleanupResult);
             }
 

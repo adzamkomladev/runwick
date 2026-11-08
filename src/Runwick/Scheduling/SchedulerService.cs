@@ -356,9 +356,9 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         await TakeAllowanceAsync(plan.Occurrences.Count, ct).ConfigureAwait(false);
         var command = new StoreCommand<MaterializeRequest>(Application, Guid.CreateVersion7(), _time.GetUtcNow() + ScheduleOperations.SchedulerLifetime, plan);
         System.Diagnostics.Activity.Current = null;
-        using var span = Telemetry.Telemetry.Source.StartActivity("runwick.schedule.materialize");
+        using var span = Telemetry.Telemetry.Span("runwick.schedule.materialize");
         var reply = await SendAsync(() => store.MaterializeOccurrencesAsync(command, ct), command.CommandId, ct).ConfigureAwait(false);
-        span?.SetTag("runwick.schedule.result", Worker.WorkerEngine.Snake(reply.Status.ToString())).SetTag("runwick.schedule.occurrences", plan.Occurrences.Count);
+        span.Activity?.SetTag("runwick.schedule.result", Worker.WorkerEngine.Snake(reply.Status.ToString())).SetTag("runwick.schedule.occurrences", plan.Occurrences.Count);
         if (reply is { Status: StoreStatus.Applied, Value: { } materialized })
         {
             var now = _time.GetUtcNow();

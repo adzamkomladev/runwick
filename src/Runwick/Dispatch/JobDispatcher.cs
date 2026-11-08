@@ -328,7 +328,7 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
         public SendScope(string kind)
         {
             _kind = kind;
-            _span = T.Source.StartActivity("send", ActivityKind.Producer);
+            _span = T.StartActivity("send", ActivityKind.Producer);
             _span?.SetTag("messaging.system", "runwick").SetTag("messaging.operation.type", "send").SetTag("messaging.operation.name", "dispatch")
                 .SetTag("runwick.dispatch.kind", kind);
         }
@@ -400,7 +400,7 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
                 T.DispatchOperations.Add(1, result, _kind, T.Queue(queue));
             }
 
-            _span?.Dispose();
+            T.Stop(_span);
         }
     }
 }

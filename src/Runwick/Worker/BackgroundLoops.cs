@@ -224,9 +224,9 @@ internal sealed partial class WorkerEngine
     {
         // A new root span per Recover command (18 §2.1); measured after the outcome is known.
         System.Diagnostics.Activity.Current = null;
-        using var span = Telemetry.Telemetry.Source.StartActivity("runwick.recover");
+        using var span = Telemetry.Telemetry.Span("runwick.recover");
         var result = await RecoverOnceAsync(lease).ConfigureAwait(false);
-        span?.SetTag("runwick.result", result);
+        span.Activity?.SetTag("runwick.result", result);
         Telemetry.Telemetry.Recoveries.Add(1, result);
     }
 

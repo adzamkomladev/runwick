@@ -13,15 +13,15 @@ internal sealed class MeteredManagementSession(IManagementSession inner) : IMana
     static async Task<TResult> Measure<TResult>(string operation, bool mutation, Func<Task<TResult>> call, Func<TResult, (string Result, bool Replayed)>? describe = null)
     {
         var start = Stopwatch.GetTimestamp();
-        using var span = mutation ? T.Source.StartActivity("runwick.management.command") : null;
-        span?.SetTag("runwick.management.operation", operation);
+        using var span = mutation ? T.Span("runwick.management.command") : default;
+        span.Activity?.SetTag("runwick.management.operation", operation);
         var result = "error";
         try
         {
             var value = await call().ConfigureAwait(false);
             var (code, replayed) = describe?.Invoke(value) ?? ("ok", false);
             result = code;
-            span?.SetTag("runwick.replayed", replayed);
+            span.Activity?.SetTag("runwick.replayed", replayed);
             return value;
         }
         catch (Exception ex)
@@ -38,12 +38,12 @@ internal sealed class MeteredManagementSession(IManagementSession inner) : IMana
                 OperationCanceledException => "cancelled",
                 _ => "error",
             };
-            span?.SetTag("error.type", result).SetStatus(ActivityStatusCode.Error);
+            span.Activity?.SetTag("error.type", result).SetStatus(ActivityStatusCode.Error);
             throw;
         }
         finally
         {
-            span?.SetTag("runwick.result", result);
+            span.Activity?.SetTag("runwick.result", result);
             T.ManagementRequests.Add(1, operation, result);
             T.ManagementDuration.Record(Stopwatch.GetElapsedTime(start).TotalSeconds, operation);
         }

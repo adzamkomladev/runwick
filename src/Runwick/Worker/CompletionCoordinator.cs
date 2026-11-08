@@ -67,8 +67,8 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
         }
 
         var started = Stopwatch.GetTimestamp();
-        using var span = T.Source.StartActivity("settle " + entry.Reserved.Queue);
-        span?.SetTag("messaging.system", "runwick").SetTag("messaging.operation.type", "settle").SetTag("messaging.operation.name", "finish")
+        using var span = T.Span("settle " + entry.Reserved.Queue);
+        span.Activity?.SetTag("messaging.system", "runwick").SetTag("messaging.operation.type", "settle").SetTag("messaging.operation.name", "finish")
             .SetTag("messaging.destination.name", entry.Reserved.Queue);
         SettlementResult? result = null;
         try
@@ -87,11 +87,11 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
                 _ => "unresolved",
             };
             T.SettlementDuration.Record(Stopwatch.GetElapsedTime(started).TotalSeconds, name);
-            span?.SetTag("runwick.settlement.result", name).SetTag("runwick.storage.attempts", Volatile.Read(ref entry.FinishAttempts));
+            span.Activity?.SetTag("runwick.settlement.result", name).SetTag("runwick.storage.attempts", Volatile.Read(ref entry.FinishAttempts));
             entry.Span?.SetTag("runwick.settlement.result", name);
             if (result != SettlementResult.Applied)
             {
-                span?.SetStatus(ActivityStatusCode.Error);
+                span.Activity?.SetStatus(ActivityStatusCode.Error);
                 entry.Span?.SetStatus(ActivityStatusCode.Error);
             }
 

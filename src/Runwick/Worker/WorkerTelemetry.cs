@@ -53,7 +53,7 @@ internal sealed partial class WorkerEngine
         }
 
         var queue = entry.Reserved.Queue;
-        var span = T.Source.StartActivity("process " + queue, ActivityKind.Consumer, default(ActivityContext), null, links);
+        var span = T.StartActivity("process " + queue, ActivityKind.Consumer, default, links);
         if (span is null)
         {
             return;
@@ -86,20 +86,15 @@ internal sealed partial class WorkerEngine
                 span.SetStatus(ActivityStatusCode.Error);
             }
 
-            span.Dispose();
             entry.Span = null;
+            T.Stop(span);
         }
     }
 
-    /// <summary>An Applied Begin (18 §3.1): replayed receipts are not counted again (OBS-02, OBS-08).</summary>
-    void RecordBegin(AttemptEntry entry, BegunExecution begun, bool replayed)
+    /// <summary>An Applied Begin (18 §3.1), counted once per attempt: a replayed receipt answers the attempt's only Begin (OBS-02).</summary>
+    void RecordBegin(AttemptEntry entry, BegunExecution begun)
     {
         entry.Span?.SetTag("runwick.execution.number", begun.ExecutionNumber);
-        if (replayed)
-        {
-            return;
-        }
-
         var queue = T.Queue(entry.Reserved.Queue);
         T.ExecutionAuthorized.Add(1, queue, T.JobName(entry.Reserved.Contract.Name), entry.Pool.Settings.Name);
         T.ExecutionStartDelay.Record(Math.Max(0, (begun.AuthorizedAt - entry.Reserved.Cursor.EligibleAt).TotalSeconds), queue);
