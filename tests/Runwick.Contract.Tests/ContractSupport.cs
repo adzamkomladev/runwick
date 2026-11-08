@@ -98,4 +98,12 @@ internal static class Cx
     public static IEnumerable<string> JobDataTables(DriverFixture f, IEnumerable<string> changed) => f.Kind == StoreKind.Redis
         ? changed.Where(t => t.StartsWith("job:", StringComparison.Ordinal) || t.StartsWith("pay:", StringComparison.Ordinal) || t.StartsWith("keys:", StringComparison.Ordinal))
         : changed.Where(t => t is "jobs" or "job_payloads" or "job_generations" or "dispatch_keys");
+
+    /// <summary>
+    /// Rules the committed histories break. PostgreSQL and SQLite replay every job's attempts through the ReferenceModel; the Redis keys do not
+    /// carry the per-attempt command identifiers that replay needs, so for Redis this is the snapshot invariants only.
+    /// </summary>
+    public static async Task<IReadOnlyList<string>> History(DriverFixture f) =>
+        f.Kind == StoreKind.Redis ? SnapshotInvariants.Violations(await Model(f)) : await f.HistoryViolations();
 }
+

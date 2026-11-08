@@ -75,7 +75,8 @@ internal sealed class RxReply
 
     public StoreReply<T> Reject<T>() where T : class =>
         StoreReply<T>.NoEffect(StoreStatus, new StoreError(Code ?? "invariant_fault", null, Conflict, Blocked,
-            ResumeJob is { } j ? new CandidateCursor(ResumeAt!.Value, j) : null, Detail), Decided);
+            ResumeJob is { } j ? new CandidateCursor(ResumeAt!.Value, j) : null,
+            Detail is { Length: > 0 } d && d[0] == (char)91 ? RedisStore.DashIds(d).ToJsonString() : Detail), Decided);
 
     public StoreReply<T> Applied<T>(T? value) where T : class =>
         new(StoreStatus, StoreEffect.Applied, Replayed, value, Code is null ? null : new StoreError(Code, Detail: Detail), Decided);

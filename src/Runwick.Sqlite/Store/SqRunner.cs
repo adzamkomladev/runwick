@@ -365,7 +365,13 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
             return gate;
         }
 
-        return tx.Op.HasReceipt ? Receipt(tx) : null;
+        // An operation without a receipt (Renew, RenewMany) still refuses a command whose deadline has passed, as the PostgreSQL frame does.
+        if (!tx.Op.HasReceipt)
+        {
+            return tx.Clock >= tx.Op.NotAfter ? SqRow.NoEffect("CommandExpired", "command_expired", tx.Now) : null;
+        }
+
+        return Receipt(tx);
     }
 
     SqOutcome<T> OutcomeProtocol<T>(SqTx tx, Func<SqTx, SqOutcome<T>> body, Func<SqTx, SqReceiptRow, StoreReply<T>>? replay) where T : class

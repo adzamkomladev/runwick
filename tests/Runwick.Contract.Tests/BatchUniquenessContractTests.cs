@@ -56,14 +56,18 @@ public sealed class BatchUniquenessContractTests
                 var batch = HundredItems("n" + n + "-").Take(20).ToList();
                 var p = c.Prepared.PrepareMany(batch);
                 store.Runner.Client.FailAfter = n;
+                Exception? interrupted;
                 try
                 {
-                    await Assert.ThrowsAnyAsync<Exception>(() => c.Prepared.DispatchAsync(p));
+                    interrupted = await Record.ExceptionAsync(() => c.Prepared.DispatchAsync(p));
                 }
                 finally
                 {
                     store.Runner.Client.FailAfter = 0;
                 }
+
+                // A cut at n writes interrupts the call; a larger n than the intent has writes lets it finish.
+                Assert.True(interrupted is null ? n >= 40 : interrupted is DispatchOutcomeUnknownException, $"n={n}: {interrupted}");
 
                 // The resend finishes the interrupted intent and returns its receipt: exactly the 20 jobs, once.
                 var receipt = await c.Prepared.DispatchAsync(p);
