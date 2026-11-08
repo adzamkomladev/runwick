@@ -270,7 +270,7 @@ The request body limit for this route is **1 MiB + 16 KiB** (other routes keep 6
 
 **HTTP mapping.** 200 with the result (`replayed: true` on a replay); 409 `unique_conflict`, `command_conflict`; `AdmissionClosed` → 503 `admission_closed`; others as 16 §4.
 
-**PostgreSQL (next schema revision, 16 at the time of writing).** Migration `00NN_management_dispatch.sql`: `management_audit` operation check adds `Dispatch`; new function `management_dispatch_v1` (frame + dispatch core + audit insert, as the other server functions, 04 Changes PF-05); the manifest adds `ManagementDispatch/1`. No new table or index.
+**PostgreSQL (schema revision 17).** Migration `0017_management_dispatch.sql`: `management_audit` operation check adds `Dispatch`; new function `management_dispatch_v1` (frame + dispatch core + audit insert, as the other server functions, 04 Changes PF-05); the manifest adds `ManagementDispatch/1`. No new table or index.
 
 **SQLite.** Part of the SQLite manifest and of its `0001_initial.sql` from the start (20 §9.3).
 

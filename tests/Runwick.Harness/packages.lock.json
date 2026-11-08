@@ -351,18 +351,6 @@
         "resolved": "10.0.14",
         "contentHash": "O/RzNwWoDzehkLlAG9hR8xooY5L41U7VUaYlcKvE3+FhHohBJqF10oLUzuv0v59VeJ62hv3uw9VoeX12zej7Sg=="
       },
-      "Testcontainers": {
-        "type": "Transitive",
-        "resolved": "4.16.0",
-        "contentHash": "JmMUZk6ZXQovbGQjaMB+YxOR0PbJTdYjOYjRcrm5LrA2dhLVMuCbhVGGunzCGIQfFMUB5Lno2LPOHMMuaGmuIg==",
-        "dependencies": {
-          "Docker.DotNet.Enhanced": "4.3.3",
-          "Docker.DotNet.Enhanced.X509": "4.3.3",
-          "Microsoft.Extensions.Logging.Abstractions": "8.0.3",
-          "SSH.NET": "2026.0.0",
-          "SharpZipLib": "1.4.2"
-        }
-      },
       "xunit.v3.common": {
         "type": "Transitive",
         "resolved": "4.0.2",
@@ -466,6 +454,19 @@
         "contentHash": "7nb5YzXuvWWJxB0J8DiyL3we+X4FOctZrt0fIBnucOIaIevFEEwGQVZKtiu9olXdlNAK1eNgqSral6r/jlhI4w==",
         "dependencies": {
           "Microsoft.Extensions.Logging.Abstractions": "10.0.0"
+        }
+      },
+      "Testcontainers": {
+        "type": "CentralTransitive",
+        "requested": "[4.16.0, )",
+        "resolved": "4.16.0",
+        "contentHash": "JmMUZk6ZXQovbGQjaMB+YxOR0PbJTdYjOYjRcrm5LrA2dhLVMuCbhVGGunzCGIQfFMUB5Lno2LPOHMMuaGmuIg==",
+        "dependencies": {
+          "Docker.DotNet.Enhanced": "4.3.3",
+          "Docker.DotNet.Enhanced.X509": "4.3.3",
+          "Microsoft.Extensions.Logging.Abstractions": "8.0.3",
+          "SSH.NET": "2026.0.0",
+          "SharpZipLib": "1.4.2"
         }
       }
     }
