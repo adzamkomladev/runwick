@@ -11,11 +11,19 @@ internal sealed partial class PgStore
     // Dispatch/1 and DispatchMany/1, direct or staged, run in runwick.dispatch_v2 (04 §7.2): steps 2-10 are the shared
     // runwick.rw_dispatch_core_v3, which ReceiveOutbox/1 and the schedule operations reach as well.
 
-    public Task<StoreReply<DispatchResult>> DispatchAsync(StoreCommand<DispatchRequest> command, CancellationToken ct) =>
-        runner.CallAsync(DispatchOp(command), DispatchCall([command.Body.Item], many: false, continueOnConflict: false), MapDispatch, ct);
+    public async Task<StoreReply<DispatchResult>> DispatchAsync(StoreCommand<DispatchRequest> command, CancellationToken ct)
+    {
+        var reply = await runner.CallAsync(DispatchOp(command), DispatchCall([command.Body.Item], many: false, continueOnConflict: false), MapDispatch, ct).ConfigureAwait(false);
+        WakeAfterCommit(reply, command.Application, [command.Body.Item]);
+        return reply;
+    }
 
-    public Task<StoreReply<DispatchBatchResult>> DispatchManyAsync(StoreCommand<DispatchBatchRequest> command, CancellationToken ct) =>
-        runner.CallAsync(DispatchManyOp(command), DispatchCall(command.Body.Items, many: true, command.Body.ContinueOnConflict), MapDispatchMany, ct);
+    public async Task<StoreReply<DispatchBatchResult>> DispatchManyAsync(StoreCommand<DispatchBatchRequest> command, CancellationToken ct)
+    {
+        var reply = await runner.CallAsync(DispatchManyOp(command), DispatchCall(command.Body.Items, many: true, command.Body.ContinueOnConflict), MapDispatchMany, ct).ConfigureAwait(false);
+        WakeAfterCommit(reply, command.Application, command.Body.Items);
+        return reply;
+    }
 
     /// <summary>Dispatch/1 on a caller-owned transaction (01 §15, 04 §6.1).</summary>
     public Task<StoreReply<DispatchResult>> StageDispatchAsync(NpgsqlTransaction transaction, StoreCommand<DispatchRequest> command, CancellationToken ct) =>

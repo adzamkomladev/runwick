@@ -502,6 +502,8 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
             var set = new NpgsqlBatchCommand(TimeoutsSql);
             set.Parameters.AddWithValue("lock", NpgsqlDbType.Text, t.LockMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
             set.Parameters.AddWithValue("stmt", NpgsqlDbType.Text, t.StatementMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            // Direct dispatch: the store sends the wake after the commit (0018_client_wake).
+            set.Parameters.AddWithValue("wake", NpgsqlDbType.Text, op.Operation is Operations.Dispatch or Operations.DispatchMany ? "client" : "");
             batch.BatchCommands.Add(set);
         }
 
@@ -611,7 +613,8 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
     const string TimeoutsSql = """
         SELECT set_config('lock_timeout', @lock || 'ms', true),
                set_config('statement_timeout', @stmt || 'ms', true),
-               set_config('idle_in_transaction_session_timeout', '10000ms', true);
+               set_config('idle_in_transaction_session_timeout', '10000ms', true),
+               set_config('runwick.wake', @wake, true);
 
         """;
 
@@ -640,7 +643,8 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
             if (timeouts is { } t)
             {
                 g1.P("lock", t.LockMs.ToString(System.Globalization.CultureInfo.InvariantCulture))
-                  .P("stmt", t.StatementMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                  .P("stmt", t.StatementMs.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                  .P("wake", ""); // statement path: dispatch through it still notifies in the transaction
             }
 
             var sets = await tx.QueryBatchAsync(g1).ConfigureAwait(false);

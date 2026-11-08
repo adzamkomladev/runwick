@@ -12,7 +12,7 @@ namespace Runwick.Postgres.Tests;
 public sealed class MigrationTests
 {
     const string SpecManifest = """
-        {"manifestVersion":1,"schemaRevision":17,"protocolEpochs":[1],"receiptCodecs":[1],"commandFingerprintVersions":[1],
+        {"manifestVersion":1,"schemaRevision":18,"protocolEpochs":[1],"receiptCodecs":[1],"commandFingerprintVersions":[1],
          "windowFingerprintVersions":[1],"retryEvaluators":["exponential-v1"],
          "operations":{"Describe":[1],"RegisterApplication":[1],"RegisterQueue":[1],"RegisterScope":[1],"Dispatch":[1],
            "DispatchMany":[1],"ResolveCommand":[1],"ReadinessProbe":[1,2],"PublishPresence":[1],"ListExpiredLeases":[1],
