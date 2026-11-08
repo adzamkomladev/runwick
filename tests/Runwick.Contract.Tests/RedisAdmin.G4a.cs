@@ -70,7 +70,7 @@ internal static partial class RedisAdmin
 
     /// <summary>The store record (<c>rw:store</c>): store id, layout, manifest and its digest.</summary>
     public static async Task<Dictionary<string, string>> StoreHash() =>
-        (await (await Db()).HashGetAllAsync(Runwick.Redis.RedisMigrator.StoreKey)).ToDictionary(e => (string)e.Name!, e => (string)e.Value!, StringComparer.Ordinal);
+        (await (await Db()).HashGetAllAsync(Runwick.Redis.Migrations.RedisMigrator.StoreKey)).ToDictionary(e => (string)e.Name!, e => (string)e.Value!, StringComparer.Ordinal);
 
     /// <summary>Setup: sets the layout revision the application's gate reads (the binary's is "1").</summary>
     public static async Task SetLayout(string application, string layout) => await (await Db()).HashSetAsync(P(application) + "meta", "layout", layout);

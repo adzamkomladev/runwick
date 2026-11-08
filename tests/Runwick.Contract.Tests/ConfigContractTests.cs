@@ -23,8 +23,9 @@ public sealed class ConfigContractTests
 {
     public static TheoryData<StoreKind> Kinds => CoreContractTests.Kinds;
 
+    /// <summary>One revision below and one above the binary's. SQLite has a single revision so far: the one below is revision 0, which its schema only allows in maintenance mode.</summary>
     public static TheoryData<StoreKind, int> KindsAndOffsets =>
-        [.. CoreContractTests.Kinds.Select(k => (StoreKind)k.Data).SelectMany(k => new[] { -1, 1 }.Select(o => (k, o)))];
+        [.. CoreContractTests.Kinds.Select(k => (StoreKind)k.Data).SelectMany(k => new[] { -1, 1 }.Where(o => k != StoreKind.Sqlite || o > 0).Select(o => (k, o)))];
 
     static readonly ControlActor Actor = new("user:cfg", null, "host", "cfg-01");
 
@@ -63,7 +64,7 @@ public sealed class ConfigContractTests
                 var store = await RedisAdmin.StoreHash();
                 manifest = store["manifest"];
                 digest = store["digest"];
-                expectedDigest = Convert.ToHexStringLower(Runwick.Redis.RunwickRedisMigrations.Manifest().Digest);
+                expectedDigest = Convert.ToHexStringLower(Runwick.Redis.Migrations.RedisMigrator.Manifest().Digest);
                 break;
         }
 
@@ -117,7 +118,7 @@ public sealed class ConfigContractTests
         var c = await f.OpenClient(configure: r =>
         {
             TestJobs.Register(r);
-            r.AddJob<TickJob>().Named("test.tick").ToQueue("default");
+            r.AddJob<ScheduleTickJob>().Named("test.tick").ToQueue("default");
         });
         var ct = CancellationToken.None;
         var driver = c.Driver;
@@ -134,7 +135,7 @@ public sealed class ConfigContractTests
         var waiting = (await c.Dispatcher.DispatchAsync(new PingJob("w"))).JobId.Value;
         await c.Dispatcher.DispatchAsync(new ResourceJob("r", "r1"));
         var preparer = c.Services.GetRequiredService<DispatchPreparer>();
-        var definition = ScheduleCompiler.Compile(new ScheduleDeclaration("nightly", new TickJob("n")) { Cron = "* * * * *" }, preparer, TzdbArtifact.Pinned);
+        var definition = ScheduleCompiler.Compile(new ScheduleDeclaration("nightly", new ScheduleTickJob("n")) { Cron = "* * * * *" }, preparer, TzdbArtifact.Pinned);
         var cutoff = await schedules.StoreNowAsync(ct);
         var first = ScheduleRecurrence.For(definition, TzdbArtifact.Pinned, TimeProvider.System)(cutoff)?.At;
         Assert.Equal(StoreStatus.Applied, (await schedules.RegisterScheduleAsync(c.Command(new RegisterScheduleRequest("nightly", definition, cutoff, first)), ct)).Status);

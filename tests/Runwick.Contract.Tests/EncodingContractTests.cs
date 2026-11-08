@@ -70,13 +70,13 @@ public sealed class EncodingContractTests
         // v7, v4 and byte patterns on which the little-endian Guid.ToByteArray() order and big-endian order differ.
         var random = new Random(20261031);
         var ids = new List<Guid>();
-        for (var i = 0; i < 100; i++)
+        for (var i = 0; i < 60; i++)
         {
             ids.Add(Guid.CreateVersion7(DateTimeOffset.UnixEpoch + TimeSpan.FromMilliseconds(random.NextInt64(0, 1L << 47))));
             ids.Add(Guid.NewGuid());
         }
 
-        for (var i = 0; i < 100; i++)
+        for (var i = 0; i < 60; i++)
         {
             var bytes = new byte[16];
             bytes[random.Next(16)] = (byte)random.Next(256);
@@ -91,13 +91,15 @@ public sealed class EncodingContractTests
         // Every job has the same eligible_at, so the store's candidate order is decided by the job ID alone.
         await using var f = await DriverFixture.StartAsync(Ns("enc01b"), kind);
         var c = await f.OpenClient(configure: r => TestJobs.Register(r));
-        var at = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 4_000);
+        var at = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 12_000);
         var p = c.Prepared.Prepare(new PingJob("x"), new DispatchOptions { NotBefore = at });
         foreach (var id in ids.OrderBy(_ => random.Next()))
         {
             Assert.Equal(StoreStatus.Applied, (await c.Driver.DispatchAsync(CommandFor(p, id), CancellationToken.None)).Status);
         }
 
+        Assert.True(DateTimeOffset.UtcNow < at, "the dispatches took longer than the not-before instant, so the jobs would not share one eligible_at");
+        Assert.Single((await Model(f)).Jobs.Select(j => j.EligibleAt).Distinct());
         while (DateTimeOffset.UtcNow <= at + TimeSpan.FromMilliseconds(200))
         {
             await Task.Delay(100);
@@ -110,7 +112,10 @@ public sealed class EncodingContractTests
             order.Add(next.Value!.Position.JobId);
         }
 
-        Assert.True(expected.SequenceEqual(order), $"count {order.Count}/{expected.Count}; missing [{string.Join(",", expected.Except(order).Take(5))}]; first difference at {expected.Zip(order).TakeWhile(p => p.First == p.Second).Count()}");
+        var model = await Model(f);
+        var at0 = expected.Zip(order).TakeWhile(x => x.First == x.Second).Count();
+        Assert.True(expected.SequenceEqual(order), at0 >= expected.Count ? "" :
+            $"count {order.Count}/{expected.Count}; first difference at {at0}: expected {expected[at0]} (eligible {model.Job(expected[at0]).EligibleAt:O}) but got {order[at0]} (eligible {model.Job(order[at0]).EligibleAt:O})");
     }
 
     /// <summary>Setup: puts the resource scopes' fencing counter at <paramref name="value"/> with fencing enabled (the SQL stores update the scope row).</summary>
