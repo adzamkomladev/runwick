@@ -11,7 +11,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "pg": "^8.23.1",
-    "pg-boss": "^12.38.0"
+    "pg": "8.23.1",
+    "pg-boss": "12.38.0"
   }
 }

@@ -42,7 +42,23 @@ const workOptions = { localConcurrency: concurrency, batchSize: batch, pollingIn
 const latencies = [];
 let completed = 0;
 
-if (mode === 'drain') {
+if (mode === 'enqueue') {
+  // --n single send() calls from --calls concurrent loops; no worker. Measures adding, not running.
+  const calls = Number(arg('calls', 1));
+  const lat = [];
+  let next = 0;
+  const t0 = performance.now();
+  await Promise.all(Array.from({ length: calls }, async () => {
+    while (next++ < n) {
+      const t = performance.now();
+      await boss.send(queue, payload);
+      lat.push(performance.now() - t);
+    }
+  }));
+  lat.sort((a, b) => a - b);
+  const p = q => lat[Math.max(0, Math.min(lat.length - 1, Math.floor(q * lat.length) - 1))];
+  Object.assign(result, { jobs: n, calls, insertsPerSec: n / ((performance.now() - t0) / 1000), insertLatencyMs: { p50: p(0.5), p99: p(0.99) } });
+} else if (mode === 'drain') {
   const t0 = performance.now();
   for (let i = 0; i < n; i += 5000) {
     await boss.insert(queue, Array.from({ length: Math.min(5000, n - i) }, () => ({ data: payload })));
