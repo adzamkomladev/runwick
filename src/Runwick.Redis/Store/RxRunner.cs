@@ -75,7 +75,8 @@ internal sealed class RxReply
 
     public StoreReply<T> Reject<T>() where T : class =>
         StoreReply<T>.NoEffect(StoreStatus, new StoreError(Code ?? "invariant_fault", null, Conflict, Blocked,
-            ResumeJob is { } j ? new CandidateCursor(ResumeAt!.Value, j) : null, Detail), Decided);
+            ResumeJob is { } j ? new CandidateCursor(ResumeAt!.Value, j) : null,
+            Detail is { Length: > 0 } d && d[0] == (char)91 ? RedisStore.DashIds(d).ToJsonString() : Detail), Decided);
 
     public StoreReply<T> Applied<T>(T? value) where T : class =>
         new(StoreStatus, StoreEffect.Applied, Replayed, value, Code is null ? null : new StoreError(Code, Detail: Detail), Decided);
@@ -87,7 +88,7 @@ internal sealed class RxReply
 /// Runs one write (22 §4.1–§4.4): the script call, then pending-intent recovery and the same-command resend while the
 /// operation budget lasts. A pending intent that cannot be finished surfaces as <c>store_recovering</c>.
 /// </summary>
-internal sealed class RxRunner(RxClient client, TimeProvider time)
+internal sealed class RxRunner(RxClient client, TimeProvider time, IFaultInjector? faults = null)
 {
     const int RecoveryBatch = 100;
     static readonly TimeSpan DefaultBudget = TimeSpan.FromSeconds(5);
@@ -106,7 +107,31 @@ internal sealed class RxRunner(RxClient client, TimeProvider time)
     /// <summary>Script calls that answered Recovering (tests).</summary>
     public long RecoveringReplies;
 
-    public async Task<RxReply> WriteAsync(RxOp op, RxScript script, RedisValue[] args, CancellationToken ct)
+    public Task<RxReply> WriteAsync(RxOp op, RxScript script, RedisValue[] args, CancellationToken ct) =>
+        Telemetry.Telemetry.MeasureStorage(op.Operation, (int)op.Lane, () => WriteCoreAsync(op, script, args, ct), r => Runwick.Worker.WorkerEngine.Snake(r.Status)); // 18 §3.1
+
+    /// <summary>
+    /// Test seam (22 §12): the script has answered, so its effect is durable (AOF always) and the reply is about to go back to the caller.
+    /// An injected reply loss is the unknown outcome a caller sees when the connection dies after the script ran.
+    /// </summary>
+    async Task AfterCommitAsync(RxOp op, CancellationToken ct)
+    {
+        if (faults is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await faults.OnAsync(new FaultContext(FaultPoint.AfterCommitBeforeReply, op.Operation, op.CommandId, op.Application), ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is InjectedReplyLossException || ex.InnerException is IOException) // the harness drops a reply with a wrapped connection reset
+        {
+            throw new StoreOutcomeUnknownException("commit_outcome_unknown", op.CommandId, op.Operation);
+        }
+    }
+
+    async Task<RxReply> WriteCoreAsync(RxOp op, RxScript script, RedisValue[] args, CancellationToken ct)
     {
         if (HistoryFailure is { } h)
         {
@@ -127,7 +152,9 @@ internal sealed class RxRunner(RxClient client, TimeProvider time)
             switch ((string)a[0]!)
             {
                 case "R":
-                    return RxReply.Parse(a);
+                    var parsed = RxReply.Parse(a);
+                    await AfterCommitAsync(op, ct).ConfigureAwait(false);
+                    return parsed;
                 case "E":
                     // A Lua error before the intent: nothing was written.
                     return new RxReply { Status = nameof(StoreStatus.InvariantFault), HasValue = false, Code = "script_error", Detail = (string?)a[1] };

@@ -251,7 +251,9 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         if (reply.Status == StoreStatus.UnsupportedVersion)
         {
             throw new StoreIncompatibleException(
-                $"Schedule '{declaration.Key}' cannot be registered: {reply.Error?.Code}. Activate capability 'scheduler' first.");
+                $"Schedule '{declaration.Key}' cannot be registered: {reply.Error?.Code}. Activate capability 'scheduler' once per application: run "
+                + $"'runwick store activate-capability --name scheduler --application {Application} --provider postgres|sqlite --connection-env VAR' "
+                + "(Redis: RunwickRedisMigrations.ActivateCapabilityAsync), then restart.");
         }
 
         if (reply.Value is { Outcome: "drift" })

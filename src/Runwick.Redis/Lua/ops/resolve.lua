@@ -7,6 +7,7 @@ if m[2] and m[2] ~= '' then return { 'RECOVERING', m[2] } end
 local k = P .. 'rcpt:' .. CMD
 local r = redis.call('HMGET', k, 'op', 'ver', 'fp', 'status', 'decided', 'result')
 if r[1] then
+  if r[2] ~= '1' then return { 'Incompatible', r[2] } end
   if OP ~= '' and (r[1] ~= OP or r[3] ~= FP) then return { 'Conflict' } end
   if not r[6] or r[6] == '' then return { 'NotObserved' } end
   redis.call('HSET', k, 'confirmed', NOWS)

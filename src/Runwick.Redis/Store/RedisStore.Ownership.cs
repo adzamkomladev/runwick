@@ -459,6 +459,9 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
                     }
 
                     return time.GetUtcNow() < notAfter + floor ? new ReceiptResolution.NotApplied() : new ReceiptResolution.ExpiredUnknown();
+                case "Incompatible":
+                    // 23 §8: a receipt this binary cannot decode is never reported as not found, conflict or success.
+                    throw new StoreIncompatibleException($"Receipt operation version {(string)a[1]!} is not supported by this binary.");
                 case "Conflict":
                     return new ReceiptResolution.Conflict();
                 case "NotObserved":
@@ -469,9 +472,45 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
                     return new ReceiptResolution.ExpiredUnknown();
                 case "Recorded":
                     return new ReceiptResolution.Recorded((string)a[1]!, int.Parse((string)a[2]!, CultureInfo.InvariantCulture), (string)a[3]!,
-                        RxReply.T((string)a[4]!), JsonDocument.Parse((string)a[5]!).RootElement.Clone());
+                        RxReply.T((string)a[4]!), JsonDocument.Parse(DashIds((string)a[5]!).ToJsonString()).RootElement.Clone());
                 default:
                     throw new StoreOutcomeUnknownException("commit_outcome_unknown", commandId, "ResolveCommand");
+            }
+        }
+    }
+
+    internal static JsonNode DashIds(string json)
+    {
+        var node = JsonNode.Parse(json)!;
+        Walk(node);
+        return node;
+
+        static void Walk(JsonNode? n)
+        {
+            switch (n)
+            {
+                case JsonObject o:
+                    foreach (var (name, child) in o.ToList())
+                    {
+                        if (name.EndsWith("Id", StringComparison.Ordinal) && child is JsonValue v && v.TryGetValue<string>(out var s)
+                            && s.Length == 32 && Guid.TryParseExact(s, "N", out var g))
+                        {
+                            o[name] = g.ToString("D");
+                        }
+                        else
+                        {
+                            Walk(child);
+                        }
+                    }
+
+                    break;
+                case JsonArray a:
+                    foreach (var child in a)
+                    {
+                        Walk(child);
+                    }
+
+                    break;
             }
         }
     }

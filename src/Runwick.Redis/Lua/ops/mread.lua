@@ -147,14 +147,26 @@ elseif SUB == 'scopes' then
     end
   end
 elseif SUB == 'schedules' then
-  -- 2 after key ('' = none), 3 limit; the stored schedule row is returned as it is
+  -- 2 after key ('' = none), 3 limit. The hash also holds key indexes (k:), definitions (d:) and audit ranges (ar:); a schedule
+  -- row's field is its colon-free ID. Listed by schedule key; the last materialization is the newest of its occurrences.
   if redis.call('HLEN', P .. 'sched') > BUDGET then return { 'BUDGET' } end
   local after, limit = ARGS(2), tonumber(ARGS(3))
-  local keys = redis.call('HKEYS', P .. 'sched')
-  table.sort(keys, U.blt)
-  for _, k in ipairs(keys) do
-    if after == '' or U.blt(after, k) then
-      add('{"key":' .. U.str(k) .. ',"row":' .. redis.call('HGET', P .. 'sched', k) .. '}')
+  local rows = {}
+  for _, id in ipairs(redis.call('HKEYS', P .. 'sched')) do
+    if not string.find(id, ':', 1, true) then rows[#rows + 1] = U.jget('sched', id) end
+  end
+  table.sort(rows, function(a, b) return U.blt(a.key, b.key) end)
+  for _, r in ipairs(rows) do
+    if after == '' or U.blt(after, r.key) then
+      local mat = NULL
+      local occ = redis.call('HVALS', P .. 'occ:' .. r.id)
+      if #occ > BUDGET then return { 'BUDGET' } end
+      for _, o in ipairs(occ) do
+        local m = cjson.decode(o).mat
+        if m and (mat == NULL or m > mat) then mat = m end
+      end
+      add(U.enc({ key = r.key, paused = r.paused and true or false, review = r.review and true or false, drev = r.drev, crev = r.crev,
+        next = U.nn(r.next) or NULL, mat = mat }))
       if #out - 3 >= limit then break end
     end
   end

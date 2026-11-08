@@ -12,6 +12,7 @@
   <ItemGroup>
     <!-- Built by `npm run build` in ClientApp and committed (21 §7.2); dotnet build and pack never run Node. -->
     <EmbeddedResource Include="dist/**" LogicalName="runwick-dashboard/%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="..\..\THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="THIRD-PARTY-NOTICES.md" Visible="false" />
     <None Remove="ClientApp/**" />
     <Compile Remove="ClientApp/**" />
     <Content Remove="ClientApp/**" />

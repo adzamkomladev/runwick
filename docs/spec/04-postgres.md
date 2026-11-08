@@ -6,6 +6,10 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-08, SP-026)
+
+- §7.15 (application-gate change) is no longer harness only: `RunwickPostgresMigrations.SetAdmissionModeAsync` runs the same statements with a 5 s `lock_timeout` as the migration role (23 §3). §8.1: a lost migration session is `migration_connection_lost` (23 §4). `ResolveCommand` throws `StoreIncompatibleException` for a receipt whose codec or operation version this binary does not know (23 §8).
+
 ## Changes (2026-11-07, wider producer lane)
 
 §9.1: the producer/admin class is **8** concurrent calls by default and follows `ProducerOptions.MaxConcurrentCalls`; the work data source maximum is admission 4 + producer/admin + background 2 (**14** by default, 8 before). Per worker group the planning ceiling becomes `8 + 14 = 22` (+1 listener). See 06 Changes 2026-11-07, wider producer lane.

@@ -16,7 +16,7 @@ namespace Runwick
     }
 
     /// <summary>The explicit deployment migrator for the Redis store (22 §9). Workers never migrate on startup.</summary>
-    public static class RunwickRedisMigrations
+    public static partial class RunwickRedisMigrations
     {
         /// <summary>Writes <c>rw:store</c> once, or does nothing when this layout is already installed (22 §9.2).</summary>
         public static Task<RedisMigrationResult> MigrateAsync(string configuration, CancellationToken cancellationToken = default) =>
@@ -36,7 +36,11 @@ namespace Runwick.Redis.Migrations
         /// <summary>Test seam (REDIS-14): how long to wait for the migration lock.</summary>
         internal static TimeSpan LockWait { get; set; } = TimeSpan.FromSeconds(60);
 
-        public static async Task<RedisMigrationResult> RunAsync(string configuration, CancellationToken ct)
+        public static Task<RedisMigrationResult> RunAsync(string configuration, CancellationToken ct) =>
+            WithLockAsync(configuration, (db, server) => ApplyAsync(db, server, ct), ct);
+
+        /// <summary>Connects as admin, checks the profile and runs <paramref name="body"/> under the migration lock (22 §9.2).</summary>
+        internal static async Task<T> WithLockAsync<T>(string configuration, Func<IDatabase, IServer, Task<T>> body, CancellationToken ct)
         {
             ConfigurationOptions options;
             try
@@ -68,7 +72,7 @@ namespace Runwick.Redis.Migrations
                 }
 
                 var db = mux.GetDatabase();
-                var server = mux.GetServer(mux.GetEndPoints().Single());
+                var server = mux.GetServer(mux.GetEndPoints(configuredOnly: true).Single());
                 RxProfileReport report;
                 try
                 {
@@ -98,7 +102,7 @@ namespace Runwick.Redis.Migrations
 
                 try
                 {
-                    return await ApplyAsync(db, server, ct).ConfigureAwait(false);
+                    return await body(db, server).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -115,6 +119,11 @@ namespace Runwick.Redis.Migrations
             if (existing.Length > 0)
             {
                 var map = existing.ToDictionary(e => (string)e.Name!, e => (string)e.Value!, StringComparer.Ordinal);
+                if (long.TryParse(map.GetValueOrDefault("layout"), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var layout) && layout > CurrentLayout)
+                {
+                    throw new RedisMigrationException("migration_unknown", $"rw:store holds layout revision {layout}, which this binary does not know (newer store).");
+                }
+
                 if (map.GetValueOrDefault("layout") != CurrentLayout.ToString(System.Globalization.CultureInfo.InvariantCulture)
                     || map.GetValueOrDefault("digest") != Convert.ToHexStringLower(digest))
                 {

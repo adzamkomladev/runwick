@@ -29,7 +29,7 @@ for _, lane in ipairs(lanes) do
     local head = redis.call('ZRANGE', key, '-inf', NOWS, 'BYSCORE', 'LIMIT', 0, 1)
     if #head == 1 then
       local j = redis.call('HMGET', P .. 'job:' .. head[1], 'name', 'pver', 'profile', 'profver')
-      if not supported[j[1] .. '\0' .. j[2] .. '\0' .. j[3] .. '\0' .. j[4]] then unsupported[#unsupported + 1] = lane end
+      if not supported[j[1] .. '\0' .. j[2] .. '\0' .. j[3] .. '\0' .. j[4]] then unsupported[#unsupported + 1] = U.arr({ lane[1], lane[2] }) end
       local due = U.candidates(lane[1], lane[2], nil, nil, supported, 1)
       if #due == 1 then ready[#ready + 1] = { queue = lane[1], priority = lane[2], at = due[1].at } end
     end

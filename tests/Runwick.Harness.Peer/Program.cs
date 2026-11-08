@@ -173,7 +173,8 @@ async Task<JsonObject> RunAsync(string cmd, JsonObject m)
             return PeerJson.Reply(await C().RecoverAsync(expired).ConfigureAwait(false));
         case "deadlocks":
             // 40P01 rollbacks this process's runner has observed: deadlock-freedom evidence (07 I-18).
-            return new JsonObject { ["count"] = ((Runwick.Postgres.Store.PgRunner)C().Services.GetService(typeof(Runwick.Postgres.Store.PgRunner))!).Deadlocks };
+            // SQLite and Redis runners have no lock-order deadlock to count (one writer): 0.
+            return new JsonObject { ["count"] = C().Services.GetService(typeof(Runwick.Postgres.Store.PgRunner)) is Runwick.Postgres.Store.PgRunner pg ? pg.Deadlocks : 0 };
         case "armFault":
             faults.Arm(m);
             return [];

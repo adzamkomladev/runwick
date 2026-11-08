@@ -22,6 +22,8 @@ Implementation choices *[choice]*:
 
 Changes (2026-11-01, owed cases):
 
+- 2026-11-08 (SP-028): §6.1 names no caller. The operator path is `ActivateCapabilityAsync` on the three migration classes and `runwick store activate-capability --name rate_admission` (23 §3.6); it writes no audit row or event. The store operation stays for in-process callers.
+
 - 2026-11-01: The capacity-control §6 rate rows are cases RATE-05 … RATE-10 (15 I-1). The enlargement/cleanup race has no ID and stays with SP-021.
 - 2026-11-01: §4 lock order, made testable: the rate scopes are locked by one `SELECT … ORDER BY rate_scope_id FOR UPDATE`, so there is no fault point between two scope locks. RATE-09 interleaves the acquisitions with an admin row lock on the higher-UUID scope plus a barrier at `AfterLocksBeforeFreshTime`, and checks which backend the second Begin waits on.
 - 2026-11-01: §6.1, "binaries without the capability": their handshake also fails after activation, because RegisterQueue and RegisterScope are creation paths (03 §10.3). An old binary already running keeps Renew, Finish, Recover and ReleaseReservation. This is the UPG-06 "rollback after activation is rejected" subset, together with the refusal to lower a capability.

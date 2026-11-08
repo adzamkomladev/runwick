@@ -365,7 +365,13 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
             return gate;
         }
 
-        return tx.Op.HasReceipt ? Receipt(tx) : null;
+        // An operation without a receipt (Renew, RenewMany) still refuses a command whose deadline has passed, as the PostgreSQL frame does.
+        if (!tx.Op.HasReceipt)
+        {
+            return tx.Clock >= tx.Op.NotAfter ? SqRow.NoEffect("CommandExpired", "command_expired", tx.Now) : null;
+        }
+
+        return Receipt(tx);
     }
 
     SqOutcome<T> OutcomeProtocol<T>(SqTx tx, Func<SqTx, SqOutcome<T>> body, Func<SqTx, SqReceiptRow, StoreReply<T>>? replay) where T : class
@@ -544,10 +550,10 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
 
     internal static SqReceiptRow? ReadReceipt(SqTx tx, string retentionClass) =>
         tx.One(tx.Sql("""
-            SELECT operation, operation_version, fingerprint, not_after, status, result, decided_at
+            SELECT operation, operation_version, fingerprint, not_after, status, result, decided_at, receipt_codec_version
             FROM runwick_storage_commands WHERE application = @application AND retention_class = @class AND command_id = @command_id
             """).P("class", retentionClass).P("command_id", tx.Op.CommandId),
-            r => new SqReceiptRow(r.GetString(0), r.GetInt32(1), r.Blob(2), r.Time(3), r.StrN(4), r.JsonN(5), r.TimeN(6)));
+            r => new SqReceiptRow(r.GetString(0), r.GetInt32(1), r.Blob(2), r.Time(3), r.StrN(4), r.JsonN(5), r.TimeN(6), r.GetInt32(7)));
 
     // ------------------------------------------------------------------ caller transactions (20 §8)
 
