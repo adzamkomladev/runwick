@@ -8,6 +8,13 @@ using StackExchange.Redis;
 namespace Runwick.Contract.Tests;
 
 /// <summary>
+/// A server-wide stall (<c>CLIENT PAUSE</c>) delays every client of the Redis server, so the classes that use one run alone: xUnit runs a collection that
+/// disables parallelization after, and never beside, the others.
+/// </summary>
+[CollectionDefinition(nameof(RedisPauseCollection), DisableParallelization = true)]
+public sealed class RedisPauseCollection;
+
+/// <summary>
 /// Makes protocol commands wait on the store the way a contended lock does, then lets them go. This is how the "waits on a lock" cases
 /// (CMD-04, OWN-03) get their wait on every driver:
 /// PostgreSQL holds the resource-scope rows <c>FOR UPDATE</c> in an open transaction (what the original PostgreSQL cases do);
@@ -48,7 +55,7 @@ internal sealed class WriteHold : IAsyncDisposable
                 break;
             default:
                 var mux = await RedisServer.AdminAsync();
-                await mux.GetServer(mux.GetEndPoints()[0]).ExecuteAsync("CLIENT", "PAUSE", 600_000, "WRITE");
+                await mux.GetServer(mux.GetEndPoints()[0]).ExecuteAsync("CLIENT", "PAUSE", 60_000, "WRITE");
                 break;
         }
 

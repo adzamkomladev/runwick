@@ -41,6 +41,40 @@ internal static partial class RedisAdmin
     public static async Task SetCancelRequested(string application, Guid job) =>
         await (await Db()).HashSetAsync(P(application) + "job:" + job.ToString("N"), "cancelat", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
 
+    /// <summary>Puts the fencing counter of every resource scope at <paramref name="value"/> and enables fencing on it.</summary>
+    public static async Task SetFence(string application, long value)
+    {
+        var db = await Db();
+        foreach (var (id, json) in (await Hash(application, "scopes")).Where(p => !p.Key.StartsWith("k:", StringComparison.Ordinal)))
+        {
+            var row = JsonNode.Parse(json)!.AsObject();
+            if (row["kind"]!.GetValue<string>() == "resource")
+            {
+                row["fencing"] = true;
+                row["fence"] = value.ToString(CultureInfo.InvariantCulture);
+                await db.HashSetAsync(P(application) + "scopes", id, row.ToJsonString());
+            }
+        }
+    }
+
+    /// <summary>The fencing counter of the (single) resource scope.</summary>
+    public static async Task<long> Fence(string application) =>
+        (await Hash(application, "scopes")).Where(p => !p.Key.StartsWith("k:", StringComparison.Ordinal))
+            .Select(p => JsonNode.Parse(p.Value)!.AsObject()).Where(r => r["kind"]!.GetValue<string>() == "resource")
+            .Select(r => long.Parse(r["fence"]!.GetValue<string>(), CultureInfo.InvariantCulture)).Single();
+
+    /// <summary>The recorded execution time (ms) of the (single) closed attempt of a job.</summary>
+    public static async Task<long> AttemptElapsed(string application, Guid job) =>
+        (await Hash(application, "job:" + job.ToString("N"))).Where(p => p.Key.StartsWith("a:", StringComparison.Ordinal) && p.Key.EndsWith(":elapsed", StringComparison.Ordinal))
+            .Select(p => long.Parse(p.Value, CultureInfo.InvariantCulture)).Single();
+
+    /// <summary>The store record (<c>rw:store</c>): store id, layout, manifest and its digest.</summary>
+    public static async Task<Dictionary<string, string>> StoreHash() =>
+        (await (await Db()).HashGetAllAsync(Runwick.Redis.RedisMigrator.StoreKey)).ToDictionary(e => (string)e.Name!, e => (string)e.Value!, StringComparer.Ordinal);
+
+    /// <summary>Setup: sets the layout revision the application's gate reads (the binary's is "1").</summary>
+    public static async Task SetLayout(string application, string layout) => await (await Db()).HashSetAsync(P(application) + "meta", "layout", layout);
+
     /// <summary>Gives a waiting job a spent execution budget: its generation's started count reaches the maximum.</summary>
     public static async Task SpendBudget(string application, Guid job)
     {

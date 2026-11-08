@@ -18,6 +18,7 @@ namespace Runwick.Contract.Tests;
 /// </summary>
 [Trait("Category", "Contract")]
 [Trait("Item", "SP-028")]
+[Collection(nameof(RedisPauseCollection))]
 public sealed class FinishManyContractTests
 {
     public static TheoryData<StoreKind> Kinds => CoreContractTests.Kinds;
@@ -335,13 +336,22 @@ public sealed class FinishManyContractTests
         {
             var mux = await RedisServer.AdminAsync();
             var server = mux.GetServer(mux.GetEndPoints()[0]);
-            await server.ExecuteAsync("CLIENT", "PAUSE", 600_000, "WRITE");
-            var a = Task.Run(first);
-            await Task.Delay(300);
-            var b = Task.Run(second);
-            await Task.Delay(300);
-            Assert.False(a.IsCompleted || b.IsCompleted, "the commands did not wait for the server");
-            await server.ExecuteAsync("CLIENT", "UNPAUSE");
+            await server.ExecuteAsync("CLIENT", "PAUSE", 60_000, "WRITE");
+            Task<T1> a;
+            Task<T2> b;
+            try
+            {
+                a = Task.Run(first);
+                await Task.Delay(300);
+                b = Task.Run(second);
+                await Task.Delay(300);
+                Assert.False(a.IsCompleted || b.IsCompleted, "the commands did not wait for the server");
+            }
+            finally
+            {
+                await server.ExecuteAsync("CLIENT", "UNPAUSE");
+            }
+
             return (await WithTimeout(a), await WithTimeout(b));
         }
 

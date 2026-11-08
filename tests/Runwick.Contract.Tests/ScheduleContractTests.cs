@@ -5,6 +5,8 @@ using Runwick.Harness.Engine;
 using Runwick.Harness.Faults;
 using Runwick.Harness.Store;
 using Runwick.Protocol;
+using Runwick.Redis.Store;
+using Runwick.ReferenceModel;
 using Runwick.Scheduling;
 using Runwick.Scheduling.Evaluation;
 
@@ -192,23 +194,54 @@ public sealed class ScheduleContractTests
         await RewindAsync(f, "tick", 2);
         var (before, _, plan) = await PlanAsync(c, "tick");
         var id = Guid.CreateVersion7();
-        f.ArmFault(Enum.Parse<FaultPoint>(point), FaultSpec.Throw(), FaultTarget.Command(id));
 
-        await Assert.ThrowsAnyAsync<Exception>(() => SendAsync(c, plan!, id));
+        if (kind == StoreKind.Redis)
+        {
+            // Redis has no store fault points (22 §12); its seam cuts the stored intent after n writes. There is no rollback to observe: the intent is
+            // finished whole by the next command, so the cut leaves nothing visible until then and exactly one set of effects after it.
+            var redis = c.Services.GetRequiredService<RedisStore>();
+            var command = c.Command(plan!, id);   // one command: its deadline is part of the fingerprint, so the resend must carry the same one
+            redis.Runner.Client.FailAfter = int.Parse(point["FailAfter".Length..], System.Globalization.CultureInfo.InvariantCulture);
+            try
+            {
+                await Assert.ThrowsAsync<StoreOutcomeUnknownException>(() => Store(c).MaterializeOccurrencesAsync(command, Ct));
+            }
+            finally
+            {
+                redis.Runner.Client.FailAfter = 0;
+            }
 
-        Assert.Equal(0, await Jobs(f));
-        Assert.Equal(0, await Occurrences(f));
-        Assert.Equal(0, await Count(f, "SELECT count(*) FROM runwick.storage_commands WHERE command_id = @c", ("c", id)));
-        var after = await ReadAsync(c, "tick");
-        Assert.Equal((before.CursorRevision, before.EvaluatedThrough, before.NextDueAt), (after.CursorRevision, after.EvaluatedThrough, after.NextDueAt));
+            var done = await Store(c).MaterializeOccurrencesAsync(command, Ct);
+            Assert.Equal(StoreStatus.Applied, done.Status);
+            Assert.Equal(plan!.Occurrences.Count, await Jobs(f));
+            Assert.Equal(plan.Occurrences.Count, await Occurrences(f));
+            Assert.Equal(1, await Count(f, "SELECT count(*) FROM runwick.storage_commands WHERE command_id = @c", ("c", id)));
+            Assert.Equal(before.CursorRevision + 1, (await ReadAsync(c, "tick")).CursorRevision);
+            Assert.Empty(SnapshotInvariants.Violations((await f.ReadCommittedSnapshot()).Model));
+        }
+        else
+        {
+            f.ArmFault(Enum.Parse<FaultPoint>(point), FaultSpec.Throw(), FaultTarget.Command(id));
+
+            await Assert.ThrowsAnyAsync<Exception>(() => SendAsync(c, plan!, id));
+
+            Assert.Equal(0, await Jobs(f));
+            Assert.Equal(0, await Occurrences(f));
+            Assert.Equal(0, await Count(f, "SELECT count(*) FROM runwick.storage_commands WHERE command_id = @c", ("c", id)));
+            var after = await ReadAsync(c, "tick");
+            Assert.Equal((before.CursorRevision, before.EvaluatedThrough, before.NextDueAt), (after.CursorRevision, after.EvaluatedThrough, after.NextDueAt));
+        }
     }
 
+    /// <summary>The fault points of PostgreSQL and SQLite, and for Redis the write-prefix cuts that stand in for them.</summary>
     public static TheoryData<StoreKind, string> FaultPoints =>
         [.. FaultKinds.SelectMany(k => new[] { nameof(FaultPoint.AfterMutation), nameof(FaultPoint.BeforeCommit) }
-            .Select(p => ((StoreKind)k.Data, p)))];
+            .Select(p => ((StoreKind)k.Data, p))),
+         .. CoreContractTests.Kinds.Select(k => (StoreKind)k.Data).Where(k => k == StoreKind.Redis)
+            .SelectMany(k => new[] { "FailAfter1", "FailAfter3" }.Select(p => (k, p)))];
 
     [Theory]
-    [MemberData(nameof(FaultKinds))]
+    [MemberData(nameof(CoreContractTests.Kinds), MemberType = typeof(CoreContractTests))]
     [Trait("Case", "SCH-03")]
     public async Task Pause_racing_materialization_has_one_serial_outcome(StoreKind kind)
     {
@@ -218,23 +251,51 @@ public sealed class ScheduleContractTests
         await RewindAsync(f, "tick", 1);
         var (s, _, plan) = await PlanAsync(c, "tick");
 
-        // Materialize holds the lock (row lock or write lock); the pause waits on it and applies after.
+        // Materialize holds the lock (row lock or write lock); the pause waits on it and applies after. Redis has no store fault points and no
+        // locks: its scripts run one at a time, so the server is paused, materialize and pause queue in that order, and the unpause runs them in it.
         var id = Guid.CreateVersion7();
-        var barrier = f.ArmFault(FaultPoint.AfterLocksBeforeFreshTime, FaultSpec.Barrier, FaultTarget.Command(id));
-        var materialize = SendAsync(c, plan!, id);
-        await DriverFixture.WaitAtBarrier(barrier);
-        var pause = Store(c).SetScheduleStateAsync(c.Command(new ScheduleStateRequest("tick", true, null, s.ControlRevision, Actor)), Ct);
-        DriverFixture.ReleaseBarrier(barrier);
-        Assert.Equal(StoreStatus.Applied, (await materialize).Status);
-        Assert.Equal(StoreStatus.Applied, (await pause).Status);
-        Assert.Equal(plan!.Occurrences.Count, await Jobs(f));
+        StoreReply<ScheduleMaterialization> materialized;
+        StoreReply<ScheduleState> paused;
+        if (kind == StoreKind.Redis)
+        {
+            var materialize = SendAsync(c, plan!, id);
+            var pause = Store(c).SetScheduleStateAsync(c.Command(new ScheduleStateRequest("tick", true, null, s.ControlRevision, Actor)), Ct);
+            materialized = await materialize;
+            paused = await pause;
+        }
+        else
+        {
+            var barrier = f.ArmFault(FaultPoint.AfterLocksBeforeFreshTime, FaultSpec.Barrier, FaultTarget.Command(id));
+            var materialize = SendAsync(c, plan!, id);
+            await DriverFixture.WaitAtBarrier(barrier);
+            var pause = Store(c).SetScheduleStateAsync(c.Command(new ScheduleStateRequest("tick", true, null, s.ControlRevision, Actor)), Ct);
+            DriverFixture.ReleaseBarrier(barrier);
+            materialized = await materialize;
+            paused = await pause;
+        }
+
+        // One serial outcome: the jobs exist and the pause followed, or (Redis only, where no lock orders the two) the plan was rejected because the
+        // pause came first. The pause itself is applied either way.
+        Assert.Equal(StoreStatus.Applied, paused.Status);
+        long expectedJobs = plan!.Occurrences.Count;
+        if (kind == StoreKind.Redis && materialized.Status != StoreStatus.Applied)
+        {
+            Assert.Contains(materialized.Error!.Code, new[] { "schedule_paused", "revision_conflict" });
+            expectedJobs = 0;
+        }
+        else
+        {
+            Assert.Equal(StoreStatus.Applied, materialized.Status);
+        }
+
+        Assert.Equal(expectedJobs, await Jobs(f));
 
         // The other order: a plan made before the pause is rejected, never applied on a paused row.
         await RewindAsync(f, "tick", 1);
         var stale = (await PlanAsync(c, "tick")).Plan;
         var rejected = await SendAsync(c, stale!);
         Assert.Equal((StoreStatus.InvalidState, "schedule_paused"), (rejected.Status, rejected.Error!.Code));
-        Assert.Equal(plan.Occurrences.Count, await Jobs(f));
+        Assert.Equal(expectedJobs, await Jobs(f));
     }
 
     [Theory]
