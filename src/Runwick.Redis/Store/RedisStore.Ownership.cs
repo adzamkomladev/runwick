@@ -139,15 +139,14 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
         var headers = new JsonObject { ["business"] = Map(item.Intent.BusinessMetadata), ["diagnostic"] = Map(item.Intent.DiagnosticMetadata) };
         if (item.Schedule is { } s)
         {
-            // A manual trigger (default times) takes the decision time; the script cannot rewrite headers, so the client's clock stands in.
+            // A manual trigger (default times) takes the decision time: the script replaces the "__now__" marker (sched_trigger).
             var manual = s.ScheduledAt == default;
-            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             headers["schedule"] = new JsonObject
             {
                 ["key"] = s.ScheduleName,
-                ["scheduledAt"] = manual ? now : s.ScheduledAt.ToUnixTimeMilliseconds(),
-                ["coveredFrom"] = manual ? now : s.CoveredFrom.ToUnixTimeMilliseconds(),
-                ["coveredUntil"] = manual ? now : s.CoveredUntil.ToUnixTimeMilliseconds(),
+                ["scheduledAt"] = manual ? "__now__" : JsonValue.Create(s.ScheduledAt.ToUnixTimeMilliseconds()),
+                ["coveredFrom"] = manual ? "__now__" : JsonValue.Create(s.CoveredFrom.ToUnixTimeMilliseconds()),
+                ["coveredUntil"] = manual ? "__now__" : JsonValue.Create(s.CoveredUntil.ToUnixTimeMilliseconds()),
             };
         }
 

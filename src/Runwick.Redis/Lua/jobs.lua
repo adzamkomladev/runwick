@@ -376,6 +376,7 @@ function U.dispatch_core(items, continueOnConflict, createdReason, actor)
   end
   local function bind_window(wk, job, it)
     wk.bound, wk.biz, wk.pol, wk.ver, wk.exp, wk.dirty = job, it.biz, it.pol, 1, NOW + it.wms, true
+    U.hset('job:' .. job, 'w:' .. wk.f, '1') -- reverse link for retention (17 §3.2): a live window binding keeps its job
   end
   local results, created, drifts, conflicts = U.arr(), {}, {}, {}
   for i, it in ipairs(items) do
