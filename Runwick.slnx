@@ -17,6 +17,8 @@
     <Project Path="tests/Runwick.Harness.Peer/Runwick.Harness.Peer.csproj" />
     <Project Path="tests/Runwick.Core.Tests/Runwick.Core.Tests.csproj" />
     <Project Path="tests/Runwick.Postgres.Tests/Runwick.Postgres.Tests.csproj" />
+    <Project Path="tests/Runwick.Contract.Tests/Runwick.Contract.Tests.csproj" />
+    <Project Path="tests/Runwick.Sqlite.Tests/Runwick.Sqlite.Tests.csproj" />
     <Project Path="tests/Runwick.Outbox.Tests/Runwick.Outbox.Tests.csproj" />
     <Project Path="tests/Runwick.Workloads/Runwick.Workloads.csproj" />
     <Project Path="tests/Runwick.AspNetCore.Tests/Runwick.AspNetCore.Tests.csproj" />

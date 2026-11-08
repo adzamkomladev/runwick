@@ -11,14 +11,18 @@ namespace Runwick.Harness.Store;
 
 internal enum StoreProfile { DirectPrimary, DirectPrimaryViaProxy }
 
-/// <summary>Per-test PostgreSQL store fixture (07 §2.1).</summary>
+/// <summary>The store a driver-suite case runs against (20 §12).</summary>
+public enum StoreKind { Postgres, Sqlite }
+
+/// <summary>Per-test store fixture (07 §2.1): a PostgreSQL database, or a SQLite file in its own temp directory (20 §12).</summary>
 internal sealed class DriverFixture : IAsyncDisposable
 {
     readonly List<TestClient> _clients = [];
     readonly List<PeerClient> _peers = [];
 
-    DriverFixture(StoreServer server, string ns, string database, StoreProfile profile, PgFaultProxy? proxy)
+    DriverFixture(StoreServer server, string ns, string database, StoreProfile profile, PgFaultProxy? proxy, StoreKind kind = StoreKind.Postgres)
     {
+        Kind = kind;
         Server = server;
         Namespace = ns;
         DatabaseName = database;
@@ -26,6 +30,12 @@ internal sealed class DriverFixture : IAsyncDisposable
         Proxy = proxy;
     }
 
+    public StoreKind Kind { get; }
+
+    /// <summary>The SQLite file (SQLite fixtures only).</summary>
+    public string SqlitePath => Path.Combine(DatabaseName, "runwick.db");
+
+    /// <summary>Null for SQLite fixtures; PostgreSQL-only members use it.</summary>
     public StoreServer Server { get; }
 
     public string Namespace { get; }
@@ -42,10 +52,23 @@ internal sealed class DriverFixture : IAsyncDisposable
     public HarnessFaultInjector Faults { get; } = new();
 
     /// <summary>Direct (unproxied) admin connection string for the per-test database.</summary>
-    public string AdminConnectionString => Server.ConnectionStringFor(DatabaseName, "rw:harness:admin");
+    public string AdminConnectionString => Kind == StoreKind.Sqlite ? $"Data Source={SqlitePath}" : Server.ConnectionStringFor(DatabaseName, "rw:harness:admin");
 
     public static async Task<DriverFixture> StartAsync(string isolatedNamespace, StoreProfile profile = StoreProfile.DirectPrimary)
     {
+        return await StartAsync(isolatedNamespace, StoreKind.Postgres, profile).ConfigureAwait(false);
+    }
+
+    /// <summary>A fixture of the given kind; SQLite gets a fresh temp directory and a migrated file.</summary>
+    public static async Task<DriverFixture> StartAsync(string isolatedNamespace, StoreKind kind, StoreProfile profile = StoreProfile.DirectPrimary)
+    {
+        if (kind == StoreKind.Sqlite)
+        {
+            var dir = Directory.CreateTempSubdirectory("runwick-sqlite-").FullName;
+            await RunwickSqliteMigrations.MigrateAsync($"Data Source={Path.Combine(dir, "runwick.db")}").ConfigureAwait(false);
+            return new DriverFixture(null!, isolatedNamespace, dir, profile, null, StoreKind.Sqlite);
+        }
+
         var server = await StoreServer.SharedAsync().ConfigureAwait(false);
         var db = await server.CreateDatabaseAsync(isolatedNamespace).ConfigureAwait(false);
         PgFaultProxy? proxy = profile == StoreProfile.DirectPrimaryViaProxy
@@ -57,6 +80,11 @@ internal sealed class DriverFixture : IAsyncDisposable
     /// <summary>Client connection string tagged <c>rw:&lt;identity&gt;</c> (the driver appends <c>:control</c>/<c>:work</c>), routed through the proxy when the profile says so.</summary>
     public string ClientConnectionString(string identity, string? role = null)
     {
+        if (Kind == StoreKind.Sqlite)
+        {
+            return AdminConnectionString;
+        }
+
         var cs = new NpgsqlConnectionStringBuilder(Server.ConnectionStringFor(DatabaseName, role is null ? $"rw:{identity}" : $"rw:{identity}:{role}"))
         {
             IncludeErrorDetail = false,
@@ -79,7 +107,8 @@ internal sealed class DriverFixture : IAsyncDisposable
         return client;
     }
 
-    public Task<HarnessSnapshot> ReadCommittedSnapshot() => SnapshotReader.ReadAsync(AdminConnectionString);
+    public Task<HarnessSnapshot> ReadCommittedSnapshot() =>
+        Kind == StoreKind.Sqlite ? Task.FromResult(SqliteSnapshotReader.Read(SqlitePath)) : SnapshotReader.ReadAsync(AdminConnectionString);
 
     /// <summary>
     /// Replays every job's committed history through the ReferenceModel (15 §12.2 rule 4); empty when all are accepted.
@@ -173,6 +202,11 @@ internal sealed class DriverFixture : IAsyncDisposable
     /// <summary>Reads one scalar with admin SQL (assertions only).</summary>
     public async Task<long> CountAsync(string sql, params (string Name, object Value)[] parameters)
     {
+        if (Kind == StoreKind.Sqlite)
+        {
+            return SqliteSnapshotReader.Count(SqlitePath, sql, parameters);
+        }
+
         var conn = new NpgsqlConnection(AdminConnectionString);
         await using (conn.ConfigureAwait(false))
         {
@@ -234,6 +268,21 @@ internal sealed class DriverFixture : IAsyncDisposable
         if (Proxy is not null)
         {
             await Proxy.DisposeAsync().ConfigureAwait(false);
+        }
+
+        if (Kind == StoreKind.Sqlite)
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try
+            {
+                Directory.Delete(DatabaseName, recursive: true);
+            }
+            catch (IOException)
+            {
+                // A peer process may still hold the file for a moment; the temp directory is left behind.
+            }
+
+            return;
         }
 
         await Server.DropDatabaseAsync(DatabaseName).ConfigureAwait(false);

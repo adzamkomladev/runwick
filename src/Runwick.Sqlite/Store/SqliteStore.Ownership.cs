@@ -33,14 +33,14 @@ internal sealed partial class SqliteStore : ILeaseBatchStore, IReserveAndBeginSt
         """).P("job_id", jobId), r => new JobRow(r.GetString(0), r.GetInt32(1), r.GetInt64(2), r.UuidN(3), r.UuidN(4), r.UuidN(5), r.TimeN(6),
             r.TimeN(7), r.StrN(8), r.GetString(9), r.Time(10), r.GetInt64(11)));
 
-    sealed record GenerationRow(int MaxExecutions, int MaxUnstarted, long TimeoutMs, string Retry, string UnstartedRetry, int Started, int Unstarted);
+    sealed record GenerationRow(int MaxExecutions, int MaxUnstarted, long? TimeoutMs, string Retry, string UnstartedRetry, int Started, int Unstarted);
 
     static GenerationRow ReadGeneration(SqTx tx, Guid jobId, int generation) => tx.One(tx.Sql("""
         SELECT max_executions, max_unstarted_abandonments, execution_timeout_ms, retry_policy, unstarted_retry_policy, started_count,
                consecutive_unstarted_count
         FROM runwick_job_generations WHERE application = @application AND job_id = @job_id AND generation = @generation
         """).P("job_id", jobId).P("generation", generation),
-        r => new GenerationRow(r.GetInt32(0), r.GetInt32(1), r.GetInt64(2), r.GetString(3), r.GetString(4), r.GetInt32(5), r.GetInt32(6)))
+        r => new GenerationRow(r.GetInt32(0), r.GetInt32(1), r.LongN(2), r.GetString(3), r.GetString(4), r.GetInt32(5), r.GetInt32(6)))
         ?? throw new InvalidOperationException("generation row missing");
 
     /// <summary>rw_ownership_v1: null when the lease owns the job in one of <paramref name="states"/>.</summary>

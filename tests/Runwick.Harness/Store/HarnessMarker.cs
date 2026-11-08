@@ -10,6 +10,10 @@ internal static class HarnessMarker
 {
 #pragma warning disable CA2255 // Intended: every test process that loads the harness is marked before any store opens.
     [ModuleInitializer]
-    internal static void Initialize() => Runwick.Postgres.Store.PgRunner.HarnessMarker = true;
+    internal static void Initialize()
+    {
+        Runwick.Postgres.Store.PgRunner.HarnessMarker = true;
+        Runwick.Sqlite.Store.SqRunner.HarnessMarker = true;
+    }
 #pragma warning restore CA2255
 }

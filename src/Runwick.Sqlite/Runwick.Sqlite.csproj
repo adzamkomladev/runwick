@@ -12,5 +12,7 @@
     <EmbeddedResource Include="Sql\*.sql" LogicalName="Runwick.Sqlite.Sql.%(Filename)%(Extension)" />
     <InternalsVisibleTo Include="Runwick.Contract.Tests" />
     <InternalsVisibleTo Include="Runwick.Sqlite.Tests" />
+    <InternalsVisibleTo Include="Runwick.Harness" />
+    <InternalsVisibleTo Include="Runwick.Harness.Peer" />
   </ItemGroup>
 </Project>

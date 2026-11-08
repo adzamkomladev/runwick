@@ -206,7 +206,9 @@ internal sealed class SqRow
 
     public static SqRow Applied(string status, string? code, DateTimeOffset decidedAt, JsonObject? result, string? detail = null) => new()
     {
-        Status = status, Effect = nameof(StoreEffect.Applied), Code = code, Detail = detail, DecidedAt = decidedAt, Result = result,
+        Status = status, Effect = nameof(StoreEffect.Applied), Code = code, Detail = detail, DecidedAt = decidedAt,
+        // Through JSON text, so values read back exactly as from the stored receipt (a Guid node reads as a string).
+        Result = result is null ? null : JsonNode.Parse(result.ToJsonString())!.AsObject(),
     };
 
     public StoreReply<T> Reject<T>() where T : class =>
