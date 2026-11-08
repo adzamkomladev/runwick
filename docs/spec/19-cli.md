@@ -14,16 +14,21 @@ The same commands produce three kinds of output:
 
 All three come from one internal description of each command, so they cannot offer different features, only different presentation.
 
+The CLI can also **create a job** (`runwick dispatch <job-name> --payload @file.json`). The management host checks the payload against the job type it has registered, and writes the job and an audit row together, so every job created by a person or a script is on record.
+
 Every command that changes something takes `--command-id` and `--expected-revision`. Sending the same command ID again is safe: the server returns the original result instead of doing the work twice. This is what makes the tool safe in retrying CI jobs.
 
 The CLI never stores passwords or tokens on disk. A saved "context" holds the server URL, the login method, a user name and the **name** of an environment variable that holds the secret.
 
-Not in SP-032 [choice]: `dispatch` (needs a new audited "dispatch by job name" store operation; §11), `schedules edit` (schedules are edited by changing the registered definition, 13 §6.4), an OIDC/device login flow, storing secrets in an OS keychain, and Native AOT or trimmed builds.
+Not in SP-032 [choice]: `schedules edit` (schedules are edited by changing the registered definition, 13 §6.4), an OIDC/device login flow, storing secrets in an OS keychain, and Native AOT or trimmed builds.
 
 ## Changes
 
 - (2026-11-08) New document.
-- (2026-11-08) Decisions taken where the sources were silent, each marked [choice] in the text: HTTP-only client except `migrate`/`doctor` (§1); secrets never written to disk (§3); `dispatch` and `schedules edit` left out (§2); new read endpoint `GET {prefix}/v1/events` added to spec 16 (§6, and 16 Changes); own argument parser over the command model, no System.CommandLine (§4); agent mode requires explicit expected revisions (§5.3); automatic resend on unknown outcome (§5.4).
+- (2026-11-08) Decisions taken where the sources were silent, each marked [choice] in the text: HTTP-only client except `migrate`/`doctor` (§1); secrets never written to disk (§3); `schedules edit` left out (§2); new read endpoint `GET {prefix}/v1/events` added to spec 16 (§6, and 16 Changes); own argument parser over the command model, no System.CommandLine (§4); agent mode requires explicit expected revisions (§5.3); automatic resend on unknown outcome (§5.4).
+
+- (2026-11-08, user decision, adzamkomla) **`dispatch` is in SP-032.** Specified as an audited dispatch by job name with a JSON payload: CLI command (§2), API route `POST {prefix}/v1/jobs:dispatch` and permission `Jobs.Dispatch` (§6.2, 16), store operation `ManagementDispatch/1` writing the job and the audit row in one transaction at the next PostgreSQL schema revision (§6.2, §10), cases CLI-10 and MGMT-13. Replaces the earlier deferral.
+- (2026-11-08, user decision, adzamkomla) **CLI secrets are never written to disk** (§3): only an environment-variable name is saved; the secret comes from that variable, stdin, or a prompt in human mode. Decided, no longer a [choice].
 
 ## 1. Package and process
 
@@ -53,6 +58,7 @@ The CLI library is testable in-process: `RunwickCli.RunAsync(string[] args, CliE
 | `jobs cancel-many --file <path\|->` | `POST jobs:cancel` | `Jobs.Cancel` | File is JSON Lines `{jobId, expectedGeneration, expectedRevision}`, 1–100 lines, else usage error. Item command IDs: §5.4 |
 | `jobs reveal-payload <id>` | `POST jobs/{id}/payload:reveal` | `Jobs.ReadPayload` | Writes an audit row (16 §3); the only way the CLI ever prints a payload |
 | `jobs reveal-error <attempt-id>` | `POST attempts/{id}/error:reveal` | `Jobs.ReadError` | Same |
+| `dispatch <job-name> --payload <@file\|-> [--payload-version <n>] [--queue <q>] [--priority low\|medium\|high] [--not-before <instant>]` | `POST jobs:dispatch` (§6.2) | `Jobs.Dispatch` on the resulting queue | The payload is a JSON value read from a file or stdin, never inline on the command line [choice: argv is visible to other users]. At most 1 MiB. Result: job ID, disposition (`created`/`reused`), generation, revision, queue, `replayed`. The payload is never echoed |
 | `queues list` | `GET queues` | `Queues.Read` | |
 | `queues pause\|resume <name> --expected-revision <n>` | `POST queues/{name}/pause\|resume` | `Queues.Control` | |
 | `workers list [--include-expired]` | `GET workers` | `Capacity.Read` | |
@@ -83,7 +89,7 @@ Config file: `$RUNWICK_CONFIG`, else `Environment.SpecialFolder.ApplicationData/
 ```
 
 - `url` is the prefix passed to `MapRunwickManagement` (the CLI appends `/v1/…`). It must be `https://`, or `http://` to a loopback host (`localhost`, `127.0.0.0/8`, `::1`); anything else is `insecure_url` [choice]. Server certificates use the system trust store; there is no option to skip verification.
-- **Secrets are never written to the file** [choice]. Secret lookup order: `--secret-stdin` (first line of stdin), the context's `secretEnv` variable, `RUNWICK_SECRET`, then an interactive hidden prompt **only** in human mode with a terminal on stdin. Agent and JSON modes never prompt: a missing secret is `credential_missing`.
+- **Secrets are never written to the file** (user decision 2026-11-08). Secret lookup order: `--secret-stdin` (first line of stdin), the context's `secretEnv` variable, `RUNWICK_SECRET`, then an interactive hidden prompt **only** in human mode with a terminal on stdin. Agent and JSON modes never prompt: a missing secret is `credential_missing`.
 - `auth: basic` sends `Authorization: Basic` (user + secret). Mutations need an antiforgery token (16 §5): before the first mutation of a process the CLI calls `GET antiforgery`, keeps the returned cookie and token in memory for that process only, and sends the token in the header the response names (`X-Runwick-Antiforgery`). A 400 `antiforgery_invalid` triggers one fresh fetch and one resend with the same command ID.
 - `auth: bearer` sends `Authorization: Bearer <secret>`. The token comes from the host's own scheme (JWT, API key handler…); Runwick ships none. The host must map that group with `.ForMachineClients()`; the CLI then sends no antiforgery token. If a mutation answers 400 `antiforgery_invalid` under bearer, the error hint says the group needs `ForMachineClients()`.
 - `login` calls `GET antiforgery` (it needs authentication but no permission) and reports `ok`, the URL and the auth kind. It writes nothing.
@@ -206,6 +212,8 @@ The same schema files are committed at `schemas/runwick-cli-agent-envelope-v1.js
 | `not_found` (404), `detail_expired` (410) | API | no | 1 | — |
 | `invalid_request`, `invalid_cursor`, `antiforgery_invalid`, `payload_too_large`, `unsupported_media_type` (400/413/415) | API | no | 1 | — |
 | `stale_revision`, `stale_generation`, `invalid_state`, `unique_conflict`, `command_conflict`, `cancel_already_requested`, `no_change` (409) | API | no | 1 | Read again; `command_conflict`: this command ID was used with another body |
+| `job_not_registered` (404), `payload_invalid`, `payload_version_unsupported` (400), `payload_too_large` (413) | API, dispatch | no | 1 | Register the job type in the management host / fix the payload / send the current payload version |
+| `admission_closed` (503) | API, dispatch while the application drains or is in maintenance | yes | 4 | Retry after the application reopens |
 | `rate_limited` (429) | API | yes | 4 | Wait `Retry-After` |
 | `busy`, `query_budget_exceeded`, `store_unavailable` (503) | API | yes | 4 | — |
 | `outcome_unknown` (503 or lost reply after resends) | API/CLI | yes | 3 | Resend with the same `--command-id` |
@@ -213,7 +221,9 @@ The same schema files are committed at `schemas/runwick-cli-agent-envelope-v1.js
 
 `cancel_requested` (202) is success (`ok: true`, exit 0) with `result.effect = "cancel_requested"`. A bulk result is `ok: true` even when items are rejected; per-item status is in `result` (16 §4). Server messages are shown as received (they never contain exception text, 16 §5); the CLI adds no request echo.
 
-## 6. API addition: events read
+## 6. API additions
+
+### 6.1 Events read
 
 `events tail` needs a read the SP-020 API lacks. Added to `IManagementSession` and `Runwick.AspNetCore` (recorded in 16 Changes):
 
@@ -223,6 +233,46 @@ The same schema files are committed at `schemas/runwick-cli-agent-envelope-v1.js
 - `ManagementEvent(long EventId, string Kind, Guid? JobId, Guid? AttemptId, Guid? CommandId, DateTimeOffset OccurredAt, string? ActorId, JsonObject Details)`. `ActorId` is null unless the caller also has `Audit.Read` [choice: actor subjects are audit data].
 - The cursor is the **plain** position `"<txId>.<eventId>"` (decimal), not a signed 15-minute cursor [choice]: it encodes no filter or scope, grants nothing, and a tail must survive hours. A malformed value is 400 `invalid_cursor`. `Next` is the input cursor when the page is empty.
 - `events tail` without `--follow` reads until a page is empty and not `Partial`, then ends. With `--follow` it polls every `--interval` (default 2 s, 250 ms–60 s).
+
+### 6.2 Audited dispatch
+
+`dispatch` needs a mutation the SP-020 API lacks. Added to `IManagementSession`, `Runwick.AspNetCore` and the stores (recorded in 16 Changes):
+
+**Permission.** `ManagementPermissions.JobsDispatch = "Jobs.Dispatch"`. It may be queue-scoped (it covers the queue the job lands in). It is in **no preset**; it is granted explicitly, like `Jobs.ReadPayload`.
+
+**Route.** `POST {prefix}/v1/jobs:dispatch`, antiforgery as every mutation (16 §5). Body (JSON, camelCase):
+
+| Field | Rule |
+|---|---|
+| `commandId` | UUID, required. Becomes the dispatch operation ID; the proposed job ID is the first 16 bytes of SHA-256(`"runwick.mgmt.dispatch.v1"` ‖ 0x00 ‖ command ID bytes) with version nibble 8 and the RFC 4122 variant, so a resend has the same body |
+| `jobName` | Required; job-name grammar (02 §1) |
+| `payloadVersion` | Optional; if present it must equal the registered **current** payload version, else 400 `payload_version_unsupported` [choice: upgraders are for stored payloads, not for new ones] |
+| `payload` | Required JSON value |
+| `queue`, `priority`, `notBefore` | Optional overrides, validated as `DispatchOptions` (01 §10); defaults from the job's registration |
+| `reason` | Optional, ≤ 512 UTF-8 bytes |
+
+The request body limit for this route is **1 MiB + 16 KiB** (other routes keep 64 KiB, 16 §5); a larger body is 413 `payload_too_large` before parsing.
+
+**Session steps** (`DispatchAsync(ManagementCaller caller, ManagementDispatchRequest request, CancellationToken ct)` → `ManagementDispatchResult(Guid JobId, string Disposition, int Generation, long Revision, string Queue, bool Replayed, Guid CommandId)`):
+
+1. Look the job name up in the host's `JobRegistry`. Unknown → 404 `job_not_registered`. The management host must register the job types it dispatches, as a producer-only host does (01 §6: `AddJob<T>()` or `AddJobsFromAssemblyContaining<T>()`, no `AddWorker`).
+2. Resolve the target queue (override or registration) and check `Jobs.Dispatch` on it; missing → 403. Job names are not hidden resources, so an unregistered name is 404 for every caller.
+3. Deserialize `payload` with the job's registered serializer profile into the job type (`runwick.json` v1, 02). Failure → 400 `payload_invalid`; the message names the JSON path and never echoes values.
+4. Prepare as any dispatch (01 §13): re-serialize to the canonical payload bytes, apply the 1 MiB limit and the 02 §4.2 scanner (`payload_too_large`, `payload_invalid`), freeze policies, scopes and uniqueness from the registration. Local admission (`local_capacity_exceeded`) → 503 `busy`.
+5. Send `ManagementDispatch/1` (below) with the caller's actor. Unknown outcome: resent with the same command until NotAfter, as the other mutations (16 §4).
+
+**Store operation `ManagementDispatch/1`** (internal `IJobControlStore.ManagementDispatchAsync`), one transaction:
+
+- Body = the `Dispatch/1` body (03 §3.2, single item) + `actor` {`subject`, `display`?, `scheme`, `reason`?}. Fingerprint: 02 §6 canonical form over that body, operation version 1. Receipt class `durable`, lifetime 5 min (03 §8.4). Receipt result: the `Dispatch/1` result (03 §8.5).
+- Steps: gates (creation path, 03 §10) → receipt → the shared dispatch core, unchanged (PostgreSQL: `rw_dispatch_core_v2`) → one `management_audit` row: `operation = 'Dispatch'`, `target_kind = 'job'`, `target_id` = the resulting job ID, actor, reason, `resulting_revision` = the job revision, `details` = {`jobName`, `queue`, `disposition`} → the `dispatched` queue event carries `actor_id = actor.subject` and `command_id` → receipt decided → commit.
+- A `reused` result (uniqueness, 01 §11) also writes its audit row: the command applied, it just created nothing. `UniquenessConflict` writes nothing (409 `unique_conflict`).
+- Audit failure rolls back the dispatch (MGMT-09).
+
+**HTTP mapping.** 200 with the result (`replayed: true` on a replay); 409 `unique_conflict`, `command_conflict`; `AdmissionClosed` → 503 `admission_closed`; others as 16 §4.
+
+**PostgreSQL (next schema revision, 16 at the time of writing).** Migration `00NN_management_dispatch.sql`: `management_audit` operation check adds `Dispatch`; new function `management_dispatch_v1` (frame + dispatch core + audit insert, as the other server functions, 04 Changes PF-05); the manifest adds `ManagementDispatch/1`. No new table or index.
+
+**SQLite.** Part of the SQLite manifest and of its `0001_initial.sql` from the start (20 §9.3).
 
 ## 7. `doctor`
 
@@ -259,12 +309,12 @@ Project `tests/Runwick.Cli.Tests` (trait `Item=SP-032`). The CLI runs in-process
 | CLI-07 | Streaming: `events tail` from a cursor while jobs run returns every event exactly once across resumes; `jobs tail` ends at the terminal state; Ctrl-C emits an `end` line; queue-scoped caller gets 403 on events; `actorId` null without `Audit.Read` |
 | CLI-08 | `migrate` on an empty PostgreSQL database and again (no-op); `doctor` with store checks reports the revisions; a store one revision ahead of the CLI is `fail`. The SQLite half runs once SP-019 is merged |
 | CLI-09 | Paging: `--limit 450` over 3 API pages returns 450 items and a `next`; an expired cursor is `invalid_cursor` |
+| CLI-10 | Dispatch: `dispatch` from a file and from stdin creates one job and one audit row; resent with the same `--command-id` → `replayed`, still one job and one audit row; reply dropped → automatic resend, one job; unknown job name → `job_not_registered`; a payload that does not bind to the job type → `payload_invalid` with no payload text in any output; wrong `--payload-version` → `payload_version_unsupported`; a 1 MiB + 1 byte payload → `payload_too_large`; a caller without `Jobs.Dispatch` (every preset) → 403; a uniqueness-bound job dispatched twice with different command IDs → `reused` with an audit row each |
 
 ## 10. Schema revision
 
-None. The events endpoint reads the existing `queue_events` through `EventsSince/1`.
+The **next PostgreSQL schema revision** (16 at the time of writing): `ManagementDispatch/1` and the audit `Dispatch` operation (§6.2). The events endpoint needs none; it reads `queue_events` through `EventsSince/1`.
 
 ## 11. Left for later
 
-- `dispatch <job-name> --payload @file.json`: needs (a) dispatching by job name with a JSON payload inside a management host, which must then register the job types, and (b) an audit row atomic with the dispatch, which today's `Dispatch/1` cannot write. Both are new engine and store surface (a `Jobs.Dispatch` permission, a store operation with an actor, a schema revision). Proposed as its own item after SP-032.
 - `schedules edit`: schedule definitions come from code registration (`UpdateSchedule/1`, 13 §6.4); an API edit would be overwritten by the next deploy.

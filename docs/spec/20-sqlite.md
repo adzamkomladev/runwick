@@ -13,14 +13,18 @@ SP-019 adds `Runwick.Sqlite`: Runwick's job store in a single SQLite database fi
 - **Same-host only.** A database on a network share is refused at startup. In-memory databases are refused too.
 - **Your transaction, your file.** An application can stage a job (or complete one) inside its own SQLite transaction on the same file, so the business row and the job commit together.
 
+Workers send their routine work in batches, as on PostgreSQL: one command claims and starts up to 32 jobs, one renews up to 64 leases, one finishes up to 32 jobs. On SQLite each batch is a single write transaction, so it waits for the file lock once and syncs to disk once instead of once per job.
+
 The SQLite schema is created by one migration and matches PostgreSQL schema revision 15 table by table. It has its own revision counter starting at 1.
 
-Not in SP-019 [choice]: the batched operations `ReserveAndBegin/1`, `RenewMany/1` and `FinishMany/1` (the engine already falls back to the single operations when a store lacks them; add them later if measurements ask), cross-process wake-up notifications (polling plus wake-ups within one process), a `synchronous=NORMAL` profile, retention cleanup (SP-021 adds it for every store), and certification (G-4).
+Not in SP-019 [choice]: cross-process wake-up notifications (polling plus wake-ups within one process), a `synchronous=NORMAL` profile, retention cleanup (SP-021 adds it for every store), and certification (G-4).
 
 ## Changes
 
 - (2026-11-08) New document.
-- (2026-11-08) Decisions taken where the sources were silent, each marked [choice] in the text: table prefix `runwick_` (§3); UUIDs as 16-byte big-endian blobs (§3); `STRICT` tables for overflow detection (§3); one writer thread per process (§5); `AUTOINCREMENT` events so a cursor never skips (§7.1); no batched operations (above); only the FULL profile (§2); caller staging requires the caller connection to be FULL and to have foreign keys on (§8); interrupt-based query budget (§5.3).
+- (2026-11-08) Decisions taken where the sources were silent, each marked [choice] in the text: table prefix `runwick_` (§3); UUIDs as 16-byte big-endian blobs (§3); `STRICT` tables for overflow detection (§3); one writer thread per process (§5); `AUTOINCREMENT` events so a cursor never skips (§7.1); only the FULL profile (§2); caller staging requires the caller connection to be FULL and to have foreign keys on (§8); interrupt-based query budget (§5.3).
+- (2026-11-08, user decision, adzamkomla) **Batched operations from the start.** `ReserveAndBegin/1`, `RenewMany/1` and `FinishMany/1` are in the SQLite manifest and implemented on the writer thread, one `BEGIN IMMEDIATE` per batch (§5.1, §7.2); `DispatchMany/1` uses multi-row statements, the SQLite form of PostgreSQL's set-based dispatch (§7.2). Cases SQL-12 and OWN-04 with `RenewMany`. Replaces the earlier deferral. `synchronous=FULL` stays the only profile.
+- (2026-11-08) `ManagementDispatch/1` (19 §6.2) is in the SQLite manifest and schema from the start (§9.3).
 - (2026-11-08) Public API additions recorded in 01 Changes: `UseSqlite`, `SqliteOptions`, `ISqliteJobDispatcher`, `ISqliteJobCompletion`, `RunwickSqliteMigrations`, `AcknowledgementProfiles.SqliteWalFull`.
 
 ## 1. Targets and boundaries
@@ -33,7 +37,7 @@ Not in SP-019 [choice]: the batched operations `ReserveAndBegin/1`, `RenewMany/1
 | Deployment modes | All five modes of 00 §5, provided every process is on one host. |
 | Notifications | None across processes. After its own commit a process wakes its own local pools, scheduler and relay (the existing in-process hint). Polling is sufficient for correctness (OBS-01). |
 | Acknowledgement profile | `AcknowledgementProfiles.SqliteWalFull = "sqlite.wal-synchronous-full"`: a reply follows a commit with WAL and `synchronous=FULL` on the committing connection. |
-| Operations | Every operation of the PostgreSQL revision-15 manifest except `ReserveAndBegin`, `RenewMany`, `FinishMany` (§9.3). |
+| Operations | Every operation of the PostgreSQL manifest at revision 15, batched operations included, plus `ManagementDispatch/1` (19 §6.2) (§9.3). |
 
 ## 2. Registration, options and startup checks
 
@@ -166,6 +170,8 @@ Microsoft.Data.Sqlite runs its `…Async` methods synchronously. Each store inst
 | none (caller's thread) | caller's connection | Staging and transactional completion (§8) |
 | migration (§9) | 1 separate connection, opened and closed by the runner | Migrations only |
 
+Batches are single writes: `RenewMany/1` (renewal class), `FinishMany/1` (settlement class) and `ReserveAndBegin/1` (admission class) each run as **one** `BEGIN IMMEDIATE … COMMIT` on the writer thread, with one decision time read after the lock for every member, and one WAL sync at commit. The engine's batching (05, PF-06: which leases go into one `RenewMany`, which completions into one `FinishMany`, when a pool claims with `ReserveAndBegin`) is unchanged; the writer thread does not merge separate calls into one transaction.
+
 The call classes and ceilings of 04 §9.1 apply unchanged as admission limits (renewal 4, settlement 4, admission 4, producer/admin `MaxConcurrentCalls`, background 2), so `local_capacity_exceeded` and slot waits behave as on PostgreSQL. The writer thread takes queued writes highest class first: renewal → settlement → admission → producer/admin → background; first come first served within a class. A write is never interrupted once its `BEGIN IMMEDIATE` succeeded.
 
 Awaiting callers get a `TaskCompletionSource` completed with `RunContinuationsAsynchronously`, so no caller continuation runs on a store thread. The lease watchdog (05) keeps its own timer; a writer stuck behind another process's lock delays a Renew reply, never the watchdog's local expiry.
@@ -189,11 +195,15 @@ Each operation runs the steps that 04 §7 (and 08, 09, 10, 11, 13, 14, 16 for la
 | Operation | Reference | SQLite difference |
 |---|---|---|
 | RegisterApplication/Queue/Scope | 04 §7.1 | `INSERT … ON CONFLICT DO NOTHING RETURNING`; then read existing rows |
-| Dispatch/1, DispatchMany/1 | 04 §7.2, 14 (dispatch core) | No locks to sort. Key bindings, scopes and jobs are written in the PostgreSQL order anyway, so the event and reply order are identical |
+| Dispatch/1, DispatchMany/1 | 04 §7.2, 04 Changes 2026-11-07 (set dispatch), 14 (dispatch core) | No locks to sort. Key bindings, scopes and jobs are written in the PostgreSQL order anyway, so the event and reply order are identical. `DispatchMany` is set-based (§7.2) |
+| ManagementDispatch/1 | 19 §6.2 | Dispatch core + audit row in the same write transaction |
 | Reserve/1 | 04 §7.3 | No `FOR UPDATE SKIP LOCKED`: the write lock already makes the candidate scan exclusive. Capability tuples are bound as one JSON array and joined with `json_each($capabilities)` [choice: no temp tables]. Candidate order `(eligible_at, job_id)` with the 512-tuple and scan bounds of 04 |
 | ReadinessProbe/1 and /2, ListUnsupportedBacklog | 04 §7.4, 09 | Read path (§4.2) |
 | Begin/1 (rate-aware) | 04 §7.5, 10 §4 | Rate scopes and grants as PostgreSQL; T20 deferral writes its receipt as there |
 | Renew/1 | 04 §7.6 | Write path; no receipt (R1) |
+| RenewMany/1 | 03 Changes 2026-11-02 (PF-06) | §7.2 |
+| ReserveAndBegin/1 | 03 Changes 2026-11-02 (PF-06 batched claim), 04 Changes 2026-11-07 (set-based claim) | §7.2 |
+| FinishMany/1 | 03 Changes 2026-11-02 (PF-06 batched finish), 04 Changes 2026-11-07 (set-based finish) | §7.2 |
 | Finish/1, Recover/1, ReleaseReservation/1, shared close | 04 §7.7–§7.10 | — |
 | ListExpiredLeases/1, PublishPresence/1, ResolveCommand/1 | 04 §7.11–§7.13 | — |
 | Cancel/ManualRetry/RerunSucceeded, SetQueueState, EditScopePolicy | 08 | Audit row in the same transaction |
@@ -214,6 +224,15 @@ ORDER BY event_id LIMIT $limit;
 ```
 
 `EventCursor.TxId` is always 0 on SQLite and `Partial` is always false. EVT-01 and EVT-02 hold as stated in 08.
+
+### 7.2 Batched and set-based operations
+
+The replies, receipts, rows, events and their order are those of 03 for each operation; only the SQLite mechanics are given here.
+
+- **RenewMany/1** (1–64 leases): one transaction. Each member runs inside `SAVEPOINT rw_m` … `RELEASE`; a member refused (`StaleLease`, `InvalidState`, `NotFound`) writes nothing, and a member's `InvariantFault permit_set_mismatch` is `ROLLBACK TO rw_m` for that member only. No member's outcome rolls back another (OWN-04). No receipt (R1). The transaction commits when at least one member renewed, else rolls back.
+- **ReserveAndBegin/1** (1–32 jobs): one transaction; the candidate scan of Reserve/1 continues until `MaxJobs` jobs are claimed or candidates run out; each claimed job gets the Reserve and then the Begin steps (rate step and T20 deferral included) before the next job is scanned, so a later job sees the permits and grants of the earlier ones. One receipt with `items[]`. Any `InvariantFault` rolls the whole command back (03).
+- **FinishMany/1** (1–32 items): one transaction; each item checks its own receipt (replay or new) and ownership, then runs Finish/1's steps. Item receipts are ordinary Finish receipts. The transaction commits when at least one item applied now, rolls back when every item was refused or replayed; any `InvariantFault` rolls the whole call back (03 Changes 2026-11-02).
+- **Set-based statements.** Where PostgreSQL's revisions 12–14 moved per-item statements into set statements, SQLite does the same with multi-row `INSERT … VALUES (…), (…)` and `UPDATE … WHERE (application, job_id) IN (SELECT … FROM json_each($ids))`, chunked so one statement binds at most 32,766 parameters (SQLite's default limit since 3.32). This applies to `DispatchMany/1` (jobs, payloads, generations, requirements, events), `FinishMany/1` (attempt closes, permit deletes, events) and `ReserveAndBegin/1` (attempts, permits, events). It is a speed measure only: a set statement must produce exactly the rows of the per-item path (SQL-12 compares them).
 
 ## 8. Caller transactions
 
@@ -269,7 +288,7 @@ Later SQLite migrations (`0002_…`) follow the same single-transaction shape; a
 
 ### 9.3 Manifest
 
-Same canonical encoding and digest domain as 04 §8.5 (`runwick.manifest.v1`). `schemaRevision: 1`; `operations` = the PostgreSQL revision-15 operation set and versions minus `ReserveAndBegin`, `RenewMany` and `FinishMany`.
+Same canonical encoding and digest domain as 04 §8.5 (`runwick.manifest.v1`). `schemaRevision: 1`; `operations` = the PostgreSQL revision-15 operation set and versions (batched operations included) plus `ManagementDispatch: [1]`. The `runwick_management_audit` operation check includes `Dispatch` (19 §6.2).
 
 ### 9.4 Validation
 
@@ -302,7 +321,7 @@ Harness changes:
 - `Runwick.Harness.Peer` accepts `--store sqlite --path <file>`, so contention and crash cases use separate OS processes (an in-process shared connection is not enough, driver-contract-suite §5).
 - The SQLite runner calls the existing `IFaultInjector` at the points of §4.1; "lost reply" is `AfterCommitBeforeReply` + `DropReply` (there is no wire to cut).
 
-Applicable driver-suite cases (all must pass, real files, real processes where the case involves more than one client): CMD-01–06, ADM-01–05, RUN-01–02, OWN-01–05 (OWN-04 with single Renews), END-01–04, UNI-01–04, RATE-01–04, SCH-01–05, ISO-01, ENC-01, CFG-01, OBS-01, TX-01–03, OUT-01–02, the SER cases of identity-and-serialization that touch a store, and EVT-01–02. Not applicable: TX-04 (no wire between caller and file), RET-01 (SP-021). Declared unsupported (CFG-01 shows the refusal): batched operations, multi-host.
+Applicable driver-suite cases (all must pass, real files, real processes where the case involves more than one client): CMD-01–06, ADM-01–05, RUN-01–02, OWN-01–05 (OWN-04 through `RenewMany/1`), END-01–04, UNI-01–04, RATE-01–04, SCH-01–05, ISO-01, ENC-01, CFG-01, OBS-01, TX-01–03, OUT-01–02, the SER cases of identity-and-serialization that touch a store, and EVT-01–02. Not applicable: TX-04 (no wire between caller and file), RET-01 (SP-021). Declared unsupported (CFG-01 shows the refusal): multi-host. The ReserveAndBegin, RenewMany and FinishMany cases of 15 (G-2 plan) run on SQLite too, plus MGMT-13 against a SQLite-backed management host.
 
 SQLite cases (trait `Item=SP-019`):
 
@@ -319,6 +338,7 @@ SQLite cases (trait `Item=SP-019`):
 | SQL-09 | Encoding vectors: UUID blob order equals `UuidOrder`, text order equals UTF-8 byte order, ms floor/ceil at equality, a fence at `long.MaxValue` incremented → `InvariantFault counter_overflow`, nothing written (ENC-01) |
 | SQL-10 | Migration: empty file, re-run no-op, changed checksum → `migration_checksum_mismatch`, foreign `runwick_x` table → `schema_not_empty`, concurrent migrate from two processes → one applies, the other no-op or `migration_lock_timeout`; the outbox source tables in the same file are untouched |
 | SQL-11 | Events: 3 writer processes, a reader tailing `EventsSince` from saved cursors while the newest events are deleted by the harness: no event returned twice or skipped |
+| SQL-12 | Batches: `RenewMany` of 64 leases with one stale member and one permit-mismatch member renews the other 62 and commits once; `FinishMany` of 32 and `ReserveAndBegin` of 32 each commit once (commit count from the fault injector); for the same seeded workload, batched runs and single-operation runs (batches disabled in the engine) leave identical normalized snapshots; set-based `DispatchMany` of 1,000 items with 40 parameters each crosses the parameter chunk boundary and matches the per-item rows; a `RenewMany` queued behind a `DispatchMany` of 1,000 is served before the next queued dispatch |
 
 ## 13. Must not claim
 
