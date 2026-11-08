@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Runwick.Harness.Engine;
@@ -37,15 +39,145 @@ public sealed class RateScalingContractTests
 
     static string Sql(DriverFixture f, string sql) => f.Kind == StoreKind.Sqlite ? sql.Replace("runwick.", "runwick_", StringComparison.Ordinal) : sql;
 
-    static object At(DriverFixture f, DateTimeOffset t) => f.Kind == StoreKind.Sqlite ? t.ToUnixTimeMilliseconds() : t;
+    static object At(DriverFixture f, DateTimeOffset t) => f.Kind != StoreKind.Postgres ? t.ToUnixTimeMilliseconds() : t;
 
     /// <summary>An instant column as epoch milliseconds.</summary>
     static string Ms(DriverFixture f, string column) => f.Kind == StoreKind.Sqlite ? column : $"(extract(epoch FROM {column}) * 1000)::bigint";
 
-    static Task<long> Count(DriverFixture f, string sql, params (string, object)[] p) => f.CountAsync(Sql(f, sql), p);
+    static Task<long> Count(DriverFixture f, string sql, params (string, object)[] p) =>
+        f.Kind == StoreKind.Redis ? RedisCount(f, sql, p) : f.CountAsync(Sql(f, sql), p);
+
+    // ---- Redis: the same questions answered from the committed key snapshot (hash rows are "field=json", sorted-set rows "member=score").
+
+    /// <summary>The JSON object rows of a hash (the scope hashes also hold plain field-to-id entries, which are skipped).</summary>
+    static async Task<List<(string Field, JsonNode Row)>> RedisFieldRows(DriverFixture f, string key) =>
+        [.. (await f.ReadCommittedSnapshot()).Tables.GetValueOrDefault(key, []).Select(r => (r[..r.IndexOf('=')], r[(r.IndexOf('=') + 1)..]))
+            .Where(r => r.Item2.StartsWith('{')).Select(r => (r.Item1, JsonNode.Parse(r.Item2)!))];
+
+    static async Task<List<JsonNode>> RedisRows(DriverFixture f, string key) => [.. (await RedisFieldRows(f, key)).Select(r => r.Row)];
+
+    static async Task<List<(string Key, Dictionary<string, string> Fields)>> RedisHashes(DriverFixture f, string prefix) =>
+        [.. (await f.ReadCommittedSnapshot()).Tables.Where(t => t.Key.StartsWith(prefix, StringComparison.Ordinal))
+            .Select(t => (t.Key, t.Value.ToDictionary(r => r[..r.IndexOf('=')], r => r[(r.IndexOf('=') + 1)..])))];
+
+    /// <summary>Every grant of every scope as (scope id, attempt, authorized-at ms).</summary>
+    static async Task<List<(string Scope, long At)>> RedisGrants(DriverFixture f) =>
+        [.. (await f.ReadCommittedSnapshot()).Tables.Where(t => t.Key.StartsWith("grants:", StringComparison.Ordinal))
+            .SelectMany(t => t.Value.Select(r => (t.Key, (long)double.Parse(r[(r.LastIndexOf('=') + 1)..], System.Globalization.CultureInfo.InvariantCulture))))];
+
+    static async Task<long> RedisCount(DriverFixture f, string sql, (string Name, object Value)[] p)
+    {
+        static bool Has(string sql, string part) => sql.Contains(part, StringComparison.Ordinal);
+        if (Has(sql, "FROM runwick.rate_grants") && Has(sql, "min("))
+        {
+            return (await RedisGrants(f)).Min(g => g.At);
+        }
+
+        if (Has(sql, "FROM runwick.rate_grants"))
+        {
+            var kind = p.FirstOrDefault(x => x.Name == "kind").Value as string;
+            var all = await RedisGrants(f);
+            if (Has(sql, "authorized_at >="))
+            {
+                return all.Count(g => g.At >= (long)p.First(x => x.Name == "t").Value);
+            }
+
+            if (string.IsNullOrEmpty(kind))
+            {
+                return all.Count;
+            }
+
+            var ids = (await RedisFieldRows(f, "ratescopes")).Where(r => (string?)r.Row["kind"] == kind).Select(r => "grants:" + r.Field).ToHashSet();
+            return (await f.ReadCommittedSnapshot()).Tables.Where(t => ids.Contains(t.Key)).Sum(t => t.Value.Count);
+        }
+
+        if (Has(sql, "policy_revision FROM runwick.rate_scopes"))
+        {
+            return (long)(await RedisRows(f, "ratescopes")).Single(r => (string?)r["kind"] == "job-type")["prev"]!;
+        }
+
+        if (Has(sql, "FROM runwick.rate_scopes WHERE last_decision_at >="))
+        {
+            return (await RedisRows(f, "ratescopes")).Count(r => (long?)r["last"] >= (long)p[0].Value);
+        }
+
+        if (Has(sql, "FROM runwick.management_audit"))
+        {
+            var rows = await RedisRows(f, "audit:data");
+            var op = Regex.Match(sql, "operation = '([^']+)'").Groups[1].Value;
+            var target = Regex.Match(sql, "target_kind = '([^']+)'") is { Success: true } m ? m.Groups[1].Value : null;
+            return rows.Count(r => (string?)r["action"] == op && (target is null || (string?)r["targetKind"] == target));
+        }
+
+        if (Has(sql, "FROM runwick.queue_events"))
+        {
+            var kind = Regex.Match(sql, "event_kind = '([^']+)'").Groups[1].Value;
+            return (await RedisRows(f, "events:data")).Count(r => (string?)r["kind"] == kind);
+        }
+
+        if (Has(sql, "FROM runwick.scaling_events"))
+        {
+            var rows = await RedisRows(f, "scaling:data");
+            if (Has(sql, "membership_digest = 7"))
+            {
+                return rows.Count(r => (string?)r["membershipDigest"] == "7" && (long?)r["desired"] == 4);
+            }
+
+            if (Has(sql, "old_target = 1"))
+            {
+                return rows.Count(r => (long?)r["oldTarget"] == 1 && (long?)r["newTarget"] == 0 && (string?)r["reason"] == "override");
+            }
+
+            return rows.Count;
+        }
+
+        if (Has(sql, "FROM runwick.jobs"))
+        {
+            var jobs = await RedisHashes(f, "job:");
+            var state = Regex.Match(sql, "state = '([^']+)'") is { Success: true } s ? s.Groups[1].Value : null;
+            var priority = Regex.Match(sql, "priority = '([^']+)'") is { Success: true } q ? q.Groups[1].Value : null;
+            return jobs.Count(j => (state is null || j.Fields.GetValueOrDefault("state") == state) && (priority is null || j.Fields.GetValueOrDefault("priority") == priority));
+        }
+
+        throw new NotSupportedException("No Redis form for: " + sql);
+    }
+
+    /// <summary>Redis: the most grants of one scope inside any window of <paramref name="windowMs"/>; SQL stores state this as a self-join.</summary>
+    static async Task<int> RedisMostGrantsInWindow(DriverFixture f, long windowMs)
+    {
+        var most = 0;
+        foreach (var g in (await RedisGrants(f)).GroupBy(g => g.Scope))
+        {
+            var ats = g.Select(x => x.At).Order().ToList();
+            most = Math.Max(most, ats.Select((a, i) => ats.Count(b => b <= a && b > a - windowMs)).DefaultIfEmpty(0).Max());
+        }
+
+        return most;
+    }
 
     static async Task Exec(DriverFixture f, string sql, params (string Name, object Value)[] p)
     {
+        if (f.Kind == StoreKind.Redis)
+        {
+            Assert.Contains("UPDATE runwick.rate_scopes SET last_decision_at", sql, StringComparison.Ordinal);
+            var mux = await RedisServer.AdminAsync();
+            var key = RedisServer.Key(f.Application, "ratescopes");
+            foreach (var e in await mux.GetDatabase().HashGetAllAsync(key))
+            {
+                if (!((string)e.Value!).StartsWith('{'))
+                {
+                    continue;
+                }
+
+                var row = JsonNode.Parse((string)e.Value!)!;
+                row["last"] = (long)p[0].Value;
+                row["notBefore"] = null;
+                await mux.GetDatabase().HashSetAsync(key, e.Name, row.ToJsonString());
+            }
+
+            return;
+        }
+
         if (f.Kind == StoreKind.Postgres)
         {
             await f.ExecAsync(sql, p);
@@ -63,6 +195,9 @@ public sealed class RateScalingContractTests
 
         cmd.ExecuteNonQuery();
     }
+
+    /// <summary>True where the store has SQL tables to inspect (attempts, permits, generations are not mirrored as Redis keys).</summary>
+    static bool Sqlish(DriverFixture f) => f.Kind != StoreKind.Redis;
 
     static async Task<DateTimeOffset> StoreNow(DriverFixture f) => f.Kind == StoreKind.Postgres ? await f.StoreNow() : DateTimeOffset.UtcNow;
 
@@ -137,7 +272,10 @@ public sealed class RateScalingContractTests
         Assert.Equal(1, await Count(f, "SELECT count(*) FROM runwick.queue_events WHERE event_kind = 'capabilities_activated'"));
 
         await c.Dispatcher.DispatchAsync(new RatedJob("after"), cancellationToken: Ct);
-        Assert.Equal(1, await Count(f, "SELECT count(*) FROM runwick.job_rate_requirements"));
+        if (Sqlish(f))
+        {
+            Assert.Equal(1, await Count(f, "SELECT count(*) FROM runwick.job_rate_requirements"));
+        }
         await NoViolations(f);
     }
 
@@ -196,12 +334,20 @@ public sealed class RateScalingContractTests
         }
 
         Assert.True(next.Count(r => r.Reply.Status == StoreStatus.Applied) <= 2);
-        Assert.Equal(0, await Count(f, $"""
-            SELECT count(*) FROM runwick.rate_grants AS a
-            WHERE (SELECT count(*) FROM runwick.rate_grants AS b
-                   WHERE b.rate_scope_id = a.rate_scope_id AND {Ms(f, "b.authorized_at")} > {Ms(f, "a.authorized_at")} - {WindowMs}
-                     AND b.authorized_at <= a.authorized_at) > 2
-            """));
+        if (!Sqlish(f))
+        {
+            Assert.True(await RedisMostGrantsInWindow(f, WindowMs) <= 2);
+        }
+
+        if (Sqlish(f))
+        {
+            Assert.Equal(0, await Count(f, $"""
+                SELECT count(*) FROM runwick.rate_grants AS a
+                WHERE (SELECT count(*) FROM runwick.rate_grants AS b
+                       WHERE b.rate_scope_id = a.rate_scope_id AND {Ms(f, "b.authorized_at")} > {Ms(f, "a.authorized_at")} - {WindowMs}
+                         AND b.authorized_at <= a.authorized_at) > 2
+                """));
+        }
         await NoViolations(f);
     }
 
@@ -224,13 +370,22 @@ public sealed class RateScalingContractTests
 
         // Nothing charged in the scope that had room; the attempt closed admission_deferred, permits gone, budgets unchanged.
         Assert.Equal((1L, 1L), (await Grants(f, "job-type"), await Grants(f, "resource")));
-        Assert.Equal(1, await Count(f, "SELECT count(*) FROM runwick.job_attempts WHERE attempt_id = @a AND outcome = 'admission_deferred'",
-            ("a", lease.AttemptId)));
-        Assert.Equal(0, await Count(f, "SELECT count(*) FROM runwick.concurrency_permits WHERE job_id = @j", ("j", second)));
-        Assert.Equal(1, await Count(f, """
-            SELECT count(*) FROM runwick.jobs AS j JOIN runwick.job_generations AS g USING (application, job_id, generation)
-            WHERE j.job_id = @j AND g.started_count = 0 AND g.consecutive_unstarted_count = 0 AND j.execution_count = 0 AND j.state = 'pending'
-            """, ("j", second)));
+        if (Sqlish(f))
+        {
+            Assert.Equal(1, await Count(f, "SELECT count(*) FROM runwick.job_attempts WHERE attempt_id = @a AND outcome = 'admission_deferred'",
+                ("a", lease.AttemptId)));
+        }
+        if (Sqlish(f))
+        {
+            Assert.Equal(0, await Count(f, "SELECT count(*) FROM runwick.concurrency_permits WHERE job_id = @j", ("j", second)));
+        }
+        if (Sqlish(f))
+        {
+            Assert.Equal(1, await Count(f, """
+                SELECT count(*) FROM runwick.jobs AS j JOIN runwick.job_generations AS g USING (application, job_id, generation)
+                WHERE j.job_id = @j AND g.started_count = 0 AND g.consecutive_unstarted_count = 0 AND j.execution_count = 0 AND j.state = 'pending'
+                """, ("j", second)));
+        }
         Assert.Equal(1, await Count(f, "SELECT count(*) FROM runwick.queue_events WHERE event_kind = 'attempt_admission_deferred'"));
         await NoViolations(f);
     }
@@ -256,7 +411,10 @@ public sealed class RateScalingContractTests
         Assert.Equal((first.Deferred!.Position, first.Deferred.EligibleAt), (replay.Deferred!.Position, replay.Deferred.EligibleAt));
         Assert.Equal(first.Deferred.BlockingScopes, replay.Deferred.BlockingScopes);
         Assert.Equal(first.Reply.DecidedAt, replay.Reply.DecidedAt);
-        Assert.Equal(1, await Count(f, "SELECT count(*) FROM runwick.job_attempts WHERE outcome = 'admission_deferred'"));
+        if (Sqlish(f))
+        {
+            Assert.Equal(1, await Count(f, "SELECT count(*) FROM runwick.job_attempts WHERE outcome = 'admission_deferred'"));
+        }
         Assert.Equal(2, await Grants(f));
         await NoViolations(f);
     }
@@ -289,7 +447,10 @@ public sealed class RateScalingContractTests
         Assert.Equal(StoreStatus.RateLimited, retry.Reply.Status);
         Assert.Equal(JobStates.Retrying, retry.Deferred!.Position.State);
         Assert.Equal(2, await Grants(f));
-        Assert.Equal(1, await Count(f, "SELECT execution_count FROM runwick.jobs WHERE job_id = @j", ("j", job)));
+        if (Sqlish(f))
+        {
+            Assert.Equal(1, await Count(f, "SELECT execution_count FROM runwick.jobs WHERE job_id = @j", ("j", job)));
+        }
         await NoViolations(f);
     }
 
@@ -374,13 +535,19 @@ public sealed class RateScalingContractTests
         Assert.All(Enumerable.Range(0, 3), i => Assert.Equal(1, w.Script.Invocations.Count(x => x.JobKey == "w" + i)));
 
         // Consecutive grants are at least one window apart; deferrals never touched the unstarted guard.
-        Assert.Equal(0, await Count(f, $"""
-            SELECT count(*) FROM runwick.rate_grants AS a JOIN runwick.rate_grants AS b
-              ON b.rate_scope_id = a.rate_scope_id AND b.attempt_id <> a.attempt_id
-             AND {Ms(f, "b.authorized_at")} >= {Ms(f, "a.authorized_at")} AND {Ms(f, "b.authorized_at")} - {Ms(f, "a.authorized_at")} < 2000
-            """));
+        if (Sqlish(f))
+        {
+            Assert.Equal(0, await Count(f, $"""
+                SELECT count(*) FROM runwick.rate_grants AS a JOIN runwick.rate_grants AS b
+                  ON b.rate_scope_id = a.rate_scope_id AND b.attempt_id <> a.attempt_id
+                 AND {Ms(f, "b.authorized_at")} >= {Ms(f, "a.authorized_at")} AND {Ms(f, "b.authorized_at")} - {Ms(f, "a.authorized_at")} < 2000
+                """));
+        }
         Assert.Equal(3, await Count(f, "SELECT count(*) FROM runwick.rate_grants"));
-        Assert.Equal(0, await Count(f, "SELECT count(*) FROM runwick.job_generations WHERE consecutive_unstarted_count > 0"));
+        if (Sqlish(f))
+        {
+            Assert.Equal(0, await Count(f, "SELECT count(*) FROM runwick.job_generations WHERE consecutive_unstarted_count > 0"));
+        }
         await w.StopAsync(Ct);
         await NoViolations(f);
     }

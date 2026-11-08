@@ -70,5 +70,8 @@ internal sealed class RedisStoreRegistration(StackExchange.Redis.ConfigurationOp
         services.AddSingleton<IReadinessDiagnostics>(sp => sp.GetRequiredService<RedisStore>());
         services.AddSingleton<IJobControlStore>(sp => sp.GetRequiredService<RedisStore>());
         services.AddSingleton<IManagementQueryStore>(sp => sp.GetRequiredService<RedisStore>());
+        services.AddSingleton<IRateControlStore>(sp => sp.GetRequiredService<RedisStore>());
+        services.AddSingleton<IScalingStore>(sp => sp.GetRequiredService<RedisStore>());
+        services.AddSingleton<IOutboxDestinationStore>(sp => sp.GetRequiredService<RedisStore>());
     }
 }
