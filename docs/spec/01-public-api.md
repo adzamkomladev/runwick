@@ -4,6 +4,8 @@
 
 ## Changes (2026-11-08, SP-025 spec)
 
+- (2026-11-08, SP-019) Error table gains `transaction_profile_mismatch` (`RunwickErrorCodes.TransactionProfileMismatch`), raised by SQLite caller staging (20 §8 rule 1).
+
 The reserved `UseRedis` (§18) is specified in 22: `UseRedis(configuration, configure)` with `RedisOptions` (22 §2.1), `RunwickRedisMigrations.MigrateAsync` (22 §9.1) and `AcknowledgementProfiles.RedisAofAlways = "redis.aof-always-single-primary-v1"` (22 §1). Redis has no staging or transactional-completion twin (22 §8). `DispatchOutcomeUnknownException` gains the code `store_recovering`: the Redis store held an unpublished intent when the call was made, so its outcome is not known yet; resend the same prepared request or call `ResolveAsync`, which can answer `DispatchResolutionStatus.Recovering` (22 §4.4, 03 Changes 2026-11-08, SP-025).
 
 ## Changes (2026-11-08, SP-019 spec)
@@ -1212,6 +1214,7 @@ public static class RunwickErrorCodes
 | `store_incompatible` | `StoreIncompatibleException` | KnownNotApplied |
 | `admission_closed` | `AdmissionClosedException` | KnownNotApplied |
 | `transaction_store_mismatch`, `transaction_invalid` | `TransactionValidationException` | KnownNotApplied |
+| `transaction_profile_mismatch` (SQLite caller connection without `foreign_keys = 1` and `synchronous = 2`, 20 §8) | `TransactionValidationException` | KnownNotApplied |
 | `outcome_unknown` (I/O loss, timeout or cancellation around commit; any failure after send) | `DispatchOutcomeUnknownException` | OutcomeUnknown |
 | `expired_unknown` | `DispatchOutcomeUnknownException` | OutcomeUnknown |
 | `cancelled_after_send` | `DispatchCanceledAfterSendException` | OutcomeUnknown |
