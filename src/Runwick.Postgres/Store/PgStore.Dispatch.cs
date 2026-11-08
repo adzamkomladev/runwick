@@ -212,6 +212,12 @@ internal sealed partial class PgStore
             }
 
             var now = await tx.ClockAsync().ConfigureAwait(false);
+            if (found is { CodecVersion: not 1 } or { OperationVersion: not 1 })
+            {
+                // 23 §8: a receipt this binary cannot decode is never reported as not found, conflict or success.
+                throw new StoreIncompatibleException($"Receipt codec {found.CodecVersion}/operation version {found.OperationVersion} is not supported by this binary.");
+            }
+
             if (found is not null)
             {
                 resolution = (operation is not null && (found.Operation != operation || !found.Fingerprint.AsSpan().SequenceEqual(fingerprint)))

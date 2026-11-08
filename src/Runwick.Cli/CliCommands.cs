@@ -144,6 +144,15 @@ internal static class CliCommands
         Local("migrate", "Apply this CLI's store migrations.", typeof(PostgresMigrationResult), MigrateAsync,
             options: [Opt("--provider", V.String, "Store provider.", required: true, allowed: ["postgres", "sqlite"]), ConnectionEnv, ConnectionStdin],
             permission: "migration role"),
+        Local("store status", "Show the store's revision, mode, application gates and the lease and presence rows (never proof that processes stopped).", typeof(StoreAdminStatus), StoreStatusAsync,
+            options: [Provider, ConnectionEnv, ConnectionStdin], permission: "migration role"),
+        Local("store admission", "Set application admission: drain blocks new work, maintenance blocks everything but status reads; open reopens.", typeof(AdmissionResult), StoreAdmissionAsync,
+            options: [Opt("--mode", V.String, "Target admission mode.", required: true, allowed: ["open", "drain", "maintenance"]),
+                      Opt("--application", V.String, "Application name; every registered application when absent."), Provider, ConnectionEnv, ConnectionStdin],
+            permission: "migration role"),
+        Local("store reidentify", "Give a restored or copied store a new logical identity (offline: every application in maintenance, no live leases).", typeof(StoreIdentityChange), StoreReidentifyAsync,
+            options: [Opt("--confirm", V.Flag, "Required: old prepared envelopes and in-flight commands stop resolving.", required: true), Provider, ConnectionEnv, ConnectionStdin],
+            permission: "migration role"),
         Local("doctor", "Check the server, credentials, clock and (with a connection) the store.", typeof(DoctorResult), DoctorAsync,
             options: [Provider, ConnectionEnv, ConnectionStdin], permission: "authenticated"),
         Local("version", "Print the CLI version.", typeof(VersionResult),
@@ -634,10 +643,44 @@ internal static class CliCommands
         }
     }
 
+    static async Task<CommandOutcome> StoreAsync<T>(CliInvocation inv, Func<string, bool, Task<T>> run)
+    {
+        var cs = await ConnectionAsync(inv) ?? throw CliErrors.Usage(inv.Command.Name + " needs --connection-env or --connection-stdin.");
+        try
+        {
+            return CommandOutcome.Ok(JsonSerializer.SerializeToNode(await run(cs, IsSqlite(inv)), RunwickCli.Json));
+        }
+        catch (PostgresMigrationException ex)
+        {
+            return MigrationFailed(ex.Code, ex.Message);
+        }
+        catch (SqliteMigrationException ex)
+        {
+            return MigrationFailed(ex.Code, ex.Message);
+        }
+    }
+
+    static Task<CommandOutcome> StoreStatusAsync(CliInvocation inv, CancellationToken ct) =>
+        StoreAsync(inv, (cs, sqlite) => sqlite ? RunwickSqliteMigrations.GetStatusAsync(cs, ct) : RunwickPostgresMigrations.GetStatusAsync(cs, ct));
+
+    static Task<CommandOutcome> StoreAdmissionAsync(CliInvocation inv, CancellationToken ct)
+    {
+        var mode = inv.Opt("--mode")!;
+        var application = inv.Opt("--application");
+        return StoreAsync(inv, async (cs, sqlite) => new AdmissionResult(sqlite
+            ? await RunwickSqliteMigrations.SetAdmissionModeAsync(cs, application, mode, "cli", ct)
+            : await RunwickPostgresMigrations.SetAdmissionModeAsync(cs, application, mode, "cli", ct)));
+    }
+
+    internal sealed record AdmissionResult(IReadOnlyList<AdmissionChange> Changes);
+
+    static Task<CommandOutcome> StoreReidentifyAsync(CliInvocation inv, CancellationToken ct) =>
+        StoreAsync(inv, (cs, sqlite) => sqlite ? RunwickSqliteMigrations.ReassignStoreIdAsync(cs, ct) : RunwickPostgresMigrations.ReassignStoreIdAsync(cs, ct));
+
     /// <summary>Provider codes pass through unchanged; never the inner exception (it may name the server or the file).</summary>
     static CommandOutcome MigrationFailed(string code, string message)
     {
-        var unavailable = code is "store_unavailable" or "migration_lock_unavailable" or "migration_lock_timeout";
+        var unavailable = code is "store_unavailable" or "migration_lock_unavailable" or "migration_lock_timeout" or "migration_connection_lost";
         return CommandOutcome.Fail(new CliError(code, message, unavailable, unavailable ? "Retry when the store is reachable and no other migration runs." : "See the message.",
             null, unavailable ? CliErrors.Unavailable : CliErrors.Rejected));
     }

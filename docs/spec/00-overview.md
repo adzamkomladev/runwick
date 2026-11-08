@@ -2,6 +2,10 @@
 
 **Sources:** docs/architecture-baseline.md, docs/architecture-plan.md, docs/architecture-acceptance.md, docs/runwick-explained.md, docs/review-2026-10-30.md, docs/v1-delivery-plan.md, docs/architecture/platform-and-packages.md, docs/architecture/provider-dependency-plan.md.
 
+## Changes (2026-11-08, SP-026 spec)
+
+- Upgrades, rollback, drain and maintenance, restore and clone identity, and scheduler profile cutovers are specified in [23-upgrades.md](23-upgrades.md): one store revision per binary, the admission-mode commands, the rollback floor, history-discontinuity limits, UPG-01 to UPG-10 per driver. §10 index gains 23.
+
 ## Changes (2026-11-08, SP-025 spec)
 
 - The Redis store is specified in [22-redis.md](22-redis.md) (own layout revision line, starting at 1). §10 index gains 22. It folds in the SP-018 report's required follow-ups; 01, 03 and 06 record their parts in their own Changes.
@@ -250,5 +254,6 @@ These are invariants for code, API results, logs, telemetry and documentation. A
 | [20-sqlite.md](20-sqlite.md) | M4 SP-019: SQLite store: profile and topology checks, schema translation, `BEGIN IMMEDIATE` runner, executor threads, operations vs 04 including batched ReserveAndBegin/RenewMany/FinishMany, events, caller staging and completion, migrations, SQL cases | driver-capabilities §4, driver-contract-suite, provider-dependency-plan §5, 03, 04 |
 | [21-dashboard.md](21-dashboard.md) | M4 SP-024: `Runwick.Dashboard` package and public API, mount pipeline (gate, Inertia.Net named mount, router), auth and per-mount antiforgery, pages and their management reads, polling, controls and reveals, `ListScalingEvents`, embedded prebuilt client and stale-build guard, DASH/MGMT/DSH cases | v1-delivery-plan SP-024, sp-023 report, dashboard-integration-closure, management-and-dashboard, 16, 17 |
 | [22-redis.md](22-redis.md) | M4 SP-025: Redis store: `redis-aof-always-single-primary-v1` profile and history checks, one hash slot per application, key layout and exact encodings, intent/projection/publication script protocol, Recovering, intent limits and renewal-wait bound, confirmation marker, operations vs 04, events, bounded management projections, retention, no caller transactions, migrations, REDIS cases | sp-018 report, redis-design-closure, bullmq-redis-review, driver-capabilities §5, driver-contract-suite, 03, 04, 20 |
+| [23-upgrades.md](23-upgrades.md) | M5 SP-026: one store revision per binary, upgrade order, drain/maintenance semantics and the `store` admission/status/reidentify commands, rollback floor, restore and clone identity rules and history-discontinuity limits, receipts across versions, scheduler profile/data cutovers, UPG cases per driver | postgres-upgrades-and-compatibility, 03, 04 §7.15/§8, 12, 13, 19, 20, 22 |
 
 Test-case citations use `document:case` wherever an ID is ambiguous; `OBS-01` in particular exists in both the driver contract suite and the telemetry plan and is always cited with its document.

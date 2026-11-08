@@ -20,7 +20,7 @@ public sealed class PostgresMigrationException(string code, string message, Exce
 }
 
 /// <summary>The explicit deployment migrator for the PostgreSQL store. Workers never migrate on startup.</summary>
-public static class RunwickPostgresMigrations
+public static partial class RunwickPostgresMigrations
 {
     /// <summary>Applies every migration this binary knows, in order, each through expand, validate and activate. Re-running is a no-op.</summary>
     public static Task<PostgresMigrationResult> MigrateAsync(string connectionString, CancellationToken cancellationToken = default) =>
@@ -232,6 +232,11 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
             {
                 return await RunPhasesAsync(conn, ct).ConfigureAwait(false);
             }
+            catch (Exception ex) when (ex is NpgsqlException or ObjectDisposedException or IOException)
+            {
+                // 23 §4: losing the lock-owning session aborts the run; the ledger says where to resume.
+                throw new PostgresMigrationException("migration_connection_lost", "The migration session was lost; rerun migrate to resume from the ledger.", ex);
+            }
             finally
             {
                 // The schema may have changed under statements this process's stores prepared: drop their idle
@@ -274,7 +279,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         }
     }
 
-    static async Task AcquireLockAsync(NpgsqlConnection conn, CancellationToken ct)
+    internal static async Task AcquireLockAsync(NpgsqlConnection conn, CancellationToken ct)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
         var delay = TimeSpan.FromMilliseconds(250);

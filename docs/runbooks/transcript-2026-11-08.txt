@@ -1,0 +1,282 @@
+NOTICE:  database "rw_runbook_clone" does not exist, skipping
+### interrupted first install: kill the migrator's session once the ledger has 20 rows
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll --agent migrate --provider postgres --connection-env RUNWICK_STORE
+{"schemaVersion":1,"command":"migrate","ok":false,"result":null,"error":{"code":"migration_connection_lost","message":"The migration session was lost; rerun migrate to resume from the ledger.","retryable":true,"hint":"Re
+[exit 4]
+
+revision after interruption: 11, mode normal
+
+### upgrade.md step 4: migrate again (resumes from the ledger)
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll migrate --provider postgres --connection-env RUNWICK_STORE
+storeId: 49234c88-cd9d-4264-a6d6-a98433591fe6
+schemaRevision: 17
+appliedPhases[0]: 0012_set_claim:validate
+appliedPhases[1]: 0012_set_claim:activate
+appliedPhases[2]: 0013_set_finish:expand
+appliedPhases[3]: 0013_set_finish:validate
+appliedPhases[4]: 0013_set_finish:activate
+appliedPhases[5]: 0014_set_dispatch:expand
+appliedPhases[6]: 0014_set_dispatch:validate
+appliedPhases[7]: 0014_set_dispatch:activate
+appliedPhases[8]: 0015_management:expand
+appliedPhases[9]: 0015_management:validate
+appliedPhases[10]: 0015_management:activate
+appliedPhases[11]: 0016_retention:expand
+appliedPhases[12]: 0016_retention:validate
+appliedPhases[13]: 0016_retention:activate
+appliedPhases[14]: 0017_management_dispatch:expand
+appliedPhases[15]: 0017_management_dispatch:validate
+appliedPhases[16]: 0017_management_dispatch:activate
+[exit 0]
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll migrate --provider postgres --connection-env RUNWICK_STORE
+storeId: 49234c88-cd9d-4264-a6d6-a98433591fe6
+schemaRevision: 17
+[exit 0]
+
+### the application runs 3 jobs (registers application 'samples')
+
+$ dotnet <repo>/samples/Runwick.Samples.Host/bin/Debug/net10.0/Runwick.Samples.Host.dll --dispatch 3
+3 succeeded
+[exit 0]
+
+### upgrade.md step 1: back up
+-rw-r--r-- 1 root root 294589 Nov  8 16:29 /tmp/rw_runbook.dump
+$ pg_dump -Fc rw_runbook  [exit 0]
+
+### upgrade.md step 2: status, drain, status
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store status --provider postgres --connection-env RUNWICK_STORE
+storeId: 49234c88-cd9d-4264-a6d6-a98433591fe6
+storeRevision: 17
+binaryRevision: 17
+migrationMode: normal
+applications[0].application: samples
+applications[0].admissionMode: open
+applications[0].gateRevision: 1
+applications[0].requiredCapabilities: {}
+ownedLeases: 0
+workerPresences: 1
+expiredWorkerPresences: 0
+quiescence: unverified: expired or absent lease and presence rows do not prove that no old process is running; stop processes yourself
+[exit 0]
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store admission --mode maintenance --provider postgres --connection-env RUNWICK_STORE
+error drain_first: Application samples is open: drain it and let work settle before maintenance.
+hint: See the message.
+[exit 1]
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store admission --mode drain --provider postgres --connection-env RUNWICK_STORE
+changes[0].application: samples
+changes[0].previousMode: open
+changes[0].mode: drain
+changes[0].revision: 2
+changes[0].changed: true
+[exit 0]
+
+### while drained: dispatch is refused, nothing runs
+
+$ dotnet <repo>/samples/Runwick.Samples.Host/bin/Debug/net10.0/Runwick.Samples.Host.dll --dispatch 1
+fail: Runwick.Hosting.RunwickRuntime[1703]
+      Store schema incompatible: expected this binary's schema and protocol, actual Store handshake failed: AdmissionClosed application_draining .
+fail: Microsoft.Extensions.Hosting.Internal.Host[11]
+      Hosting failed to start
+      Runwick.StoreIncompatibleException: Store handshake failed: AdmissionClosed application_draining 
+         at Runwick.Hosting.RunwickRuntime.Applied[T](Task`1 call) in <repo>/src/Runwick/Hosting/RunwickRuntime.cs:line 123
+         at Runwick.Hosting.RunwickRuntime.HandshakeAsync(CancellationToken ct) in <repo>/src/Runwick/Hosting/RunwickRuntime.cs:line 94
+         at Runwick.Hosting.RunwickRuntime.EnsureReadyAsync(CancellationToken ct) in <repo>/src/Runwick/Hosting/RunwickRuntime.cs:line 59
+         at Runwick.Hosting.RunwickHostedService.StartAsync(CancellationToken cancellationToken) in <repo>/src/Runwick/Hosting/RunwickHostedService.cs:line 29
+         at Microsoft.Extensions.Hosting.Internal.Host.<StartAsync>b__14_1(IHostedService service, CancellationToken token)
+         at Microsoft.Extensions.Hosting.Internal.Host.ForeachService[T](IEnumerable`1 services, CancellationToken token, Boolean concurrent, Boolean abortOnFirstException, List`1 exceptions, Func`3 operation)
+Unhandled exception. Runwick.StoreIncompatibleException: Store handshake failed: AdmissionClosed application_draining 
+   at Runwick.Hosting.RunwickRuntime.Applied[T](Task`1 call) in <repo>/src/Runwick/Hosting/RunwickRuntime.cs:line 123
+   at Runwick.Hosting.RunwickRuntime.HandshakeAsync(CancellationToken ct) in <repo>/src/Runwick/Hosting/RunwickRuntime.cs:line 94
+   at Runwick.Hosting.RunwickRuntime.EnsureReadyAsync(CancellationToken ct) in <repo>/src/Runwick/Hosting/RunwickRuntime.cs:line 59
+   at Runwick.Hosting.RunwickHostedService.StartAsync(CancellationToken cancellationToken) in <repo>/src/Runwick/Hosting/RunwickHostedService.cs:line 29
+   at Microsoft.Extensions.Hosting.Internal.Host.<StartAsync>b__14_1(IHostedService service, CancellationToken token)
+   at Microsoft.Extensions.Hosting.Internal.Host.ForeachService[T](IEnumerable`1 services, CancellationToken token, Boolean concurrent, Boolean abortOnFirstException, List`1 exceptions, Func`3 operation)
+   at Microsoft.Extensions.Hosting.Internal.Host.<StartAsync>g__LogAndRethrow|14_3(<>c__DisplayClass14_0&)
+   at Microsoft.Extensions.Hosting.Internal.Host.StartAsync(CancellationToken cancellationToken)
+   at Program.<Main>$(String[] args) in <repo>/samples/Runwick.Samples.Host/Program.cs:line 49
+   at Program.<Main>(String[] args)
+runbook-pg.sh: line 9: 2687507 Aborted                 (core dumped) "$@" 2>&1
+[exit 134]
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store status --provider postgres --connection-env RUNWICK_STORE
+storeId: 49234c88-cd9d-4264-a6d6-a98433591fe6
+storeRevision: 17
+binaryRevision: 17
+migrationMode: normal
+applications[0].application: samples
+applications[0].admissionMode: drain
+applications[0].gateRevision: 2
+applications[0].requiredCapabilities: {}
+ownedLeases: 0
+workerPresences: 1
+expiredWorkerPresences: 0
+quiescence: unverified: expired or absent lease and presence rows do not prove that no old process is running; stop processes yourself
+[exit 0]
+
+### upgrade.md step 6: reopen, new binary works
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store admission --mode open --provider postgres --connection-env RUNWICK_STORE
+changes[0].application: samples
+changes[0].previousMode: drain
+changes[0].mode: open
+changes[0].revision: 3
+changes[0].changed: true
+[exit 0]
+
+$ dotnet <repo>/samples/Runwick.Samples.Host/bin/Debug/net10.0/Runwick.Samples.Host.dll --dispatch 2
+2 succeeded
+[exit 0]
+
+### restore.md: restore the dump as a different database and give it a new identity
+$ pg_restore  [exit 0]
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store status --provider postgres --connection-env RUNWICK_RESTORED
+storeId: 49234c88-cd9d-4264-a6d6-a98433591fe6
+storeRevision: 17
+binaryRevision: 17
+migrationMode: normal
+applications[0].application: samples
+applications[0].admissionMode: open
+applications[0].gateRevision: 1
+applications[0].requiredCapabilities: {}
+ownedLeases: 0
+workerPresences: 1
+expiredWorkerPresences: 0
+quiescence: unverified: expired or absent lease and presence rows do not prove that no old process is running; stop processes yourself
+[exit 0]
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store reidentify --confirm --provider postgres --connection-env RUNWICK_RESTORED
+error store_not_quiescent: Put every application in maintenance first; not in maintenance: samples
+hint: See the message.
+[exit 1]
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store admission --mode drain --provider postgres --connection-env RUNWICK_RESTORED
+changes[0].application: samples
+changes[0].previousMode: open
+changes[0].mode: drain
+changes[0].revision: 2
+changes[0].changed: true
+[exit 0]
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store admission --mode maintenance --provider postgres --connection-env RUNWICK_RESTORED
+changes[0].application: samples
+changes[0].previousMode: drain
+changes[0].mode: maintenance
+changes[0].revision: 3
+changes[0].changed: true
+[exit 0]
+
+### the dump holds the presence rows of the processes that were running; wait for them to expire (they prove nothing)
+live presence rows after 1s: 0
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store status --provider postgres --connection-env RUNWICK_RESTORED
+storeId: 49234c88-cd9d-4264-a6d6-a98433591fe6
+storeRevision: 17
+binaryRevision: 17
+migrationMode: normal
+applications[0].application: samples
+applications[0].admissionMode: maintenance
+applications[0].gateRevision: 3
+applications[0].requiredCapabilities: {}
+ownedLeases: 0
+workerPresences: 1
+expiredWorkerPresences: 1
+quiescence: unverified: expired or absent lease and presence rows do not prove that no old process is running; stop processes yourself
+[exit 0]
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store reidentify --confirm --provider postgres --connection-env RUNWICK_RESTORED
+oldStoreId: 49234c88-cd9d-4264-a6d6-a98433591fe6
+newStoreId: a93b6b49-585f-4d3b-85c9-f1cd52458f5c
+[exit 0]
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store admission --mode open --provider postgres --connection-env RUNWICK_RESTORED
+changes[0].application: samples
+changes[0].previousMode: maintenance
+changes[0].mode: open
+changes[0].revision: 4
+changes[0].changed: true
+[exit 0]
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store status --provider postgres --connection-env RUNWICK_RESTORED
+storeId: a93b6b49-585f-4d3b-85c9-f1cd52458f5c
+storeRevision: 17
+binaryRevision: 17
+migrationMode: normal
+applications[0].application: samples
+applications[0].admissionMode: open
+applications[0].gateRevision: 4
+applications[0].requiredCapabilities: {}
+ownedLeases: 0
+workerPresences: 1
+expiredWorkerPresences: 1
+quiescence: unverified: expired or absent lease and presence rows do not prove that no old process is running; stop processes yourself
+[exit 0]
+
+### the original keeps its own identity
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store status --provider postgres --connection-env RUNWICK_STORE
+storeId: 49234c88-cd9d-4264-a6d6-a98433591fe6
+storeRevision: 17
+binaryRevision: 17
+migrationMode: normal
+applications[0].application: samples
+applications[0].admissionMode: open
+applications[0].gateRevision: 3
+applications[0].requiredCapabilities: {}
+ownedLeases: 0
+workerPresences: 2
+expiredWorkerPresences: 1
+quiescence: unverified: expired or absent lease and presence rows do not prove that no old process is running; stop processes yourself
+[exit 0]
+
+### a process holding the restored database's OLD identity would be refused; a new process learns the new one
+
+### an application run against the restored database works under its new identity
+
+$ dotnet <repo>/samples/Runwick.Samples.Host/bin/Debug/net10.0/Runwick.Samples.Host.dll --dispatch 1
+1 succeeded
+[exit 0]
+
+### SQLite: the same commands on a file
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll migrate --provider sqlite --connection-env SQ
+storeId: 2b07c218-72d2-482e-8969-86baea78ec92
+schemaRevision: 1
+appliedPhases[0]: 0001_initial:expand
+appliedPhases[1]: 0001_initial:validate
+appliedPhases[2]: 0001_initial:activate
+[exit 0]
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store status --provider sqlite --connection-env SQ
+storeId: 2b07c218-72d2-482e-8969-86baea78ec92
+storeRevision: 1
+binaryRevision: 1
+migrationMode: normal
+ownedLeases: 0
+workerPresences: 0
+expiredWorkerPresences: 0
+quiescence: unverified: expired or absent lease and presence rows do not prove that no old process is running; stop processes yourself
+[exit 0]
+$ cp runwick.db copy.db  (the store is idle: no process has the file open)
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store reidentify --confirm --provider sqlite --connection-env SQ2
+oldStoreId: 2b07c218-72d2-482e-8969-86baea78ec92
+newStoreId: 468aeda6-4e67-4712-9020-f743c431c766
+[exit 0]
+
+$ dotnet <repo>/src/Runwick.Cli/bin/Debug/net10.0/Runwick.Cli.dll store status --provider sqlite --connection-env SQ
+storeId: 2b07c218-72d2-482e-8969-86baea78ec92
+storeRevision: 1
+binaryRevision: 1
+migrationMode: normal
+ownedLeases: 0
+workerPresences: 0
+expiredWorkerPresences: 0
+quiescence: unverified: expired or absent lease and presence rows do not prove that no old process is running; stop processes yourself
+[exit 0]

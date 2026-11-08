@@ -24,6 +24,8 @@ Not in SP-032 [choice]: `schedules edit` (schedules are edited by changing the r
 
 ## Changes
 
+- (2026-11-08, SP-026) Three store commands are added next to `migrate` and `doctor`: `store status`, `store admission --mode open|drain|maintenance [--application NAME]` and `store reidentify --confirm`, for `--provider postgres|sqlite` with `--connection-env`/`--connection-stdin` (migration role; spec 23 §3.5). They return the provider's migration-exception codes unchanged (`drain_first`, `invalid_mode`, `application_not_registered`, `store_not_quiescent`, `migration_lock_timeout`, `store_not_initialized`). `migrate` also maps the new PostgreSQL code `migration_connection_lost` (a lost migration session) to a retryable exit 4. Redis is not offered: this package does not reference `Runwick.Redis`. CLI-UPG covers them.
+
 - (2026-11-08) New document.
 - (2026-11-08) Decisions taken where the sources were silent, each marked [choice] in the text: HTTP-only client except `migrate`/`doctor` (§1); secrets never written to disk (§3); `schedules edit` left out (§2); new read endpoint `GET {prefix}/v1/events` added to spec 16 (§6, and 16 Changes); own argument parser over the command model, no System.CommandLine (§4); agent mode requires explicit expected revisions (§5.3); automatic resend on unknown outcome (§5.4).
 
@@ -79,6 +81,7 @@ The CLI library is testable in-process: `RunwickCli.RunAsync(string[] args, CliE
 | `audit list [--target-kind] [--target-id] [--from] [--to] [--limit] [--cursor]` | `GET audit` | `Audit.Read` | |
 | `settings` | `GET settings` | `Settings.Read` | |
 | `migrate --provider postgres\|sqlite (--connection-env <VAR> \| --connection-stdin)` | — (store) | migration role | `RunwickPostgresMigrations.MigrateAsync` / `RunwickSqliteMigrations.MigrateAsync`; prints store ID, revision, applied phases; provider error codes become CLI error codes unchanged |
+| `store status\|admission\|reidentify --provider postgres\|sqlite (--connection-env <VAR> \| --connection-stdin)` | — (store) | migration role | `RunwickPostgresMigrations` / `RunwickSqliteMigrations` `GetStatusAsync`, `SetAdmissionModeAsync`, `ReassignStoreIdAsync`; spec 23 |
 | `doctor [--provider … --connection-env …]` | `GET antiforgery`, `GET settings` (+ store Describe) | authenticated | §7 |
 | `version` | — | — | |
 | `--agent describe` | — | — | §5.5 |
