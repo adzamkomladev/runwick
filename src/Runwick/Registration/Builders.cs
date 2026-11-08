@@ -24,6 +24,15 @@ public sealed class RunwickBuilder
     internal List<Action<ProducerOptions>> ProducerConfiguration { get; } = [];
     internal List<IJsonTypeInfoResolver> JsonResolvers { get; } = [];
     internal List<ConfigurationError> EarlyErrors { get; } = [];
+    internal RunwickTelemetryOptions TelemetryOptions { get; } = new();
+
+    /// <summary>Telemetry options (18 §1); nothing is exported unless the host adds a listener or exporter.</summary>
+    public RunwickBuilder Telemetry(Action<RunwickTelemetryOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        configure(TelemetryOptions);
+        return this;
+    }
 
     public RunwickBuilder Application(string name)
     {

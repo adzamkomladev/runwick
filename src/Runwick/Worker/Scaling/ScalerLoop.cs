@@ -58,6 +58,7 @@ internal sealed partial class WorkerEngine
             {
                 var decision = pool.Scaler!.Sample(Sample(pool, estimate, saturated));
                 pool.LastDecision = decision;
+                Telemetry.Telemetry.ScalingDecisions.Add(1, pool.Settings.Name, Snake(decision.Action.ToString()), decision.Reason);
                 Interlocked.Increment(ref ScalerSamples);
                 if (decision.NewTarget is { } target)
                 {

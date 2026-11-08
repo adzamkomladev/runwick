@@ -1,7 +1,10 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Runwick.Hosting;
 using Runwick.Protocol;
 using Runwick.Serialization;
+using Runwick.Telemetry;
+using T = Runwick.Telemetry.Telemetry;
 
 namespace Runwick.Dispatching;
 
@@ -15,20 +18,50 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
         where TJob : class, IQueueJob
     {
         cancellationToken.ThrowIfCancellationRequested();
-        await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
-        using var lease = await admission.TryEnterAsync(cancellationToken).ConfigureAwait(false) ?? throw new LocalCapacityExceededException();
-        var prepared = preparer.Prepare(runtime.StoreId, job, options);
-        return await SendAsync(prepared, cancellationToken).ConfigureAwait(false);
+
+        // The send span is current while preparing, so the stored traceparent is its context (18 §2.1).
+        var send = new SendScope("single");
+        try
+        {
+            await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+            using var lease = await admission.TryEnterAsync(cancellationToken).ConfigureAwait(false) ?? throw new LocalCapacityExceededException();
+            var prepared = preparer.Prepare(runtime.StoreId, job, options);
+            send.Queue(prepared.Intent.Queue);
+            return send.Done(await SendAsync(prepared, cancellationToken).ConfigureAwait(false));
+        }
+        catch (Exception ex)
+        {
+            send.Failed(ex, runtime);
+            throw;
+        }
+        finally
+        {
+            send.End();
+        }
     }
 
     public async Task<BatchDispatchReceipt> DispatchManyAsync(
         IReadOnlyList<BatchDispatchItem> items, BatchDispatchOptions? options = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
-        using var lease = await admission.TryEnterAsync(cancellationToken).ConfigureAwait(false) ?? throw new LocalCapacityExceededException();
-        var prepared = preparer.PrepareMany(runtime.StoreId, items, options);
-        return await SendAsync(prepared, cancellationToken).ConfigureAwait(false);
+        var send = new SendScope("batch");
+        try
+        {
+            await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+            using var lease = await admission.TryEnterAsync(cancellationToken).ConfigureAwait(false) ?? throw new LocalCapacityExceededException();
+            var prepared = preparer.PrepareMany(runtime.StoreId, items, options);
+            send.Batch(prepared.Items);
+            return send.Done(await SendAsync(prepared, cancellationToken).ConfigureAwait(false));
+        }
+        catch (Exception ex)
+        {
+            send.Failed(ex, runtime);
+            throw;
+        }
+        finally
+        {
+            send.End();
+        }
     }
 
     public PreparedDispatch Prepare<TJob>(TJob job, DispatchOptions? options = null) where TJob : class, IQueueJob =>
@@ -41,18 +74,46 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
     {
         ArgumentNullException.ThrowIfNull(prepared);
         cancellationToken.ThrowIfCancellationRequested();
-        await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
-        using var lease = await admission.TryEnterAsync(cancellationToken).ConfigureAwait(false) ?? throw new LocalCapacityExceededException(prepared);
-        return await SendAsync(prepared, cancellationToken).ConfigureAwait(false);
+        var send = new SendScope("prepared");
+        send.Queue(prepared.Intent.Queue);
+        try
+        {
+            await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+            using var lease = await admission.TryEnterAsync(cancellationToken).ConfigureAwait(false) ?? throw new LocalCapacityExceededException(prepared);
+            return send.Done(await SendAsync(prepared, cancellationToken).ConfigureAwait(false));
+        }
+        catch (Exception ex)
+        {
+            send.Failed(ex, runtime);
+            throw;
+        }
+        finally
+        {
+            send.End();
+        }
     }
 
     public async Task<BatchDispatchReceipt> DispatchAsync(PreparedBatch prepared, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(prepared);
         cancellationToken.ThrowIfCancellationRequested();
-        await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
-        using var lease = await admission.TryEnterAsync(cancellationToken).ConfigureAwait(false) ?? throw new LocalCapacityExceededException(preparedBatch: prepared);
-        return await SendAsync(prepared, cancellationToken).ConfigureAwait(false);
+        var send = new SendScope("prepared");
+        send.Batch(prepared.Items);
+        try
+        {
+            await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+            using var lease = await admission.TryEnterAsync(cancellationToken).ConfigureAwait(false) ?? throw new LocalCapacityExceededException(preparedBatch: prepared);
+            return send.Done(await SendAsync(prepared, cancellationToken).ConfigureAwait(false));
+        }
+        catch (Exception ex)
+        {
+            send.Failed(ex, runtime);
+            throw;
+        }
+        finally
+        {
+            send.End();
+        }
     }
 
     public async Task<DispatchResolution> ResolveAsync(DispatchOperationId operationId, CancellationToken cancellationToken = default)
@@ -105,9 +166,11 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
         try
         {
             reply = await runtime.Store.DispatchAsync(command, ct).ConfigureAwait(false);
+            runtime.Producer.Ok();
         }
         catch (Exception ex) when (ex is StoreNotAppliedException or StoreOutcomeUnknownException)
         {
+            runtime.Producer.Failed(ex);
             throw Translate(ex, prepared.OperationId, prepared, null, ct);
         }
 
@@ -131,9 +194,11 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
         try
         {
             reply = await runtime.Store.DispatchManyAsync(command, ct).ConfigureAwait(false);
+            runtime.Producer.Ok();
         }
         catch (Exception ex) when (ex is StoreNotAppliedException or StoreOutcomeUnknownException)
         {
+            runtime.Producer.Failed(ex);
             throw Translate(ex, prepared.OperationId, null, prepared, ct);
         }
 
@@ -246,5 +311,96 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
         }
 
         return DateTimeOffset.FromUnixTimeMilliseconds(ms);
+    }
+
+    /// <summary>
+    /// One client-observed dispatch (18 §2.1, §3.1): the <c>send</c> span and the outcome counters, recorded once the reply
+    /// or the failure is known. Batch items count one operation each.
+    /// </summary>
+    sealed class SendScope
+    {
+        readonly Activity? _span;
+        readonly long _start = Stopwatch.GetTimestamp();
+        readonly string _kind;
+        List<string> _queues = [];
+        List<string>? _results;
+
+        public SendScope(string kind)
+        {
+            _kind = kind;
+            _span = T.Source.StartActivity("send", ActivityKind.Producer);
+            _span?.SetTag("messaging.system", "runwick").SetTag("messaging.operation.type", "send").SetTag("messaging.operation.name", "dispatch")
+                .SetTag("runwick.dispatch.kind", kind);
+        }
+
+        public void Queue(string queue)
+        {
+            _queues = [queue];
+            if (_span is not null)
+            {
+                _span.DisplayName = "send " + queue;
+                _span.SetTag("messaging.destination.name", queue);
+            }
+        }
+
+        public void Batch(IReadOnlyList<DispatchIntent> items)
+        {
+            _queues = [.. items.Select(i => i.Queue)];
+            if (_span is not null && _queues.Count > 0)
+            {
+                _span.DisplayName = "send " + _queues[0];
+                _span.SetTag("messaging.destination.name", _queues[0]).SetTag("messaging.batch.message_count", _queues.Count);
+            }
+        }
+
+        public DispatchReceipt Done(DispatchReceipt receipt)
+        {
+            _results = [Disposition(receipt.Disposition)];
+            _span?.SetTag("runwick.job.id", receipt.JobId.Value.ToString("D")).SetTag("messaging.message.id", receipt.JobId.Value.ToString("D"));
+            return receipt;
+        }
+
+        public BatchDispatchReceipt Done(BatchDispatchReceipt receipt)
+        {
+            _results = [.. receipt.Items.OrderBy(i => i.Ordinal).Select(i => i.Receipt is { } r ? Disposition(r.Disposition) : "conflict")];
+            return receipt;
+        }
+
+        static string Disposition(DispatchDisposition d) => d == DispatchDisposition.Created ? "created" : "reused";
+
+        public void Failed(Exception ex, RunwickRuntime runtime)
+        {
+            var result = ex switch
+            {
+                LocalCapacityExceededException => "local_capacity_exceeded",
+                DispatchOutcomeUnknownException or DispatchCanceledAfterSendException => "unknown",
+                UniquenessConflictException => "conflict",
+                _ => "rejected",
+            };
+            _results = [result];
+            _span?.SetTag("error.type", ex is RunwickException r ? r.Code : T.ErrorType(ex.GetType().FullName ?? ex.GetType().Name))
+                .SetStatus(ActivityStatusCode.Error);
+            if (ex is DispatchOutcomeUnknownException u)
+            {
+                RunwickLog.DispatchOutcomeUnknown(runtime.Logger, u.OperationId.Value, T.Queue(_queues.FirstOrDefault()));
+            }
+        }
+
+        public void End()
+        {
+            var results = _results ?? ["rejected"];
+            _span?.SetTag("runwick.dispatch.result", results[0]);
+            T.DispatchDuration.Record(Stopwatch.GetElapsedTime(_start).TotalSeconds, results[0]);
+            var count = Math.Max(1, Math.Max(results.Count, _queues.Count));
+            for (var i = 0; i < count; i++)
+            {
+                // A whole batch rejected or unknown: every item had that outcome.
+                var result = results[Math.Min(i, results.Count - 1)];
+                var queue = _queues.Count == 0 ? null : _queues[Math.Min(i, _queues.Count - 1)];
+                T.DispatchOperations.Add(1, result, _kind, T.Queue(queue));
+            }
+
+            _span?.Dispose();
+        }
     }
 }

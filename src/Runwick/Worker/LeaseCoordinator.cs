@@ -222,10 +222,18 @@ internal sealed class LeaseCoordinator(WorkerEngine engine) : IDisposable
     /// </summary>
     public async Task<RenewResult> RenewOnceAsync(AttemptEntry entry)
     {
+        var (result, margin) = await RenewUnderArbiterAsync(entry).ConfigureAwait(false);
+        engine.RecordRenewal(entry, result, margin);
+        return result;
+    }
+
+    /// <summary>The Renew itself; the measurement waits until the arbiter slot is released (18 §1).</summary>
+    async Task<(RenewResult, TimeSpan?)> RenewUnderArbiterAsync(AttemptEntry entry)
+    {
         using var slot = await entry.Arbiter.AcquireAsync(ControlPriority.Renew, engine.ControlStop).ConfigureAwait(false);
         if (!Renewable(entry))
         {
-            return RenewResult.Skipped;
+            return (RenewResult.Skipped, null);
         }
 
         var now = engine.Clock.Now;
@@ -234,7 +242,7 @@ internal sealed class LeaseCoordinator(WorkerEngine engine) : IDisposable
         {
             if (now >= d0)
             {
-                return RenewResult.Lost;
+                return (RenewResult.Lost, null);
             }
 
             budget = WorkerEngine.Min(budget, d0 - now);
@@ -257,10 +265,11 @@ internal sealed class LeaseCoordinator(WorkerEngine engine) : IDisposable
         {
             // Unknown or not applied: no receipt resolution; the next Renew is a new command (05 §6 rule 4).
             engine.Logger.LogDebug(ex, "Runwick Renew of {Entry} failed.", entry);
-            return RenewResult.Transient;
+            return (RenewResult.Transient, null);
         }
 
-        return Apply(entry, reply.Status, reply.Error?.Code, reply.Value, reply.Replayed, reply.DecidedAt, sentAt);
+        var margin = entry.Deadline - engine.Clock.Now;
+        return (Apply(entry, reply.Status, reply.Error?.Code, reply.Value, reply.Replayed, reply.DecidedAt, sentAt), margin);
     }
 
     /// <summary>One lease's Renew outcome (05 §11.3), from Renew/1 or from its member of a RenewMany/1 reply.</summary>
@@ -339,6 +348,7 @@ internal sealed class LeaseCoordinator(WorkerEngine engine) : IDisposable
     {
         var members = new List<(AttemptEntry Entry, PriorityGate.Slot Slot)>();
         var single = new List<AttemptEntry>();
+        var measured = new List<(AttemptEntry Entry, RenewResult Result, TimeSpan? Margin)>();
         try
         {
             var jobs = new HashSet<Guid>();
@@ -418,9 +428,15 @@ internal sealed class LeaseCoordinator(WorkerEngine engine) : IDisposable
             for (var i = 0; i < members.Count; i++)
             {
                 var o = value.Outcomes[i];
-                if (Apply(members[i].Entry, o.Status, o.Code, o.Value, replayed: false, reply.DecidedAt, sentAt) == RenewResult.Transient)
+                var margin = members[i].Entry.Deadline - engine.Clock.Now;
+                var result = Apply(members[i].Entry, o.Status, o.Code, o.Value, replayed: false, reply.DecidedAt, sentAt);
+                if (result == RenewResult.Transient)
                 {
                     single.Add(members[i].Entry);
+                }
+                else
+                {
+                    measured.Add((members[i].Entry, result, margin));
                 }
             }
         }
@@ -437,6 +453,11 @@ internal sealed class LeaseCoordinator(WorkerEngine engine) : IDisposable
             foreach (var m in members)
             {
                 m.Slot.Dispose();
+            }
+
+            foreach (var (e, result, margin) in measured)
+            {
+                engine.RecordRenewal(e, result, margin);
             }
 
             foreach (var e in single.Distinct())

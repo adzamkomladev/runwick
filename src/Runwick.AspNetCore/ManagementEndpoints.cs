@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Runwick;
 using Runwick.AspNetCore;
@@ -144,6 +145,11 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
                     await ctx.ChallengeAsync(basic).ConfigureAwait(false);
                 }
 
+                // Event 1401, limited to 10 a minute (18 §5); the source is a coarse hash bucket, never the address or user.
+                var source = ctx.Connection.RemoteIpAddress?.ToString() ?? "";
+                var bucket = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(source)))[..4];
+                Runwick.Telemetry.RunwickLog.ManagementAuthenticationFailed(
+                    ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Runwick.Management"), string.Join(',', state.Schemes), bucket);
                 return Error(401, "unauthenticated", "Authentication is required.");
             }
 
