@@ -29,7 +29,7 @@
     <PackageVersion Include="Testcontainers" Version="4.16.0" />
     <!-- SP-018 prototype tests; D-09 client baseline, also the future Runwick.Redis pin. -->
     <PackageVersion Include="StackExchange.Redis" Version="3.4.20" />
+    <!-- SP-023 dashboard: the Inertia adapter (named mounts since 1.7.0). -->
+    <PackageVersion Include="Inertia.Net" Version="1.7.0" />
   </ItemGroup>
-  <!-- Later milestones (recorded, not referenced yet):
-    Inertia.Net 1.5.3 -->
 </Project>
