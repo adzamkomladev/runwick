@@ -126,7 +126,7 @@ internal sealed record SqOp(
     public bool HasReceipt => Fingerprint is not null;
 
     public bool IsCreation => Operation is Operations.Dispatch or Operations.DispatchMany or Operations.Reserve or Operations.ReserveAndBegin
-        or Operations.Begin or Operations.RegisterQueue or Operations.RegisterScope or OutboxOperations.ReceiveOutbox
+        or Operations.Begin or Operations.RegisterQueue or Operations.RegisterScope or OutboxOperations.ReceiveOutbox or Operations.ManagementDispatch
         || ScheduleOperations.IsCreation(Operation);
 
     public bool AllowedWhileDraining => Operation is Operations.Renew or Operations.RenewMany or Operations.Finish or Operations.FinishMany or Operations.Recover

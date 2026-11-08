@@ -106,6 +106,20 @@ internal static class SqliteSnapshotReader
         return Convert.ToInt64(cmd.ExecuteScalar(), CultureInfo.InvariantCulture);
     }
 
+    /// <summary>Admin SQL against the SQLite file (setup only); UUID parameters bind as 16-byte big-endian blobs.</summary>
+    public static void Exec(string path, string sql, params (string Name, object Value)[] parameters)
+    {
+        using var conn = Open(path);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        foreach (var (name, value) in parameters)
+        {
+            cmd.Parameters.AddWithValue(name.StartsWith('@') ? name : "@" + name, value is Guid g ? g.ToByteArray(bigEndian: true) : value);
+        }
+
+        cmd.ExecuteNonQuery();
+    }
+
     static string Format(string column, object? value) => value switch
     {
         null => "∅",
