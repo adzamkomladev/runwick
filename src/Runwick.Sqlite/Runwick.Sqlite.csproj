@@ -14,5 +14,6 @@
     <InternalsVisibleTo Include="Runwick.Sqlite.Tests" />
     <InternalsVisibleTo Include="Runwick.Harness" />
     <InternalsVisibleTo Include="Runwick.Harness.Peer" />
+    <InternalsVisibleTo Include="Runwick.Cli" />
   </ItemGroup>
 </Project>
