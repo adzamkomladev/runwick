@@ -36,7 +36,7 @@ internal sealed class TestHeaderHandler(IOptionsMonitor<AuthenticationSchemeOpti
             : AuthenticateResult.NoResult());
 }
 
-/// <summary>A TestServer host with AddRunwick (PostgreSQL), AddRunwickManagement and MapRunwickManagement.</summary>
+/// <summary>A TestServer host with AddRunwick (the fixture's store), AddRunwickManagement and MapRunwickManagement.</summary>
 internal sealed class MgmtHost : IAsyncDisposable
 {
     public const string Prefix = "/runwick/api";
@@ -83,7 +83,7 @@ internal sealed class MgmtHost : IAsyncDisposable
         b.Services.AddSingleton<IFaultInjector>(f.Faults);
         b.Services.AddRunwick(r =>
         {
-            r.Application(f.Application).UsePostgres(f.ClientConnectionString(identity));
+            f.UseStore(r.Application(f.Application), identity);
             Jobs(r);
         });
         b.Services.AddAuthorization();

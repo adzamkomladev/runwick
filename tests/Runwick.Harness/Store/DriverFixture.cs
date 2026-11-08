@@ -104,6 +104,14 @@ internal sealed class DriverFixture : IAsyncDisposable
         return Proxy is null ? cs : Proxy.Rewrite(cs);
     }
 
+    /// <summary>Points a host's builder at this fixture's store, by kind (PostgreSQL, SQLite or Redis), for hosts that are not a <see cref="TestClient"/>.</summary>
+    public RunwickBuilder UseStore(RunwickBuilder builder, string identity) => Kind switch
+    {
+        StoreKind.Sqlite => builder.UseSqlite(ClientConnectionString(identity)),
+        StoreKind.Redis => builder.UseRedis(RedisServer.ConfigurationOf(ClientConnectionString(identity))),
+        _ => builder.UsePostgres(ClientConnectionString(identity)),
+    };
+
     /// <summary>Opens an in-process client over the real registry, dispatcher, store and SQL.</summary>
     public async Task<TestClient> OpenClient(string processIdentity = "local", Action<RunwickBuilder>? configure = null,
         string? application = null, TimeProvider? time = null, bool ensureReady = true)
