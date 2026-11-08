@@ -29,6 +29,13 @@ Not in SP-032 [choice]: `schedules edit` (schedules are edited by changing the r
 
 - (2026-11-08, user decision, adzamkomla) **`dispatch` is in SP-032.** Specified as an audited dispatch by job name with a JSON payload: CLI command (§2), API route `POST {prefix}/v1/jobs:dispatch` and permission `Jobs.Dispatch` (§6.2, 16), store operation `ManagementDispatch/1` writing the job and the audit row in one transaction at PostgreSQL schema revision 17 (§6.2, §10), cases CLI-10 and MGMT-13. Replaces the earlier deferral.
 - (2026-11-08, user decision, adzamkomla) **CLI secrets are never written to disk** (§3): only an environment-variable name is saved; the secret comes from that variable, stdin, or a prompt in human mode. Decided, no longer a [choice].
+- (2026-11-08, implementation of SP-032) What the build settled:
+  - **No `management_dispatch_v1` function.** `ManagementDispatch/1` runs on the PostgreSQL statement path (dispatch core statement, then the `queue_events.actor_id` update and the audit insert, in one transaction), like the other management controls. Migration 0017 therefore only replaces the `management_audit` operation check (now `management_audit_operation_v7_ck`, dropping v5/v6 `IF EXISTS` so it applies after revision 16 retention) and adds `Dispatch`. The manifest adds `ManagementDispatch/1` at 17.
+  - The job ID of a management dispatch is derived from the command ID (SHA-256, UUID version 8), and no trace context is stored, so a resend fingerprints identically.
+  - `GET events`: `limit` above 1,000 is clamped, not refused; an empty page returns the input cursor (or `"0.0"`) as `next`.
+  - CLI: no colour; `--url` with no context means a bearer login; `context add --url` is that command's own option, not the global override; `describe` works in every output mode; `doctor` failures are error `check_failed` (exit 1) with the checks still in `result`; a reveal's `commandId` is local only (reveals carry no command ID on the wire); `events tail --limit` is the page size per request.
+  - `migrate`/`doctor --provider sqlite` is a `usage_error` in this build: SQLite is SP-019's and plugs in after its merge (CLI-08's SQLite half not run).
+  - The agent envelope and describe schemas are committed as `schemas/runwick-cli-agent-envelope-v1.json` and `schemas/runwick-cli-describe-v1.json`; CLI-03 fails when they differ from the generated ones (regenerate with `RUNWICK_WRITE_SCHEMAS=1`).
 
 ## 1. Package and process
 
