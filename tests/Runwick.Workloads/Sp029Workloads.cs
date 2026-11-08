@@ -28,7 +28,7 @@ namespace Runwick.Workloads;
 /// </summary>
 internal static class Sp029Workloads
 {
-    public static readonly string[] Names = ["P-03", "P-07", "P-10"];
+    public static readonly string[] Names = ["P-01t", "P-03", "P-07", "P-10"];
 
     static string I(long v) => v.ToString(CultureInfo.InvariantCulture);
 
@@ -51,6 +51,9 @@ internal static class Sp029Workloads
         result["summary"] = summary;
         switch (workload)
         {
+            case "P-01t":
+                await P01tAsync(db, root, a, runs, summary).ConfigureAwait(false);
+                break;
             case "P-03":
                 await P03Async(db, root, a, runs, summary).ConfigureAwait(false);
                 break;
@@ -127,6 +130,76 @@ internal static class Sp029Workloads
             G2Jobs.Register(r, new Args([]));
         });
         return sc.BuildServiceProvider();
+    }
+
+    // ------------------------------------------------------------------------------------------------ P-01t
+
+    /// <summary>
+    /// Instrumentation cost on P-01 (plan threshold: throughput −10 % at most, allocations/job +15 % at most): the same P-01
+    /// with telemetry off, then with every Runwick activity sampled and every Runwick instrument enabled (in-process
+    /// listeners standing in for a bounded exporter), alternating per repetition.
+    /// </summary>
+    static async Task P01tAsync(TestDatabase db, string root, Args a, JsonArray runs, JsonObject summary)
+    {
+        var handlerMs = a.Int("handler-ms", 100);
+        for (var rep = 1; rep <= a.Int("reps", 3); rep++)
+        {
+            foreach (var on in new[] { false, true })
+            {
+                var spec = new G2Spec("P-01t", $"{(on ? "on" : "off")}-rep{rep}", [], [Worker(a, "pu:1", "work", handlerMs, on ? ["--telemetry"] : [])],
+                    ["--mode", "poisson", "--job", "work", "--rate", D(a.Double("rate", 100))], a.Int("concurrency", 16), handlerMs,
+                    Drain: true, Capabilities: []);
+                var run = await RunOnceAsync(db, root, spec, c => MeasureAsync(c, a, 5, 15), drainMinutes: a.Double("drain-min", 90)).ConfigureAwait(false);
+                runs.Add(run);
+                var w = run["workers"]?[0];
+                summary[spec.Label] = new JsonObject
+                {
+                    ["telemetry"] = on,
+                    ["confirmedFinishesPerSec"] = run["window"]?["confirmedFinishesPerSec"]?.DeepClone(),
+                    ["workerAllocatedBytes"] = w?["process"]?["allocatedBytes"]?.DeepClone(),
+                    ["workerInvocations"] = w?["invocations"]?.DeepClone(),
+                    ["workerAllocatedBytesPerJob"] = Div(Num(w?["process"]?["allocatedBytes"]), Num(w?["invocations"])),
+                    ["workerCpuMsPerJob"] = Div(Num(w?["process"]?["cpuMs"]) * 1000, Num(w?["invocations"])) is { } us ? Math.Round(us / 1000, 3) : null,
+                };
+            }
+        }
+    }
+
+    /// <summary>Samples every Runwick activity and listens to every Runwick instrument, counting what it receives.</summary>
+    internal static IDisposable ListenToTelemetry()
+    {
+        long events = 0;
+        var activities = new System.Diagnostics.ActivityListener
+        {
+            ShouldListenTo = s => s.Name == RunwickTelemetry.SourceName,
+            Sample = (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _) => System.Diagnostics.ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = _ => Interlocked.Increment(ref events),
+        };
+        System.Diagnostics.ActivitySource.AddActivityListener(activities);
+        var meters = new System.Diagnostics.Metrics.MeterListener
+        {
+            InstrumentPublished = (i, l) =>
+            {
+                if (i.Meter.Name == RunwickTelemetry.SourceName)
+                {
+                    l.EnableMeasurementEvents(i);
+                }
+            },
+        };
+        meters.SetMeasurementEventCallback<long>((_, _, _, _) => Interlocked.Increment(ref events));
+        meters.SetMeasurementEventCallback<double>((_, _, _, _) => Interlocked.Increment(ref events));
+        meters.SetMeasurementEventCallback<int>((_, _, _, _) => Interlocked.Increment(ref events));
+        meters.Start();
+        return new Listeners(activities, meters);
+    }
+
+    sealed class Listeners(System.Diagnostics.ActivityListener activities, System.Diagnostics.Metrics.MeterListener meters) : IDisposable
+    {
+        public void Dispose()
+        {
+            activities.Dispose();
+            meters.Dispose();
+        }
     }
 
     // ------------------------------------------------------------------------------------------------ P-03

@@ -22,6 +22,7 @@ internal static class WorkerMode
     {
         var metrics = new Metrics();
         using var phases = PhaseListener.Attach(metrics);
+        using var telemetry = a.Has("telemetry") ? Sp029Workloads.ListenToTelemetry() : null;
         var invocations = new ConcurrentDictionary<Guid, int>();
         var concurrency = a.Int("concurrency", 16);
         var g2 = a.Has("g2");
