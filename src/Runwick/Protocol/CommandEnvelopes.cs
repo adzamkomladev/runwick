@@ -95,6 +95,12 @@ internal static class CommandEnvelopes
         .Add("subject", a.Subject)
         .Build();
 
+    /// <summary>ManagementDispatch/1: the item's Dispatch/1 command digest (02 §8.3, over the same command ID and NotAfter) and the actor.</summary>
+    public static CanonicalValue ManagementDispatch(ManagementDispatchStoreRequest r) => CanonicalValue.Object()
+        .Add("actor", Actor(r.Actor))
+        .Add("dispatch", Convert.ToHexStringLower(r.Item.Digests.Command))
+        .Build();
+
     public static CanonicalValue Cancel(CancelRequest r) => JobControl(r.Actor, r.ExpectedGeneration, r.ExpectedRevision, r.JobId);
 
     public static CanonicalValue Retry(RetryRequest r) => JobControl(r.Actor, r.ExpectedGeneration, r.ExpectedRevision, r.JobId);

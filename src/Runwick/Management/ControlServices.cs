@@ -66,7 +66,7 @@ internal sealed class ControlService(RunwickRuntime runtime, IJobControlStore? s
 {
     static readonly TimeSpan[] Backoff = [TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(1)];
 
-    IJobControlStore Store => store ?? throw new InvalidOperationException("The configured store does not support revisioned controls.");
+    internal IJobControlStore Store => store ?? throw new InvalidOperationException("The configured store does not support revisioned controls.");
 
     public Task<JobControlResult> CancelAsync(JobTarget target, ManagementActor actor, string? reason = null, CancellationToken cancellationToken = default) =>
         JobAsync(Operations.Cancel, target, actor, reason, null, cancellationToken);
@@ -161,7 +161,7 @@ internal sealed class ControlService(RunwickRuntime runtime, IJobControlStore? s
     }
 
     /// <summary>Same command until it resolves: a lost reply never becomes a second, differently identified command.</summary>
-    async Task<StoreReply<T>> ResendAsync<T>(DateTimeOffset notAfter, Func<CancellationToken, Task<StoreReply<T>>> send, CancellationToken ct) where T : class
+    internal async Task<StoreReply<T>> ResendAsync<T>(DateTimeOffset notAfter, Func<CancellationToken, Task<StoreReply<T>>> send, CancellationToken ct) where T : class
     {
         for (var attempt = 0; ; attempt++)
         {

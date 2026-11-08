@@ -26,6 +26,8 @@
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.16.0" />
     <!-- Matches the Microsoft.AspNetCore.App shared framework the SDK runs (10.0.14). -->
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="10.0.14" />
+    <!-- Test-only JSON Schema validator for the CLI agent envelope (SP-032, 19 §9). -->
+    <PackageVersion Include="JsonSchema.Net" Version="9.2.2" />
     <PackageVersion Include="Testcontainers" Version="4.16.0" />
     <!-- SP-018 prototype tests; D-09 client baseline, also the future Runwick.Redis pin. -->
     <PackageVersion Include="StackExchange.Redis" Version="3.4.20" />

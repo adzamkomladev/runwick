@@ -33,6 +33,7 @@ Not in SP-020: retention cleanup and the detail-expired projection (SP-021), the
 
 - (2026-11-08, SP-032 spec) New read `ListEventsAsync` and route `GET {prefix}/v1/events?after&limit` over `EventsSince/1` (19 §6): needs `Jobs.Read` application-wide (queue-scoped → 403); `actorId` only with `Audit.Read`; plain unsigned position cursor `"<txId>.<eventId>"` (malformed → 400 `invalid_cursor`); limit 1–1,000, default 100; no schema change. The CLI (19) is the first client.
 - (2026-11-08, SP-032 spec, user decision) **Audited dispatch** (19 §6.2): permission `Jobs.Dispatch` (queue-scopable, in no preset), session `DispatchAsync`, route `POST {prefix}/v1/jobs:dispatch` with a 1 MiB + 16 KiB body limit for that route only, store operation `ManagementDispatch/1` (dispatch core + `management_audit` row `Dispatch` in one transaction) at PostgreSQL schema revision 17, codes `job_not_registered` (404), `payload_invalid`, `payload_version_unsupported` (400), `admission_closed` (503). Case MGMT-13.
+- (2026-11-08, implementation of SP-032) Dispatch runs on the statement path (no `management_dispatch_v1` function; see 19 Changes). `ManagementNotFoundException` now carries a code (`job_not_registered` for an unknown job name); new `ManagementConflictException` (409: `unique_conflict`, `command_conflict`) and `ManagementUnavailableException` (503: `admission_closed`). Events: `limit` above 1,000 is clamped.
 
 ## 1. Caller, permissions and scope
 
