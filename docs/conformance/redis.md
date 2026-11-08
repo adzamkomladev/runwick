@@ -23,15 +23,14 @@ What this is: every test case the specs require of this driver, with what happen
 ## Counts
 
 - cases in the registry: 321
-- pass: 158, fail: 0, partial: 2, not-run: 1, N/A: 160
+- pass: 159, fail: 0, partial: 2, not-run: 0, N/A: 160
 - mandatory cases that apply to this driver: 161
-- mandatory applicable cases without a passing result: 3
+- mandatory applicable cases without a passing result: 2
 
 ## Missing for G-4
 
 These mandatory applicable cases have no passing result:
 
-- **CLN-05** (not-run): no test result for this driver in the recorded run
 - **REDIS-01** (partial): write-prefix sweeps now cover Finish, Reserve, Begin with rate grants, Release, ReserveAndBegin, FinishMany, Recover, a windowed Dispatch, a 60-job DispatchMany between projection batches, controls, materialization and cleanup; kill -9 restarts are built for the Finish prefixes only (AOF rewrite and torn-AOF kills are built); a byte-identical comparison with a clean run and the outbox and presence operations are not built
 - **REDIS-07** (partial): the 250 ms bound is a reference-host requirement; numbers were measured on the shared development host (informational) and the largest intent any operation can build is about 240 keys (two per job), not 1,024 after-images
 
@@ -87,7 +86,7 @@ Theories that have no rows for this store (their data lists exclude it, so the f
 | CLN-02 | spec 17 | yes | applicable | pass | RetentionContractTests.Cln02_a_closed_day_writes_one_summary_per_class(kind: Redis) [2026-11-08 8f64ffb] |
 | CLN-03 | spec 17 | yes | applicable | pass | RetentionCleanupContractTests.Cln03_a_failed_batch_records_its_error_and_the_next_resumes_without_double_co... [2026-11-08 8f64ffb] |
 | CLN-04 | spec 17 | yes | applicable | pass | RetentionCleanupContractTests.Cln04_no_batch_starts_once_the_worker_drains(kind: Redis) [2026-11-08 8f64ffb] |
-| CLN-05 | spec 17 | yes | applicable | not-run | no test result for this driver in the recorded run |
+| CLN-05 | spec 17 | yes | applicable | pass | SourceCleanupTests.The_relay_runs_cleanup_on_its_own_and_version_1_sources_upgrade_in_place(kind: Postgres,...; SourceCleanupTests.The_relay_runs_cleanup_on_its_own_and_version_1_sources_upgrade_in_place(kind: Sqlite, s... [2026-11-08 8f64ffb] |
 | CMD-01 | contract-suite; spec 07; spec 13; spec 14; spec 15 | yes | applicable | pass | CoreContractTests.A_resent_command_replays_its_receipt_and_a_changed_body_conflicts(kind: Redis); RateScalingContractTests.Pool_overrides_are_revisioned_replayable_and_audited(kind: Redis) (+1 more) [2026-11-08 8f64ffb] |
 | CMD-02 | contract-suite; spec 07; spec 14; spec 15 | yes | applicable | pass | ScheduleContractTests.Schedule_controls_follow_the_receipt_protocol(kind: Redis) [2026-11-08 8f64ffb] |
 | CMD-03 | contract-suite; spec 07; spec 14; spec 15 | yes | applicable | pass | ScheduleContractTests.Schedule_controls_follow_the_receipt_protocol(kind: Redis) [2026-11-08 8f64ffb] |

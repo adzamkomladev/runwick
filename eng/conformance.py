@@ -158,6 +158,8 @@ def load_results(methods):
                 drivers = set(DRIVERS)
             elif project in HOST_PROJECTS and (host_kinds := {KIND[k] for k in re.findall(r'\b(Postgres|Sqlite|Redis)\b', r['display'].split('(', 1)[1] if '(' in r['display'] else '')}):
                 drivers = host_kinds  # a host test that is a theory over the store kind runs on each (SP-028)
+            elif project == 'Runwick.Outbox.Tests' and (dest := re.findall(r'\bstore: (Postgres|Sqlite|Redis)\b', r['display'])):
+                drivers = {KIND[k] for k in dest}  # a relay theory over the destination store kind (its "kind:" argument is the source)
             elif project in PROJECT_DRIVER:
                 drivers = {PROJECT_DRIVER[project]}
             else:  # Contract.Tests and Cli.Tests: the store kind named in the theory arguments, else the run's own driver
