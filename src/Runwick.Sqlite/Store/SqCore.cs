@@ -147,7 +147,7 @@ internal abstract record SqOutcome<T> where T : class
 
 /// <summary>A committed receipt row (R2).</summary>
 internal sealed record SqReceiptRow(string Operation, int OperationVersion, byte[] Fingerprint, DateTimeOffset NotAfter,
-    string? Status, JsonObject? Result, DateTimeOffset? DecidedAt);
+    string? Status, JsonObject? Result, DateTimeOffset? DecidedAt, int CodecVersion = 1);
 
 /// <summary>
 /// The reply of an operation body ported from a PostgreSQL server function (the <c>rw_reply_v1</c> row): the same fields,

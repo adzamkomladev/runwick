@@ -119,6 +119,11 @@ namespace Runwick.Redis.Migrations
             if (existing.Length > 0)
             {
                 var map = existing.ToDictionary(e => (string)e.Name!, e => (string)e.Value!, StringComparer.Ordinal);
+                if (long.TryParse(map.GetValueOrDefault("layout"), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var layout) && layout > CurrentLayout)
+                {
+                    throw new RedisMigrationException("migration_unknown", $"rw:store holds layout revision {layout}, which this binary does not know (newer store).");
+                }
+
                 if (map.GetValueOrDefault("layout") != CurrentLayout.ToString(System.Globalization.CultureInfo.InvariantCulture)
                     || map.GetValueOrDefault("digest") != Convert.ToHexStringLower(digest))
                 {

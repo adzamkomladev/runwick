@@ -129,6 +129,13 @@ namespace Sqlite.Migrations
             var tables = List(conn, "SELECT name FROM sqlite_schema WHERE type = 'table' AND name LIKE 'runwick\\_%' ESCAPE '\\'");
             if (tables.Contains("runwick_schema_migrations"))
             {
+                // A ledger row this binary does not know means the store is ahead of it (23 §5, UPG-06).
+                var unknown = Scalar(conn, $"SELECT migration_id FROM runwick_schema_migrations WHERE migration_id <> '{MigrationId}' ORDER BY migration_id LIMIT 1");
+                if (unknown is string newer)
+                {
+                    throw new SqliteMigrationException("migration_unknown", $"Applied migration {newer} is not known to this binary (newer store).");
+                }
+
                 using var read = conn.CreateCommand();
                 read.CommandText = "SELECT DISTINCT checksum FROM runwick_schema_migrations WHERE migration_id = @id";
                 read.Parameters.AddWithValue("@id", MigrationId);
