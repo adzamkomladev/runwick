@@ -9,7 +9,7 @@ namespace Runwick.Management;
 public static class ManagementPermissions
 {
     public const string JobsRead = "Jobs.Read", JobsReadPayload = "Jobs.ReadPayload", JobsReadError = "Jobs.ReadError",
-        JobsCancel = "Jobs.Cancel", JobsRetry = "Jobs.Retry", JobsRerun = "Jobs.Rerun",
+        JobsCancel = "Jobs.Cancel", JobsRetry = "Jobs.Retry", JobsRerun = "Jobs.Rerun", JobsDispatch = "Jobs.Dispatch",
         QueuesRead = "Queues.Read", QueuesControl = "Queues.Control",
         SchedulesRead = "Schedules.Read", SchedulesTrigger = "Schedules.Trigger", SchedulesControl = "Schedules.Control", SchedulesEdit = "Schedules.Edit",
         CapacityRead = "Capacity.Read", CapacityEdit = "Capacity.Edit",
@@ -18,12 +18,12 @@ public static class ManagementPermissions
     /// <summary>Permissions a grant may scope to queues: jobs in a queue and that queue's control.</summary>
     public static IReadOnlySet<string> QueueScoped { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        JobsRead, JobsReadPayload, JobsReadError, JobsCancel, JobsRetry, JobsRerun, QueuesRead, QueuesControl,
+        JobsRead, JobsReadPayload, JobsReadError, JobsCancel, JobsRetry, JobsRerun, JobsDispatch, QueuesRead, QueuesControl,
     };
 
     public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
-        JobsRead, JobsReadPayload, JobsReadError, JobsCancel, JobsRetry, JobsRerun, QueuesRead, QueuesControl,
+        JobsRead, JobsReadPayload, JobsReadError, JobsCancel, JobsRetry, JobsRerun, JobsDispatch, QueuesRead, QueuesControl,
         SchedulesRead, SchedulesTrigger, SchedulesControl, SchedulesEdit, CapacityRead, CapacityEdit, SettingsRead, RetentionManage, AuditRead,
     };
 }
@@ -53,7 +53,7 @@ public sealed record ManagementGrant(string Permission, IReadOnlySet<string>? Qu
 /// <summary>A trusted caller: the authenticated actor and its grants, both from the host's principal mapping.</summary>
 public sealed record ManagementCaller(ManagementActor Actor, IReadOnlyList<ManagementGrant> Grants);
 
-/// <summary>Preset grant sets (16 §1). Payload, error and audit reads are never in a preset.</summary>
+/// <summary>Preset grant sets (16 §1). Payload, error and audit reads and <c>Jobs.Dispatch</c> are never in a preset.</summary>
 public static class ManagementRoles
 {
     static IReadOnlyList<ManagementGrant> Of(params string[] permissions) => [.. permissions.Select(p => new ManagementGrant(p))];
@@ -99,8 +99,16 @@ public sealed class ManagementDeniedException(string permission)
 }
 
 /// <summary>Missing, or outside the caller's queues (→ 404). The same either way: hidden IDs are never confirmed.</summary>
-public sealed class ManagementNotFoundException()
-    : RunwickException("not_found", ErrorDisposition.KnownNotApplied, "Not found.");
+public sealed class ManagementNotFoundException(string code = "not_found", string message = "Not found.")
+    : RunwickException(code, ErrorDisposition.KnownNotApplied, message);
+
+/// <summary>The management host cannot take the request now (→ 503 with <c>busy</c> or <c>admission_closed</c>); nothing was applied.</summary>
+public sealed class ManagementUnavailableException(string code, string message)
+    : RunwickException(code, ErrorDisposition.KnownNotApplied, message);
+
+/// <summary>The store refused a dispatch because of the store's state (→ 409 <c>unique_conflict</c>, <c>command_conflict</c>).</summary>
+public sealed class ManagementConflictException(string code, string message)
+    : RunwickException(code, ErrorDisposition.KnownNotApplied, message);
 
 /// <summary>A request the session rejects before any store call (→ 400).</summary>
 public sealed class ManagementValidationException(string code, string message)
@@ -180,6 +188,27 @@ public sealed record BulkCancelItem(Guid JobId, Guid CommandId, int ExpectedGene
 /// <c>not_found</c>, <c>forbidden</c> or <c>unavailable</c>.
 /// </summary>
 public sealed record BulkCancelResult(Guid JobId, string Status, string? Code, JobControlResult? Result);
+
+/// <summary>
+/// An audited dispatch by job name (19 §6.2). <see cref="CommandId"/> is the dispatch operation ID; resend it unchanged
+/// to resolve an unknown outcome. <see cref="Payload"/> is bound to the registered job type.
+/// </summary>
+public sealed record ManagementDispatchRequest(
+    Guid CommandId, string JobName, JsonNode? Payload, int? PayloadVersion = null, string? Queue = null, string? Priority = null,
+    DateTimeOffset? NotBefore = null, string? Reason = null);
+
+/// <summary><see cref="Disposition"/> is <c>created</c> or <c>reused</c> (an existing job holding the uniqueness key).</summary>
+public sealed record ManagementDispatchResult(Guid JobId, string Disposition, int Generation, long Revision, string Queue, bool Replayed, Guid CommandId);
+
+/// <summary>One job event (08 §7). <see cref="ActorId"/> is null unless the caller may read audit.</summary>
+public sealed record ManagementEvent(
+    long EventId, string Kind, Guid? JobId, Guid? AttemptId, Guid? CommandId, DateTimeOffset OccurredAt, string? ActorId, JsonObject Details);
+
+/// <summary>
+/// A page of events. <see cref="Next"/> is a plain position <c>"&lt;txId&gt;.&lt;eventId&gt;"</c> (the input cursor when
+/// the page is empty); <see cref="Partial"/> means newer events may not be visible yet.
+/// </summary>
+public sealed record EventsPage(IReadOnlyList<ManagementEvent> Items, DateTimeOffset ObservedAt, string Next, bool Partial);
 
 internal static class ManagementText
 {

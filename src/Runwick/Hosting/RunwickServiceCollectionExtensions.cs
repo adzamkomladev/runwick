@@ -107,7 +107,8 @@ public static class RunwickServiceCollectionExtensions
             sp.GetRequiredService<global::Runwick.Management.ControlService>(), sp.GetRequiredService<global::Runwick.Management.ScheduleControlService>(),
             new global::Runwick.Management.ManagementCursors(sp.GetRequiredService<global::Runwick.Management.IManagementCursorProtector>(),
                 sp.GetRequiredService<TimeProvider>()),
-            sp.GetRequiredService<global::Runwick.Management.ManagementOptions>(), sp.GetRequiredService<TimeProvider>()));
+            sp.GetRequiredService<global::Runwick.Management.ManagementOptions>(), sp.GetRequiredService<TimeProvider>(),
+            sp.GetRequiredService<DispatchPreparer>(), sp.GetRequiredService<LocalAdmission>()));
         if (isWorker)
         {
             // Worker settings validate with the registry (06 §3); the engine starts after the handshake.

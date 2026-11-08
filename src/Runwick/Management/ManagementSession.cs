@@ -1,8 +1,11 @@
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text.Json;
+using Runwick.Dispatching;
 using Runwick.Hosting;
 using Runwick.Protocol;
 using Runwick.Registration;
+using Runwick.Serialization;
 
 namespace Runwick.Management;
 
@@ -67,11 +70,23 @@ public interface IManagementSession
 
     Task<ScheduleControlResult> RevalidateScheduleAsync(ManagementCaller caller, string key, Guid commandId, long expectedDefinitionRevision,
         string? reason = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Job events after a plain position cursor (19 §6.1). Needs <c>Jobs.Read</c> for every queue; <c>ActorId</c> is
+    /// filled only with <c>Audit.Read</c>. Limit 1-1,000 (default 100).
+    /// </summary>
+    Task<EventsPage> ListEventsAsync(ManagementCaller caller, string? after = null, int? limit = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Dispatches a registered job by name with a JSON payload and writes a <c>Dispatch</c> audit row in the same
+    /// transaction (19 §6.2). Needs <c>Jobs.Dispatch</c> on the resulting queue.
+    /// </summary>
+    Task<ManagementDispatchResult> DispatchAsync(ManagementCaller caller, ManagementDispatchRequest request, CancellationToken cancellationToken = default);
 }
 
 internal sealed class ManagementSession(
     RunwickRuntime runtime, RunwickBuilder builder, IManagementQueryStore? store, ControlService controls, ScheduleControlService schedules,
-    ManagementCursors cursors, ManagementOptions options, TimeProvider time) : IManagementSession
+    ManagementCursors cursors, ManagementOptions options, TimeProvider time, DispatchPreparer preparer, LocalAdmission admission) : IManagementSession
 {
     public const int DefaultPageSize = 50, MaxPageSize = 200, MaxBulkItems = 100;
     static readonly TimeSpan DefaultRange = TimeSpan.FromDays(7), MaxRange = TimeSpan.FromDays(31);
@@ -481,6 +496,151 @@ internal sealed class ManagementSession(
         var existing = await Read(() => Store.CommandNotAfterAsync(App, commandId, ct)).ConfigureAwait(false);
         return new CommandSeed(commandId, existing ?? CommandSeed.Ms(time.GetUtcNow() + lifetime));
     }
+
+    // ------------------------------------------------------------------ events and dispatch (SP-032, 19 §6)
+
+    public const int DefaultEventPage = 100, MaxEventPage = 1_000;
+
+    public async Task<EventsPage> ListEventsAsync(ManagementCaller caller, string? after = null, int? limit = null, CancellationToken cancellationToken = default)
+    {
+        // Events carry no queue column: only an application-wide Jobs.Read may read them.
+        if (Require(caller, ManagementPermissions.JobsRead) is not null)
+        {
+            throw new ManagementDeniedException(ManagementPermissions.JobsRead);
+        }
+
+        var size = limit switch
+        {
+            null => DefaultEventPage,
+            < 1 => throw new ManagementValidationException("invalid_request", "limit must be at least 1."),
+            _ => Math.Min(limit.Value, MaxEventPage),
+        };
+        var cursor = after is null ? (EventCursor?)null : ParseEventCursor(after);
+        await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+        var page = await Read(() => controls.Store.EventsSinceAsync(App, cursor, size, cancellationToken)).ConfigureAwait(false);
+        var actors = TryScope(caller, ManagementPermissions.AuditRead, out _);
+        return new EventsPage(
+            [.. page.Events.Select(e => new ManagementEvent(e.EventId, e.Kind, e.JobId, e.AttemptId, e.CommandId, e.OccurredAt, actors ? e.ActorId : null, e.Details))],
+            time.GetUtcNow(), page.Next is { } n ? FormatEventCursor(n) : after ?? "0.0", page.Partial);
+    }
+
+    internal static string FormatEventCursor(EventCursor c) =>
+        c.TxId.ToString(CultureInfo.InvariantCulture) + "." + c.EventId.ToString(CultureInfo.InvariantCulture);
+
+    static EventCursor ParseEventCursor(string s) =>
+        s.Split('.') is [var tx, var id]
+        && ulong.TryParse(tx, NumberStyles.None, CultureInfo.InvariantCulture, out var t)
+        && long.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out var e)
+            ? new EventCursor(t, e)
+            : throw new ManagementValidationException("invalid_cursor", "The events cursor is not valid.");
+
+    public async Task<ManagementDispatchResult> DispatchAsync(ManagementCaller caller, ManagementDispatchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ManagementText.Reason(request.Reason);
+        if (request.CommandId == Guid.Empty)
+        {
+            throw new ManagementValidationException("invalid_request", "commandId is required.");
+        }
+
+        // Job names are not hidden resources: an unknown name is 404 for every caller.
+        var job = (request.JobName is { } name ? runtime.Registry.ByName(name) : null)
+            ?? throw new ManagementNotFoundException("job_not_registered", "The job name is not registered in this management host.");
+        var queue = request.Queue ?? job.Queue;
+        if (!Covers(caller, ManagementPermissions.JobsDispatch, queue))
+        {
+            throw new ManagementDeniedException(ManagementPermissions.JobsDispatch);
+        }
+
+        if (request.PayloadVersion is { } version && version != job.CurrentVersion)
+        {
+            throw new ManagementValidationException("payload_version_unsupported",
+                $"The current payload version of {job.Name} is {job.CurrentVersion.ToString(CultureInfo.InvariantCulture)}.");
+        }
+
+        var bound = Bind(job, request.Payload);
+        await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+        using var lease = await admission.TryEnterAsync(cancellationToken).ConfigureAwait(false)
+            ?? throw new ManagementUnavailableException("busy", "Local producer admission is full.");
+        DispatchIntent intent;
+        IReadOnlyList<ScopeRequirement> scopes;
+        CanonicalValue canonical;
+        try
+        {
+            (intent, scopes, canonical) = preparer.PrepareItem(bound,
+                new DispatchOptions { Queue = request.Queue, Priority = request.Priority, NotBefore = request.NotBefore });
+        }
+        catch (DispatchValidationException ex)
+        {
+            throw new ManagementValidationException(
+                ex.Code == RunwickErrorCodes.PayloadTooLarge ? ex.Code : ex.Code.StartsWith("payload_", StringComparison.Ordinal) ? "payload_invalid" : "invalid_request",
+                $"The dispatch is not valid ({ex.Code}).");
+        }
+
+        // A resend must carry the same body: the job ID comes from the command ID, and no per-request trace context is kept.
+        intent = intent with { ProposedJobId = DispatchJobId(request.CommandId), DiagnosticMetadata = new Dictionary<string, string>(StringComparer.Ordinal) };
+        var seed = await SeedAsync(request.CommandId, Operations.AdministrativeLifetime, cancellationToken).ConfigureAwait(false);
+        var digests = Fingerprints.ForDispatch(runtime.StoreId, App, seed.CommandId, seed.NotAfter.ToUnixTimeMilliseconds(), intent, canonical);
+        var item = new DispatchItem(intent, scopes, digests) { Rates = preparer.RatesFor(intent) };
+        var command = new StoreCommand<ManagementDispatchStoreRequest>(App, seed.CommandId, seed.NotAfter,
+            new ManagementDispatchStoreRequest(item, Actor(caller, request.Reason)));
+        var reply = await controls.ResendAsync(seed.NotAfter, t => controls.Store.ManagementDispatchAsync(command, t), cancellationToken).ConfigureAwait(false);
+        if (reply.Value is { } v)
+        {
+            return new ManagementDispatchResult(v.Dispatch.JobId, v.Dispatch.Disposition == DispatchDisposition.Created ? "created" : "reused",
+                v.Generation, v.Revision, v.Queue, reply.Replayed, request.CommandId);
+        }
+
+        throw reply.Status switch
+        {
+            StoreStatus.UniquenessConflict => new ManagementConflictException("unique_conflict", "A live uniqueness binding conflicts with this dispatch."),
+            StoreStatus.CommandConflict => new ManagementConflictException("command_conflict", "This command ID was used with another body."),
+            StoreStatus.AdmissionClosed => new ManagementUnavailableException("admission_closed", "Application admission is closed."),
+            StoreStatus.InvalidRequest => new ManagementValidationException("invalid_request", "The store rejected the dispatch."),
+            _ => new StoreUnavailableException($"The dispatch was not applied ({reply.Error?.Code})."),
+        };
+    }
+
+    /// <summary>Binds the JSON payload to the registered type; errors name the JSON path, never a value.</summary>
+    static IQueueJob Bind(CompiledJob job, System.Text.Json.Nodes.JsonNode? payload)
+    {
+        var utf8 = payload is null ? "null"u8.ToArray() : JsonSerializer.SerializeToUtf8Bytes(payload);
+        if (utf8.Length > PayloadBounds.MaxPayloadBytes)
+        {
+            throw new ManagementValidationException(RunwickErrorCodes.PayloadTooLarge, $"The payload exceeds {PayloadBounds.MaxPayloadBytes} bytes.");
+        }
+
+        try
+        {
+            JsonPayloadScanner.ScanPayload(utf8);
+            return JsonSerializer.Deserialize(utf8, job.PayloadType, RunwickJsonProfile.V1.Options) as IQueueJob
+                ?? throw new ManagementValidationException("payload_invalid", $"The payload does not bind to {job.Name} at $.");
+        }
+        catch (JsonException ex)
+        {
+            throw new ManagementValidationException("payload_invalid", $"The payload does not bind to {job.Name} at {ex.Path ?? "$"}.");
+        }
+        catch (PayloadValidationException ex)
+        {
+            throw new ManagementValidationException(ex.Code == RunwickErrorCodes.PayloadTooLarge ? ex.Code : "payload_invalid", $"The payload is not valid ({ex.Code}).");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
+        {
+            throw new ManagementValidationException("payload_invalid", $"The payload does not bind to {job.Name}.");
+        }
+    }
+
+    /// <summary>The dispatch's proposed job ID (19 §6.2): SHA-256(<c>runwick.mgmt.dispatch.v1</c> ‖ 0x00 ‖ command ID, big-endian), version 8.</summary>
+    internal static Guid DispatchJobId(Guid commandId)
+    {
+        Span<byte> bytes = stackalloc byte[32];
+        SHA256.HashData([.. "runwick.mgmt.dispatch.v1"u8, 0, .. commandId.ToByteArray(bigEndian: true)], bytes);
+        bytes[6] = (byte)((bytes[6] & 0x0F) | 0x80);
+        bytes[8] = (byte)((bytes[8] & 0x3F) | 0x80);
+        return new Guid(bytes[..16], bigEndian: true);
+    }
+
 
     /// <summary>A trigger's proposed job ID, derived from its command ID so a resent trigger has the same body.</summary>
     static Guid ProposedJobId(Guid commandId)

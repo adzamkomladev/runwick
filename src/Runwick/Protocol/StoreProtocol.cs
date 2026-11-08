@@ -453,7 +453,19 @@ internal interface IJobControlStore
     Task<StoreReply<ScopePolicy>> EditScopePolicyAsync(StoreCommand<ScopePolicyRequest> command, CancellationToken ct);
 
     Task<EventPage> EventsSinceAsync(string application, EventCursor? after, int limit, CancellationToken ct);
+
+    /// <summary>
+    /// ManagementDispatch/1 (19 §6.2): the shared dispatch core and one <c>Dispatch</c> audit row in one transaction; the
+    /// <c>dispatched</c> event carries the actor. A <c>reused</c> result is audited too; a uniqueness conflict writes nothing.
+    /// </summary>
+    Task<StoreReply<ManagementDispatched>> ManagementDispatchAsync(StoreCommand<ManagementDispatchStoreRequest> command, CancellationToken ct);
 }
+
+/// <summary>ManagementDispatch/1 body: one frozen dispatch item and the trusted actor.</summary>
+internal sealed record ManagementDispatchStoreRequest(DispatchItem Item, ControlActor Actor);
+
+/// <summary>The Dispatch/1 result plus the resulting job's position and queue.</summary>
+internal sealed record ManagementDispatched(DispatchResult Dispatch, int Generation, long Revision, string Queue);
 
 /// <summary>EditRatePolicy/1 (10 §6.2): count and window of one existing rate scope, under its policy revision.</summary>
 internal sealed record RatePolicyRequest(string ScopeKind, string ScopeKey, int Limit, long WindowMs, long ExpectedPolicyRevision, ControlActor Actor);
@@ -650,6 +662,7 @@ internal static class Operations
     public const string EditRatePolicy = "EditRatePolicy";
     public const string ActivateCapabilities = "ActivateCapabilities";
     public const string SetPoolOverride = "SetPoolOverride";
+    public const string ManagementDispatch = "ManagementDispatch";
 
     /// <summary>Administrative mutations (08 §3.1): durable class, 5 min default NotAfter, 10 min cap.</summary>
     public static bool IsAdministrative(string operation) =>

@@ -184,6 +184,8 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         new("0013_set_finish", LoadSql("0013_set_finish.sql"), 13),
         new("0014_set_dispatch", LoadSql("0014_set_dispatch.sql"), 14),
         new("0015_management", LoadSql("0015_management.sql"), 15),
+        // 16 is 0016_retention (SP-021), merged separately; 0017 applies after it and also on a store without it.
+        new("0017_management_dispatch", LoadSql("0017_management_dispatch.sql"), 17),
     ];
 
     /// <summary>The schema revision this binary writes to (03 §10.1): the last migration's target.</summary>
@@ -525,7 +527,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
     [GeneratedRegex(@"CONSTRAINT ([a-z0-9_]+) (?:PRIMARY KEY|UNIQUE|FOREIGN KEY|CHECK|EXCLUDE)")]
     private static partial Regex ConstraintPattern();
 
-    [GeneratedRegex(@"DROP CONSTRAINT ([a-z0-9_]+)")]
+    [GeneratedRegex(@"DROP CONSTRAINT (?:IF EXISTS )?([a-z0-9_]+)")]
     private static partial Regex DroppedConstraintPattern();
 
     /// <summary>Relations every migration up to and including the last one creates.</summary>
@@ -645,6 +647,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         [13] = [],
         [14] = [],
         [15] = ["RecordDisclosure"],
+        [17] = ["ManagementDispatch"],
     };
 
     internal static IReadOnlyList<string> OperationsAt(long revision) => [.. VersionsAt(revision).Keys];

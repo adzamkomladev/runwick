@@ -492,7 +492,8 @@ internal sealed partial class PgStore : IJobControlStore
     }
 
     /// <summary>The management audit row (08 §5), written only on success, in the effect's transaction.</summary>
-    static async Task AuditAsync(PgTx tx, string targetKind, string targetId, ControlActor actor, long? expectedRevision, long? resultingRevision, JsonObject details)
+    static async Task AuditAsync(PgTx tx, string targetKind, string targetId, ControlActor actor, long? expectedRevision, long? resultingRevision, JsonObject details,
+        string? operation = null)
     {
         using var a = tx.Sql("""
             INSERT INTO runwick.management_audit (
@@ -500,7 +501,7 @@ internal sealed partial class PgStore : IJobControlStore
                 expected_revision, resulting_revision, details, occurred_at)
             VALUES (@application, @command_id, @operation, @target_kind, @target_id, @subject, @display, @scheme, @reason,
                     @expected, @resulting, @details, @now)
-            """).P("command_id", tx.Op.CommandId).P("operation", tx.Op.Operation).P("target_kind", targetKind).P("target_id", targetId)
+            """).P("command_id", tx.Op.CommandId).P("operation", operation ?? tx.Op.Operation).P("target_kind", targetKind).P("target_id", targetId)
                 .P("subject", actor.Subject).P("display", actor.Display).P("scheme", actor.Scheme).P("reason", actor.Reason)
                 .P("expected", expectedRevision, NpgsqlDbType.Bigint).P("resulting", resultingRevision, NpgsqlDbType.Bigint)
                 .Json("details", details).P("now", tx.Now);

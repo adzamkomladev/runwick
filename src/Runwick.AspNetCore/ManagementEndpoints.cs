@@ -60,6 +60,7 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
 {
     public const string AntiforgeryHeader = "X-Runwick-Antiforgery";
     const int MaxBody = 64 * 1024;
+    const int DispatchMaxBody = 1024 * 1024 + 16 * 1024; // jobs:dispatch only (19 §6.2)
     const string CallerKey = "runwick.management.caller";
 
     static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -164,9 +165,9 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
 
             if (post)
             {
-                if (ctx.Request.ContentLength > MaxBody)
+                if (ctx.Request.ContentLength > BodyLimit(ctx))
                 {
-                    return Error(413, "payload_too_large", "The request body exceeds 64 KiB.");
+                    return Error(413, "payload_too_large", "The request body is too large.");
                 }
 
                 if ((ctx.Request.ContentLength > 0 || ctx.Request.ContentType is not null) && !ctx.Request.HasJsonContentType())
@@ -228,14 +229,17 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
     static IResult? Map(Exception ex) => ex switch
     {
         ManagementDeniedException => Error(403, "forbidden", "The caller lacks the permission for this operation."),
-        ManagementNotFoundException => Error(404, "not_found", "Not found."),
+        ManagementNotFoundException n => Error(404, n.Code, n.Message),
+        ManagementValidationException { Code: "payload_too_large" } v => Error(413, v.Code, v.Message),
         ManagementValidationException v => Error(400, v.Code, v.Message),
+        ManagementConflictException c => Error(409, c.Code, c.Message),
+        ManagementUnavailableException u => Error(503, u.Code, u.Message),
         ManagementDetailExpiredException d => Results.Json(new { code = d.Code, message = d.Message, jobId = d.JobId }, Json, statusCode: 410),
         ControlOutcomeUnknownException u => Results.Json(new ErrorBody(u.Code, "The outcome is unknown; resend the same command.", u.CommandId, null), Json,
             statusCode: 503),
         RunwickConfigurationException or ArgumentException => null,
         RunwickException r => Error(503, r.Code, "The store is unavailable."),
-        BadHttpRequestException { StatusCode: 413 } => Error(413, "payload_too_large", "The request body exceeds 64 KiB."),
+        BadHttpRequestException { StatusCode: 413 } => Error(413, "payload_too_large", "The request body is too large."),
         JsonException or BadHttpRequestException => Error(400, "invalid_request", "The request body is not valid."),
         _ => null,
     };
@@ -253,8 +257,11 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
 
     static IResult Ok(object value) => Results.Json(value, Json);
 
+    static int BodyLimit(HttpContext ctx) => ctx.Request.Path.Value!.EndsWith("/jobs:dispatch", StringComparison.Ordinal) ? DispatchMaxBody : MaxBody;
+
     static async Task<T> Body<T>(HttpContext ctx) where T : class, new()
     {
+        var max = BodyLimit(ctx);
         if (ctx.Request.ContentLength is 0 || (ctx.Request.ContentLength is null && !ctx.Request.HasJsonContentType()))
         {
             return new T();
@@ -265,9 +272,9 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
         int n;
         while ((n = await ctx.Request.Body.ReadAsync(chunk, ctx.RequestAborted).ConfigureAwait(false)) > 0)
         {
-            if (buffer.Length + n > MaxBody)
+            if (buffer.Length + n > max)
             {
-                throw new BadHttpRequestException("The request body exceeds 64 KiB.", 413);
+                throw new BadHttpRequestException("The request body is too large.", 413);
             }
 
             await buffer.WriteAsync(chunk.AsMemory(0, n), ctx.RequestAborted).ConfigureAwait(false);
@@ -351,6 +358,14 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
             new AuditQuery(Q(ctx, "targetKind"), Q(ctx, "targetId"), QTime(ctx, "from"), QTime(ctx, "to"), QInt(ctx, "limit"), Q(ctx, "cursor")),
             ctx.RequestAborted)));
         g.MapGet("settings", async (HttpContext ctx, CancellationToken _) => Ok(await Session(ctx).GetSettingsAsync(Caller(ctx), ctx.RequestAborted)));
+        g.MapGet("events", async (HttpContext ctx, CancellationToken _) =>
+            Ok(await Session(ctx).ListEventsAsync(Caller(ctx), Q(ctx, "after"), QInt(ctx, "limit"), ctx.RequestAborted)));
+        g.MapPost("jobs:dispatch", async (HttpContext ctx, CancellationToken _) =>
+        {
+            var b = await Body<DispatchBody>(ctx);
+            return Ok(await Session(ctx).DispatchAsync(Caller(ctx), new ManagementDispatchRequest(b.CommandId, b.JobName!, b.Payload, b.PayloadVersion,
+                b.Queue, b.Priority, b.NotBefore, b.Reason), ctx.RequestAborted));
+        });
     }
 
     static ResumePolicy Policy(string? policy) => policy switch
@@ -435,6 +450,25 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
         public int Capacity { get; set; }
 
         public long ExpectedPolicyRevision { get; set; }
+
+        public string? Reason { get; set; }
+    }
+
+    sealed class DispatchBody
+    {
+        public Guid CommandId { get; set; }
+
+        public string? JobName { get; set; }
+
+        public System.Text.Json.Nodes.JsonNode? Payload { get; set; }
+
+        public int? PayloadVersion { get; set; }
+
+        public string? Queue { get; set; }
+
+        public string? Priority { get; set; }
+
+        public DateTimeOffset? NotBefore { get; set; }
 
         public string? Reason { get; set; }
     }
