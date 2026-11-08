@@ -45,6 +45,7 @@ func main() {
 	pad := flag.Int("payload", 1024, "payload bytes")
 	out := flag.String("out", "", "result JSON file")
 	cooldown := flag.Int("cooldown-ms", 100, "River FetchCooldown (default 100 ms)")
+	calls := flag.Int("calls", 1, "enqueue: concurrent single-job inserters")
 	flag.Parse()
 	ctx := context.Background()
 
@@ -81,6 +82,36 @@ func main() {
 	result := map[string]any{"system": "river v0.50.0", "mode": *mode, "workers": *workers, "payloadBytes": *pad, "fetchCooldownMs": *cooldown}
 
 	switch *mode {
+	case "enqueue":
+		// -n single-job Insert calls from -calls goroutines; no worker started. Measures adding, not running.
+		var next atomic.Int64
+		lat := make([][]float64, *calls)
+		start := time.Now()
+		done := make(chan struct{})
+		for c := 0; c < *calls; c++ {
+			go func(c int) {
+				for next.Add(1) <= int64(*n) {
+					t := time.Now()
+					_, err := client.Insert(ctx, payload, nil)
+					must(err)
+					lat[c] = append(lat[c], float64(time.Since(t).Microseconds())/1000)
+				}
+				done <- struct{}{}
+			}(c)
+		}
+		for c := 0; c < *calls; c++ {
+			<-done
+		}
+		elapsed := time.Since(start).Seconds()
+		all := []float64{}
+		for _, l := range lat {
+			all = append(all, l...)
+		}
+		sort.Float64s(all)
+		result["jobs"] = *n
+		result["calls"] = *calls
+		result["insertsPerSec"] = float64(*n) / elapsed
+		result["insertLatencyMs"] = map[string]float64{"p50": pct(all, 0.5), "p99": pct(all, 0.99)}
 	case "drain":
 		params := make([]river.InsertManyParams, 0, *n)
 		for i := 0; i < *n; i++ {
