@@ -17,6 +17,8 @@ internal static class RedisServer
     static readonly Lazy<Task> Migrated = new(() => RunwickRedisMigrations.MigrateAsync(Configuration));
     static readonly Lazy<Task<ConnectionMultiplexer>> Admin = new(() => ConnectionMultiplexer.ConnectAsync(Configuration + ",allowAdmin=true"));
 
+    public static string Key(string application, string name) => RxClient.KeyPrefix(application) + name;
+
     public static bool IsRedis(string connectionString) => connectionString.StartsWith(Prefix, StringComparison.Ordinal);
 
     public static string ConfigurationOf(string connectionString) => connectionString[Prefix.Length..];
