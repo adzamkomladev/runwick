@@ -28,6 +28,12 @@ public sealed class WireVectorContractTests
 
     static DispatchOptions Active(string key) => new() { Uniqueness = new DispatchUniqueness(key, null, null) };
 
+    /// <summary>
+    /// Tables that differ between two reads, apart from Redis' application meta hash: the shared-server cases that raise a capability
+    /// for every application (CapabilityActivationContractTests) change it for tests running at the same time.
+    /// </summary>
+    static IReadOnlyList<string> Written(HarnessSnapshot before, HarnessSnapshot after) => [.. before.DiffTables(after).Where(t => t != "meta")];
+
     static async Task<int> JobCount(DriverFixture f) => (await f.ReadCommittedSnapshot()).Model.Jobs.Count;
 
     // ------------------------------------------------------------------ admin edits (setup only)
@@ -114,7 +120,9 @@ public sealed class WireVectorContractTests
         var before = await f.ReadCommittedSnapshot();
         var refused = await Assert.ThrowsAnyAsync<RunwickException>(() => c.Dispatcher.DispatchAsync(new PingJob("one"), Window("w"), Ct));
         Assert.Contains("fingerprint_version_unsupported", refused.ToString(), StringComparison.Ordinal);
-        Assert.Empty(before.DiffTables(await f.ReadCommittedSnapshot()));
+        var after = await f.ReadCommittedSnapshot();
+        var diff = Written(before, after);
+        Assert.True(diff.Count == 0, string.Join("; ", diff.Select(t => t + ": " + string.Join(",", after.Tables.GetValueOrDefault(t, []).Except(before.Tables.GetValueOrDefault(t, []))) + " <- " + string.Join(",", before.Tables.GetValueOrDefault(t, []).Except(after.Tables.GetValueOrDefault(t, []))))));
         Assert.Single(before.Model.Jobs);
 
         // Version 1 after the bound job's history was purged: no foreign key, so the binding still compares and answers.
@@ -157,7 +165,7 @@ public sealed class WireVectorContractTests
         Assert.NotEqual(j3.JobId, j4.JobId);
         var before = await f.ReadCommittedSnapshot();
         await Assert.ThrowsAsync<UniquenessConflictException>(() => c.Dispatcher.DispatchAsync(new PingJob("j4"), Window("w2", active: "user:43"), Ct));
-        Assert.Empty(before.DiffTables(await f.ReadCommittedSnapshot()));
+        Assert.Empty(Written(before, await f.ReadCommittedSnapshot()));
         Assert.Equal(3, before.Model.Jobs.Count);
     }
 
@@ -183,7 +191,7 @@ public sealed class WireVectorContractTests
         var conflict = await Assert.ThrowsAsync<UniquenessConflictException>(() => c.Dispatcher.DispatchManyAsync(items, cancellationToken: Ct));
         var failure = Assert.Single(conflict.ItemFailures);
         Assert.Equal((1, orig.JobId), (failure.Ordinal, failure.ConflictingJobId));
-        Assert.Empty(pre.DiffTables(await f.ReadCommittedSnapshot()));
+        Assert.Empty(Written(pre, await f.ReadCommittedSnapshot()));
 
         // ContinueOnConflict: item 1 is reported as a failure, items 0 and 2 commit together, under one receipt with ordinals 0-2.
         var prepared = c.Prepared.PrepareMany(items, new BatchDispatchOptions { ContinueOnConflict = true });
