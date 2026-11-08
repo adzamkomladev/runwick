@@ -114,7 +114,8 @@ internal sealed class DriverFixture : IAsyncDisposable
     /// Replays every job's committed history through the ReferenceModel (15 §12.2 rule 4); empty when all are accepted.
     /// See <see cref="CommittedHistory"/> for the sources and the lease limit.
     /// </summary>
-    public Task<IReadOnlyList<string>> HistoryViolations() => CommittedHistory.ViolationsAsync(AdminConnectionString);
+    public Task<IReadOnlyList<string>> HistoryViolations() =>
+        Kind == StoreKind.Sqlite ? Task.FromResult(CommittedHistory.SqliteViolations(SqlitePath)) : CommittedHistory.ViolationsAsync(AdminConnectionString);
 
     public FaultHandle ArmFault(FaultPoint point, FaultSpec action, FaultTarget target, int times = 1) =>
         Faults.Arm(point, action, target, times);
@@ -130,19 +131,23 @@ internal sealed class DriverFixture : IAsyncDisposable
         Proxy?.Retarget(Server.Database.Host, Server.Database.Port);
     }
 
+    /// <summary>A SQLite peer is pointed at the file by its command line (20 §12); its commands then need no connection string.</summary>
+    string[] PeerOptions => Kind == StoreKind.Sqlite ? ["--store", "sqlite", "--path", SqlitePath] : [];
+
     /// <summary>Starts a peer OS process (07 §2.4) connected to this store.</summary>
     public async Task<PeerClient> OpenPeer(string processIdentity, int maxExecutions = 3, string? application = null)
     {
-        var peer = await PeerClient.StartAsync(processIdentity).ConfigureAwait(false);
+        var peer = await PeerClient.StartAsync(processIdentity, PeerOptions).ConfigureAwait(false);
         _peers.Add(peer);
-        await peer.OpenAsync(ClientConnectionString(processIdentity), application ?? Application, maxExecutions).ConfigureAwait(false);
+        await peer.OpenAsync(Kind == StoreKind.Sqlite ? null : ClientConnectionString(processIdentity), application ?? Application, maxExecutions)
+            .ConfigureAwait(false);
         return peer;
     }
 
     /// <summary>Starts a peer OS process without opening a client; the caller sends its own open command (SP-013).</summary>
     public async Task<PeerClient> StartPeer(string processIdentity)
     {
-        var peer = await PeerClient.StartAsync(processIdentity).ConfigureAwait(false);
+        var peer = await PeerClient.StartAsync(processIdentity, PeerOptions).ConfigureAwait(false);
         _peers.Add(peer);
         return peer;
     }

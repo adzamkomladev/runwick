@@ -1,6 +1,7 @@
 // Peer process controlled over JSON Lines on stdin/stdout (spec 07 §2.4).
 using System.Text.Json.Nodes;
 using Runwick;
+using Runwick.Harness.Engine;
 using Runwick.Harness.Jobs;
 using Runwick.Harness.Peer;
 using Runwick.Harness.Store;
@@ -8,6 +9,21 @@ using Runwick.Protocol;
 
 Runwick.Postgres.Store.PgRunner.HarnessMarker = true;   // a test binary: may use fault-hooks stores (PF-05)
 var identity = args.Length > 0 ? args[0] : "peer";
+
+// `--store sqlite --path <file>` (20 §12): commands without "cs" use that file; a "cs" in a command still selects the store.
+string? storeCs = null;
+for (var i = 1; i + 1 < args.Length; i += 2)
+{
+    if (args[i] == "--path")
+    {
+        storeCs = $"Data Source={args[i + 1]}";
+    }
+    else if (args[i] != "--store" || args[i + 1] != "sqlite")
+    {
+        throw new ArgumentException($"unknown peer option {args[i]} {args[i + 1]}");
+    }
+}
+
 var output = new PeerOutput(Console.Out);
 var faults = new PeerFaultInjector(output);
 TestClient? client = null;
@@ -22,6 +38,10 @@ while (await Console.In.ReadLineAsync().ConfigureAwait(false) is { } line)
     var msg = JsonNode.Parse(line)!.AsObject();
     var id = msg["id"]!.GetValue<long>();
     var cmd = msg["cmd"]!.GetValue<string>();
+    if (msg["cs"] is null && storeCs is not null)
+    {
+        msg["cs"] = storeCs;
+    }
 
     // Store commands run concurrently so a command blocked at a barrier does not block the control channel.
     _ = Task.Run(async () =>
@@ -54,7 +74,16 @@ async Task<JsonObject> RunAsync(string cmd, JsonObject m)
             client = await TestClient.CreateAsync(m["cs"]!.GetValue<string>(), m["app"]!.GetValue<string>(), faults,
                 r =>
                 {
-                    TestJobs.Register(r, max);
+                    // "work": the WorkJob contracts of a worker peer (optionally contended, SQL-01), for a producer-only process.
+                    if (m["work"]?.GetValue<bool>() == true)
+                    {
+                        WorkerHost.RegisterWork(r, jobs: m["contended"]?.GetValue<bool>() == true ? WorkerHost.Contended : null);
+                    }
+                    else
+                    {
+                        TestJobs.Register(r, max);
+                    }
+
                     // Concurrent peer commands queue behind the 2-call admission limit; under suite load 1 s is too short.
                     r.Producer(o => o.AdmissionWait = TimeSpan.FromSeconds(20));
                 }).ConfigureAwait(false);
@@ -68,9 +97,34 @@ async Task<JsonObject> RunAsync(string cmd, JsonObject m)
                 "resource" => new ResourceJob(jobId, m["key"]!.GetValue<string>()),
                 "capped" => new CappedJob(jobId),
                 "pair" => new PairJob(jobId, m["key"]!.GetValue<string>(), m["key2"]!.GetValue<string>()),
+                "work" => new WorkJob(jobId),
                 _ => new PingJob(jobId),
             };
             return ReceiptJson(await Dispatch(job).ConfigureAwait(false));
+        case "dispatchWork":
+            // SQL-01 producer: WorkJob "<prefix><i % resources>-<i>" for i in [0, count), four calls in flight.
+            var prefix = m["prefix"]!.GetValue<string>();
+            var resources = m["resources"]!.GetValue<int>();
+            await Parallel.ForAsync(0, m["count"]!.GetValue<int>(), new ParallelOptions { MaxDegreeOfParallelism = 4 },
+                async (i, ct) => await C().Dispatcher.DispatchAsync(new WorkJob($"{prefix}{i % resources}-{i}"), cancellationToken: ct).ConfigureAwait(false))
+                .ConfigureAwait(false);
+            return [];
+        case "holdWriter":
+            // SQL-02/07: this process takes the file's write lock (BEGIN IMMEDIATE) and keeps it for "ms".
+            using (var holder = new Microsoft.Data.Sqlite.SqliteConnection(m["cs"]!.GetValue<string>() + ";Pooling=False"))
+            {
+                holder.Open();
+                using var begin = holder.CreateCommand();
+                begin.CommandText = "BEGIN IMMEDIATE";
+                begin.ExecuteNonQuery();
+                output.Write(new JsonObject { ["type"] = "writerHeld" });
+                await Task.Delay(m["ms"]!.GetValue<int>()).ConfigureAwait(false);
+                using var commit = holder.CreateCommand();
+                commit.CommandText = "COMMIT";
+                commit.ExecuteNonQuery();
+            }
+
+            return [];
         case "dispatchPrepared":
             // The same PreparedDispatch (operation ID, body, NotAfter) imported from the local process's envelope.
             var imported = C().Prepared.ImportPrepared(Convert.FromBase64String(m["envelope"]!.GetValue<string>()));
@@ -104,7 +158,10 @@ async Task<JsonObject> RunAsync(string cmd, JsonObject m)
             rr["expiresAt"] = renewed.Value?.Lease.ExpiresAt.ToUnixTimeMilliseconds();
             return rr;
         case "finish":
-            var finished = await C().FinishAsync(PeerJson.Lease(m["lease"]!), Enum.Parse<AttemptOutcome>(m["outcome"]?.GetValue<string>() ?? "Succeeded")).ConfigureAwait(false);
+            // "commandId"/"notAfterMs" let the fixture resend the same command after a crash (SQL-04).
+            var finished = await C().FinishAsync(PeerJson.Lease(m["lease"]!), Enum.Parse<AttemptOutcome>(m["outcome"]?.GetValue<string>() ?? "Succeeded"),
+                commandId: m["commandId"]?.GetValue<string>() is { } fc ? Guid.Parse(fc) : null,
+                notAfter: m["notAfterMs"]?.GetValue<long>() is { } na ? DateTimeOffset.FromUnixTimeMilliseconds(na) : null).ConfigureAwait(false);
             var fr = PeerJson.Reply(finished);
             fr["disposition"] = finished.Value?.Disposition;
             return fr;
@@ -177,5 +234,6 @@ Task<DispatchReceipt> Dispatch(IQueueJob job) => job switch
     CappedJob cj => C().Dispatcher.DispatchAsync(cj),
     PairJob pj => C().Dispatcher.DispatchAsync(pj),
     PingJob p => C().Dispatcher.DispatchAsync(p),
+    WorkJob w => C().Dispatcher.DispatchAsync(w),
     _ => throw new ArgumentOutOfRangeException(nameof(job)),
 };

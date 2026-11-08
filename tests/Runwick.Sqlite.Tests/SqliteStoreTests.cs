@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Runwick.Harness.Jobs;
@@ -340,44 +341,27 @@ public sealed class SqliteStoreTests
         c.Services.GetRequiredService<SqliteStoreRegistration>().Options.WriterBusyTimeout = TimeSpan.FromMilliseconds(150);
         var runner = c.Services.GetRequiredService<SqRunner>();
 
-        // Shortcut: the lock holder is a second connection in this process, not a peer process; SQLite's file lock is the same.
-        using (var holder = Raw(f))
-        {
-            using (var begin = holder.CreateCommand())
-            {
-                begin.CommandText = "BEGIN IMMEDIATE";
-                begin.ExecuteNonQuery();
-            }
+        // The lock holder is a separate OS process (driver-contract-suite §5): a Peer that runs BEGIN IMMEDIATE on the file.
+        var holder = await f.StartPeer("holder");
 
-            // Microsoft.Data.Sqlite retries a busy statement for its 1 s command timeout, so a hold shorter than that is
-            // only a longer wait; 1.5 s makes the runner see SQLITE_BUSY and retry the whole transaction.
-            var dispatch = c.Dispatcher.DispatchAsync(new PingJob("held"), cancellationToken: Ct);
-            await Task.Delay(1500, Ct);
-            Assert.False(dispatch.IsCompleted);
-            using (var commit = holder.CreateCommand())
-            {
-                commit.CommandText = "COMMIT";
-                commit.ExecuteNonQuery();
-            }
-
-            var receipt = await dispatch;
-            Assert.Equal(DispatchDisposition.Created, receipt.Disposition);
-            Assert.True(runner.BusyConflicts > 0);
-        }
-
+        // Microsoft.Data.Sqlite retries a busy statement for its 1 s command timeout, so a hold shorter than that is
+        // only a longer wait; 1.5 s makes the runner see SQLITE_BUSY and retry the whole transaction.
+        var hold = holder.SendAsync("holdWriter", new JsonObject { ["ms"] = 1500 });
+        await holder.WaitForEventAsync("writerHeld");
+        var dispatch = c.Dispatcher.DispatchAsync(new PingJob("held"), cancellationToken: Ct);
+        await Task.Delay(1000, Ct);
+        Assert.False(dispatch.IsCompleted);
+        await hold;
+        var receipt = await dispatch;
+        Assert.Equal(DispatchDisposition.Created, receipt.Disposition);
+        Assert.True(runner.BusyConflicts > 0);
         Assert.Single((await f.ReadCommittedSnapshot()).Model.Jobs);
 
-        using (var holder = Raw(f))
-        {
-            using (var begin = holder.CreateCommand())
-            {
-                begin.CommandText = "BEGIN IMMEDIATE";
-                begin.ExecuteNonQuery();
-            }
-
-            var expired = await c.ReserveAsync(notAfter: DateTimeOffset.UtcNow.AddMilliseconds(300));
-            Assert.Equal(StoreStatus.CommandExpired, expired.Status);
-        }
+        hold = holder.SendAsync("holdWriter", new JsonObject { ["ms"] = 1500 });
+        await holder.WaitForEventAsync("writerHeld");
+        var expired = await c.ReserveAsync(notAfter: DateTimeOffset.UtcNow.AddMilliseconds(300));
+        Assert.Equal(StoreStatus.CommandExpired, expired.Status);
+        await hold;
 
         Assert.Equal("pending", Assert.Single((await f.ReadCommittedSnapshot()).Model.Jobs).State);
     }

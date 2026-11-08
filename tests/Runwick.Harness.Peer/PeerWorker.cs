@@ -37,6 +37,7 @@ internal static class PeerWorker
 
                 var business = m["bcs"]?.GetValue<string>();
                 _host = WorkerHost.Create(m["cs"]!.GetValue<string>(), m["app"]!.GetValue<string>(), faults, m["concurrency"]?.GetValue<int>() ?? 4,
+                    jobs: m["contended"]?.GetValue<bool>() == true ? WorkerHost.Contended : null, divisor: m["divisor"]?.GetValue<int>(),
                     queue: m["queue"]?.GetValue<string>() ?? "default");
                 _host.Script.Default = (job, ctx, ct) =>
                     job.Id.StartsWith("block", StringComparison.Ordinal) ? Task.Delay(Timeout.InfiniteTimeSpan, CancellationToken.None)
@@ -79,6 +80,8 @@ internal static class PeerWorker
                     ["invoked"] = invoked,
                     ["finishesSent"] = Interlocked.Read(ref h.Engine.FinishesSent),
                     ["stagedObserved"] = Interlocked.Read(ref h.Engine.StagedCompletionsObserved),
+                    ["renewed"] = h.EventCount("renewed"),
+                    ["lost"] = h.Events.Count(e => e.Name.StartsWith("lost:", StringComparison.Ordinal)),
                 };
             case "workerDispatch":
                 var options = m["queue"]?.GetValue<string>() is { } q ? new DispatchOptions { Queue = q } : null;
