@@ -1,0 +1,20 @@
+# Release checklist (v1)
+
+Nothing here publishes anything. These are the steps between the current local state and "v1 published", which is the owner's step.
+
+Local checks (all pass at the time of writing, except where noted):
+
+1. `eng/check-package-graph.sh`: allowed project and package edges.
+2. `eng/check-release.sh`: packs all 13 packages (and symbols) into `artifacts/packages` with 0 warnings and inspects each one: metadata, licence, README, dependency list, `net10.0` only, no unexpected files.
+3. `eng/check-licenses.sh`: every NuGet and bundled npm package is on `eng/license-allowlist.txt`.
+4. `dotnet test tests/Runwick.Core.Tests --filter Item=SP-030`: documented defaults equal the code.
+
+Owner decisions and actions before publishing:
+
+1. Confirm the licence (MIT) and the copyright holder in `LICENSE` ("Runwick contributors" is a placeholder).
+2. Set the real repository URL: `RepositoryUrl` and `PackageProjectUrl` in `Directory.Build.props` are `https://example.invalid/runwick/runwick` placeholders because no remote exists. When a remote exists, consider adding SourceLink (`Microsoft.SourceLink.*` package) so symbols link to source.
+3. Choose the final version (now `0.1.0-m1`) in `Directory.Build.props`.
+4. Check that the package name `Runwick` is free on NuGet (spec 00 §7 asks for this).
+5. Confirm the SQLite public-domain point in [licenses.md](licenses.md).
+6. Finish the qualification that G-6 depends on: SP-028 (conformance reports) and SP-029 (performance and soak), then review them.
+7. Sign the packages if you use package signing; push with your own API key.

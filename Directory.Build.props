@@ -17,6 +17,12 @@
     <Product>Runwick</Product>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryType>git</RepositoryType>
+    <!-- Placeholder: no remote exists yet; set the real URL at publish time (docs/release/release-checklist.md). -->
+    <RepositoryUrl>https://example.invalid/runwick/runwick</RepositoryUrl>
+    <PackageProjectUrl>https://example.invalid/runwick/runwick</PackageProjectUrl>
+    <PackageTags>background-jobs;job-queue;postgresql;sqlite;redis;dotnet</PackageTags>
+    <Copyright>Copyright (c) Runwick contributors</Copyright>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <IsSrcProject>$(MSBuildProjectDirectory.Contains('$([System.IO.Path]::DirectorySeparatorChar)src$([System.IO.Path]::DirectorySeparatorChar)'))</IsSrcProject>
   </PropertyGroup>
 
@@ -25,9 +31,13 @@
     <!-- Public XML docs are written per item; missing ones are tracked, not build-breaking, until SP-033. -->
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <IsPackable>true</IsPackable>
+    <!-- Symbols ship as .snupkg; no SourceLink because there is no remote to link to. -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(IsSrcProject)' == 'true'">
+    <None Include="$(MSBuildThisFileDirectory)eng/PACKAGE-README.md" Pack="true" PackagePath="README.md" Visible="false" />
     <InternalsVisibleTo Include="Runwick" />
     <InternalsVisibleTo Include="Runwick.Postgres" />
     <InternalsVisibleTo Include="Runwick.Sqlite" />
