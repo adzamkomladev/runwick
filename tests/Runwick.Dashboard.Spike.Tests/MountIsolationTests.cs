@@ -20,14 +20,15 @@ public sealed class MountIsolationTests
         await using var app = await StartAsync(
             b =>
             {
-                b.Services.AddRunwickDashboardSpike();
                 b.Services.AddBasic("basic-a");
                 b.Services.AddBasicOnly("basic-b", "bob");
+                b.Services.AddDashboard("ops-a", "basic-a", Data("alpha"));
+                b.Services.AddDashboard("ops-b", "basic-b", Data("bravo"));
             },
             a =>
             {
-                a.UseRunwickDashboardSpike("/ops-a", o => o.Use("ops-a", "basic-a", Data("alpha")));
-                a.UseRunwickDashboardSpike("/ops-b", o => o.Use("ops-b", "basic-b", Data("bravo")));
+                a.UseRunwickDashboardSpike("/ops-a", "ops-a");
+                a.UseRunwickDashboardSpike("/ops-b", "ops-b");
             });
 
         var alice = app.Browser("alice");
@@ -59,10 +60,10 @@ public sealed class MountIsolationTests
     [Trait("Case", "DASH-01")]
     public async Task Two_hosts_in_one_process_with_the_same_mount_do_not_share_props_or_tokens()
     {
-        await using var first = await StartAsync(b => { b.Services.AddRunwickDashboardSpike(); b.Services.AddBasic("basic"); },
-            a => a.UseRunwickDashboardSpike("/runwick", o => o.Use("default", "basic", Data("first"))));
-        await using var second = await StartAsync(b => { b.Services.AddRunwickDashboardSpike(); b.Services.AddBasic("basic"); },
-            a => a.UseRunwickDashboardSpike("/runwick", o => o.Use("default", "basic", Data("second"))));
+        await using var first = await StartAsync(b => { b.Services.AddBasic("basic"); b.Services.AddDashboard("default", "basic", Data("first")); },
+            a => a.UseRunwickDashboardSpike("/runwick", "default"));
+        await using var second = await StartAsync(b => { b.Services.AddBasic("basic"); b.Services.AddDashboard("default", "basic", Data("second")); },
+            a => a.UseRunwickDashboardSpike("/runwick", "default"));
 
         var one = first.Browser("alice");
         var (_, _, page) = await one.LoadAsync("/runwick");
@@ -79,16 +80,22 @@ public sealed class MountIsolationTests
 
     [Fact]
     [Trait("Case", "DASH-01")]
-    public async Task Inertia_Net_1_5_3_has_one_option_set_per_service_provider()
+    public async Task Each_mount_is_its_own_Inertia_Net_named_mount_and_leaves_the_default_alone()
     {
-        // Evidence for the fallback: a second AddInertia call configures the same unnamed options, so two mounts in one host
-        // cannot have different shared props, versions or root views through the adapter.
         var services = new ServiceCollection();
-        services.AddInertia(o => { o.Version = "mount-a"; o.Share("tenant", "a"); });
-        services.AddInertia(o => { o.Version = "mount-b"; o.Share("tenant", "b"); });
+        services.AddInertia(o => o.Version = "host-1");
+        services.AddBasic("basic");
+        services.AddDashboard("ops-a", "basic", Data());
+        services.AddDashboard("ops-b", "basic", Data(), assets: Rebuilt());
         await using var provider = services.BuildServiceProvider();
-        var options = provider.GetRequiredService<IOptions<InertiaOptions>>().Value;
-        Assert.Equal("mount-b", options.Version); // the last configure wins for everyone; the adapter reads only IOptions<InertiaOptions>
+        var monitor = provider.GetRequiredService<IOptionsMonitor<InertiaOptions>>();
+        var (a, b) = (monitor.Get("runwick-ops-a"), monitor.Get("runwick-ops-b"));
+        Assert.Equal("host-1", provider.GetRequiredService<IOptions<InertiaOptions>>().Value.Version);
+        Assert.Equal(DashboardAssets.Embedded.Version, a.Version);
+        Assert.NotEqual(a.Version, b.Version);
+        Assert.Equal(".Inertia.State.runwick-ops-a", a.State.CookieName);
+        Assert.Equal(".Inertia.State.runwick-ops-b", b.State.CookieName);
+        Assert.Same(provider.GetRequiredKeyedService<DashboardMount>("ops-a"), provider.GetRequiredKeyedService<IInertiaRootView>("runwick-ops-a"));
     }
 
     [Fact]
@@ -137,26 +144,43 @@ public sealed class MountIsolationTests
 
     [Fact]
     [Trait("Case", "DASH-02")]
-    public async Task The_adapter_itself_inside_an_Inertia_host_leaks_host_shared_props_and_version()
+    public async Task A_host_JSON_naming_policy_reaches_named_mounts_but_not_the_dashboards_props()
     {
-        // Evidence for the fallback: a "dashboard" page rendered by Inertia.Net in the host resolves the host's page writer.
-        using var root = new HostRoot();
-        await using var app = await InertiaHostAsync(root, withDashboard: false, dashboardFirst: true,
-            extra: a => a.MapGet("/adapter-dashboard", () => Inertia.Net.Inertia.Render("Overview", new InertiaProps { ["jobs"] = Array.Empty<string>() })));
-        var browser = app.Browser();
-        browser.Version = "host-1";
-        var json = await Browser.JsonAsync(await browser.VisitAsync("/adapter-dashboard"));
-        Assert.Equal("host-secret-user", json.GetProperty("props").GetProperty("hostUser").GetString());
-        Assert.Equal("host-1", json.GetProperty("version").GetString());
+        // Remaining gap in 1.7.0: a named mount serializes props with the host's HttpJsonOptions. The plain "evidence" mount shows
+        // it; the dashboard passes JsonElements written with its own options, so its prop names stay as the client expects.
+        await using var app = await StartAsync(
+            b =>
+            {
+                b.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseUpper);
+                b.Services.AddInertia("evidence", null);
+                b.Services.AddBasic("basic");
+                b.Services.AddDashboard("default", "basic", Data());
+            },
+            a =>
+            {
+                a.UseRunwickDashboardSpike("/runwick", "default");
+                a.Map("/evidence", e =>
+                {
+                    e.UseInertia("evidence");
+                    e.Run(c => Inertia.Net.Inertia.Render("Job", new InertiaProps { ["job"] = new SpikeJob("1", "n", "s", 1, 0) }).ExecuteAsync(c));
+                });
+            });
+        var browser = app.Browser("alice");
+        var evidence = await Browser.JsonAsync(await browser.VisitAsync("/evidence"));
+        Assert.Equal("n", evidence.GetProperty("props").GetProperty("job").GetProperty("NAME").GetString());
+
+        var (_, _, page) = await browser.LoadAsync("/runwick/jobs/1");
+        Assert.Equal("alpha", page.GetProperty("props").GetProperty("job").GetProperty("name").GetString());
+        Assert.Equal(1, page.GetProperty("props").GetProperty("job").GetProperty("revision").GetInt64());
     }
 
     [Fact]
     [Trait("Case", "DASH-02")]
     public async Task A_host_catch_all_fallback_does_not_capture_the_mount()
     {
-        await using var app = await StartAsync(b => { b.Services.AddRunwickDashboardSpike(); b.Services.AddBasic("basic"); }, a =>
+        await using var app = await StartAsync(b => { b.Services.AddBasic("basic"); b.Services.AddDashboard("default", "basic", Data()); }, a =>
         {
-            a.UseRunwickDashboardSpike("/runwick", o => o.Use("default", "basic", Data()));
+            a.UseRunwickDashboardSpike("/runwick", "default");
             a.MapFallback(() => Results.Text("host-spa"));
         });
         var browser = app.Browser("alice");
@@ -189,21 +213,21 @@ public sealed class MountIsolationTests
                 });
                 if (withDashboard)
                 {
-                    b.Services.AddRunwickDashboardSpike();
                     b.Services.AddBasic("basic");
+                    b.Services.AddDashboard("default", "basic", Data());
                 }
             },
             a =>
             {
                 if (withDashboard && dashboardFirst)
                 {
-                    a.UseRunwickDashboardSpike("/runwick", o => o.Use("default", "basic", Data()));
+                    a.UseRunwickDashboardSpike("/runwick", "default");
                 }
 
                 a.UseInertia();
                 if (withDashboard && !dashboardFirst)
                 {
-                    a.UseRunwickDashboardSpike("/runwick", o => o.Use("default", "basic", Data()));
+                    a.UseRunwickDashboardSpike("/runwick", "default");
                 }
 
                 a.MapGet("/", () => Inertia.Net.Inertia.Render("Home", new InertiaProps { ["greeting"] = "hello from the host" }));
@@ -223,5 +247,13 @@ public sealed class MountIsolationTests
         public string Path { get; }
 
         public void Dispose() => Directory.Delete(Path, recursive: true);
+    }
+
+    private static DashboardAssets Rebuilt()
+    {
+        var old = DashboardAssets.Embedded;
+        var files = old.Files.ToDictionary();
+        files[old.Entry] = [.. old.Files[old.Entry], .. "\n// v2"u8.ToArray()];
+        return new DashboardAssets(files);
     }
 }

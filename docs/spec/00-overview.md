@@ -2,6 +2,10 @@
 
 **Sources:** docs/architecture-baseline.md, docs/architecture-plan.md, docs/architecture-acceptance.md, docs/runwick-explained.md, docs/review-2026-10-30.md, docs/v1-delivery-plan.md, docs/architecture/platform-and-packages.md, docs/architecture/provider-dependency-plan.md.
 
+## Changes (2026-11-08, SP-023)
+
+- §6 `Runwick.Dashboard` pin: Inertia.Net 1.5.3 → 1.7.0. 1.5.3 had one option set, version, root view and state store per app, so a dashboard could not be mounted inside a host that already uses Inertia. 1.7.0 adds named mounts (`AddInertia(name, ...)`, `UseInertia(name)`), and each dashboard mount is one of them. What 1.7.0 still leaves to Runwick is listed in [docs/reports/sp-023.md](../reports/sp-023.md).
+
 ## Changes (2026-10-31, SP-016)
 
 - Schedules (registration, materialization, misfire and catch-up, pause/resume, edits, manual triggers) are specified in [13-scheduler.md](13-scheduler.md), built from schema revision 6. §10 index gains 13.
@@ -136,7 +140,7 @@ All packages target `net10.0` only (no .NET 8/9, .NET Framework or .NET Standard
 | `Runwick.Sqlite` | SQLite provider and staging | `Runwick` | Microsoft.Data.Sqlite 10.0.14 | M4 |
 | `Runwick.Redis` | Redis provider | `Runwick` | StackExchange.Redis 3.4.20 | M4 |
 | `Runwick.AspNetCore` | Auth/policy adapters, management endpoints, antiforgery, HTTP mapping | `Runwick` | ASP.NET Core shared framework | M4 |
-| `Runwick.Dashboard` | Inertia server adapter, page projections, prebuilt frontend assets | `Runwick.AspNetCore` | Inertia.Net 1.5.3 (SPA mode, no SSR); bundled Inertia React/core 3.9.1, React 19.3.1 | M4 |
+| `Runwick.Dashboard` | Inertia server adapter, page projections, prebuilt frontend assets | `Runwick.AspNetCore` | Inertia.Net 1.7.0 (one named mount per dashboard mount; SPA mode, no SSR); bundled Inertia React/core 3.9.1, React 19.3.1 | M4 |
 | `Runwick.Outbox` | Optional relay and delivery contracts | `Runwick` | — | M3 |
 | `Runwick.Outbox.Postgres` | Source staging/relay persistence | `Runwick.Outbox` | Npgsql | M3 |
 | `Runwick.Outbox.Sqlite` | Source staging/relay persistence | `Runwick.Outbox` | Microsoft.Data.Sqlite | M3 |

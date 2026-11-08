@@ -11,27 +11,26 @@ builder.Services.AddInertia(o =>
     o.Version = "host-1";
     o.Share("hostUser", _ => "host-secret-user");
 });
-builder.Services.AddRunwickDashboardSpike();
 builder.Services.AddAuthentication().AddScheme<SpikeBasicOptions, SpikeBasicHandler>("runwick-basic", o =>
 {
     o.Users["alice"] = ("pw-alice", ["view", "operate"]);
     o.Users["victor"] = ("pw-victor", ["view"]);
 });
-
-var app = builder.Build();
-app.UsePathBase("/ops");
 var data = new InMemoryDashboardSpikeData()
     .Add("1", "</script><script>alert(1)</script>\"'&<img src=x onerror=alert(2)>", "card=4111-1111")
     .Add("2", "nightly-report", "{\"to\":\"ops@example.com\"}");
-app.UseRunwickDashboardSpike("/runwick", o =>
+builder.Services.AddRunwickDashboardSpike("ops", o =>
 {
-    o.MountId = "ops";
     o.Title = "Runwick (spike)";
     o.Data = data;
     o.ViewPolicy = new AuthorizationPolicyBuilder("runwick-basic").RequireClaim("runwick:permission", "view", "operate").Build();
     o.OperatePolicy = new AuthorizationPolicyBuilder("runwick-basic").RequireClaim("runwick:permission", "operate").Build();
     o.Assets = args.Contains("v2") ? Rebuilt(DashboardAssets.Embedded) : DashboardAssets.Embedded;
 });
+
+var app = builder.Build();
+app.UsePathBase("/ops");
+app.UseRunwickDashboardSpike("/runwick", "ops");
 app.UseInertia(); // after the mount: the host's version check and state store never see dashboard requests
 app.MapGet("/", () => Inertia.Net.Inertia.Render("Home", new InertiaProps { ["greeting"] = "host page" }));
 app.MapGet("/healthz", () => "ok");

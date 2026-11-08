@@ -1,10 +1,13 @@
 using System.Net;
+using Inertia.Net;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using static Runwick.Dashboard.Spike.Tests.Support;
 
 namespace Runwick.Dashboard.Spike.Tests;
@@ -17,10 +20,10 @@ public sealed class DeliveryTests
     [Trait("Case", "DASH-05")]
     public async Task PathBase_reaches_asset_urls_page_urls_cookie_paths_and_redirects()
     {
-        await using var app = await StartAsync(b => { b.Services.AddRunwickDashboardSpike(); b.Services.AddBasic("basic"); }, a =>
+        await using var app = await StartAsync(b => { b.Services.AddBasic("basic"); b.Services.AddDashboard("default", "basic", Data()); }, a =>
         {
             a.UsePathBase("/ops");
-            a.UseRunwickDashboardSpike("/runwick", o => o.Use("default", "basic", Data()));
+            a.UseRunwickDashboardSpike("/runwick", "default");
         });
         var browser = app.Browser("alice");
         var (response, body, page) = await browser.LoadAsync("/ops/runwick/jobs/1?tab=a%20b");
@@ -43,8 +46,8 @@ public sealed class DeliveryTests
         await using var app = await StartAsync(
             b =>
             {
-                b.Services.AddRunwickDashboardSpike();
                 b.Services.AddBasic("basic");
+                b.Services.AddDashboard("default", "basic", Data());
                 b.Services.Configure<ForwardedHeadersOptions>(o =>
                 {
                     o.ForwardedHeaders = ForwardedHeaders.XForwardedPrefix | ForwardedHeaders.XForwardedProto;
@@ -54,7 +57,7 @@ public sealed class DeliveryTests
             a =>
             {
                 a.UseForwardedHeaders();
-                a.UseRunwickDashboardSpike("/runwick", o => o.Use("default", "basic", Data()));
+                a.UseRunwickDashboardSpike("/runwick", "default");
             });
 
         var context = await app.GetTestServer().SendAsync(c =>
@@ -66,7 +69,8 @@ public sealed class DeliveryTests
         }, TestContext.Current.CancellationToken);
         var body = await new StreamReader(context.Response.Body).ReadToEndAsync(TestContext.Current.CancellationToken);
         Assert.Equal(200, context.Response.StatusCode);
-        Assert.Contains($"\"base\":\"{expectedBase}\"", body, StringComparison.Ordinal);
+        var page = System.Text.Json.JsonDocument.Parse(PageScript().Match(body).Groups[1].Value).RootElement;
+        Assert.Equal(expectedBase, page.GetProperty("props").GetProperty("base").GetString());
     }
 
     [Fact]
@@ -74,8 +78,8 @@ public sealed class DeliveryTests
     public async Task Redirects_stay_inside_the_mount_whatever_the_id()
     {
         var data = new InMemoryDashboardSpikeData().Add("\\\\evil.example", "odd", "p"); // "\\evil.example": browsers read /\\host as //host
-        await using var app = await StartAsync(b => { b.Services.AddRunwickDashboardSpike(); b.Services.AddBasic("basic"); },
-            a => a.UseRunwickDashboardSpike("/runwick", o => o.Use("default", "basic", data)));
+        await using var app = await StartAsync(b => { b.Services.AddBasic("basic"); b.Services.AddDashboard("default", "basic", data); },
+            a => a.UseRunwickDashboardSpike("/runwick", "default"));
         var browser = app.Browser("alice");
         await browser.LoadAsync("/runwick");
         var retry = await browser.PostAsync("/runwick/jobs/%5C%5Cevil.example/retry", 1);
@@ -90,14 +94,14 @@ public sealed class DeliveryTests
         var old = DashboardAssets.Embedded;
         var rebuilt = Rebuild(old);
         Assert.NotEqual(old.Version, rebuilt.Version);
-        await using var app = await StartAsync(b => { b.Services.AddRunwickDashboardSpike(); b.Services.AddBasic("basic"); },
-            a => a.UseRunwickDashboardSpike("/runwick", o => { o.Use("default", "basic", Data()); o.Assets = rebuilt; }));
+        await using var app = await StartAsync(b => { b.Services.AddBasic("basic"); b.Services.AddDashboard("default", "basic", Data(), assets: rebuilt); },
+            a => a.UseRunwickDashboardSpike("/runwick", "default"));
 
         var browser = app.Browser("alice");
         browser.Version = old.Version; // a tab loaded before the deploy
         var visit = await browser.VisitAsync("/runwick/jobs/1?x=1");
         Assert.Equal(HttpStatusCode.Conflict, visit.StatusCode);
-        Assert.Equal("/runwick/jobs/1?x=1", visit.Header("X-Inertia-Location"));
+        Assert.Equal("http://localhost/runwick/jobs/1?x=1", visit.Header("X-Inertia-Location")); // the adapter sends the absolute URL
         Assert.Empty(await visit.Content.ReadAsByteArrayAsync());
 
         Assert.Equal(HttpStatusCode.NotFound, (await browser.SendAsync(HttpMethod.Get, "/runwick/" + old.Entry, inertia: false)).StatusCode);
@@ -112,8 +116,8 @@ public sealed class DeliveryTests
     public async Task A_mutation_sent_with_a_stale_version_runs_once_and_is_not_replayed_by_the_reload()
     {
         var data = Data();
-        await using var app = await StartAsync(b => { b.Services.AddRunwickDashboardSpike(); b.Services.AddBasic("basic"); },
-            a => a.UseRunwickDashboardSpike("/runwick", o => { o.Use("default", "basic", data); o.Assets = Rebuild(DashboardAssets.Embedded); }));
+        await using var app = await StartAsync(b => { b.Services.AddBasic("basic"); b.Services.AddDashboard("default", "basic", data, assets: Rebuild(DashboardAssets.Embedded)); },
+            a => a.UseRunwickDashboardSpike("/runwick", "default"));
         var browser = app.Browser("alice");
         await browser.LoadAsync("/runwick/jobs/1");
         browser.Version = DashboardAssets.Embedded.Version;
@@ -134,8 +138,8 @@ public sealed class DeliveryTests
     {
         var data = Data();
         data.ForcedOutcome = forced;
-        await using var app = await StartAsync(b => { b.Services.AddRunwickDashboardSpike(); b.Services.AddBasic("basic"); },
-            a => a.UseRunwickDashboardSpike("/runwick", o => o.Use("default", "basic", data)));
+        await using var app = await StartAsync(b => { b.Services.AddBasic("basic"); b.Services.AddDashboard("default", "basic", data); },
+            a => a.UseRunwickDashboardSpike("/runwick", "default"));
         var browser = app.Browser("alice");
         await browser.LoadAsync("/runwick/jobs/1");
         var response = await browser.PostAsync("/runwick/jobs/1/retry", 1, "cmd-42");
@@ -154,55 +158,57 @@ public sealed class DeliveryTests
     [Trait("Case", "DASH-07")]
     public async Task Standalone_host_serves_the_dashboard_with_no_workers_or_hosted_services()
     {
-        await using var app = await StartAsync(b => { b.Services.AddRunwickDashboardSpike(); b.Services.AddBasic("basic"); },
-            a => a.UseRunwickDashboardSpike("/runwick", o => o.Use("default", "basic", Data())));
+        await using var app = await StartAsync(b => { b.Services.AddBasic("basic"); b.Services.AddDashboard("default", "basic", Data()); },
+            a => a.UseRunwickDashboardSpike("/runwick", "default"));
         Assert.Equal(HttpStatusCode.OK, (await app.Browser("alice").LoadAsync("/runwick")).Response.StatusCode);
         Assert.DoesNotContain(app.Services.GetServices<IHostedService>(), s => s.GetType().Assembly.GetName().Name!.StartsWith("Runwick", StringComparison.Ordinal));
     }
 
     [Fact]
     [Trait("Case", "DASH-07")]
-    public void Embedding_adds_no_global_behaviour()
+    public async Task Embedding_adds_no_startup_filter_and_only_idle_framework_hosted_services()
     {
         var builder = WebApplication.CreateSlimBuilder();
         var before = builder.Services.ToList();
-        builder.Services.AddRunwickDashboardSpike();
-        var descriptors = builder.Services.Except(before).ToList();
-        var added = descriptors.Select(d => d.ServiceType).ToList();
+        builder.Services.AddBasic("basic");
+        builder.Services.AddDashboard("default", "basic", Data());
+        var added = builder.Services.Except(before).ToList();
+        Assert.DoesNotContain(added, d => d.ServiceType == typeof(IStartupFilter));
 
-        // A host without Data Protection gets its key-ring hosted service; that is the only hosted service added.
-        Assert.All(descriptors.Where(d => d.ServiceType == typeof(IHostedService)), d =>
-            Assert.StartsWith("Microsoft.AspNetCore.DataProtection", d.ImplementationType!.Namespace, StringComparison.Ordinal));
-        added.RemoveAll(t => t == typeof(IHostedService));
-        Assert.All(added, type => Assert.True(
-            type.Namespace!.StartsWith("Microsoft.AspNetCore.DataProtection", StringComparison.Ordinal)
-            || type.Namespace.StartsWith("Microsoft.AspNetCore.Authorization", StringComparison.Ordinal)
-            || type.Namespace.StartsWith("Microsoft.AspNetCore.Cryptography", StringComparison.Ordinal)
-            || type.Namespace.StartsWith("Microsoft.Extensions.Options", StringComparison.Ordinal),
-            $"unexpected global registration {type}"));
-        Assert.DoesNotContain(added, t => t == typeof(IStartupFilter));
+        // Inertia.Net's own (refresh queue; SSR and TypeScript writers that idle without configuration) and Data Protection's key ring.
+        await using var app = builder.Build();
+        var hosted = app.Services.GetServices<IHostedService>().Select(s => s.GetType().Namespace!).ToList();
+        Assert.All(hosted, ns => Assert.True(ns.StartsWith("Inertia.Net", StringComparison.Ordinal)
+            || ns.StartsWith("Microsoft.AspNetCore.DataProtection", StringComparison.Ordinal)
+            || ns.StartsWith("Microsoft.AspNetCore.Hosting", StringComparison.Ordinal), ns)); // the web host itself
+        Assert.Null(app.Services.GetRequiredService<IOptions<InertiaOptions>>().Value.Version); // the host's default mount untouched
     }
 
     [Theory]
     [Trait("Case", "DASH-07")]
-    [InlineData("/", "default", true)]
-    [InlineData("/Runwick", "default", true)]
-    [InlineData("/runwick/", "default", true)]
-    [InlineData("/runwick", "Bad Id", true)]
-    [InlineData("/runwick", "default", false)]
-    public void Invalid_or_unauthorized_mounts_are_refused_at_startup(string path, string mountId, bool withPolicies)
+    [InlineData("Bad Id", true)]
+    [InlineData("default", false)]
+    public void Invalid_or_unauthorized_mounts_are_refused_at_registration(string mountId, bool withPolicies) =>
+        Assert.ThrowsAny<Exception>(() => new ServiceCollection().AddRunwickDashboardSpike(mountId, o =>
+        {
+            o.Data = Data();
+            o.ViewPolicy = withPolicies ? new AuthorizationPolicyBuilder("basic").RequireAuthenticatedUser().Build() : null;
+            o.OperatePolicy = o.ViewPolicy;
+        }));
+
+    [Theory]
+    [Trait("Case", "DASH-07")]
+    [InlineData("/", "default")]
+    [InlineData("/Runwick", "default")]
+    [InlineData("/runwick/", "default")]
+    [InlineData("/runwick", "unregistered")]
+    public void Invalid_paths_and_unknown_mounts_are_refused_when_mapping(string path, string mountId)
     {
         var builder = WebApplication.CreateSlimBuilder();
-        builder.Services.AddRunwickDashboardSpike();
+        builder.Services.AddBasic("basic");
+        builder.Services.AddDashboard("default", "basic", Data());
         var app = builder.Build();
-        Assert.ThrowsAny<Exception>(() => app.UseRunwickDashboardSpike(path, o =>
-        {
-            o.Use(mountId, "basic", Data());
-            if (!withPolicies)
-            {
-                o.ViewPolicy = null;
-            }
-        }));
+        Assert.ThrowsAny<Exception>(() => app.UseRunwickDashboardSpike(path, mountId));
     }
 
     /// <summary>The same files with the entry changed, as a rebuild produces: new hash, new file name, new version.</summary>

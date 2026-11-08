@@ -51,14 +51,17 @@ internal static partial class Support
     public static void AddBasicOnly(this IServiceCollection services, string scheme, string user) =>
         services.AddAuthentication().AddScheme<SpikeBasicOptions, SpikeBasicHandler>(scheme, o => o.Users[user] = ("pw-" + user, ["view", "operate"]));
 
-    public static void Use(this DashboardMountOptions options, string mountId, string scheme, IDashboardSpikeData data, string? title = null)
-    {
-        options.MountId = mountId;
-        options.Title = title ?? mountId;
-        options.Data = data;
-        options.ViewPolicy = new AuthorizationPolicyBuilder(scheme).RequireClaim("runwick:permission", "view", "operate").Build();
-        options.OperatePolicy = new AuthorizationPolicyBuilder(scheme).RequireClaim("runwick:permission", "operate").Build();
-    }
+    /// <summary>Registers a mount whose view/operate policies use <paramref name="scheme"/>.</summary>
+    public static IServiceCollection AddDashboard(this IServiceCollection services, string mountId, string scheme, IDashboardSpikeData data,
+        string? title = null, DashboardAssets? assets = null) =>
+        services.AddRunwickDashboardSpike(mountId, o =>
+        {
+            o.Title = title ?? mountId;
+            o.Data = data;
+            o.ViewPolicy = new AuthorizationPolicyBuilder(scheme).RequireClaim("runwick:permission", "view", "operate").Build();
+            o.OperatePolicy = new AuthorizationPolicyBuilder(scheme).RequireClaim("runwick:permission", "operate").Build();
+            o.Assets = assets ?? o.Assets;
+        });
 
     public static InMemoryDashboardSpikeData Data(string name = "alpha") => new InMemoryDashboardSpikeData().Add("1", name, "secret-payload-" + name);
 

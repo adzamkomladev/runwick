@@ -4,9 +4,9 @@
     "net10.0": {
       "Inertia.Net": {
         "type": "Direct",
-        "requested": "[1.5.3, )",
-        "resolved": "1.5.3",
-        "contentHash": "GhtsmKYRNU8+jsKtjJ0cE1klJu1U7Y/twSeXq36+ZJH++LlcHwKUIkm8EqcXYaLEKTezu+ogeiHB/Y4u82psRw=="
+        "requested": "[1.7.0, )",
+        "resolved": "1.7.0",
+        "contentHash": "oSlTk81hVNyyrTUQ18fCIiCqYL/kVio2REbdmZeiZCCvqEU7QXha4bc+5akPsqkodkkfpTkQ8Vh9fluEkom5nw=="
       },
       "Microsoft.AspNetCore.TestHost": {
         "type": "Direct",
@@ -168,7 +168,10 @@
         }
       },
       "runwick.dashboard.spike": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "Inertia.Net": "[1.7.0, )"
+        }
       },
       "xunit.v3.extensibility.core": {
         "type": "CentralTransitive",

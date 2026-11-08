@@ -6,9 +6,6 @@ namespace Runwick.Dashboard.Spike;
 /// <summary>One dashboard mount. Nothing here is shared with the host or with another mount.</summary>
 public sealed class DashboardMountOptions
 {
-    /// <summary>Names the mount's cookie and token purpose: lower-case letters, digits and '-', at most 32.</summary>
-    public string MountId { get; set; } = "default";
-
     /// <summary>The page title.</summary>
     public string Title { get; set; } = "Runwick";
 

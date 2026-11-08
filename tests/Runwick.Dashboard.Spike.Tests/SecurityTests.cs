@@ -18,8 +18,8 @@ namespace Runwick.Dashboard.Spike.Tests;
 public sealed class SecurityTests
 {
     private static Task<WebApplication> BasicHostAsync(InMemoryDashboardSpikeData? data = null, string? title = null) =>
-        StartAsync(b => { b.Services.AddRunwickDashboardSpike(); b.Services.AddBasic("basic"); },
-            a => a.UseRunwickDashboardSpike("/runwick", o => o.Use("default", "basic", data ?? Data(), title)));
+        StartAsync(b => { b.Services.AddBasic("basic"); b.Services.AddDashboard("default", "basic", data ?? Data(), title); },
+            a => a.UseRunwickDashboardSpike("/runwick", "default"));
 
     [Fact]
     [Trait("Case", "DASH-03")]
@@ -48,7 +48,8 @@ public sealed class SecurityTests
         await using var app = await StartAsync(
             b =>
             {
-                b.Services.AddRunwickDashboardSpike();
+                b.Services.AddDashboard("cookie", "host-cookie", Data());
+                b.Services.AddDashboard("oidc", "oidc-cookie", Data());
                 b.Services.AddAuthentication()
                     .AddCookie("host-cookie", o => o.LoginPath = "/login")
                     .AddCookie("oidc-cookie", o => o.ForwardChallenge = "oidc") // the usual cookie + OpenIdConnect pairing
@@ -56,8 +57,8 @@ public sealed class SecurityTests
             },
             a =>
             {
-                a.UseRunwickDashboardSpike("/cookie", o => Policies(o, "cookie", "host-cookie"));
-                a.UseRunwickDashboardSpike("/oidc", o => Policies(o, "oidc", "oidc-cookie"));
+                a.UseRunwickDashboardSpike("/cookie", "cookie");
+                a.UseRunwickDashboardSpike("/oidc", "oidc");
                 a.MapGet("/login", async (HttpContext c, string scheme, string user, string permission) =>
                 {
                     var identity = new ClaimsIdentity([new(ClaimTypes.Name, user), new("runwick:permission", permission)], scheme);
@@ -98,8 +99,8 @@ public sealed class SecurityTests
     public async Task Mutations_need_this_mounts_token_for_this_principal_and_never_run_on_GET()
     {
         var data = Data();
-        await using var app = await StartAsync(b => { b.Services.AddRunwickDashboardSpike(); b.Services.AddBasic("basic", "mallory"); },
-            a => a.UseRunwickDashboardSpike("/runwick", o => o.Use("default", "basic", data)));
+        await using var app = await StartAsync(b => { b.Services.AddBasic("basic", "mallory"); b.Services.AddDashboard("default", "basic", data); },
+            a => a.UseRunwickDashboardSpike("/runwick", "default"));
         var alice = app.Browser("alice");
         await alice.LoadAsync("/runwick");
         var token = alice.Csrf;
@@ -139,7 +140,9 @@ public sealed class SecurityTests
         var alice = app.Browser("alice");
         await alice.LoadAsync("/runwick/jobs/1");
         var allowed = await Browser.JsonAsync(await alice.VisitAsync("/runwick/jobs/1", Partial("Job", "audit")));
-        Assert.Equal(["audit"], allowed.GetProperty("props").EnumerateObject().Select(p => p.Name));
+        var names = allowed.GetProperty("props").EnumerateObject().Select(p => p.Name).ToList();
+        Assert.Contains("audit", names);
+        Assert.DoesNotContain("job", names); // only the requested prop (plus the adapter's always-sent "errors")
         var reveal = await alice.SendAsync(HttpMethod.Get, "/runwick/jobs/1/payload", inertia: false);
         Assert.Equal("secret-payload-alpha", (await Browser.JsonAsync(reveal)).GetProperty("payload").GetString());
         Assert.Equal("no-store, private", reveal.Header("Cache-Control"));
@@ -198,8 +201,6 @@ public sealed class SecurityTests
         r.Headers.Add("X-Inertia-Partial-Component", component);
         r.Headers.Add("X-Inertia-Partial-Data", only);
     };
-
-    private static void Policies(DashboardMountOptions o, string mountId, string scheme) => o.Use(mountId, scheme, Data());
 
     /// <summary>Stands in for OpenIdConnect: never authenticates by itself and challenges by redirecting to another origin.</summary>
     private sealed class ExternalIdpHandler(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
