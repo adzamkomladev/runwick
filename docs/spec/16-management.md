@@ -31,13 +31,16 @@ Not in SP-020: retention cleanup and the detail-expired projection (SP-021), the
   - **MGMT-05 dropped reply** uses the harness fault point `AfterCommitBeforeReply` with `DropReply` rather than the TCP fault proxy: the session's own resend resolves it, and a client resend replays.
   - **MGMT-12 schedule controls** act on a schedule registered by a separate scheduler-side client, since the management host runs no scheduler.
 
+- (2026-11-08, SP-032 spec) New read `ListEventsAsync` and route `GET {prefix}/v1/events?after&limit` over `EventsSince/1` (19 §6): needs `Jobs.Read` application-wide (queue-scoped → 403); `actorId` only with `Audit.Read`; plain unsigned position cursor `"<txId>.<eventId>"` (malformed → 400 `invalid_cursor`); limit 1–1,000, default 100; no schema change. The CLI (19) is the first client.
+- (2026-11-08, SP-032 spec, user decision) **Audited dispatch** (19 §6.2): permission `Jobs.Dispatch` (queue-scopable, in no preset), session `DispatchAsync`, route `POST {prefix}/v1/jobs:dispatch` with a 1 MiB + 16 KiB body limit for that route only, store operation `ManagementDispatch/1` (dispatch core + `management_audit` row `Dispatch` in one transaction) at PostgreSQL schema revision 17, codes `job_not_registered` (404), `payload_invalid`, `payload_version_unsupported` (400), `admission_closed` (503). Case MGMT-13.
+
 ## 1. Caller, permissions and scope
 
 ```csharp
 public static class ManagementPermissions
 {
     public const string JobsRead = "Jobs.Read", JobsReadPayload = "Jobs.ReadPayload", JobsReadError = "Jobs.ReadError",
-        JobsCancel = "Jobs.Cancel", JobsRetry = "Jobs.Retry", JobsRerun = "Jobs.Rerun",
+        JobsCancel = "Jobs.Cancel", JobsRetry = "Jobs.Retry", JobsRerun = "Jobs.Rerun", JobsDispatch = "Jobs.Dispatch", // Dispatch: SP-032
         QueuesRead = "Queues.Read", QueuesControl = "Queues.Control",
         SchedulesRead = "Schedules.Read", SchedulesTrigger = "Schedules.Trigger", SchedulesControl = "Schedules.Control", SchedulesEdit = "Schedules.Edit",
         CapacityRead = "Capacity.Read", CapacityEdit = "Capacity.Edit",
@@ -53,7 +56,7 @@ Rules:
 
 - The application is bound by configuration (the runtime's application). Nothing in a request selects it.
 - The actor (subject, display, scheme) comes from the authenticated principal through the host's mapping. Request bodies, headers and payloads never supply actor or grant facts.
-- Presets: **Viewer** = every `*.Read` except payload, error and audit. **Operator** = Viewer + `Jobs.Cancel/Retry/Rerun`, `Queues.Control`, `Schedules.Trigger/Control`. **Administrator** = Operator + `Schedules.Edit`, `Capacity.Edit`, `Retention.Manage`. `Jobs.ReadPayload`, `Jobs.ReadError` and `Audit.Read` are never in a preset; they are granted explicitly.
+- Presets: **Viewer** = every `*.Read` except payload, error and audit. **Operator** = Viewer + `Jobs.Cancel/Retry/Rerun`, `Queues.Control`, `Schedules.Trigger/Control`. **Administrator** = Operator + `Schedules.Edit`, `Capacity.Edit`, `Retention.Manage`. `Jobs.ReadPayload`, `Jobs.ReadError`, `Audit.Read` and `Jobs.Dispatch` (SP-032) are never in a preset; they are granted explicitly.
 - A queue-scoped grant covers jobs in that queue and that queue's control. Scopes, schedules, workers and settings are application-wide: a grant for them needs `Queues = null`. A queue-scoped grant for those permissions is rejected at startup (configuration error), not silently widened.
 - `RevalidateSchedule` needs `Schedules.Edit`.
 
@@ -94,6 +97,7 @@ One store transaction (`RecordDisclosure/1`): insert an audit row (`operation = 
 | Mutation | Permission | Body |
 |---|---|---|
 | Cancel / Retry / Rerun job | `Jobs.Cancel` / `Jobs.Retry` / `Jobs.Rerun` (job's queue) | `commandId`, `expectedGeneration`, `expectedRevision`, `reason?` |
+| Dispatch by job name (SP-032, 19 §6.2) | `Jobs.Dispatch` (resulting queue) | `commandId`, `jobName`, `payload`, `payloadVersion?`, `queue?`, `priority?`, `notBefore?`, `reason?` |
 | Bulk cancel | `Jobs.Cancel` per item | `items[]` (≤ 100: `jobId`, `commandId`, `expectedGeneration`, `expectedRevision`), `reason?` |
 | Pause / resume queue | `Queues.Control` (that queue) | `commandId`, `expectedRevision`, `reason?` |
 | Set scope capacity | `Capacity.Edit` | `commandId`, `capacity`, `expectedPolicyRevision`, `reason?` |
@@ -135,7 +139,7 @@ app.MapRunwickManagement("/runwick/api");               // endpoints under {pref
 - The endpoint group requires an authenticated principal from the listed schemes only; it does not change the host's default scheme, challenge or other routes (MGMT-07).
 - **Antiforgery:** every mutation validates the ASP.NET Core antiforgery request token (header `X-Runwick-Antiforgery`) unless the group was mapped with `.ForMachineClients()`. A machine-client group accepts only schemes that are not cookie-based and not Basic; mapping it with such a scheme fails at startup. `X-Inertia` or any other header never skips the check. `GET {prefix}/v1/antiforgery` returns a token for an authenticated caller. Mutations are never GET.
 - Basic (`AddRunwickBasic`): needs an explicit verifier, no default credentials; rejects non-HTTPS requests; failures are limited to 10/min per bucket (source address + user name) and answer 401 with `WWW-Authenticate: Basic`.
-- Requests: JSON only (`application/json`, else 415), body ≤ 64 KiB (413). Responses: JSON (camelCase, `runwick.json`-independent), `Cache-Control: no-store, private`, `X-Content-Type-Options: nosniff`.
+- Requests: JSON only (`application/json`, else 415), body ≤ 64 KiB (413), except `jobs:dispatch` (1 MiB + 16 KiB, SP-032). Responses: JSON (camelCase, `runwick.json`-independent), `Cache-Control: no-store, private`, `X-Content-Type-Options: nosniff`.
 - Limits (process-local, 06): per principal 120 reads, 30 mutations and 10 reveals per minute, burst a quarter of that; at most 10,000 tracked principals, then a shared restricted bucket; 16 active requests per instance with 32 waiting up to 1 s. Over a limit: 429 with `Retry-After`, or 503 `busy` for the instance limit.
 - Errors use one body shape: `{ "code": "...", "message": "...", "commandId"?, "actualRevision"? }`. No exception text, stack or request echo.
 - Forwarded headers are the host's choice (`UseForwardedHeaders` with known proxies). Runwick reads only `HttpContext.Request.IsHttps`, `PathBase` and the principal; redirects are never issued by the API.
@@ -154,6 +158,8 @@ Route table (all under `{prefix}/v1`):
 | `GET schedules`; `POST schedules/{key}/pause`, `…/resume`, `…/trigger`, `…/revalidate` | ListSchedules; schedule controls |
 | `GET audit?targetKind&targetId&from&to&limit&cursor` | ListAudit |
 | `GET settings` | GetSettings |
+| `GET events?after&limit` | ListEvents (added by SP-032, 19 §6.1) |
+| `POST jobs:dispatch` | Dispatch (added by SP-032, 19 §6.2; body limit 1 MiB + 16 KiB) |
 | `GET antiforgery` | token |
 
 ## 6. Store additions (PostgreSQL, schema revision 15)
@@ -179,5 +185,6 @@ Test project `tests/Runwick.AspNetCore.Tests` (TestServer over the real PostgreS
 | MGMT-09 | Audit insert made to fail (fault point `AfterMutation` raising in the audit insert): the control returns 503/not applied and the job is unchanged; a reveal returns no data |
 | MGMT-10 | 200-row page cap, 31-day range cap, 101-item bulk is 400, a burst over the read/mutation/reveal rate gives 429 with `Retry-After`, the instance limit gives 503 `busy`; over 10,000 principals uses the shared bucket and the map stays ≤ 10,000 |
 | MGMT-12 (part) | A standalone host (`AddRunwick` + PostgreSQL + `MapRunwickManagement`, no `AddWorker`/`AddScheduler`) serves every read and control; no worker presence row is written |
+| MGMT-13 (SP-032) | `jobs:dispatch`: one job, one `Dispatch` audit row and one receipt per command; replay returns `replayed` with no second row; audit insert made to fail rolls the job back; unregistered name 404, unbindable payload 400 with no payload text in the body, 64 KiB < body ≤ 1 MiB accepted on this route only; queue-scoped grant without the target queue 403; no preset grants it |
 
 MGMT-06, MGMT-11 and the dashboard half of MGMT-12 are SP-021/SP-024.

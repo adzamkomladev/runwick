@@ -16,6 +16,8 @@ Not in SP-021: an explicit "delete this now" request, legal hold, per-queue poli
 
 ## Changes
 
+- (2026-11-08, user decision, adzamkomla) Defaults accepted as written: the cleanup pace stays at the 06 values (tunable, with the "behind" indicator), and a purged job leaves no record (lookup is 404). Schema revision fixed at 16; SP-032's `ManagementDispatch/1` takes 17.
+
 - (2026-11-08) New document.
 - (2026-11-08) Amends the 03 §4 operation catalog: `CleanupBatch/1` writes **no receipt** (see §4.1); `EditRetentionPolicy/1` is a new administrative operation in class `durable`.
 
@@ -302,7 +304,7 @@ Cleanup then takes only locks that already exist, in their ranks: outbox identit
 
 ## 5. Store additions (PostgreSQL, next schema revision)
 
-Migration `0016_retention.sql` (revision 16 in this file; renumbered in merge order if another migration lands first):
+Migration `0016_retention.sql` (schema revision 16):
 
 - Tables `retention_policies` (§2.1) and `cleanup_progress` (§4.2), owned by the runtime role with `SELECT, INSERT, UPDATE` (no `DELETE`).
 - Indexes:

@@ -5,6 +5,10 @@
 ## Changes (2026-11-08, SP-023)
 
 - §6 `Runwick.Dashboard` pin: Inertia.Net 1.5.3 → 1.7.0. 1.5.3 had one option set, version, root view and state store per app, so a dashboard could not be mounted inside a host that already uses Inertia. 1.7.0 adds named mounts (`AddInertia(name, ...)`, `UseInertia(name)`), and each dashboard mount is one of them. What 1.7.0 still leaves to Runwick is listed in [docs/reports/sp-023.md](../reports/sp-023.md).
+## Changes (2026-11-08, SP-019 and SP-032 specs)
+
+- The SQLite store is specified in [20-sqlite.md](20-sqlite.md) (own schema revision line, starting at 1) and the CLI in [19-cli.md](19-cli.md). §10 index gains 19 and 20.
+- §6: `Runwick.Cli` may reference `Runwick`, `Runwick.Postgres` and `Runwick.Sqlite` (the providers only for `migrate`/`doctor`, 19 §1); it still has no external dependency.
 
 ## Changes (2026-10-31, SP-016)
 
@@ -145,7 +149,7 @@ All packages target `net10.0` only (no .NET 8/9, .NET Framework or .NET Standard
 | `Runwick.Outbox.Postgres` | Source staging/relay persistence | `Runwick.Outbox` | Npgsql | M3 |
 | `Runwick.Outbox.Sqlite` | Source staging/relay persistence | `Runwick.Outbox` | Microsoft.Data.Sqlite | M3 |
 | `Runwick.OpenTelemetry` | `AddRunwickInstrumentation()`, views, cardinality limits | `Runwick` | OpenTelemetry SDK | M4 |
-| `Runwick.Cli` | `dotnet tool` + single-file CLI over the public management API | (management API client) | — | M4 |
+| `Runwick.Cli` | `dotnet tool` + single-file CLI over the public management API (19) | `Runwick`; `Runwick.Postgres`, `Runwick.Sqlite` for `migrate`/`doctor` only | — | M4 |
 | `Runwick.Cloud` | Hosted-store client driver | `Runwick` | gRPC client | v1.x |
 
 Dependency rules (enforced by SP-002 packed-graph inspection, DEP-01):
@@ -234,5 +238,7 @@ These are invariants for code, API results, logs, telemetry and documentation. A
 | [16-management.md](16-management.md) | M4 SP-020: `IManagementSession`, permissions and scope, bounded reads and signed cursors, reveal with disclosure audit, client command IDs, `Runwick.AspNetCore` endpoints, auth, antiforgery, limits, MGMT cases | management-and-dashboard, management-retention-defaults, 08, 13 |
 | [17-retention.md](17-retention.md) | M4 SP-021: record classes and horizons, retention policy and `EditRetentionPolicy/1`, detail expiry then job purge, dependency guards (receipts, keys, grants, outbox, fences), resumable bounded cleanup loop, progress and daily summaries, schema revision, RET-01/MGMT-11/OPS-02/04/05 | management-retention-defaults, management-and-dashboard §6, 03, 04, 08, 10, 13, 14, 16 |
 | [18-telemetry.md](18-telemetry.md) | M4 SP-022: `Runwick` ActivitySource/Meter, frozen span/instrument/log tables, attribute vocabulary and cardinality bound, local vs global metrics and staleness, redaction, per-role health, `Runwick.OpenTelemetry`, pinned messaging mapping, Grafana dashboard and alert rules, OBS cases | observability-and-operations, management-retention-defaults, 05, 09, 16, 17 |
+| [19-cli.md](19-cli.md) | M4 SP-032: `runwick` CLI over the management HTTP API; contexts and credentials; human, `--output json` and `--agent` envelopes; `--agent describe`; command IDs and resend; events endpoint; audited dispatch by job name (`ManagementDispatch/1`, next PostgreSQL revision); `migrate`/`doctor`; CLI cases | v1-delivery-plan SP-032, implementation-backlog §6b, commercial-strategy §4, 16 |
+| [20-sqlite.md](20-sqlite.md) | M4 SP-019: SQLite store: profile and topology checks, schema translation, `BEGIN IMMEDIATE` runner, executor threads, operations vs 04 including batched ReserveAndBegin/RenewMany/FinishMany, events, caller staging and completion, migrations, SQL cases | driver-capabilities §4, driver-contract-suite, provider-dependency-plan §5, 03, 04 |
 
 Test-case citations use `document:case` wherever an ID is ambiguous; `OBS-01` in particular exists in both the driver contract suite and the telemetry plan and is always cited with its document.

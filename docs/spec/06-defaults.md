@@ -4,6 +4,10 @@
 
 Every numeric default used by milestone M2 is in this file. Behavior that uses each value is specified in [05-worker-engine.md](05-worker-engine.md) (cited as `05 §n`) and the storage/protocol specs. A value listed here is the default; a host may change configurable values only within the startup inequalities of §3. Values marked *profile constant* are not host-configurable (raising them requires a new serializer profile/format version).
 
+## Changes (2026-11-08, SP-019 spec)
+
+The SQLite store's own numbers (writer busy timeout 2 s, reader threads 2, one writer thread, WAL size limit 64 MiB, migration lock wait 60 s) are in 20 §10. The call-class ceilings of §1.7 apply to it unchanged.
+
 ## Changes (2026-11-07, wider producer lane)
 
 More producer calls may reach the database at once, and an application that raises `ProducerOptions.MaxConcurrentCalls` now gets that many in the PostgreSQL store too (before, the store's producer lane stayed at 2 whatever the option said). Measured on the 20,000-job drain bench (4 callers): insert 9.6 s with lane 2, 6.6–7.4 s with a wider lane (trace-adding report, 2026-11-07). The default was first set to 4 and raised to 8 the same day at the owner's request.
