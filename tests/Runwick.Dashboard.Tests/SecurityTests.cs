@@ -197,13 +197,19 @@ public sealed class SecurityTests
         Assert.Equal("no-store, private", payload.Header("Cache-Control"));
     }
 
-    [Fact]
+    /// <summary>The store kinds this run covers (RUNWICK_TEST_STORES narrows it, as for the contract suite).</summary>
+    public static TheoryData<StoreKind> Kinds =>
+        [.. Enum.GetValues<StoreKind>().Where(k => Environment.GetEnvironmentVariable("RUNWICK_TEST_STORES") is not { Length: > 0 } only
+            || only.Split(',').Contains(k.ToString(), StringComparer.OrdinalIgnoreCase))];
+
+    [Theory]
+    [MemberData(nameof(Kinds))]
     [Trait("Case", "DASH-04")]
     [Trait("Case", "MGMT-06")]
-    public async Task Hostile_strings_are_text_everywhere_and_nothing_sensitive_reaches_props_or_logs()
+    public async Task Hostile_strings_are_text_everywhere_and_nothing_sensitive_reaches_props_or_logs(StoreKind kind)
     {
         var logs = new LogSink();
-        await using var f = await DriverFixture.StartAsync(Ns("dash04"));
+        await using var f = await DriverFixture.StartAsync(Ns("dash04"), kind);
         await using var h = await DashHost.StartAsync(f, services: b =>
         {
             b.Logging.AddProvider(logs);

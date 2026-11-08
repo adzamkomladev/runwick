@@ -112,6 +112,18 @@ internal sealed class DriverFixture : IAsyncDisposable
         _ => builder.UsePostgres(ClientConnectionString(identity)),
     };
 
+    /// <summary>Appends one autoscaler history row through the store, as the autoscaler would (11 §6); on any store kind.</summary>
+    internal async Task RecordScalingEventAsync(string pool, string reason, Guid? instance = null)
+    {
+        var c = await OpenClient().ConfigureAwait(false);
+        var written = await ((IScalingStore)c.Driver).RecordScalingEventAsync(Application,
+            new ScalingEventRecord(instance ?? Guid.Empty, pool, 1, 2, 2, null, reason, null, null), CancellationToken.None).ConfigureAwait(false);
+        if (!written)
+        {
+            throw new InvalidOperationException("The scaling event was not written.");
+        }
+    }
+
     /// <summary>Opens an in-process client over the real registry, dispatcher, store and SQL.</summary>
     public async Task<TestClient> OpenClient(string processIdentity = "local", Action<RunwickBuilder>? configure = null,
         string? application = null, TimeProvider? time = null, bool ensureReady = true)
