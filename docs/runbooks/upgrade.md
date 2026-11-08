@@ -62,7 +62,9 @@ Proof: transcript "interrupted first install" and "migrate again"; tests UPG-01 
 runwick store admission --provider postgres --connection-env RUNWICK_STORE --mode open
 ```
 
-Reopen **before** starting the new processes: a process that starts while its application is drained fails its startup handshake (`AdmissionClosed application_draining`), because registering its queues is a creation path. This was observed: the sample host exits at startup (transcript "while drained"). Between reopening and starting, nothing can run, and the old binary is already refused by the revision gate.
+The order is **migrate, reopen, start**. Reopen **before** starting the new processes: a process that starts while its application is drained is refused at startup, because registering its queues is a creation path. The refusal is a clear, retryable error (`AdmissionClosedException`: "Startup refused: the application's admission is closed (application_draining). Reopen it with 'runwick store admission --mode open', then start this process again."). A host that lets it escape from `StartAsync` stops with that message in its log; the sample scenario host catches it and exits with code 75 (retryable). Nothing was written, so reopening and starting again is all that is needed. Between reopening and starting, nothing can run, and the old binary is already refused by the revision gate.
+
+Proof: scenarios SCN-25, SCN-26, SCN-27 (`samples/run-scenarios.sh SCN-25 SCN-26 SCN-27`, PostgreSQL, SQLite, Redis): a process started while drained exits 75 with that message; after `--mode open` a new process starts and the running worker serves work again. The earlier transcript ("while drained") shows the old, unhandled crash.
 
 Proof: transcript "upgrade.md step 6"; UPG-04.
 

@@ -120,6 +120,13 @@ internal sealed class RunwickRuntime(JobRegistry registry, IRunwickStore store, 
     static async Task<T> Applied<T>(Task<StoreReply<T>> call) where T : class
     {
         var reply = await call.ConfigureAwait(false);
+        if (reply.Status == StoreStatus.AdmissionClosed)
+        {
+            // Retryable: not latched as a producer failure; reopen admission (store admission --mode open) and start again (23 §4 step 5).
+            throw new AdmissionClosedException(
+                $"Startup refused: the application's admission is closed ({reply.Error?.Code}). Reopen it with 'runwick store admission --mode open', then start this process again.");
+        }
+
         return reply.Status == StoreStatus.Applied && reply.Value is not null
             ? reply.Value
             : throw new StoreIncompatibleException($"Store handshake failed: {reply.Status} {reply.Error?.Code} {reply.Error?.Detail}");
