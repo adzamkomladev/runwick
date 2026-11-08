@@ -8,9 +8,9 @@ namespace Runwick.Management;
 /// <c>runwick.management.duration</c> by method name and bounded result; mutations get a <c>runwick.management.command</c>
 /// span under the caller's (ASP.NET Core request) activity. Bodies, reasons and actors never become attributes.
 /// </summary>
-internal sealed class MeteredManagementSession(IManagementSession inner) : IManagementSession
+internal sealed class MeteredManagementSession(IManagementSession inner, Microsoft.Extensions.Logging.ILogger? logger = null) : IManagementSession
 {
-    static async Task<TResult> Measure<TResult>(string operation, bool mutation, Func<Task<TResult>> call, Func<TResult, (string Result, bool Replayed)>? describe = null)
+    async Task<TResult> Measure<TResult>(string operation, bool mutation, Func<Task<TResult>> call, Func<TResult, (string Result, bool Replayed)>? describe = null)
     {
         var start = Stopwatch.GetTimestamp();
         using var span = mutation ? T.Span("runwick.management.command") : default;
@@ -39,6 +39,20 @@ internal sealed class MeteredManagementSession(IManagementSession inner) : IMana
                 _ => "error",
             };
             span.Activity?.SetTag("error.type", result).SetStatus(ActivityStatusCode.Error);
+            if (logger is not null)
+            {
+                switch (ex)
+                {
+                    // 1402: the target kind is the permission's area (e.g. Jobs, Queues), never the target's identity.
+                    case ManagementDeniedException d:
+                        Telemetry.RunwickLog.ManagementAccessDenied(logger, operation, d.Permission.Split('.')[0]);
+                        break;
+                    case ControlOutcomeUnknownException u:
+                        Telemetry.RunwickLog.ManagementOutcomeUnknown(logger, operation, u.CommandId);
+                        break;
+                }
+            }
+
             throw;
         }
         finally

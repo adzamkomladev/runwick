@@ -339,6 +339,11 @@ internal sealed class ManagementSession(
         var seed = await SeedAsync(commandId, Operations.AdministrativeLifetime, cancellationToken).ConfigureAwait(false);
         var r = await controls.SendAsync(Actor(caller, reason), a => new RetentionPolicyRequest(policy, expectedRevision, a), Retention.EditRetentionPolicyAsync,
             seed, cancellationToken).ConfigureAwait(false);
+        if (r.Value is { } edited && !r.Replayed)
+        {
+            Telemetry.RunwickLog.RetentionPolicyEdited(runtime.Logger, edited.Revision);
+        }
+
         return r.Value is { } v
             ? new RetentionPolicyResult(true, null, v.Revision, v.Policy, r.Replayed)
             : new RetentionPolicyResult(false, Map(r.Error?.Code), r.Error?.ActualRevision, null, false);
@@ -375,6 +380,11 @@ internal sealed class ManagementSession(
         {
             // Nothing is returned unless the audit row is known to be committed (MGMT-09).
             throw new StoreUnavailableException("The disclosure was not recorded.", ex);
+        }
+
+        if (reply.Value is { Status: "disclosed" })
+        {
+            Telemetry.RunwickLog.ManagementDisclosure(runtime.Logger, kind, jobId is null ? "attempt" : "job", (jobId ?? attemptId)!.Value, command.CommandId);
         }
 
         return reply.Value switch

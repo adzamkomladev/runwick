@@ -138,6 +138,7 @@ internal sealed class ReadinessCoordinator(WorkerEngine engine, IReadOnlyList<La
 internal sealed class PresenceLoop(WorkerEngine engine)
 {
     long _sequence;
+    long _consecutive;
 
     public long Publications;
 
@@ -159,6 +160,7 @@ internal sealed class PresenceLoop(WorkerEngine engine)
             await engine.CallAsync(engine.BackgroundIo, 0, engine.Options.ControlRequestTimeout,
                 t => engine.Store.PublishPresenceAsync(engine.Application, record, t), ct).ConfigureAwait(false);
             Failing = false;
+            _consecutive = 0;
             Interlocked.Increment(ref Publications);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
@@ -167,6 +169,8 @@ internal sealed class PresenceLoop(WorkerEngine engine)
             Failing = true;
             Interlocked.Increment(ref Failures);
             engine.Logger.LogDebug(ex, "Runwick presence publication failed.");
+            Telemetry.RunwickLog.PresencePublicationFailing(engine.Logger,
+                ex is StoreNotAppliedException n ? n.Code : ex is RunwickException r ? r.Code : ex.GetType().Name, ++_consecutive);
         }
     }
 }
@@ -228,6 +232,7 @@ internal sealed partial class WorkerEngine
         var result = await RecoverOnceAsync(lease).ConfigureAwait(false);
         span.Activity?.SetTag("runwick.result", result);
         Telemetry.Telemetry.Recoveries.Add(1, result);
+        Telemetry.RunwickLog.AttemptRecovered(Logger, lease.JobId, lease.AttemptId, result);
     }
 
     async Task<string> RecoverOnceAsync(ExpiredLease lease)

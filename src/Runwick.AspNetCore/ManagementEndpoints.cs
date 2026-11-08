@@ -167,6 +167,8 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
             if (limiter.TryTake(actor.Scheme + "\n" + actor.Subject, kind) is { } retryAfter)
             {
                 ctx.Response.Headers.RetryAfter = retryAfter.ToString(CultureInfo.InvariantCulture);
+                Runwick.Telemetry.RunwickLog.ManagementRateLimited(
+                    ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Runwick.Management"), kind.ToString());
                 return Error(429, "rate_limited", "Too many requests.");
             }
 

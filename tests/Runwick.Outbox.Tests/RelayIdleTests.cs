@@ -50,6 +50,8 @@ public sealed class RelayIdleTests
         public Task<bool> RetryLaterAsync(OutboxLease lease, TimeSpan delay, string error, CancellationToken ct) => inner.RetryLaterAsync(lease, delay, error, ct);
 
         public Task<bool> BlockAsync(OutboxLease lease, string reason, CancellationToken ct) => inner.BlockAsync(lease, reason, ct);
+
+        public Task<int> PurgeDeliveredAsync(int maxRows, long maxBytes, CancellationToken ct) => inner.PurgeDeliveredAsync(maxRows, maxBytes, ct);
     }
 
     static async Task<long> ClaimsOver(OutboxRelay relay, TimeSpan window)

@@ -25,7 +25,7 @@ public sealed class ScheduleStoreTests
 
     static void Register(RunwickBuilder r) => r.AddJob<TickJob>().Named("test.tick").ToQueue("default");
 
-    static async Task<TestClient> OpenAsync(DriverFixture f, bool activate = true, string? application = null)
+    internal static async Task<TestClient> OpenAsync(DriverFixture f, bool activate = true, string? application = null)
     {
         var c = await f.OpenClient(configure: Register, application: application);
         if (activate)
@@ -45,7 +45,7 @@ public sealed class ScheduleStoreTests
         return ScheduleCompiler.Compile(declaration, c.Services.GetRequiredService<DispatchPreparer>(), TzdbArtifact.Pinned);
     }
 
-    static async Task<StoreReply<ScheduleRegistration>> RegisterAsync(TestClient c, string key, Action<ScheduleDeclaration>? configure = null)
+    internal static async Task<StoreReply<ScheduleRegistration>> RegisterAsync(TestClient c, string key, Action<ScheduleDeclaration>? configure = null)
     {
         var definition = Definition(c, key, configure);
         var cutoff = await c.Store.StoreNowAsync(CancellationToken.None);
@@ -57,7 +57,7 @@ public sealed class ScheduleStoreTests
     }
 
     /// <summary>Moves the cursor back so exactly <paramref name="minutes"/> whole-minute occurrences are missed.</summary>
-    static Task RewindAsync(DriverFixture f, string key, int minutes) => f.ExecAsync("""
+    internal static Task RewindAsync(DriverFixture f, string key, int minutes) => f.ExecAsync("""
         UPDATE runwick.schedules
         SET evaluated_through = date_trunc('minute', clock_timestamp()) - make_interval(mins => @k),
             next_due_at = date_trunc('minute', clock_timestamp()) - make_interval(mins => @k - 1),
@@ -65,10 +65,10 @@ public sealed class ScheduleStoreTests
         WHERE schedule_key = @key
         """, ("k", minutes), ("key", key));
 
-    static async Task<ScheduleSnapshot> ReadAsync(TestClient c, string key) =>
+    internal static async Task<ScheduleSnapshot> ReadAsync(TestClient c, string key) =>
         await c.Store.ReadScheduleAsync(c.Application, key, CancellationToken.None) ?? throw new InvalidOperationException("no schedule");
 
-    static async Task<(ScheduleSnapshot Snapshot, DateTimeOffset Cutoff, MaterializeRequest? Plan)> PlanAsync(TestClient c, string key)
+    internal static async Task<(ScheduleSnapshot Snapshot, DateTimeOffset Cutoff, MaterializeRequest? Plan)> PlanAsync(TestClient c, string key)
     {
         var s = await ReadAsync(c, key);
         var t = await c.Store.StoreNowAsync(CancellationToken.None);
@@ -87,7 +87,7 @@ public sealed class ScheduleStoreTests
         public override long GetTimestamp() => 0;
     }
 
-    static Task<StoreReply<ScheduleMaterialization>> SendAsync(TestClient c, MaterializeRequest plan, Guid? id = null) =>
+    internal static Task<StoreReply<ScheduleMaterialization>> SendAsync(TestClient c, MaterializeRequest plan, Guid? id = null) =>
         c.Store.MaterializeOccurrencesAsync(c.Command(plan, id), CancellationToken.None);
 
     static long MissedMinutes(ScheduleSnapshot s, DateTimeOffset t) =>

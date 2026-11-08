@@ -359,6 +359,8 @@ internal sealed class LossySource(IOutboxSource inner, MarkLog log) : IOutboxSou
 
     public Task<bool> BlockAsync(OutboxLease lease, string reason, CancellationToken ct) => inner.BlockAsync(lease, reason, ct);
 
+    public Task<int> PurgeDeliveredAsync(int maxRows, long maxBytes, CancellationToken ct) => inner.PurgeDeliveredAsync(maxRows, maxBytes, ct);
+
     public async ValueTask DisposeAsync()
     {
         if (inner is IAsyncDisposable d)

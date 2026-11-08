@@ -32,6 +32,8 @@ internal sealed partial class WorkerEngine
         var limits = new CleanupLimits(options.BatchRows, options.BatchDetailBytes, target < TimeSpan.FromSeconds(2) ? TimeSpan.FromSeconds(2) : target);
         var due = RecordClasses.All.ToDictionary(c => c, _ => Clock.Now, StringComparer.Ordinal);
         var failures = new Dictionary<string, int>(StringComparer.Ordinal);
+        var caughtUp = RecordClasses.All.ToDictionary(c => c, _ => Clock.WallNow, StringComparer.Ordinal);
+        var behind = new HashSet<string>(StringComparer.Ordinal);
         while (!ControlStop.IsCancellationRequested && !Draining)
         {
             // Earliest due first; equal times keep the class order, so a busy store is visited round-robin.
@@ -70,6 +72,13 @@ internal sealed partial class WorkerEngine
             if (result.CaughtUp)
             {
                 Telemetry.Telemetry.RetentionCaughtUpAt(recordClass, Clock.WallNow);
+                caughtUp[recordClass] = Clock.WallNow;
+                behind.Remove(recordClass);
+            }
+            else if (Clock.WallNow - caughtUp[recordClass] > TimeSpan.FromHours(24) && behind.Add(recordClass))
+            {
+                // 1503 once per behind episode (17 §5.2's 24 h "behind" flag, as this process sees it).
+                Telemetry.RunwickLog.RetentionBehind(Logger, recordClass, caughtUp[recordClass]);
             }
 
             switch (result.Status)

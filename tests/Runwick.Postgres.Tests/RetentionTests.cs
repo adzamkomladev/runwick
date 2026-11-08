@@ -186,6 +186,70 @@ public sealed class RetentionTests(ITestOutputHelper output)
     [Trait("Category", "Contract")]
     [Trait("Item", "SP-021")]
     [Trait("Case", "RET-01")]
+    public async Task Ret01c_materialize_and_trigger_racing_occurrence_cleanup_never_redispatch_and_replays_keep_their_receipts()
+    {
+        await using var f = await DriverFixture.StartAsync(Ns("ret01c"));
+        var c = await ScheduleStoreTests.OpenAsync(f);
+        await ScheduleStoreTests.RegisterAsync(c, "tick");
+        await ScheduleStoreTests.RewindAsync(f, "tick", 3);
+        var (_, _, plan) = await ScheduleStoreTests.PlanAsync(c, "tick");
+        var materialize = c.Command(plan!);
+        var materialized = await c.Store.MaterializeOccurrencesAsync(materialize, CancellationToken.None);
+        Assert.Equal(StoreStatus.Applied, materialized.Status);
+        var jobs = materialized.Value!.Occurrences.Select(o => o.JobId).ToList();
+        var trigger = c.Command(new TriggerScheduleRequest("tick", 1, Guid.CreateVersion7(), Guid.CreateVersion7(), Actor));
+        var triggered = await c.Store.TriggerScheduleAsync(trigger, CancellationToken.None);
+        Assert.Equal(StoreStatus.Applied, triggered.Status);
+        var manualJob = triggered.Value!.Occurrences[0].JobId;
+        var before = await f.CountAsync("SELECT count(*) FROM runwick.jobs");
+        var occurrences = await f.CountAsync("SELECT count(*) FROM runwick.schedule_occurrences");
+        Assert.True(occurrences >= 2, $"{occurrences} occurrence rows");
+        await f.ExecAsync("UPDATE runwick.schedule_occurrences SET materialized_at = materialized_at - interval '60 days'");
+
+        // Replays within 24 h answer from their receipts, whether or not the occurrence rows still exist.
+        async Task ReplaysAsync()
+        {
+            var m = await WithTimeout(c.Store.MaterializeOccurrencesAsync(materialize, CancellationToken.None));
+            Assert.Equal((StoreStatus.Applied, true), (m.Status, m.Replayed));
+            Assert.Equal(jobs, m.Value!.Occurrences.Select(o => o.JobId));
+            var t = await WithTimeout(c.Store.TriggerScheduleAsync(trigger, CancellationToken.None));
+            Assert.Equal((StoreStatus.Applied, true, manualJob), (t.Status, t.Replayed, t.Value!.Occurrences[0].JobId));
+        }
+
+        // A new command re-proposing the same occurrences with fresh job IDs (a stale planner): never a second job.
+        async Task<StoreReply<ScheduleMaterialization>> ReproposeAsync()
+        {
+            var now = await ScheduleStoreTests.ReadAsync(c, "tick");
+            return await WithTimeout(ScheduleStoreTests.SendAsync(c, plan! with
+            {
+                ExpectedCursorRevision = now.CursorRevision,
+                Occurrences = [.. plan.Occurrences.Select(o => o with { ProposedJobId = Guid.CreateVersion7() })],
+                After = plan.After with { EvaluatedThrough = now.EvaluatedThrough },
+            }));
+        }
+
+        // Cleanup stops just before its delete; the replays and a re-proposal run there, then again once the rows are gone.
+        var barrier = f.ArmFault(FaultPoint.BeforeFirstMutation, FaultSpec.Barrier, FaultTarget.Op(Operations.CleanupBatch));
+        var batch = BatchAsync(c.Store, c.Application, RecordClasses.ScheduleOccurrences);
+        await DriverFixture.WaitAtBarrier(barrier);
+        await ReplaysAsync();
+        var during = await ReproposeAsync();
+        Assert.True(during.Status != StoreStatus.Applied || during.Value!.Occurrences.All(o => jobs.Contains(o.JobId)), $"{during.Status}");
+        DriverFixture.ReleaseBarrier(barrier);
+        Assert.Equal(occurrences, (await WithTimeout(batch)).Rows);
+        Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM runwick.schedule_occurrences"));
+
+        await ReplaysAsync();
+        var after = await ReproposeAsync();
+        Assert.Equal((StoreStatus.InvariantFault, "occurrence_below_high_water"), (after.Status, after.Error?.Code));
+        Assert.Equal(before, await f.CountAsync("SELECT count(*) FROM runwick.jobs"));
+        Assert.Empty(await f.HistoryViolations());
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    [Trait("Item", "SP-021")]
+    [Trait("Case", "RET-01")]
     public async Task Ret01d_a_receipt_still_inside_retain_until_survives_and_replays()
     {
         await using var f = await DriverFixture.StartAsync(Ns("ret01d"));

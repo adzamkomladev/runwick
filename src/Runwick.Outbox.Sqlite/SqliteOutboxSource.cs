@@ -39,7 +39,7 @@ internal sealed class SqliteOutboxSource(string connectionString) : IOutboxSourc
         var connection = await OpenAsync(ct).ConfigureAwait(false);
         await using var connectionScope = connection.ConfigureAwait(false);
         var (id, version) = await ReadMetadataAsync(connection, null, ct).ConfigureAwait(false);
-        if (version != SqliteOutboxSchema.Version)
+        if (!SqliteOutboxSchema.Readable(version))
         {
             throw new OutboxStagingException("outbox_schema_incompatible", $"Outbox source schema version {version} is not {SqliteOutboxSchema.Version}.");
         }
@@ -150,6 +150,40 @@ internal sealed class SqliteOutboxSource(string connectionString) : IOutboxSourc
             state = 'blocked', blocked_reason = substr($reason, 1, 256), lease_owner = NULL, lease_token = NULL,
             lease_expires_at = NULL, revision = revision + 1
             """, p => p.AddWithValue("$reason", reason), requireLive: false, ct);
+
+    /// <summary>17 §6 on SQLite: one write transaction serializes cleanup with claims, so nothing else is locked out.</summary>
+    public async Task<int> PurgeDeliveredAsync(int maxRows, long maxBytes, CancellationToken ct)
+    {
+        await _claimLane.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var connection = await OpenAsync(ct).ConfigureAwait(false);
+            await using var connectionScope = connection.ConfigureAwait(false);
+            var tx = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+            await using var txScope = tx.ConfigureAwait(false);
+            var now = (await NowAsync(connection, tx, ct).ConfigureAwait(false)).ToUnixTimeMilliseconds();
+            using var purge = new SqliteCommand("""
+                DELETE FROM runwick_outbox_messages WHERE message_id IN (
+                    SELECT message_id FROM (
+                        SELECT message_id, sum(bytes) OVER (ORDER BY delivered_at, message_id) - bytes AS before, bytes FROM (
+                            SELECT message_id, delivered_at, length(intent) AS bytes FROM runwick_outbox_messages
+                            WHERE state = 'delivered' AND delivered_at < $now - 604800000 AND accept_until + 86400000 < $now
+                            ORDER BY delivered_at, message_id
+                            LIMIT $max))
+                    WHERE before = 0 OR before + bytes <= $bytes)
+                """, connection, tx);
+            purge.Parameters.AddWithValue("$now", now);
+            purge.Parameters.AddWithValue("$max", maxRows);
+            purge.Parameters.AddWithValue("$bytes", maxBytes);
+            var deleted = await purge.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            await tx.CommitAsync(ct).ConfigureAwait(false);
+            return deleted;
+        }
+        finally
+        {
+            _claimLane.Release();
+        }
+    }
 
     public void Dispose()
     {

@@ -8,9 +8,12 @@ namespace Runwick.Outbox.Postgres;
 public static class PostgresOutboxSchema
 {
     /// <summary>The source schema version this package reads and writes.</summary>
-    public const int Version = 1;
+    public const int Version = 2;
 
-    internal static string Sql { get; } = Load("source_v1.sql");
+    internal static string Sql { get; } = Load("source_v1.sql") + "\n" + Load("source_v2.sql");
+
+    /// <summary>Version 2 only adds an index (17 §6), so a version 1 source stays readable until it is installed again.</summary>
+    internal static bool Readable(int version) => version is >= 1 and <= Version;
 
     /// <summary>Creates the <c>runwick_outbox</c> schema if absent and returns the (stable) source UUID. Idempotent.</summary>
     public static async Task<Guid> InstallAsync(string connectionString, CancellationToken cancellationToken = default)
@@ -31,7 +34,7 @@ public static class PostgresOutboxSchema
         await r.ReadAsync(cancellationToken).ConfigureAwait(false);
         var (id, version) = (r.GetGuid(0), r.GetInt32(1));
         await r.DisposeAsync().ConfigureAwait(false);
-        if (version != Version)
+        if (!Readable(version))
         {
             throw new OutboxStagingException("outbox_schema_incompatible", $"Outbox source schema version {version} is not {Version}.");
         }
@@ -157,7 +160,7 @@ internal sealed class PostgresOutboxSource : IOutboxSource, IOutboxWakeSource, I
             throw new OutboxStagingException("outbox_not_installed", "The outbox source schema has no metadata row.");
         }
 
-        if (r.GetInt32(1) != PostgresOutboxSchema.Version)
+        if (!PostgresOutboxSchema.Readable(r.GetInt32(1)))
         {
             throw new OutboxStagingException("outbox_schema_incompatible", $"Outbox source schema version {r.GetInt32(1)} is not {PostgresOutboxSchema.Version}.");
         }
@@ -239,6 +242,29 @@ internal sealed class PostgresOutboxSource : IOutboxSource, IOutboxWakeSource, I
             state = 'blocked', blocked_reason = left(@reason, 256), lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
             revision = revision + 1
             """, p => p.AddWithValue("reason", NpgsqlDbType.Text, reason), requireLive: false, ct);
+
+    // On the claim lane, so a cleanup batch never delays a renewal or a mark.
+    public Task<int> PurgeDeliveredAsync(int maxRows, long maxBytes, CancellationToken ct) =>
+        OnLane(_claimLane, async connection =>
+        {
+            using var purge = new NpgsqlCommand("""
+                WITH locked AS (
+                    SELECT message_id, delivered_at, octet_length(intent) AS bytes FROM runwick_outbox.outbox_messages
+                    WHERE state = 'delivered' AND delivered_at < clock_timestamp() - interval '7 days'
+                      AND accept_until + interval '24 hours' < clock_timestamp()
+                    ORDER BY delivered_at, message_id
+                    LIMIT @max
+                    FOR UPDATE SKIP LOCKED),
+                picked AS (
+                    SELECT message_id, sum(bytes) OVER (ORDER BY delivered_at, message_id) - bytes AS before FROM locked)
+                DELETE FROM runwick_outbox.outbox_messages AS m
+                USING picked AS p
+                WHERE m.message_id = p.message_id AND (p.before = 0 OR p.before + octet_length(m.intent) <= @bytes)
+                """, connection);
+            purge.Parameters.AddWithValue("max", NpgsqlDbType.Integer, maxRows);
+            purge.Parameters.AddWithValue("bytes", NpgsqlDbType.Bigint, maxBytes);
+            return await purge.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }, ct);
 
     public async ValueTask DisposeAsync()
     {

@@ -498,6 +498,8 @@ internal sealed class FaultySource(IOutboxSource inner) : IOutboxSource, IAsyncD
 
     public Task<bool> BlockAsync(OutboxLease lease, string reason, CancellationToken ct) => inner.BlockAsync(lease, reason, ct);
 
+    public Task<int> PurgeDeliveredAsync(int maxRows, long maxBytes, CancellationToken ct) => inner.PurgeDeliveredAsync(maxRows, maxBytes, ct);
+
     public async ValueTask DisposeAsync()
     {
         switch (inner)

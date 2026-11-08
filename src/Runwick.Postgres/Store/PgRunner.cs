@@ -43,7 +43,11 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         CancellationToken ct) where T : class =>
         WithRetriesAsync(op, () => RunOnceAsync(op, body, replay, ct), ct);
 
-    async Task<StoreReply<T>> WithRetriesAsync<T>(PgOp op, Func<Task<StoreReply<T>>> once, CancellationToken ct) where T : class
+    // runwick.storage.operation.duration (18 §3.1), recorded after the connection is returned and the lane released.
+    Task<StoreReply<T>> WithRetriesAsync<T>(PgOp op, Func<Task<StoreReply<T>>> once, CancellationToken ct) where T : class =>
+        Telemetry.Telemetry.MeasureStorage(op.Operation, (int)op.Lane, () => WithRetriesCoreAsync(op, once, ct));
+
+    async Task<StoreReply<T>> WithRetriesCoreAsync<T>(PgOp op, Func<Task<StoreReply<T>>> once, CancellationToken ct) where T : class
     {
         var gate = sources.Gate(op.Lane);
         var lap = PhaseTimings.Start();

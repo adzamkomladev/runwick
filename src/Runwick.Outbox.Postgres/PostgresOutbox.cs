@@ -83,7 +83,7 @@ internal sealed class PostgresOutbox(OutboxStager stager) : IPostgresOutbox
                 throw new OutboxStagingException("outbox_not_installed", "The outbox source schema has no metadata row.");
             }
 
-            if (r.GetInt32(1) != PostgresOutboxSchema.Version)
+            if (!PostgresOutboxSchema.Readable(r.GetInt32(1)))
             {
                 throw new OutboxStagingException("outbox_schema_incompatible", $"Outbox source schema version {r.GetInt32(1)} is not {PostgresOutboxSchema.Version}.");
             }

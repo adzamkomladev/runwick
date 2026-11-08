@@ -30,6 +30,12 @@ Not in SP-021: an explicit "delete this now" request, legal hold, per-queue poli
   - No `GRANT`s: the schema has no runtime role yet; grants for the new tables and functions come with the role work (P-18).
   - Tests move record timestamps back with admin SQL ("seed", §8) instead of moving store time with `StoreClock`; OPS-05 runs at 5,000 jobs, not 1,000,000.
 - (2026-11-08) Amends the 03 §4 operation catalog: `CleanupBatch/1` writes **no receipt** (see §4.1); `EditRetentionPolicy/1` is a new administrative operation in class `durable`.
+- (2026-11-08, SP-021 close-out) Source outbox cleanup (§6) as built:
+  - The relay's cleanup loop uses the §4.4 defaults as fixed values (100 rows, 1 MiB of intent bytes, 1 s between batches, 60 s idle, failures back off 5 s doubling to 5 min); they are not `OutboxRelayOptions`. The first batch runs when the relay starts. It stops with claims.
+  - The byte budget always lets the first row through, so one intent larger than the budget (up to 2 MiB) is still deleted.
+  - PostgreSQL batches lock their rows `FOR UPDATE SKIP LOCKED`; SQLite batches run in one write transaction, which serializes them with claims and marks.
+  - Source schema version 2 is the index plus a metadata bump (`source_v2.sql`, run by `InstallAsync` after version 1). Readers accept versions 1 and 2, because version 2 only adds an index: a version 1 source keeps working (cleanup without the index) until `InstallAsync` runs again.
+  - New case ID CLN-05 (§8): a started relay runs cleanup on its own, and a version 1 source is read and upgraded in place.
 
 ## 1. Record classes
 
@@ -367,7 +373,9 @@ Test project `tests/Runwick.Postgres.Tests` (store-level cases, real PostgreSQL)
 | CLN-03 | Batch failure: a `statement_timeout` fault rolls back the batch, records `last_error_code`, backs off, and the next batch succeeds from the same cursor |
 | CLN-04 | Pressure and drain: with the pressure stop active or the engine draining, no batch starts; the in-progress batch finishes |
 
-CLN-01 … 04 are new IDs for behaviour the source cases do not name.
+| CLN-05 | Source outbox relay (§6), both sources: a started relay deletes an old delivered row by itself and keeps a younger one; a version 1 source is still readable and `InstallAsync` upgrades it to version 2 with the index |
+
+CLN-01 … 05 are new IDs for behaviour the source cases do not name.
 
 ## 9. Must not claim
 
