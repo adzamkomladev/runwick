@@ -494,6 +494,7 @@
           "Microsoft.Extensions.TimeProvider.Testing": "[10.11.0, )",
           "Runwick.Postgres": "[0.1.0-m1, )",
           "Runwick.ReferenceModel": "[0.1.0-m1, )",
+          "Runwick.Sqlite": "[0.1.0-m1, )",
           "Testcontainers.PostgreSql": "[4.16.0, )",
           "xunit.v3.extensibility.core": "[4.0.2, )"
         }
@@ -527,6 +528,13 @@
       },
       "runwick.referencemodel": {
         "type": "Project"
+      },
+      "runwick.sqlite": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Data.Sqlite": "[10.0.14, )",
+          "Runwick": "[0.1.0-m1, )"
+        }
       },
       "Cronos": {
         "type": "CentralTransitive",

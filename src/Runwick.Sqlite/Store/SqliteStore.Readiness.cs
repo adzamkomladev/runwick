@@ -102,9 +102,9 @@ internal sealed partial class SqliteStore : IReadinessDiagnostics
                 controls[queue] = q[0];
                 var scope = Rows(Cmd(conn, application, """
                     SELECT s.scope_id, s.capacity,
-                           (SELECT count(*) FROM (SELECT 1 FROM runwick_concurrency_permits AS p
+                           min(s.capacity, (SELECT count(*) FROM runwick_concurrency_permits AS p
                                                   WHERE p.application = s.application AND p.scope_id = s.scope_id AND p.lease_expires_at > @now
-                                                  LIMIT s.capacity))
+                                            ))
                     FROM runwick_concurrency_scopes AS s
                     WHERE s.application = @application AND s.scope_kind = 'queue' AND s.scope_key = @queue
                     """).P("queue", queue).P("now", observed), r => (Id: (Guid?)r.Uuid(0), Capacity: (int?)r.GetInt32(1), Live: (int?)r.GetInt32(2)));

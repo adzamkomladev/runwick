@@ -43,6 +43,13 @@ public sealed class CoreContractTests
         var receipt = await c.Dispatcher.DispatchAsync(new PingJob("a"), cancellationToken: Ct);
         Assert.Equal(DispatchDisposition.Created, receipt.Disposition);
 
+        var probe = await c.Driver.ProbeAsync(c.Application, [new LaneKey("default", "medium"), new LaneKey("default", "high")], c.Contracts, Ct);
+        Assert.Equal(new LaneKey("default", "medium"), Assert.Single(probe.Lanes).Lane);
+        Assert.False(Assert.Single(probe.Queues).Paused);
+        var ack = await c.Driver.PublishPresenceAsync(c.Application, new PresenceRecord(c.WorkerInstanceId, 1, 1, "ready", Environment.ProcessId,
+            "host", "build", ["default"], new Dictionary<string, int> { ["main"] = 1 }, c.Contracts, TimeSpan.FromSeconds(30)), Ct);
+        Assert.True(ack.Accepted);
+
         var reserved = await c.ReserveAsync();
         Assert.Equal(StoreStatus.Applied, reserved.Status);
         Assert.Equal(receipt.JobId.Value, reserved.Value!.Position.JobId);

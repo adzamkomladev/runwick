@@ -12,6 +12,9 @@ internal sealed class StoreServer
     static readonly SemaphoreSlim Gate = new(1, 1);
     static StoreServer? _shared;
 
+    // Several test runs sharing one server (parallel worktrees) each set their own name, or they drop each other's template.
+    static readonly string Template = Environment.GetEnvironmentVariable("RUNWICK_TEST_TEMPLATE") is { Length: > 0 } t ? t : "rw_template";
+
     StoreServer(TestDatabase database) => Database = database;
 
     public TestDatabase Database { get; }
@@ -48,18 +51,18 @@ internal sealed class StoreServer
     async Task CreateTemplateAsync()
     {
         var admin = ConnectionStringFor("postgres", pooling: false);
-        await ExecAsync(admin, """
+        await ExecAsync(admin, $"""
             DO $$ BEGIN
-              IF EXISTS (SELECT 1 FROM pg_database WHERE datname = 'rw_template') THEN
-                ALTER DATABASE rw_template WITH IS_TEMPLATE false ALLOW_CONNECTIONS true;
+              IF EXISTS (SELECT 1 FROM pg_database WHERE datname = '{Template}') THEN
+                ALTER DATABASE {Template} WITH IS_TEMPLATE false ALLOW_CONNECTIONS true;
               END IF;
             END $$
             """).ConfigureAwait(false);
-        await ExecAsync(admin, "DROP DATABASE IF EXISTS rw_template WITH (FORCE)").ConfigureAwait(false);
-        await ExecAsync(admin, "CREATE DATABASE rw_template").ConfigureAwait(false);
+        await ExecAsync(admin, $"DROP DATABASE IF EXISTS {Template} WITH (FORCE)").ConfigureAwait(false);
+        await ExecAsync(admin, $"CREATE DATABASE {Template}").ConfigureAwait(false);
         // The template is the fault-hooks variant (04 §8.1, PF-05): server functions stop at planned fault points.
-        await new PgMigrator(ConnectionStringFor("rw_template", pooling: false)) { FaultHooks = true }.RunAsync(CancellationToken.None).ConfigureAwait(false);
-        await ExecAsync(admin, "ALTER DATABASE rw_template WITH IS_TEMPLATE true ALLOW_CONNECTIONS false").ConfigureAwait(false);
+        await new PgMigrator(ConnectionStringFor(Template, pooling: false)) { FaultHooks = true }.RunAsync(CancellationToken.None).ConfigureAwait(false);
+        await ExecAsync(admin, $"ALTER DATABASE {Template} WITH IS_TEMPLATE true ALLOW_CONNECTIONS false").ConfigureAwait(false);
     }
 
     /// <summary>Creates <c>rw_&lt;ns&gt;</c> from the template and gives it a fresh store identity.</summary>
@@ -73,7 +76,7 @@ internal sealed class StoreServer
         var name = "rw_" + ns;
         var admin = ConnectionStringFor("postgres", pooling: false);
         await ExecAsync(admin, $"DROP DATABASE IF EXISTS {name} WITH (FORCE)").ConfigureAwait(false);
-        await ExecAsync(admin, $"CREATE DATABASE {name} TEMPLATE rw_template").ConfigureAwait(false);
+        await ExecAsync(admin, $"CREATE DATABASE {name} TEMPLATE {Template}").ConfigureAwait(false);
         await ExecAsync(ConnectionStringFor(name, pooling: false),
             "UPDATE runwick.store_metadata SET store_id = gen_random_uuid() WHERE singleton_id = 1").ConfigureAwait(false);
         return name;
