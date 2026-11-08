@@ -39,7 +39,7 @@ public sealed class RetentionContractTests
 
     static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    static async Task<(DriverFixture F, TestClient C)> OpenAsync(StoreKind kind, string name)
+    internal static async Task<(DriverFixture F, TestClient C)> OpenAsync(StoreKind kind, string name)
     {
         var f = await DriverFixture.StartAsync(name + "_" + Guid.NewGuid().ToString("N")[..8], kind);
         var c = await f.OpenClient(configure: r =>
@@ -51,18 +51,18 @@ public sealed class RetentionContractTests
     }
 
     /// <summary>A table name in the store's form.</summary>
-    static string T(DriverFixture f, string table) => f.Kind == StoreKind.Sqlite ? "runwick_" + table : "runwick." + table;
+    internal static string T(DriverFixture f, string table) => f.Kind == StoreKind.Sqlite ? "runwick_" + table : "runwick." + table;
 
-    static Task<long> CountAsync(DriverFixture f, string sql, params (string Name, object Value)[] parameters) =>
+    internal static Task<long> CountAsync(DriverFixture f, string sql, params (string Name, object Value)[] parameters) =>
         f.Kind == StoreKind.Redis ? RedisAdmin.CountAsync(f, sql, parameters) : f.CountAsync(sql, parameters);
 
-    static long Ms(TimeSpan t) => (long)t.TotalMilliseconds;
+    internal static long Ms(TimeSpan t) => (long)t.TotalMilliseconds;
 
     /// <summary>The ms-floored instant <paramref name="ms"/> milliseconds ago (stored instants are whole ms).</summary>
-    static DateTimeOffset MsAgo(long ms) => DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - ms);
+    internal static DateTimeOffset MsAgo(long ms) => DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - ms);
 
     /// <summary>Admin SQL (setup only): PostgreSQL through the fixture, SQLite on its own connection.</summary>
-    static async Task ExecAsync(DriverFixture f, string pg, string sqlite, params (string Name, object Value)[] parameters)
+    internal static async Task ExecAsync(DriverFixture f, string pg, string sqlite, params (string Name, object Value)[] parameters)
     {
         if (f.Kind == StoreKind.Redis)
         {
@@ -94,11 +94,11 @@ public sealed class RetentionContractTests
         cmd.ExecuteNonQuery();
     }
 
-    static Task AgeJobsAsync(DriverFixture f, TimeSpan by) => ExecAsync(f,
+    internal static Task AgeJobsAsync(DriverFixture f, TimeSpan by) => ExecAsync(f,
         "UPDATE runwick.jobs SET terminal_at = terminal_at - @by WHERE terminal_at IS NOT NULL",
         "UPDATE runwick_jobs SET terminal_at = terminal_at - @by WHERE terminal_at IS NOT NULL", ("by", by));
 
-    static async Task<LeaseHandle> RunAsync(TestClient c)
+    internal static async Task<LeaseHandle> RunAsync(TestClient c)
     {
         var reserved = await c.ReserveAsync();
         Assert.Equal(StoreStatus.Applied, reserved.Status);
@@ -108,7 +108,7 @@ public sealed class RetentionContractTests
     }
 
     /// <summary>Dispatches, runs and finishes one job; failures carry an error text that detail expiry must remove.</summary>
-    static async Task<Guid> TerminalAsync(TestClient c, IQueueJob job, AttemptOutcome outcome = AttemptOutcome.PermanentFailure)
+    internal static async Task<Guid> TerminalAsync(TestClient c, IQueueJob job, AttemptOutcome outcome = AttemptOutcome.PermanentFailure)
     {
         var id = (await c.Dispatcher.DispatchAsync(job, cancellationToken: Ct)).JobId.Value;
         var lease = await RunAsync(c);
@@ -118,16 +118,16 @@ public sealed class RetentionContractTests
         return id;
     }
 
-    static IRetentionStore Retention(TestClient c) => (IRetentionStore)c.Driver;
+    internal static IRetentionStore Retention(TestClient c) => (IRetentionStore)c.Driver;
 
-    static async Task<CleanupBatchResult> BatchAsync(TestClient c, string recordClass)
+    internal static async Task<CleanupBatchResult> BatchAsync(TestClient c, string recordClass)
     {
         var r = await Retention(c).RunCleanupBatchAsync(c.Application, recordClass, Limits, CancellationToken.None);
         Assert.True(r.Status == "done", $"{recordClass}: {r.Status} {r.ErrorCode}");
         return r;
     }
 
-    static async Task PassAsync(TestClient c, string recordClass)
+    internal static async Task PassAsync(TestClient c, string recordClass)
     {
         for (var i = 0; i < 10_000; i++)
         {
@@ -140,7 +140,7 @@ public sealed class RetentionContractTests
         throw new InvalidOperationException("pass did not complete");
     }
 
-    static async Task FullPassAsync(TestClient c)
+    internal static async Task FullPassAsync(TestClient c)
     {
         foreach (var recordClass in RecordClasses.All)
         {
@@ -148,11 +148,11 @@ public sealed class RetentionContractTests
         }
     }
 
-    static Task<long> Exists(DriverFixture f, Guid job) => CountAsync(f, $"SELECT count(*) FROM {T(f, "jobs")} WHERE job_id = @j", ("j", job));
+    internal static Task<long> Exists(DriverFixture f, Guid job) => CountAsync(f, $"SELECT count(*) FROM {T(f, "jobs")} WHERE job_id = @j", ("j", job));
 
-    static Task<long> Payloads(DriverFixture f, Guid job) => CountAsync(f, $"SELECT count(*) FROM {T(f, "job_payloads")} WHERE job_id = @j", ("j", job));
+    internal static Task<long> Payloads(DriverFixture f, Guid job) => CountAsync(f, $"SELECT count(*) FROM {T(f, "job_payloads")} WHERE job_id = @j", ("j", job));
 
-    static Task<long> Expired(DriverFixture f, Guid job) =>
+    internal static Task<long> Expired(DriverFixture f, Guid job) =>
         CountAsync(f, $"SELECT count(*) FROM {T(f, "jobs")} WHERE job_id = @j AND detail_expired_at IS NOT NULL AND NOT payload_retained", ("j", job));
 
     // ------------------------------------------------------------------ RET-01

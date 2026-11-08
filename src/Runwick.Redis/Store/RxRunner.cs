@@ -124,7 +124,7 @@ internal sealed class RxRunner(RxClient client, TimeProvider time, IFaultInjecto
         {
             await faults.OnAsync(new FaultContext(FaultPoint.AfterCommitBeforeReply, op.Operation, op.CommandId, op.Application), ct).ConfigureAwait(false);
         }
-        catch (InjectedReplyLossException)
+        catch (Exception ex) when (ex is InjectedReplyLossException || ex.InnerException is IOException) // the harness drops a reply with a wrapped connection reset
         {
             throw new StoreOutcomeUnknownException("commit_outcome_unknown", op.CommandId, op.Operation);
         }
