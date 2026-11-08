@@ -86,7 +86,11 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
 
     // ------------------------------------------------------------------ retry and slot
 
-    async Task<StoreReply<T>> WithRetriesAsync<T, TRaw>(SqOp op, Func<SqliteConnection, TRaw> once, Func<TRaw, StoreReply<T>> map,
+    Task<StoreReply<T>> WithRetriesAsync<T, TRaw>(SqOp op, Func<SqliteConnection, TRaw> once, Func<TRaw, StoreReply<T>> map,
+        CancellationToken ct) where T : class =>
+        Telemetry.Telemetry.MeasureStorage(op.Operation, (int)op.Lane, () => WithRetriesCoreAsync(op, once, map, ct)); // 18 §3.1
+
+    async Task<StoreReply<T>> WithRetriesCoreAsync<T, TRaw>(SqOp op, Func<SqliteConnection, TRaw> once, Func<TRaw, StoreReply<T>> map,
         CancellationToken ct) where T : class
     {
         var gate = executor.Gate(op.Lane);

@@ -109,7 +109,7 @@ public static class RunwickServiceCollectionExtensions
             new global::Runwick.Management.ManagementCursors(sp.GetRequiredService<global::Runwick.Management.IManagementCursorProtector>(),
                 sp.GetRequiredService<TimeProvider>()),
             sp.GetRequiredService<global::Runwick.Management.ManagementOptions>(), sp.GetRequiredService<TimeProvider>(),
-            sp.GetRequiredService<DispatchPreparer>(), sp.GetRequiredService<LocalAdmission>())));
+            sp.GetRequiredService<DispatchPreparer>(), sp.GetRequiredService<LocalAdmission>()), sp.GetRequiredService<RunwickRuntime>().Logger));
 
         // Telemetry and health (18): options validated here, applied at host start.
         builder.TelemetryOptions.Validate();

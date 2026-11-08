@@ -85,6 +85,45 @@ internal sealed class ApplicationMetricsCollector(RunwickRuntime runtime, Runwic
         {
             RunwickLog.CollectorSampleFailed(logger, ex is RunwickException r ? r.Code : ex is OperationCanceledException ? "budget_exceeded" : ex.GetType().Name);
         }
+
+        await UnsupportedBacklogAsync().ConfigureAwait(false);
+    }
+
+    long _backlogCheckedAt;
+    readonly HashSet<(string, string, int)> _reported = [];
+
+    /// <summary>
+    /// Event 1014 (18 §5): at most once a minute, the 09 §5 diagnostic; each tuple is logged when it first appears and
+    /// again only after it has gone. One query on the background class with its own 1 s budget; at most 16 lines a pass.
+    /// </summary>
+    async Task UnsupportedBacklogAsync()
+    {
+        if (runtime.Store is not IReadinessDiagnostics diagnostics
+            || (_backlogCheckedAt != 0 && time.GetElapsedTime(_backlogCheckedAt) < TimeSpan.FromMinutes(1)))
+        {
+            return;
+        }
+
+        _backlogCheckedAt = time.GetTimestamp();
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+        budget.CancelAfter(Budget);
+        try
+        {
+            var backlog = await diagnostics.ListUnsupportedBacklogAsync(runtime.Registry.Application, 256, budget.Token).ConfigureAwait(false);
+            var seen = backlog.Entries.Select(e => (e.Queue, e.Contract.Name, e.Contract.PayloadVersion)).ToHashSet();
+            var fresh = seen.Except(_reported).Take(16).ToList();
+            foreach (var (queue, job, version) in fresh)
+            {
+                RunwickLog.UnsupportedBacklog(logger, queue, job, version);
+            }
+
+            _reported.IntersectWith(seen);
+            _reported.UnionWith(fresh);
+        }
+        catch (Exception ex) when (!_stop.IsCancellationRequested)
+        {
+            logger.LogDebug(ex, "Runwick unsupported-backlog diagnostic failed.");
+        }
     }
 
     /// <summary>The gauge callback body: in-memory state and the clock only (18 §3.4, OBS-04).</summary>

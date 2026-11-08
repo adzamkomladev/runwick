@@ -82,6 +82,36 @@ internal static partial class RunwickLog
     [LoggerMessage(EventId = 1013, EventName = "DrainCompleted", Level = LogLevel.Information, Message = "Worker drain completed; {Outstanding} attempts unresolved.")]
     public static partial void DrainCompleted(ILogger logger, int outstanding);
 
+    [LoggerMessage(EventId = 1006, EventName = "PresencePublicationFailing", Level = LogLevel.Warning,
+        Message = "Presence publication failing: {ErrorCode} ({ConsecutiveFailures} in a row).")]
+    static partial void PresencePublicationFailingCore(ILogger logger, string errorCode, long consecutiveFailures);
+
+    public static void PresencePublicationFailing(ILogger logger, string errorCode, long consecutiveFailures)
+    {
+        if (Limiter.Allow(logger, 1006))
+        {
+            PresencePublicationFailingCore(logger, errorCode, consecutiveFailures);
+        }
+    }
+
+    [LoggerMessage(EventId = 1009, EventName = "LeaseRenewalStale", Level = LogLevel.Warning, Message = "Renew of attempt {AttemptId} of job {JobId} found the lease stale.")]
+    static partial void LeaseRenewalStaleCore(ILogger logger, Guid jobId, Guid attemptId);
+
+    public static void LeaseRenewalStale(ILogger logger, Guid jobId, Guid attemptId)
+    {
+        if (Limiter.Allow(logger, 1009))
+        {
+            LeaseRenewalStaleCore(logger, jobId, attemptId);
+        }
+    }
+
+    [LoggerMessage(EventId = 1010, EventName = "AttemptRecovered", Level = LogLevel.Information, Message = "Recover of attempt {AttemptId} of job {JobId}: {Result}.")]
+    public static partial void AttemptRecovered(ILogger logger, Guid jobId, Guid attemptId, string result);
+
+    [LoggerMessage(EventId = 1014, EventName = "UnsupportedBacklog", Level = LogLevel.Information,
+        Message = "Queue {Queue} has due {JobName} v{PayloadVersion} jobs that no live, subscribed worker advertises.")]
+    public static partial void UnsupportedBacklog(ILogger logger, string queue, string jobName, int payloadVersion);
+
     [LoggerMessage(EventId = 1101, EventName = "DispatchOutcomeUnknown", Level = LogLevel.Warning,
         Message = "Dispatch {CommandId} to {Queue}: outcome unknown; resolve it with the same operation ID.")]
     static partial void DispatchOutcomeUnknownCore(ILogger logger, Guid commandId, string queue);
@@ -91,6 +121,55 @@ internal static partial class RunwickLog
         if (Limiter.Allow(logger, 1101))
         {
             DispatchOutcomeUnknownCore(logger, commandId, queue);
+        }
+    }
+
+    [LoggerMessage(EventId = 1201, EventName = "ScheduleMaterializationFailed", Level = LogLevel.Warning,
+        Message = "Schedule {ScheduleKey} could not be materialized here: {ErrorCode}.")]
+    static partial void ScheduleMaterializationFailedCore(ILogger logger, string scheduleKey, string errorCode);
+
+    public static void ScheduleMaterializationFailed(ILogger logger, string scheduleKey, string errorCode)
+    {
+        if (Limiter.Allow(logger, 1201))
+        {
+            ScheduleMaterializationFailedCore(logger, scheduleKey, errorCode);
+        }
+    }
+
+    [LoggerMessage(EventId = 1202, EventName = "ScheduleNeedsReview", Level = LogLevel.Warning, Message = "Schedule {ScheduleKey} needs review: {Reason}.")]
+    static partial void ScheduleNeedsReviewCore(ILogger logger, string scheduleKey, string reason);
+
+    public static void ScheduleNeedsReview(ILogger logger, string scheduleKey, string reason)
+    {
+        if (Limiter.Allow(logger, 1202))
+        {
+            ScheduleNeedsReviewCore(logger, scheduleKey, reason);
+        }
+    }
+
+    [LoggerMessage(EventId = 1203, EventName = "ScheduleMisfireEpisode", Level = LogLevel.Information,
+        Message = "Schedule {ScheduleKey} missed occurrences; misfire policy {Policy} skipped {Skipped} range(s).")]
+    public static partial void ScheduleMisfireEpisode(ILogger logger, string scheduleKey, string policy, int skipped);
+
+    [LoggerMessage(EventId = 1301, EventName = "OutboxDeliveryBlocked", Level = LogLevel.Warning, Message = "Outbox message {MessageId} blocked: {BlockedReason}.")]
+    static partial void OutboxDeliveryBlockedCore(ILogger logger, Guid messageId, string blockedReason);
+
+    public static void OutboxDeliveryBlocked(ILogger logger, Guid messageId, string blockedReason)
+    {
+        if (Limiter.Allow(logger, 1301))
+        {
+            OutboxDeliveryBlockedCore(logger, messageId, blockedReason);
+        }
+    }
+
+    [LoggerMessage(EventId = 1302, EventName = "OutboxDestinationUnavailable", Level = LogLevel.Warning, Message = "Outbox destination unavailable: {ErrorCode}.")]
+    static partial void OutboxDestinationUnavailableCore(ILogger logger, string errorCode);
+
+    public static void OutboxDestinationUnavailable(ILogger logger, string errorCode)
+    {
+        if (Limiter.Allow(logger, 1302))
+        {
+            OutboxDestinationUnavailableCore(logger, errorCode);
         }
     }
 
@@ -106,6 +185,45 @@ internal static partial class RunwickLog
         }
     }
 
+    [LoggerMessage(EventId = 1402, EventName = "ManagementAccessDenied", Level = LogLevel.Information,
+        Message = "Management {Operation} denied on {TargetKind}.")]
+    static partial void ManagementAccessDeniedCore(ILogger logger, string operation, string targetKind);
+
+    public static void ManagementAccessDenied(ILogger logger, string operation, string targetKind)
+    {
+        if (Limiter.Allow(logger, 1402))
+        {
+            ManagementAccessDeniedCore(logger, operation, targetKind);
+        }
+    }
+
+    [LoggerMessage(EventId = 1403, EventName = "ManagementRateLimited", Level = LogLevel.Information, Message = "Management request rate-limited ({Limit}).")]
+    static partial void ManagementRateLimitedCore(ILogger logger, string limit);
+
+    public static void ManagementRateLimited(ILogger logger, string limit)
+    {
+        if (Limiter.Allow(logger, 1403))
+        {
+            ManagementRateLimitedCore(logger, limit);
+        }
+    }
+
+    [LoggerMessage(EventId = 1404, EventName = "ManagementDisclosure", Level = LogLevel.Information,
+        Message = "Management {Operation} disclosed {TargetKind} {TargetId} (command {CommandId}).")]
+    public static partial void ManagementDisclosure(ILogger logger, string operation, string targetKind, Guid targetId, Guid commandId);
+
+    [LoggerMessage(EventId = 1405, EventName = "ManagementOutcomeUnknown", Level = LogLevel.Warning,
+        Message = "Management {Operation} outcome unknown; resend command {CommandId}.")]
+    static partial void ManagementOutcomeUnknownCore(ILogger logger, string operation, Guid commandId);
+
+    public static void ManagementOutcomeUnknown(ILogger logger, string operation, Guid commandId)
+    {
+        if (Limiter.Allow(logger, 1405))
+        {
+            ManagementOutcomeUnknownCore(logger, operation, commandId);
+        }
+    }
+
     [LoggerMessage(EventId = 1501, EventName = "RetentionBatchFailed", Level = LogLevel.Warning, Message = "Retention batch for {RecordClass} failed: {ErrorCode}.")]
     static partial void RetentionBatchFailedCore(ILogger logger, string recordClass, string errorCode);
 
@@ -114,6 +232,21 @@ internal static partial class RunwickLog
         if (Limiter.Allow(logger, 1501))
         {
             RetentionBatchFailedCore(logger, recordClass, errorCode);
+        }
+    }
+
+    [LoggerMessage(EventId = 1502, EventName = "RetentionPolicyEdited", Level = LogLevel.Information, Message = "Retention policy edited; revision {Revision}.")]
+    public static partial void RetentionPolicyEdited(ILogger logger, long revision);
+
+    [LoggerMessage(EventId = 1503, EventName = "RetentionBehind", Level = LogLevel.Warning,
+        Message = "Retention class {RecordClass} has not caught up since {CaughtUpAt}.")]
+    static partial void RetentionBehindCore(ILogger logger, string recordClass, DateTimeOffset caughtUpAt);
+
+    public static void RetentionBehind(ILogger logger, string recordClass, DateTimeOffset caughtUpAt)
+    {
+        if (Limiter.Allow(logger, 1503))
+        {
+            RetentionBehindCore(logger, recordClass, caughtUpAt);
         }
     }
 
@@ -144,6 +277,28 @@ internal static partial class RunwickLog
         if (Limiter.Allow(logger, 1701))
         {
             StoreUnavailableCore(logger, role, errorCode);
+        }
+    }
+
+    [LoggerMessage(EventId = 1702, EventName = "StoreProfileMismatch", Level = LogLevel.Error, Message = "Store profile mismatch: expected {Expected}, actual {Actual}.")]
+    static partial void StoreProfileMismatchCore(ILogger logger, string expected, string actual);
+
+    public static void StoreProfileMismatch(ILogger logger, string expected, string actual)
+    {
+        if (Limiter.Allow(logger, 1702))
+        {
+            StoreProfileMismatchCore(logger, expected, actual);
+        }
+    }
+
+    [LoggerMessage(EventId = 1703, EventName = "StoreSchemaIncompatible", Level = LogLevel.Error, Message = "Store schema incompatible: expected {Expected}, actual {Actual}.")]
+    static partial void StoreSchemaIncompatibleCore(ILogger logger, string expected, string actual);
+
+    public static void StoreSchemaIncompatible(ILogger logger, string expected, string actual)
+    {
+        if (Limiter.Allow(logger, 1703))
+        {
+            StoreSchemaIncompatibleCore(logger, expected, actual);
         }
     }
 }

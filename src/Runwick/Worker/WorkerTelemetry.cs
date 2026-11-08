@@ -132,6 +132,7 @@ internal sealed partial class WorkerEngine
                 break;
             case LeaseCoordinator.RenewResult.Lost:
                 T.LeaseRenewals.Add(1, "stale");
+                RunwickLog.LeaseRenewalStale(Logger, entry.Lease.JobId, entry.AttemptId);
                 break;
             case LeaseCoordinator.RenewResult.Transient:
                 T.LeaseRenewals.Add(1, "error");

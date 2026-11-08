@@ -21,9 +21,14 @@ public interface ISqliteOutbox
 /// <summary>Installs the SQLite outbox source schema (14 §3.3).</summary>
 public static class SqliteOutboxSchema
 {
-    public const int Version = 1;
+    public const int Version = 2;
 
     internal static string Sql { get; } = Load("source_v1.sql");
+
+    static string SqlV2 { get; } = Load("source_v2.sql");
+
+    /// <summary>Version 2 only adds an index (17 §6), so a version 1 source stays readable until it is installed again.</summary>
+    internal static bool Readable(int version) => version is >= 1 and <= Version;
 
     /// <summary>Creates the tables if absent and returns the (stable) source UUID. Idempotent.</summary>
     public static async Task<Guid> InstallAsync(string connectionString, CancellationToken cancellationToken = default)
@@ -48,8 +53,13 @@ public static class SqliteOutboxSchema
             await seed.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        using (var v2 = new SqliteCommand(SqlV2, connection, tx))
+        {
+            await v2.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         var (id, version) = await SqliteOutboxSource.ReadMetadataAsync(connection, tx, cancellationToken).ConfigureAwait(false);
-        if (version != Version)
+        if (!Readable(version))
         {
             throw new OutboxStagingException("outbox_schema_incompatible", $"Outbox source schema version {version} is not {Version}.");
         }
@@ -113,7 +123,7 @@ internal sealed class SqliteOutbox(OutboxStager stager) : ISqliteOutbox
         Guid messageId, TimeSpan horizon, CancellationToken ct)
     {
         var (sourceStoreId, version) = await SqliteOutboxSource.ReadMetadataAsync(connection, transaction, ct).ConfigureAwait(false);
-        if (version != SqliteOutboxSchema.Version)
+        if (!SqliteOutboxSchema.Readable(version))
         {
             throw new OutboxStagingException("outbox_schema_incompatible", $"Outbox source schema version {version} is not {SqliteOutboxSchema.Version}.");
         }

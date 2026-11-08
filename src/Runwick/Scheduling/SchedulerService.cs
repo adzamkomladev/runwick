@@ -344,7 +344,7 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
                 _localDiagnostics[schedule.ScheduleId] = ex.WireName;
             }
 
-            _logger.LogWarning("Schedule {Key} skipped locally: {Code}.", schedule.Key, ex.WireName);
+            Telemetry.RunwickLog.ScheduleMaterializationFailed(_logger, schedule.Key, ex.WireName);
             return false;
         }
 
@@ -375,6 +375,7 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
             if (plan.AuditRanges.Count > 0)
             {
                 Telemetry.Telemetry.ScheduleOccurrences.Add(plan.AuditRanges.Count, "skipped");
+                Telemetry.RunwickLog.ScheduleMisfireEpisode(_logger, schedule.Key, schedule.Definition.MisfirePolicy, plan.AuditRanges.Count);
             }
         }
 
@@ -401,7 +402,11 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         var trimmed = detail is { Length: > 512 } ? detail[..512] : detail;
         var command = new StoreCommand<EvaluationFailureRequest>(Application, Guid.CreateVersion7(), _time.GetUtcNow() + ScheduleOperations.SchedulerLifetime,
             new EvaluationFailureRequest(schedule.ScheduleId, schedule.DefinitionRevision, code, trimmed, actor));
-        await SendAsync(() => store.RecordEvaluationFailureAsync(command, ct), command.CommandId, ct).ConfigureAwait(false);
+        var reply = await SendAsync(() => store.RecordEvaluationFailureAsync(command, ct), command.CommandId, ct).ConfigureAwait(false);
+        if (reply.Status == StoreStatus.Applied)
+        {
+            Telemetry.RunwickLog.ScheduleNeedsReview(_logger, schedule.Key, code);
+        }
     }
 
     /// <summary>
