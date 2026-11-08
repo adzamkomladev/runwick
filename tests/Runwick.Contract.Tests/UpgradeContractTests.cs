@@ -1,5 +1,7 @@
 using Runwick.Harness.Jobs;
 using Runwick.Harness.Store;
+using Microsoft.Data.Sqlite;
+using Runwick.Harness.Peer;
 using Runwick.Postgres.Migrations;
 using Runwick.Protocol;
 
@@ -17,6 +19,10 @@ public sealed class UpgradeContractTests
 
     public static TheoryData<StoreKind> SqlKinds =>
         [.. Enum.GetValues<StoreKind>().Where(k => k != StoreKind.Redis && (Environment.GetEnvironmentVariable("RUNWICK_TEST_STORES") is not { Length: > 0 } only
+            || only.Split(',').Contains(k.ToString(), StringComparer.OrdinalIgnoreCase)))];
+
+    public static TheoryData<StoreKind> NonPostgresKinds =>
+        [.. Enum.GetValues<StoreKind>().Where(k => k != StoreKind.Postgres && (Environment.GetEnvironmentVariable("RUNWICK_TEST_STORES") is not { Length: > 0 } only
             || only.Split(',').Contains(k.ToString(), StringComparer.OrdinalIgnoreCase)))];
 
     static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -112,6 +118,185 @@ public sealed class UpgradeContractTests
         Assert.StartsWith("unverified", status.Quiescence, StringComparison.Ordinal);
         Assert.Equal(f.Kind == StoreKind.Redis, status.OwnedLeases is null);
     }
+
+    static Task<StoreAdminStatus> StatusOf(DriverFixture f) => f.Kind switch
+    {
+        StoreKind.Postgres => RunwickPostgresMigrations.GetStatusAsync(Conn(f), Ct),
+        StoreKind.Sqlite => RunwickSqliteMigrations.GetStatusAsync(Conn(f), Ct),
+        _ => RunwickRedisMigrations.GetStatusAsync(Conn(f), Ct),
+    };
+
+    /// <summary>Plants what a newer binary leaves behind: an applied migration (revision) this binary does not know.</summary>
+    static async Task PlantNewerStoreAsync(DriverFixture f)
+    {
+        switch (f.Kind)
+        {
+            case StoreKind.Sqlite:
+                using (var conn = new SqliteConnection(f.AdminConnectionString))
+                {
+                    conn.Open();
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = """
+                        INSERT INTO runwick_schema_migrations (migration_id, phase, checksum, target_schema_revision, state, runner_build, started_at, completed_at)
+                        VALUES ('9999_future', 'expand', zeroblob(32), 9999, 'applied', 'runwick/future', 1, 1);
+                        UPDATE runwick_store_metadata SET schema_revision = 9999;
+                        """;
+                    cmd.ExecuteNonQuery();
+                }
+
+                break;
+            case StoreKind.Redis:
+                await (await RedisServer.AdminAsync()).GetDatabase().HashSetAsync("rw:store", "layout", "9999");
+                break;
+            default:
+                await f.ExecAsync("""
+                    INSERT INTO runwick.schema_migrations (migration_id, phase, checksum, target_schema_revision, state, runner_build, started_at, completed_at)
+                    VALUES ('9999_future', 'expand', sha256('x'), 9999, 'applied', 'runwick/future', clock_timestamp(), clock_timestamp());
+                    UPDATE runwick.store_metadata SET schema_revision = 9999;
+                    """);
+                break;
+        }
+    }
+
+    static async Task Migrate(DriverFixture f)
+    {
+        switch (f.Kind)
+        {
+            case StoreKind.Postgres:
+                await RunwickPostgresMigrations.MigrateAsync(Conn(f), Ct);
+                break;
+            case StoreKind.Sqlite:
+                await RunwickSqliteMigrations.MigrateAsync(Conn(f), Ct);
+                break;
+            default:
+                await RunwickRedisMigrations.MigrateAsync(Conn(f), Ct);
+                break;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(Kinds))]
+    [Trait("Case", "UPG-06")]
+    public async Task Rollback_after_activation_is_rejected(StoreKind kind)
+    {
+        var (f, c) = await OpenAsync(kind, "upg06");
+        await using var _ = f;
+        var rates = (IRateControlStore)c.Driver;
+        var actor = new ControlActor("user:ops", null, "host", "t");
+        Task<StoreReply<ActivatedCapabilities>> Activate(int version) =>
+            rates.ActivateCapabilitiesAsync(c.Command(new ActivateCapabilitiesRequest(new Dictionary<string, int> { ["rate_admission"] = version }, actor)), Ct);
+        Assert.Equal(StoreStatus.Applied, (await Activate(1)).Status);
+
+        // Deactivation: a capability is never lowered, and a repeat changes nothing.
+        var lower = await Activate(0);
+        Assert.Equal((StoreStatus.InvalidRequest, StoreEffect.ObservedNoEffect), (lower.Status, lower.Effect));
+        var same = await Activate(1);
+        Assert.Equal((StoreStatus.InvalidState, "no_change"), (same.Status, same.Error!.Code));
+
+        // Binary rollback: the old binary cannot complete its handshake (RegisterQueue is a creation path).
+        var old = await f.StartPeer("old-1");
+        var ex = await Assert.ThrowsAsync<PeerCommandException>(() => old.OpenOldBinaryAsync(f.ClientConnectionString("old-1"), f.Application, "rate_admission"));
+        Assert.Contains("capability_unsupported", ex.Error, StringComparison.Ordinal);
+        Assert.Equal(1, await Count(f, "SELECT count(*) FROM runwick.management_audit WHERE operation = 'ActivateCapabilities'"));
+
+        // The current binary still runs work.
+        await c.Dispatcher.DispatchAsync(new PingJob("after"), cancellationToken: Ct);
+        Assert.Equal(StoreStatus.Applied, (await c.ReserveAsync()).Status);
+
+    }
+
+    /// <summary>
+    /// A migrator meeting a store written by a newer binary fails migration_unknown; status shows the store ahead of the binary.
+    /// PostgreSQL has its own form on a fresh database (Runwick.Postgres.Tests): the contract fixtures there are migrated with fault hooks.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(NonPostgresKinds))]
+    [Trait("Case", "UPG-06")]
+    public async Task A_migrator_refuses_a_store_that_is_ahead_of_it_and_status_shows_the_floor(StoreKind kind)
+    {
+        var (f, c) = await OpenAsync(kind, "upg06m");
+        await using var _ = f;
+        await c.Dispatcher.DispatchAsync(new PingJob("a"), cancellationToken: Ct);
+        await Migrate(f); // the same store is current: nothing to do, no refusal
+
+        await PlantNewerStoreAsync(f);
+        try
+        {
+            Assert.Equal("migration_unknown", await FailsWith(() => Migrate(f)));
+            var status = await StatusOf(f);
+            Assert.Equal(9999L, status.StoreRevision);
+            Assert.True(status.StoreRevision > status.BinaryRevision);
+        }
+        finally
+        {
+            if (kind == StoreKind.Redis)
+            {
+                // rw:store is shared by every application on the server: put the layout back.
+                await (await RedisServer.AdminAsync()).GetDatabase().HashSetAsync("rw:store", "layout", "1");
+            }
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(Kinds))]
+    [Trait("Case", "UPG-07")]
+    public async Task Old_receipts_resolve_without_reapplication_and_an_unknown_codec_is_explicit(StoreKind kind)
+    {
+        var (f, c) = await OpenAsync(kind, "upg07");
+        await using var _ = f;
+        var p = c.Prepared.Prepare(new PingJob("x"));
+        var first = await c.Prepared.DispatchAsync(p, Ct);
+        var snapshot = await f.ReadCommittedSnapshot();
+
+        foreach (var mode in new[] { "drain", "maintenance", "drain", "open" })
+        {
+            await Set(f, mode);
+            Assert.Equal(DispatchResolutionStatus.Confirmed, (await c.Prepared.ResolveAsync(p.OperationId, Ct)).Status);
+        }
+
+        var replay = await c.Prepared.DispatchAsync(p, Ct);
+        Assert.Equal(first.JobId, replay.JobId);
+        Assert.Single((await f.ReadCommittedSnapshot()).Model.Jobs);
+        // Redis marks a resolved receipt as confirmed (22 §4.5); that marker is the only change a resolve makes.
+        var changed = snapshot.DiffTables(await f.ReadCommittedSnapshot()).Where(t => !t.Contains("application_controls", StringComparison.Ordinal) && t != "meta" && !t.StartsWith("rcpt:", StringComparison.Ordinal)); // Redis keeps the application gate in meta
+        Assert.Empty(changed);
+
+        // A receipt from a codec this binary does not know is named, not guessed at, and nothing changes.
+        await ForgeReceiptVersionAsync(f, p.OperationId.Value, 2);
+        await Assert.ThrowsAsync<StoreIncompatibleException>(() => c.Prepared.ResolveAsync(p.OperationId, Ct));
+        Assert.Single((await f.ReadCommittedSnapshot()).Model.Jobs);
+        await ForgeReceiptVersionAsync(f, p.OperationId.Value, 1);
+        Assert.Equal(DispatchResolutionStatus.Confirmed, (await c.Prepared.ResolveAsync(p.OperationId, Ct)).Status);
+    }
+
+    /// <summary>Rewrites the receipt's codec version (PostgreSQL, SQLite) or operation version (Redis keeps no codec field).</summary>
+    static async Task ForgeReceiptVersionAsync(DriverFixture f, Guid command, int version)
+    {
+        switch (f.Kind)
+        {
+            case StoreKind.Sqlite:
+                using (var conn = new SqliteConnection(f.AdminConnectionString))
+                {
+                    conn.Open();
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = "UPDATE runwick_storage_commands SET receipt_codec_version = @v WHERE command_id = @c";
+                    cmd.Parameters.AddWithValue("@v", version);
+                    cmd.Parameters.AddWithValue("@c", command.ToByteArray(bigEndian: true));
+                    cmd.ExecuteNonQuery();
+                }
+
+                break;
+            case StoreKind.Redis:
+                await (await RedisServer.AdminAsync()).GetDatabase().HashSetAsync(RedisServer.Key(f.Application, "rcpt:" + command.ToString("N")), "ver", version);
+                break;
+            default:
+                await f.ExecAsync("UPDATE runwick.storage_commands SET receipt_codec_version = @v WHERE command_id = @c", ("c", command), ("v", version));
+                break;
+        }
+    }
+
+    static Task<long> Count(DriverFixture f, string sql) =>
+        f.Kind == StoreKind.Sqlite ? f.CountAsync(sql.Replace("runwick.", "runwick_", StringComparison.Ordinal)) : f.CountAsync(sql);
 
     [Theory]
     [MemberData(nameof(SqlKinds))]

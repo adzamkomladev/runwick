@@ -24,7 +24,9 @@ ENGINE_PROJECTS = {'Runwick.Core.Tests'}
 # Projects bound to one driver.
 PROJECT_DRIVER = {'Runwick.Postgres.Tests': 'postgres', 'Runwick.Outbox.Tests': 'postgres', 'Runwick.Dashboard.Tests': 'postgres',
                   'Runwick.AspNetCore.Tests': 'postgres', 'Runwick.Sqlite.Tests': 'sqlite', 'Runwick.Redis.Tests': 'redis'}
-EXCLUDED_PROJECTS = {'Runwick.Redis.Prototype.Tests'}  # SP-018 prototype, replaced by Runwick.Redis.Tests (22 §12)
+# Host projects whose store-kind theories count for the named kind; their other tests stay PostgreSQL evidence.
+HOST_PROJECTS = {'Runwick.AspNetCore.Tests', 'Runwick.Dashboard.Tests'}
+EXCLUDED_PROJECTS ={'Runwick.Redis.Prototype.Tests'}  # SP-018 prototype, replaced by Runwick.Redis.Tests (22 §12)
 
 # ---------------------------------------------------------------- source scan: which test method carries which traits
 
@@ -154,6 +156,8 @@ def load_results(methods):
             drivers = set()
             if project in ENGINE_PROJECTS:
                 drivers = set(DRIVERS)
+            elif project in HOST_PROJECTS and (host_kinds := {KIND[k] for k in re.findall(r'\b(Postgres|Sqlite|Redis)\b', r['display'].split('(', 1)[1] if '(' in r['display'] else '')}):
+                drivers = host_kinds  # a host test that is a theory over the store kind runs on each (SP-028)
             elif project in PROJECT_DRIVER:
                 drivers = {PROJECT_DRIVER[project]}
             else:  # Contract.Tests and Cli.Tests: the store kind named in the theory arguments, else the run's own driver

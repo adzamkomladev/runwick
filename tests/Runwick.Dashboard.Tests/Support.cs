@@ -42,7 +42,7 @@ internal static class Users
 }
 
 /// <summary>
-/// A TestServer app with AddRunwick (PostgreSQL), Cookies + Runwick Basic, AddRunwickManagement and the dashboard at
+/// A TestServer app with AddRunwick (the fixture's store), Cookies + Runwick Basic, AddRunwickManagement and the dashboard at
 /// <c>/runwick</c>; optionally the JSON API at <c>/api</c>. Requests go over https://localhost (Basic refuses plain HTTP).
 /// </summary>
 internal sealed class DashHost : IAsyncDisposable
@@ -85,7 +85,7 @@ internal sealed class DashHost : IAsyncDisposable
             b.Services.AddSingleton<IFaultInjector>(f.Faults);
             b.Services.AddRunwick(r =>
             {
-                r.Application(f.Application).UsePostgres(f.ClientConnectionString("dash"));
+                f.UseStore(r.Application(f.Application), "dash");
                 Jobs(r);
             });
         }
@@ -188,7 +188,7 @@ internal static partial class Support
     /// <summary>Inserts a scaling event as the autoscaler would (11 §6).</summary>
     public static Task ScalingEventAsync(this DriverFixture f, DateTimeOffset at, string pool = "default", string reason = "scale_up", Guid? instance = null,
         Guid? eventId = null) =>
-        f.ExecAsync("""
+        f.Kind != StoreKind.Postgres ? f.RecordScalingEventAsync(pool, reason, instance) : f.ExecAsync("""
             INSERT INTO runwick.scaling_events (application, event_id, instance_id, pool_name, old_target, new_target, desired, candidate, reason, snapshot_at, created_at)
             VALUES (@a, @e, @i, @p, 1, 2, 2, NULL, @r, NULL, @t)
             """, ("a", f.Application), ("e", eventId ?? Guid.CreateVersion7()), ("i", instance ?? Guid.Empty), ("p", pool), ("r", reason), ("t", at));

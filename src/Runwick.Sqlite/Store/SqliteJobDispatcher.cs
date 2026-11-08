@@ -56,13 +56,15 @@ internal sealed class SqliteJobDispatcher(RunwickRuntime runtime, DispatchPrepar
     {
         var command = new StoreCommand<DispatchRequest>(prepared.Application, prepared.OperationId.Value, prepared.NotAfter,
             new DispatchRequest(new DispatchItem(prepared.Intent, prepared.Scopes, prepared.Digests) { Rates = preparer.RatesFor(prepared.Intent) }, prepared.StoreId, prepared.Digests.Command));
-        var reply = Guard(() => store.StageDispatch(transaction, command, ct));
+        using var span = StageSpan(prepared.Intent.Queue, 1);
+        var reply = Guard(() => store.StageDispatch(transaction, command, ct), span.Activity);
         if (reply.Status == StoreStatus.Applied && reply.Value is { } r)
         {
+            span.Activity?.SetTag("runwick.job.id", r.JobId.ToString("D")).SetTag("messaging.message.id", r.JobId.ToString("D"));
             return Staged(prepared.OperationId, r);
         }
 
-        throw Rejection(reply, prepared.OperationId, prepared.NotAfter, prepared, null);
+        throw Failed(span.Activity, Rejection(reply, prepared.OperationId, prepared.NotAfter, prepared, null));
     }
 
     StagedBatch Send(PreparedBatch prepared, SqliteTransaction transaction, CancellationToken ct)
@@ -73,7 +75,8 @@ internal sealed class SqliteJobDispatcher(RunwickRuntime runtime, DispatchPrepar
         }).ToList();
         var command = new StoreCommand<DispatchBatchRequest>(prepared.Application, prepared.OperationId.Value, prepared.NotAfter,
             new DispatchBatchRequest(items, prepared.ContinueOnConflict, prepared.StoreId, prepared.CommandDigest));
-        var reply = Guard(() => store.StageDispatchMany(transaction, command, ct));
+        using var span = StageSpan(prepared.Items.Count > 0 ? prepared.Items[0].Queue : "", prepared.Items.Count);
+        var reply = Guard(() => store.StageDispatchMany(transaction, command, ct), span.Activity);
         if (reply.Status == StoreStatus.Applied && reply.Value is { } r)
         {
             return new StagedBatch(prepared.OperationId, [.. r.Items.Select(i => new StagedBatchItemResult(
@@ -82,10 +85,30 @@ internal sealed class SqliteJobDispatcher(RunwickRuntime runtime, DispatchPrepar
                 i.Failure is { } f ? new BatchItemFailure(i.Ordinal, f.Code, f.Detail ?? f.Code, f.ConflictingJobId is { } c ? new JobId(c) : null) : null))]);
         }
 
-        throw Rejection(reply, prepared.OperationId, prepared.NotAfter, null, prepared);
+        throw Failed(span.Activity, Rejection(reply, prepared.OperationId, prepared.NotAfter, null, prepared));
     }
 
-    static StoreReply<T> Guard<T>(Func<StoreReply<T>> call) where T : class
+    /// <summary>The <c>stage {queue}</c> span (18 §2.1), as PostgresJobDispatcher: never <c>created</c>, the job exists only if the caller commits.</summary>
+    static Telemetry.Span StageSpan(string queue, int count)
+    {
+        var activity = Telemetry.Telemetry.StartActivity("stage " + queue, System.Diagnostics.ActivityKind.Producer);
+        activity?.SetTag("runwick.dispatch.kind", "staged").SetTag("messaging.system", "runwick").SetTag("messaging.operation.type", "send")
+            .SetTag("messaging.operation.name", "stage").SetTag("messaging.destination.name", queue);
+        if (count > 1)
+        {
+            activity?.SetTag("messaging.batch.message_count", count);
+        }
+
+        return new Telemetry.Span(activity);
+    }
+
+    static Exception Failed(System.Diagnostics.Activity? span, Exception ex)
+    {
+        span?.SetTag("error.type", ex is RunwickException r ? r.Code : ex.GetType().FullName).SetStatus(System.Diagnostics.ActivityStatusCode.Error);
+        return ex;
+    }
+
+    static StoreReply<T> Guard<T>(Func<StoreReply<T>> call, System.Diagnostics.Activity? span) where T : class
     {
         try
         {
@@ -93,7 +116,7 @@ internal sealed class SqliteJobDispatcher(RunwickRuntime runtime, DispatchPrepar
         }
         catch (SqStagingValidationException ex)
         {
-            throw new TransactionValidationException(ex.Code, ex.Message);
+            throw Failed(span, new TransactionValidationException(ex.Code, ex.Message));
         }
     }
 

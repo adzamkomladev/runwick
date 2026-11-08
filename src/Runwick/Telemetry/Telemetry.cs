@@ -250,16 +250,20 @@ internal static class Telemetry
     /// runner's lane (renewal … background, the 04 §9.1 order). Without a listener the call runs unwrapped.
     /// </summary>
     public static Task<Protocol.StoreReply<T>> MeasureStorage<T>(string operation, int lane, Func<Task<Protocol.StoreReply<T>>> call) where T : class =>
-        StorageOperationDuration.Instrument.Enabled ? MeasuredAsync(operation, IoClasses[lane], call) : call();
+        MeasureStorage(operation, lane, call, reply => StatusNames[reply.Status]);
 
-    static async Task<Protocol.StoreReply<T>> MeasuredAsync<T>(string operation, string ioClass, Func<Task<Protocol.StoreReply<T>>> call) where T : class
+    /// <summary>As the reply form, for a driver whose call returns its own result type; <paramref name="result"/> names the outcome tag.</summary>
+    public static Task<TResult> MeasureStorage<TResult>(string operation, int lane, Func<Task<TResult>> call, Func<TResult, string> result) =>
+        StorageOperationDuration.Instrument.Enabled ? MeasuredAsync(operation, IoClasses[lane], call, result) : call();
+
+    static async Task<TResult> MeasuredAsync<TResult>(string operation, string ioClass, Func<Task<TResult>> call, Func<TResult, string> resultOf)
     {
         var start = Stopwatch.GetTimestamp();
         var result = "error";
         try
         {
             var reply = await call().ConfigureAwait(false);
-            result = StatusNames[reply.Status];
+            result = resultOf(reply);
             return reply;
         }
         catch (Protocol.StoreOutcomeUnknownException)

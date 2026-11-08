@@ -459,6 +459,9 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
                     }
 
                     return time.GetUtcNow() < notAfter + floor ? new ReceiptResolution.NotApplied() : new ReceiptResolution.ExpiredUnknown();
+                case "Incompatible":
+                    // 23 §8: a receipt this binary cannot decode is never reported as not found, conflict or success.
+                    throw new StoreIncompatibleException($"Receipt operation version {(string)a[1]!} is not supported by this binary.");
                 case "Conflict":
                     return new ReceiptResolution.Conflict();
                 case "NotObserved":
@@ -469,10 +472,46 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
                     return new ReceiptResolution.ExpiredUnknown();
                 case "Recorded":
                     return new ReceiptResolution.Recorded((string)a[1]!, int.Parse((string)a[2]!, CultureInfo.InvariantCulture), (string)a[3]!,
-                        RxReply.T((string)a[4]!), JsonDocument.Parse((string)a[5]!).RootElement.Clone());
+                        RxReply.T((string)a[4]!), CanonicalIds((string)a[5]!));
                 default:
                     throw new StoreOutcomeUnknownException("commit_outcome_unknown", commandId, "ResolveCommand");
             }
+        }
+    }
+
+    /// <summary>The recorded result with job IDs in the wire form: the Lua scripts keep 32-digit hex, callers parse the dashed form (03 §8.5).</summary>
+    static JsonElement CanonicalIds(string json)
+    {
+        var node = JsonNode.Parse(json)!;
+        Canonicalize(node);
+        return JsonDocument.Parse(node.ToJsonString()).RootElement.Clone();
+    }
+
+    static void Canonicalize(JsonNode? node)
+    {
+        switch (node)
+        {
+            case JsonObject o:
+                foreach (var key in o.Select(p => p.Key).ToList())
+                {
+                    if (key is "jobId" or "conflictingJobId" && o[key] is JsonValue v && v.TryGetValue<string>(out var text) && Guid.TryParseExact(text, "N", out var id))
+                    {
+                        o[key] = id.ToString("D");
+                    }
+                    else
+                    {
+                        Canonicalize(o[key]);
+                    }
+                }
+
+                break;
+            case JsonArray a:
+                foreach (var item in a)
+                {
+                    Canonicalize(item);
+                }
+
+                break;
         }
     }
 }

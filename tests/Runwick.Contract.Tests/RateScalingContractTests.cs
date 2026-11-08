@@ -45,7 +45,7 @@ public sealed class RateScalingContractTests
     /// <summary>An instant column as epoch milliseconds.</summary>
     static string Ms(DriverFixture f, string column) => f.Kind == StoreKind.Sqlite ? column : $"(extract(epoch FROM {column}) * 1000)::bigint";
 
-    static Task<long> Count(DriverFixture f, string sql, params (string, object)[] p) =>
+    internal static Task<long> Count(DriverFixture f, string sql, params (string, object)[] p) =>
         f.Kind == StoreKind.Redis ? RedisCount(f, sql, p) : f.CountAsync(Sql(f, sql), p);
 
     // ---- Redis: the same questions answered from the committed key snapshot (hash rows are "field=json", sorted-set rows "member=score").
@@ -213,7 +213,7 @@ public sealed class RateScalingContractTests
 
     // ------------------------------------------------------------------ rate admission (10)
 
-    static IRateControlStore Rates(TestClient c) => (IRateControlStore)c.Driver;
+    internal static IRateControlStore Rates(TestClient c) => (IRateControlStore)c.Driver;
 
     static IScalingStore Scaling(TestClient c) => (IScalingStore)c.Driver;
 
@@ -237,7 +237,7 @@ public sealed class RateScalingContractTests
         return c;
     }
 
-    static Task<long> Grants(DriverFixture f, string? kind = null) => Count(f, """
+    internal static Task<long> Grants(DriverFixture f, string? kind = null) => Count(f, """
         SELECT count(*) FROM runwick.rate_grants AS g JOIN runwick.rate_scopes AS s USING (application, rate_scope_id)
         WHERE @kind = '' OR s.scope_kind = @kind
         """, ("kind", kind ?? ""));

@@ -117,16 +117,11 @@ internal sealed partial class RedisStore : IManagementQueryStore
                     s["prev"]!.GetValue<long>(), o["live"]!.GetValue<int>());
             })], ct);
 
-    // The schedule row is the one the schedule operations store in 'sched' (13); absent fields read as their defaults.
+    // The schedule row is the one the schedule operations store in 'sched' (13); the script returns its summary fields.
     public Task<StoreRead<IReadOnlyList<ScheduleSummary>>> ListSchedulesAsync(string application, string? after, int limit, CancellationToken ct) =>
         ManagementReadAsync<IReadOnlyList<ScheduleSummary>>(application, "schedules", [after ?? "", limit],
-            r => [.. Rows(r).Select(o =>
-            {
-                var s = o["row"]!;
-                return new ScheduleSummary(o["key"]!.GetValue<string>(), s["paused"]?.GetValue<bool>() ?? false, s["needsReview"]?.GetValue<bool>() ?? false,
-                    s["definitionRevision"]?.GetValue<long>() ?? 0, s["controlRevision"]?.GetValue<long>() ?? 0, MsTimeN(s["nextDueAt"]),
-                    MsTimeN(s["lastMaterializedAt"]));
-            })], ct);
+            r => [.. Rows(r).Select(o => new ScheduleSummary(o["key"]!.GetValue<string>(), o["paused"]!.GetValue<bool>(), o["review"]!.GetValue<bool>(),
+                o["drev"]!.GetValue<long>(), o["crev"]!.GetValue<long>(), MsTimeN(o["next"]), MsTimeN(o["mat"])))], ct);
 
     public Task<StoreRead<IReadOnlyList<AuditEntry>>> ListAuditAsync(string application, AuditFilter filter, long? after, int limit, CancellationToken ct) =>
         ManagementReadAsync<IReadOnlyList<AuditEntry>>(application, "audit",

@@ -78,6 +78,7 @@ internal static partial class RedisAdminSql
             var c = part.Trim();
             var detail = Regex.Match(c, @"^details->>'(\w+)' = (.+)$");
             var isNull = Regex.Match(c, @"^(\w+) IS NULL$");
+            var not = Regex.Match(c, @"^NOT (\w+)$");
             var inList = Regex.Match(c, @"^(\w+) IN \((.*)\)$");
             var eq = Regex.Match(c, @"^(\w+) = (.+)$");
             if (detail.Success)
@@ -87,6 +88,10 @@ internal static partial class RedisAdminSql
             else if (isNull.Success)
             {
                 yield return (r, _) => r.GetValueOrDefault(isNull.Groups[1].Value) is null;
+            }
+            else if (not.Success)
+            {
+                yield return (r, _) => !string.Equals(r.GetValueOrDefault(not.Groups[1].Value), "true", StringComparison.OrdinalIgnoreCase);
             }
             else if (inList.Success)
             {
@@ -201,7 +206,7 @@ internal static partial class RedisAdminSql
                 foreach (var (q, json) in await Hash("queues").ConfigureAwait(false))
                 {
                     var o = JsonNode.Parse(json)!;
-                    rows.Add(new() { ["queue"] = q, ["revision"] = o["revision"]!.ToString(), ["updated_by"] = o["updatedBy"]?.ToString() });
+                    rows.Add(new() { ["queue"] = q, ["revision"] = o["revision"]!.ToString(), ["updated_by"] = o["updatedBy"]?.ToString(), ["paused"] = o["paused"]?.ToString() });
                 }
 
                 break;
@@ -228,7 +233,15 @@ internal static partial class RedisAdminSql
                 {
                     var o = JsonNode.Parse(json)!;
                     rows.Add(new() { ["command_id"] = Hex(o["commandId"]!.ToString()), ["operation"] = o["action"]!.ToString(), ["target_kind"] = o["targetKind"]!.ToString(),
-                        ["target_id"] = o["targetId"]!.ToString(), ["reason"] = o["reason"]?.ToString(), ["details"] = o["details"]!.ToJsonString() });
+                        ["target_id"] = o["targetId"]!.ToString(), ["reason"] = o["reason"]?.ToString(), ["details"] = o["details"]!.ToJsonString(),
+                        ["actor_subject"] = o["subject"]?.ToString(), ["actor_scheme"] = o["scheme"]?.ToString() });
+                }
+
+                break;
+            case "worker_instances":
+                foreach (var id in (await Hash("workers").ConfigureAwait(false)).Keys.Where(k => k.Length == 32))
+                {
+                    rows.Add(new() { ["instance_id"] = Hex(id) });
                 }
 
                 break;
