@@ -224,6 +224,12 @@ internal sealed class DriverFixture : IAsyncDisposable
     /// <summary>Runs admin SQL against the per-test database (setup only; never used to fake protocol effects under test).</summary>
     public async Task ExecAsync(string sql, params (string Name, object Value)[] parameters)
     {
+        if (Kind == StoreKind.Sqlite)
+        {
+            SqliteSnapshotReader.Exec(SqlitePath, sql, parameters);
+            return;
+        }
+
         var conn = new NpgsqlConnection(AdminConnectionString);
         await using (conn.ConfigureAwait(false))
         {

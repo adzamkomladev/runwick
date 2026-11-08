@@ -65,5 +65,6 @@ internal sealed class SqliteStoreRegistration(string connectionString, SqliteOpt
         services.AddSingleton(sp => new SqliteStore(sp.GetRequiredService<SqExecutor>(), sp.GetRequiredService<SqRunner>(), sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton<IRunwickStore>(sp => sp.GetRequiredService<SqliteStore>());
         services.AddSingleton<IReadinessDiagnostics>(sp => sp.GetRequiredService<SqliteStore>());
+        services.AddSingleton<IScheduleStore>(sp => sp.GetRequiredService<SqliteStore>());
     }
 }
