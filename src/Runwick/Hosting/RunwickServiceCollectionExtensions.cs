@@ -97,6 +97,17 @@ public static class RunwickServiceCollectionExtensions
         services.AddSingleton(sp => new global::Runwick.Management.ScheduleControlService(
             sp.GetRequiredService<RunwickRuntime>(), sp.GetService<IScheduleStore>(), sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton<global::Runwick.Management.IScheduleControl>(sp => sp.GetRequiredService<global::Runwick.Management.ScheduleControlService>());
+
+        // Management session (16): transport-free; a host adds HTTP with Runwick.AspNetCore.
+        services.TryAddSingleton(new global::Runwick.Management.ManagementOptions());
+        services.TryAddSingleton<global::Runwick.Management.IManagementCursorProtector>(sp =>
+            new global::Runwick.Management.HmacCursorProtector(sp.GetRequiredService<global::Runwick.Management.ManagementOptions>().CursorKey));
+        services.AddSingleton<global::Runwick.Management.IManagementSession>(sp => new global::Runwick.Management.ManagementSession(
+            sp.GetRequiredService<RunwickRuntime>(), builder, sp.GetService<IManagementQueryStore>(),
+            sp.GetRequiredService<global::Runwick.Management.ControlService>(), sp.GetRequiredService<global::Runwick.Management.ScheduleControlService>(),
+            new global::Runwick.Management.ManagementCursors(sp.GetRequiredService<global::Runwick.Management.IManagementCursorProtector>(),
+                sp.GetRequiredService<TimeProvider>()),
+            sp.GetRequiredService<global::Runwick.Management.ManagementOptions>(), sp.GetRequiredService<TimeProvider>()));
         if (isWorker)
         {
             // Worker settings validate with the registry (06 §3); the engine starts after the handshake.

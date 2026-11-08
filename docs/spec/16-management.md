@@ -16,6 +16,20 @@ Not in SP-020: retention cleanup and the detail-expired projection (SP-021), the
 ## Changes
 
 - (2026-11-08) New document.
+- (2026-11-08, implementation of SP-020) What the build settled where this document was silent or could not be met as written:
+  - **Resending a client command ID.** NotAfter is part of the command fingerprint (03 §8), so a resend with a fresh NotAfter would be `command_conflict`. Before each mutation the session reads the NotAfter of an existing receipt for that command ID and reuses it; a first send gets now + the lifetime. One extra read per mutation. Two concurrent *first* sends of one ID can still race: one gets `command_conflict`, and its resend replays. For a schedule trigger the proposed job ID is derived from the command ID (SHA-256), so a resent trigger has the same body.
+  - **Cursor key without `CursorKey`.** Data Protection has no public key-derivation API, so `Runwick.AspNetCore` seals cursors with an `IDataProtector` (purpose `Runwick.Management.Cursor.v1`, authenticated encryption) instead of deriving an HMAC key. Replicas sharing the key ring still accept each other's cursors. The core session alone, with no key, uses a random per-process HMAC key. With `CursorKey` set, the cursor is `payload ‖ HMAC-SHA256` as §2.1 says.
+  - **Application-wide permissions.** Only `Jobs.*` and `Queues.*` may be queue-scoped. `Capacity.*`, `Schedules.*`, `Settings.Read`, `Retention.Manage` and `Audit.Read` are application-wide (audit rows are not filtered per queue). Grants come from the host's per-request mapping, so the check is in `ManagementGrant`'s constructor: a bad grant throws where it is built (presets at type load), and the request fails with 500, never with wider access.
+  - **Visibility.** A job (or attempt) is visible when the caller has `Jobs.Read` on its queue; otherwise every read, reveal and control on it is 404. A visible job without the specific permission is 403. A queue is visible for its controls with `Queues.Read` or `Queues.Control` on it. A list filtered to a queue outside the caller's scope returns an empty page.
+  - **Pages.** `limit` above 200 is clamped to 200; below 1 is 400. Queues, workers, scopes and schedules are keyset-paged with the same cursor rules as jobs and audit.
+  - **Reveal of an expired detail** writes no audit row (nothing is disclosed) and returns 410 with the job ID.
+  - **Bulk item `status`:** `applied`, `accepted` (cancel requested on owned work), `rejected` (with `code`), `not_found`, `forbidden`, `unavailable`.
+  - **Schedule control bodies** use one field, `expectedRevision`: the control revision for pause and resume, the definition revision for trigger and revalidate. Resume takes `policy`: `skipPaused` (default), `runOnce` or `catchUp`.
+  - **Error codes** not named above: 401 `unauthenticated`, 400 `antiforgery_invalid`, 429 `rate_limited`, 413 `payload_too_large`, 415 `unsupported_media_type`, 403 `forbidden`, 404 `not_found`. A store rejection `command_expired` is 503 `store_unavailable`.
+  - **Antiforgery header.** The host's `AntiforgeryOptions` are not changed: the token sent in `X-Runwick-Antiforgery` is moved to the host's configured antiforgery header just before validation, and any client value in that header is dropped first.
+  - **Limits are options.** The numbers of §5 are the defaults of `ManagementOptions` (set with `AddRunwickManagement(m => m.Configure(...))`); `GetSettings` reports them. The Basic failure limit counts verifier failures only; a refused non-HTTPS request does not count.
+  - **MGMT-05 dropped reply** uses the harness fault point `AfterCommitBeforeReply` with `DropReply` rather than the TCP fault proxy: the session's own resend resolves it, and a client resend replays.
+  - **MGMT-12 schedule controls** act on a schedule registered by a separate scheduler-side client, since the management host runs no scheduler.
 
 ## 1. Caller, permissions and scope
 

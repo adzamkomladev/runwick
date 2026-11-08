@@ -14,7 +14,11 @@ public readonly record struct JobTarget(JobId JobId, int ExpectedGeneration, lon
 
 /// <summary>The outcome of one job control. A rejection is a result, not an exception. Preview.</summary>
 public sealed record JobControlResult(
-    JobId JobId, bool Succeeded, string? Code, string? Effect, int? Generation, long? Revision, string? State, bool Replayed);
+    JobId JobId, bool Succeeded, string? Code, string? Effect, int? Generation, long? Revision, string? State, bool Replayed)
+{
+    /// <summary>The job's generation when a position conflict rejected the control (stale generation vs stale revision).</summary>
+    internal int? ActualGeneration { get; init; }
+}
 
 /// <summary>Preview.</summary>
 public sealed record QueueControlResult(string Queue, bool Succeeded, string? Code, bool? Paused, long? Revision, bool Replayed);
@@ -65,16 +69,13 @@ internal sealed class ControlService(RunwickRuntime runtime, IJobControlStore? s
     IJobControlStore Store => store ?? throw new InvalidOperationException("The configured store does not support revisioned controls.");
 
     public Task<JobControlResult> CancelAsync(JobTarget target, ManagementActor actor, string? reason = null, CancellationToken cancellationToken = default) =>
-        JobAsync(target, actor, reason, (s, c, t) => s.CancelAsync(c.With(new CancelRequest(target.JobId.Value, target.ExpectedGeneration, target.ExpectedRevision, c.Body)), t),
-            cancellationToken);
+        JobAsync(Operations.Cancel, target, actor, reason, null, cancellationToken);
 
     public Task<JobControlResult> RetryAsync(JobTarget target, ManagementActor actor, string? reason = null, CancellationToken cancellationToken = default) =>
-        JobAsync(target, actor, reason, (s, c, t) => s.ManualRetryAsync(c.With(new RetryRequest(target.JobId.Value, target.ExpectedGeneration, target.ExpectedRevision, c.Body)), t),
-            cancellationToken);
+        JobAsync(Operations.ManualRetry, target, actor, reason, null, cancellationToken);
 
     public Task<JobControlResult> RerunAsync(JobTarget target, ManagementActor actor, string? reason = null, CancellationToken cancellationToken = default) =>
-        JobAsync(target, actor, reason, (s, c, t) => s.RerunSucceededAsync(c.With(new RetryRequest(target.JobId.Value, target.ExpectedGeneration, target.ExpectedRevision, c.Body)), t),
-            cancellationToken);
+        JobAsync(Operations.RerunSucceeded, target, actor, reason, null, cancellationToken);
 
     public async Task<IReadOnlyList<JobControlResult>> CancelManyAsync(IReadOnlyList<JobTarget> targets, ManagementActor actor, string? reason = null,
         CancellationToken cancellationToken = default)
@@ -90,49 +91,72 @@ internal sealed class ControlService(RunwickRuntime runtime, IJobControlStore? s
     }
 
     public Task<QueueControlResult> PauseAsync(string queue, long expectedRevision, ManagementActor actor, string? reason = null,
-        CancellationToken cancellationToken = default) => QueueAsync(queue, true, expectedRevision, actor, reason, cancellationToken);
+        CancellationToken cancellationToken = default) => QueueAsync(queue, true, expectedRevision, actor, reason, null, cancellationToken);
 
     public Task<QueueControlResult> ResumeAsync(string queue, long expectedRevision, ManagementActor actor, string? reason = null,
-        CancellationToken cancellationToken = default) => QueueAsync(queue, false, expectedRevision, actor, reason, cancellationToken);
+        CancellationToken cancellationToken = default) => QueueAsync(queue, false, expectedRevision, actor, reason, null, cancellationToken);
 
-    async Task<QueueControlResult> QueueAsync(string queue, bool paused, long expectedRevision, ManagementActor actor, string? reason, CancellationToken ct)
+    internal async Task<QueueControlResult> QueueAsync(string queue, bool paused, long expectedRevision, ManagementActor actor, string? reason, CommandSeed? seed,
+        CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(queue);
-        var reply = await SendAsync(Actor(actor, reason), a => new QueueStateRequest(queue, paused, expectedRevision, a), Store.SetQueueStateAsync, ct).ConfigureAwait(false);
+        var reply = await SendAsync(Actor(actor, reason), a => new QueueStateRequest(queue, paused, expectedRevision, a), Store.SetQueueStateAsync, seed, ct)
+            .ConfigureAwait(false);
         return reply.Value is { } v
             ? new QueueControlResult(queue, true, null, v.Paused, v.Revision, reply.Replayed)
             : new QueueControlResult(queue, false, reply.Error?.Code, null, reply.Error?.ActualRevision, false);
     }
 
-    public async Task<CapacityControlResult> SetScopeCapacityAsync(string scopeKind, string scopeKey, int capacity, long expectedPolicyRevision,
-        ManagementActor actor, string? reason = null, CancellationToken cancellationToken = default)
+    public Task<CapacityControlResult> SetScopeCapacityAsync(string scopeKind, string scopeKey, int capacity, long expectedPolicyRevision,
+        ManagementActor actor, string? reason = null, CancellationToken cancellationToken = default) =>
+        ScopeAsync(scopeKind, scopeKey, capacity, expectedPolicyRevision, actor, reason, null, cancellationToken);
+
+    internal async Task<CapacityControlResult> ScopeAsync(string scopeKind, string scopeKey, int capacity, long expectedPolicyRevision,
+        ManagementActor actor, string? reason, CommandSeed? seed, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(scopeKind);
         ArgumentException.ThrowIfNullOrEmpty(scopeKey);
         var reply = await SendAsync(Actor(actor, reason), a => new ScopePolicyRequest(scopeKind, scopeKey, capacity, expectedPolicyRevision, a),
-            Store.EditScopePolicyAsync, cancellationToken).ConfigureAwait(false);
+            Store.EditScopePolicyAsync, seed, cancellationToken).ConfigureAwait(false);
         return reply.Value is { } v
             ? new CapacityControlResult(scopeKind, scopeKey, true, null, v.Capacity, v.PolicyRevision, v.LivePermits, reply.Replayed)
             : new CapacityControlResult(scopeKind, scopeKey, false, reply.Error?.Code, null, reply.Error?.ActualRevision, null, false);
     }
 
-    async Task<JobControlResult> JobAsync(JobTarget target, ManagementActor actor, string? reason,
-        Func<IJobControlStore, StoreCommand<ControlActor>, CancellationToken, Task<StoreReply<ControlledJob>>> call, CancellationToken ct)
+    /// <summary>One job control; <paramref name="seed"/> is the caller's command ID and NotAfter (SP-020), else a new command.</summary>
+    internal async Task<JobControlResult> JobAsync(string operation, JobTarget target, ManagementActor actor, string? reason, CommandSeed? seed,
+        CancellationToken ct)
     {
         var controlActor = Actor(actor, reason);
         await runtime.EnsureReadyAsync(ct).ConfigureAwait(false);
-        var command = NewCommand(controlActor);
-        var reply = await ResendAsync(command.NotAfter, t => call(Store, command, t), ct).ConfigureAwait(false);
+        var command = NewCommand(controlActor, seed);
+        var retry = new RetryRequest(target.JobId.Value, target.ExpectedGeneration, target.ExpectedRevision, controlActor);
+        Func<CancellationToken, Task<StoreReply<ControlledJob>>> call = operation switch
+        {
+            Operations.Cancel => t => Store.CancelAsync(
+                command.With(new CancelRequest(target.JobId.Value, target.ExpectedGeneration, target.ExpectedRevision, controlActor)), t),
+            Operations.ManualRetry => t => Store.ManualRetryAsync(command.With(retry), t),
+            _ => t => Store.RerunSucceededAsync(command.With(retry), t),
+        };
+        var reply = await ResendAsync(command.NotAfter, call, ct).ConfigureAwait(false);
         return reply.Value is { } v
             ? new JobControlResult(target.JobId, true, null, v.Effect, v.Position.Generation, v.Position.Revision, v.Position.State, reply.Replayed)
-            : new JobControlResult(target.JobId, false, reply.Error?.Code, null, null, reply.Error?.ActualRevision, null, false);
+            : new JobControlResult(target.JobId, false, reply.Error?.Code, null, null, reply.Error?.ActualRevision, null, false)
+            {
+                ActualGeneration = ActualGeneration(reply.Error?.Detail),
+            };
     }
 
+    /// <summary>A position conflict's detail is <c>actual=generation/revision</c> (08 §3.1).</summary>
+    static int? ActualGeneration(string? detail) =>
+        detail is not null && detail.StartsWith("actual=", StringComparison.Ordinal) && detail[7..].Split('/') is [var g, _]
+            && int.TryParse(g, System.Globalization.CultureInfo.InvariantCulture, out var gen) ? gen : null;
+
     async Task<StoreReply<TResult>> SendAsync<TRequest, TResult>(ControlActor actor, Func<ControlActor, TRequest> body,
-        Func<StoreCommand<TRequest>, CancellationToken, Task<StoreReply<TResult>>> send, CancellationToken ct) where TResult : class
+        Func<StoreCommand<TRequest>, CancellationToken, Task<StoreReply<TResult>>> send, CommandSeed? seed, CancellationToken ct) where TResult : class
     {
         await runtime.EnsureReadyAsync(ct).ConfigureAwait(false);
-        var command = NewCommand(actor).With(body(actor));
+        var command = NewCommand(actor, seed).With(body(actor));
         return await ResendAsync(command.NotAfter, t => send(command, t), ct).ConfigureAwait(false);
     }
 
@@ -166,10 +190,10 @@ internal sealed class ControlService(RunwickRuntime runtime, IJobControlStore? s
         }
     }
 
-    StoreCommand<ControlActor> NewCommand(ControlActor actor)
+    StoreCommand<ControlActor> NewCommand(ControlActor actor, CommandSeed? seed)
     {
-        var notAfter = time.GetUtcNow() + Operations.AdministrativeLifetime;
-        return new(runtime.Registry.Application, Guid.CreateVersion7(), DateTimeOffset.FromUnixTimeMilliseconds(notAfter.ToUnixTimeMilliseconds()), actor);
+        var s = seed ?? CommandSeed.New(time, Operations.AdministrativeLifetime);
+        return new(runtime.Registry.Application, s.CommandId, s.NotAfter, actor);
     }
 
     static ControlActor Actor(ManagementActor actor, string? reason)
@@ -185,6 +209,14 @@ public sealed class ControlOutcomeUnknownException(Guid commandId, Exception? in
         $"The outcome of control command {commandId} is unknown.", innerException)
 {
     public Guid CommandId { get; } = commandId;
+}
+
+/// <summary>A control command's identity and deadline: a new one, or the one an SP-020 client supplied and may resend.</summary>
+internal readonly record struct CommandSeed(Guid CommandId, DateTimeOffset NotAfter)
+{
+    public static CommandSeed New(TimeProvider time, TimeSpan lifetime) => new(Guid.CreateVersion7(), Ms(time.GetUtcNow() + lifetime));
+
+    public static DateTimeOffset Ms(DateTimeOffset t) => DateTimeOffset.FromUnixTimeMilliseconds(t.ToUnixTimeMilliseconds());
 }
 
 internal static class StoreCommandExtensions

@@ -181,7 +181,8 @@ internal sealed record PgOp(
 
     public bool AllowedWhileDraining => Operation is Operations.Renew or Operations.RenewMany or Operations.Finish or Operations.FinishMany or Operations.Recover
         or Operations.ReleaseReservation or "PublishPresence" or "ReadinessProbe" or "ListExpiredLeases" or "ResolveCommand"
-        or Operations.RegisterApplication or Operations.EventsSince || Operations.IsAdministrative(Operation)
+        or Operations.RegisterApplication or Operations.EventsSince or PgStore.ManagementRead or PgStore.RecordDisclosure
+        || Operations.IsAdministrative(Operation)
         || Operation is ScheduleOperations.SetScheduleState or ScheduleOperations.UpdateSchedule or ScheduleOperations.ResolveCatchUp
             or ScheduleOperations.RecordScheduleEvaluationFailure or ScheduleOperations.RevalidateSchedule;
 }
