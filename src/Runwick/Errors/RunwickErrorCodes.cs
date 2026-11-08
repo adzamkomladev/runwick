@@ -99,6 +99,7 @@ public static class RunwickErrorCodes
     public const string NotADispatchOperation = "not_a_dispatch_operation";
     public const string TransactionStoreMismatch = "transaction_store_mismatch";
     public const string TransactionInvalid = "transaction_invalid";
+    public const string TransactionProfileMismatch = "transaction_profile_mismatch";
 
     // Dispatch — outcome unknown
     public const string OutcomeUnknown = "outcome_unknown";
