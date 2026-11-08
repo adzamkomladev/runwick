@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- SP-024: a host with its own Inertia.Net page and the Runwick dashboard at /ops/runwick, over PostgreSQL. Drives the browser runs. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <NoWarn>$(NoWarn);CA2007</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Runwick.Dashboard\Runwick.Dashboard.csproj" />
+    <ProjectReference Include="..\..\src\Runwick.Postgres\Runwick.Postgres.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Inertia.Net" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="app.html" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

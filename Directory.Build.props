@@ -48,5 +48,8 @@
     <InternalsVisibleTo Include="Runwick.AspNetCore.Tests" />
     <InternalsVisibleTo Include="Runwick.Cli" />
     <InternalsVisibleTo Include="Runwick.Cli.Tests" />
+    <InternalsVisibleTo Include="Runwick.Dashboard" />
+    <InternalsVisibleTo Include="Runwick.Dashboard.Tests" />
+    <InternalsVisibleTo Include="Runwick.Dashboard.Host" />
   </ItemGroup>
 </Project>

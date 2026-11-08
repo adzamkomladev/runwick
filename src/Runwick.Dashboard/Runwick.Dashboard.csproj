@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Runwick dashboard: a web UI over the management session, mounted inside an ASP.NET Core app (Inertia.Net named mount, prebuilt React client).</Description>
+    <!-- ASP.NET Core-only code: no SynchronizationContext to avoid. -->
+    <NoWarn>$(NoWarn);CA2007</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\Runwick.AspNetCore\Runwick.AspNetCore.csproj" />
+    <PackageReference Include="Inertia.Net" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Built by `npm run build` in ClientApp and committed (21 §7.2); dotnet build and pack never run Node. -->
+    <EmbeddedResource Include="dist/**" LogicalName="runwick-dashboard/%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Remove="ClientApp/**" />
+    <Compile Remove="ClientApp/**" />
+    <Content Remove="ClientApp/**" />
+  </ItemGroup>
+</Project>
