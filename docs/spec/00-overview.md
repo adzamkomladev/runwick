@@ -2,6 +2,10 @@
 
 **Sources:** docs/architecture-baseline.md, docs/architecture-plan.md, docs/architecture-acceptance.md, docs/runwick-explained.md, docs/review-2026-10-30.md, docs/v1-delivery-plan.md, docs/architecture/platform-and-packages.md, docs/architecture/provider-dependency-plan.md.
 
+## Changes (2026-11-08, SP-024 spec)
+
+- The dashboard is specified in [21-dashboard.md](21-dashboard.md): `AddRunwickDashboard`/`MapRunwickDashboard`, pages and the management reads behind them, polling, per-mount antiforgery, the committed client build, DASH-01–07 and MGMT-01–12 against the real UI. §10 index gains 21.
+
 ## Changes (2026-11-08, SP-023)
 
 - §6 `Runwick.Dashboard` pin: Inertia.Net 1.5.3 → 1.7.0. 1.5.3 had one option set, version, root view and state store per app, so a dashboard could not be mounted inside a host that already uses Inertia. 1.7.0 adds named mounts (`AddInertia(name, ...)`, `UseInertia(name)`), and each dashboard mount is one of them. What 1.7.0 still leaves to Runwick is listed in [docs/reports/sp-023.md](../reports/sp-023.md).
@@ -240,5 +244,6 @@ These are invariants for code, API results, logs, telemetry and documentation. A
 | [18-telemetry.md](18-telemetry.md) | M4 SP-022: `Runwick` ActivitySource/Meter, frozen span/instrument/log tables, attribute vocabulary and cardinality bound, local vs global metrics and staleness, redaction, per-role health, `Runwick.OpenTelemetry`, pinned messaging mapping, Grafana dashboard and alert rules, OBS cases | observability-and-operations, management-retention-defaults, 05, 09, 16, 17 |
 | [19-cli.md](19-cli.md) | M4 SP-032: `runwick` CLI over the management HTTP API; contexts and credentials; human, `--output json` and `--agent` envelopes; `--agent describe`; command IDs and resend; events endpoint; audited dispatch by job name (`ManagementDispatch/1`, next PostgreSQL revision); `migrate`/`doctor`; CLI cases | v1-delivery-plan SP-032, implementation-backlog §6b, commercial-strategy §4, 16 |
 | [20-sqlite.md](20-sqlite.md) | M4 SP-019: SQLite store: profile and topology checks, schema translation, `BEGIN IMMEDIATE` runner, executor threads, operations vs 04 including batched ReserveAndBegin/RenewMany/FinishMany, events, caller staging and completion, migrations, SQL cases | driver-capabilities §4, driver-contract-suite, provider-dependency-plan §5, 03, 04 |
+| [21-dashboard.md](21-dashboard.md) | M4 SP-024: `Runwick.Dashboard` package and public API, mount pipeline (gate, Inertia.Net named mount, router), auth and per-mount antiforgery, pages and their management reads, polling, controls and reveals, `ListScalingEvents`, embedded prebuilt client and stale-build guard, DASH/MGMT/DSH cases | v1-delivery-plan SP-024, sp-023 report, dashboard-integration-closure, management-and-dashboard, 16, 17 |
 
 Test-case citations use `document:case` wherever an ID is ambiguous; `OBS-01` in particular exists in both the driver contract suite and the telemetry plan and is always cited with its document.
