@@ -64,7 +64,7 @@ internal sealed class RedisStoreRegistration(StackExchange.Redis.ConfigurationOp
         services.TryAddSingleton<IFaultInjector, NullFaultInjector>();
         services.AddSingleton(sp => new RxClient(configuration ?? new StackExchange.Redis.ConfigurationOptions(),
             sp.GetRequiredService<JobRegistry>().Application, sp.GetRequiredService<ProducerOptions>().MaxConcurrentCalls));
-        services.AddSingleton(sp => new RxRunner(sp.GetRequiredService<RxClient>(), sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton(sp => new RxRunner(sp.GetRequiredService<RxClient>(), sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<IFaultInjector>()));
         services.AddSingleton(sp => new RedisStore(sp.GetRequiredService<RxRunner>(), options, sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton<IRunwickStore>(sp => sp.GetRequiredService<RedisStore>());
         services.AddSingleton<IReadinessDiagnostics>(sp => sp.GetRequiredService<RedisStore>());
