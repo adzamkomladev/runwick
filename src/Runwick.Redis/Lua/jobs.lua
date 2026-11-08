@@ -205,7 +205,7 @@ local function rate_step(j, lease, jitter)
     local s = U.jget('ratescopes', id)
     U.expect(s ~= nil)
     scopes[#scopes + 1] = { id = id, row = s }
-    if U.nn(s.last) and s.last > t then t = s.last end
+    if U.nn(s.row.last) and s.row.last > t then t = s.row.last end
   end
   local counts, blocked, isBlocked = {}, U.arr(), {}
   for i, s in ipairs(scopes) do
