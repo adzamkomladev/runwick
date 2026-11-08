@@ -54,11 +54,14 @@ internal sealed class RxScript
 
     /// <summary>A script that may write (Redis checks memory and MISCONF before it runs any of it).</summary>
     public static RxScript Write(string op) =>
-        Cache.GetOrAdd("w:" + op, _ => new RxScript(op, "#!lua\n" + Resource("prelude.lua") + "\n" + Resource("jobs.lua") + "\n" + Resource("ops." + op + ".lua")));
+        Cache.GetOrAdd("w:" + op, _ => new RxScript(op, "#!lua\n" + Resource("prelude.lua") + "\n" + Resource("jobs.lua") + Lib(op) + "\n" + Resource("ops." + op + ".lua")));
 
     /// <summary>A read-only script (<c>flags=no-writes</c>, 22 §4.6).</summary>
     public static RxScript Read(string op) =>
-        Cache.GetOrAdd("r:" + op, _ => new RxScript(op, "#!lua flags=no-writes\n" + Resource("prelude.lua") + "\n" + Resource("jobs.lua") + "\n" + Resource("ops." + op + ".lua")));
+        Cache.GetOrAdd("r:" + op, _ => new RxScript(op, "#!lua flags=no-writes\n" + Resource("prelude.lua") + "\n" + Resource("jobs.lua") + Lib(op) + "\n" + Resource("ops." + op + ".lua")));
+
+    /// <summary>The helper library an operation family shares (the schedule scripts: sched.lua).</summary>
+    static string Lib(string op) => op.StartsWith("sched_", StringComparison.Ordinal) ? "\n" + Resource("sched.lua") : "";
 
     /// <summary>Every Lua source file of the bundle (REDIS-08/11 source checks).</summary>
     internal static IEnumerable<string> AllSources() =>

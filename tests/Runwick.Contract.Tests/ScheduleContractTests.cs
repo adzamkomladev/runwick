@@ -46,12 +46,18 @@ public sealed class ScheduleContractTests
 
     static string Q(DriverFixture f, string sql) => f.Kind == StoreKind.Sqlite ? sql.Replace("runwick.", "runwick_", StringComparison.Ordinal) : sql;
 
-    /// <summary>An instant as the store's admin SQL binds it.</summary>
-    static object At(DriverFixture f, DateTimeOffset t) => f.Kind == StoreKind.Sqlite ? t.ToUnixTimeMilliseconds() : t;
+    /// <summary>An instant as the store's admin SQL binds it (epoch ms for SQLite and Redis).</summary>
+    static object At(DriverFixture f, DateTimeOffset t) => f.Kind == StoreKind.Postgres ? t : t.ToUnixTimeMilliseconds();
 
-    static Task<long> Count(DriverFixture f, string sql, params (string, object)[] p) => f.CountAsync(Q(f, sql), p);
+    /// <summary>Redis answers the same fixed statements from its keys (<see cref="RedisAdmin"/>).</summary>
+    static Task<long> Count(DriverFixture f, string sql, params (string, object)[] p) =>
+        f.Kind == StoreKind.Redis ? RedisAdmin.CountAsync(f, sql, p) : f.CountAsync(Q(f, sql), p);
 
-    static Task Exec(DriverFixture f, string sql, params (string, object)[] p) => f.ExecAsync(Q(f, sql), p);
+    static Task Exec(DriverFixture f, string sql, params (string, object)[] p) =>
+        f.Kind == StoreKind.Redis ? RedisAdmin.ExecAsync(f, sql, p) : f.ExecAsync(Q(f, sql), p);
+
+    /// <summary>Cases that arm store fault points or barriers (PostgreSQL and SQLite); Redis covers them with the write-prefix cases (REDIS-01).</summary>
+    public static TheoryData<StoreKind> FaultKinds => [.. CoreContractTests.Kinds.Select(k => (StoreKind)k.Data).Where(k => k != StoreKind.Redis)];
 
     static Task<long> Jobs(DriverFixture f, string? application = null) =>
         Count(f, "SELECT count(*) FROM runwick.jobs WHERE application = @a", ("a", application ?? f.Application));
@@ -62,7 +68,7 @@ public sealed class ScheduleContractTests
     static IScheduleStore Store(TestClient c) => c.Services.GetRequiredService<IScheduleStore>();
 
     /// <summary>Activates capability <c>scheduler</c> with admin SQL (setup only: SQLite has no rate-control store yet).</summary>
-    static Task ActivateAsync(DriverFixture f, string application) => Exec(f, f.Kind == StoreKind.Sqlite
+    static Task ActivateAsync(DriverFixture f, string application) => f.Kind == StoreKind.Redis ? RedisAdmin.Activate(application, "scheduler") : Exec(f, f.Kind == StoreKind.Sqlite
         ? "UPDATE runwick.application_controls SET required_capabilities = json_set(required_capabilities, '$.scheduler', 1), revision = revision + 1 WHERE application = @a"
         : "UPDATE runwick.application_controls SET required_capabilities = required_capabilities || '{\"scheduler\":1}'::jsonb, revision = revision + 1 WHERE application = @a",
         ("a", application));
@@ -198,11 +204,11 @@ public sealed class ScheduleContractTests
     }
 
     public static TheoryData<StoreKind, string> FaultPoints =>
-        [.. CoreContractTests.Kinds.SelectMany(k => new[] { nameof(FaultPoint.AfterMutation), nameof(FaultPoint.BeforeCommit) }
+        [.. FaultKinds.SelectMany(k => new[] { nameof(FaultPoint.AfterMutation), nameof(FaultPoint.BeforeCommit) }
             .Select(p => ((StoreKind)k.Data, p)))];
 
     [Theory]
-    [MemberData(nameof(CoreContractTests.Kinds), MemberType = typeof(CoreContractTests))]
+    [MemberData(nameof(FaultKinds))]
     [Trait("Case", "SCH-03")]
     public async Task Pause_racing_materialization_has_one_serial_outcome(StoreKind kind)
     {
@@ -377,7 +383,7 @@ public sealed class ScheduleContractTests
     }
 
     [Theory]
-    [MemberData(nameof(CoreContractTests.Kinds), MemberType = typeof(CoreContractTests))]
+    [MemberData(nameof(FaultKinds))]
     [Trait("Case", "SCHED-12")]
     public async Task A_lost_materialization_reply_keeps_the_same_command(StoreKind kind)
     {
@@ -516,8 +522,17 @@ public sealed class ScheduleContractTests
 
         // CMD-03: lost reply, then the same command resolves to the committed result.
         var resume = c.Command(new ScheduleStateRequest("tick", false, ScheduleOperations.MisfireRunOnce, s.ControlRevision + 1, Actor));
-        f.ArmFault(FaultPoint.AfterCommitBeforeReply, FaultSpec.DropReply, FaultTarget.Command(resume.CommandId));
-        await Assert.ThrowsAsync<StoreOutcomeUnknownException>(() => Store(c).SetScheduleStateAsync(resume, Ct));
+        if (kind != StoreKind.Redis)
+        {
+            f.ArmFault(FaultPoint.AfterCommitBeforeReply, FaultSpec.DropReply, FaultTarget.Command(resume.CommandId));
+            await Assert.ThrowsAsync<StoreOutcomeUnknownException>(() => Store(c).SetScheduleStateAsync(resume, Ct));
+        }
+        else
+        {
+            // No store fault points on Redis (its lost-reply cases are REDIS-01): a plain first send, then the resend below replays.
+            Assert.Equal(StoreStatus.Applied, (await Store(c).SetScheduleStateAsync(resume, Ct)).Status);
+        }
+
         var resolved = await Store(c).SetScheduleStateAsync(resume, Ct);
         Assert.True(resolved.Replayed);
         Assert.False(resolved.Value!.Paused);
