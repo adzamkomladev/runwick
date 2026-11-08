@@ -650,10 +650,13 @@ internal static class Operations
     public const string EditRatePolicy = "EditRatePolicy";
     public const string ActivateCapabilities = "ActivateCapabilities";
     public const string SetPoolOverride = "SetPoolOverride";
+    public const string EditRetentionPolicy = "EditRetentionPolicy";
+    public const string CleanupBatch = "CleanupBatch";
 
     /// <summary>Administrative mutations (08 §3.1): durable class, 5 min default NotAfter, 10 min cap.</summary>
     public static bool IsAdministrative(string operation) =>
-        operation is Cancel or ManualRetry or RerunSucceeded or SetQueueState or EditScopePolicy or EditRatePolicy or ActivateCapabilities or SetPoolOverride;
+        operation is Cancel or ManualRetry or RerunSucceeded or SetQueueState or EditScopePolicy or EditRatePolicy or ActivateCapabilities or SetPoolOverride
+            or EditRetentionPolicy;
 
     public static readonly TimeSpan AdministrativeLifetime = TimeSpan.FromMinutes(5);
 

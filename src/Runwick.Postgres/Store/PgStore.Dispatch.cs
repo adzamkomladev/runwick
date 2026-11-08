@@ -9,7 +9,7 @@ namespace Runwick.Postgres.Store;
 internal sealed partial class PgStore
 {
     // Dispatch/1 and DispatchMany/1, direct or staged, run in runwick.dispatch_v2 (04 §7.2): steps 2-10 are the shared
-    // runwick.rw_dispatch_core_v2, which ReceiveOutbox/1 and the schedule operations reach as well.
+    // runwick.rw_dispatch_core_v3, which ReceiveOutbox/1 and the schedule operations reach as well.
 
     public Task<StoreReply<DispatchResult>> DispatchAsync(StoreCommand<DispatchRequest> command, CancellationToken ct) =>
         runner.CallAsync(DispatchOp(command), DispatchCall([command.Body.Item], many: false, continueOnConflict: false), MapDispatch, ct);
@@ -33,7 +33,7 @@ internal sealed partial class PgStore
 
     static PgCall DispatchCall(IReadOnlyList<DispatchItem> items, bool many, bool continueOnConflict)
     {
-        var call = new PgCall("dispatch_v2").P("p_many", many).P("p_continue", continueOnConflict);
+        var call = new PgCall("dispatch_v3").P("p_many", many).P("p_continue", continueOnConflict);
         foreach (var (name, value, type) in DispatchArgs(items))
         {
             call.P(name, value, type);
@@ -73,7 +73,7 @@ internal sealed partial class PgStore
         return null;
     }
 
-    /// <summary>The items of runwick.rw_dispatch_core_v2 as parallel arrays, one element per item in ordinal order.</summary>
+    /// <summary>The items of runwick.rw_dispatch_core_v3 as parallel arrays, one element per item in ordinal order.</summary>
     static IEnumerable<(string Name, object? Value, NpgsqlDbType Type)> DispatchArgs(IReadOnlyList<DispatchItem> items)
     {
         const NpgsqlDbType A = NpgsqlDbType.Array;
@@ -111,7 +111,7 @@ internal sealed partial class PgStore
 
     /// <summary>
     /// Steps 2-10 of 04 §7.2 inside a statement-path transaction (the schedule operations that stay on statements): one
-    /// statement that runs runwick.rw_dispatch_core_v2, so there is one dispatch implementation. Its writes count as one
+    /// statement that runs runwick.rw_dispatch_core_v3, so there is one dispatch implementation. Its writes count as one
     /// mutation step; the decision time it read becomes this transaction's.
     /// </summary>
     async Task<DispatchOutcome> DispatchCoreAsync(PgTx tx, IReadOnlyList<DispatchItem> items, bool continueOnConflict,
@@ -120,7 +120,7 @@ internal sealed partial class PgStore
         var args = DispatchArgs(items).ToList();
         using var cmd = tx.Sql($"""
             SELECT c.p_now, (c.o_reject).status, (c.o_reject).code, (c.o_reject).detail, (c.o_reject).conflicting_job_id, c.o_items::text
-            FROM runwick.rw_dispatch_core_v2(p_application => @application, p_command_id => @command_id, p_not_after => @not_after,
+            FROM runwick.rw_dispatch_core_v3(p_application => @application, p_command_id => @command_id, p_not_after => @not_after,
                 p_continue => @continue, p_created_reason => @created_reason,
                 {string.Join(", ", args.Select(a => $"{a.Name} => @{a.Name}"))},
                 p_faults => NULL, p_steps => 0, p_now => NULL) AS c
@@ -153,7 +153,7 @@ internal sealed partial class PgStore
     /// <summary>
     /// The payload row's headers: the two metadata maps and, for a store-built scheduled job (13 §3.2), its occurrence.
     /// A manual trigger's occurrence is the decision time of the creating command, so it is sent as nulls and filled in
-    /// by runwick.rw_dispatch_core_v2.
+    /// by runwick.rw_dispatch_core_v3.
     /// </summary>
     static string Headers(DispatchItem item)
     {

@@ -152,7 +152,7 @@ internal sealed class ControlService(RunwickRuntime runtime, IJobControlStore? s
         detail is not null && detail.StartsWith("actual=", StringComparison.Ordinal) && detail[7..].Split('/') is [var g, _]
             && int.TryParse(g, System.Globalization.CultureInfo.InvariantCulture, out var gen) ? gen : null;
 
-    async Task<StoreReply<TResult>> SendAsync<TRequest, TResult>(ControlActor actor, Func<ControlActor, TRequest> body,
+    internal async Task<StoreReply<TResult>> SendAsync<TRequest, TResult>(ControlActor actor, Func<ControlActor, TRequest> body,
         Func<StoreCommand<TRequest>, CancellationToken, Task<StoreReply<TResult>>> send, CommandSeed? seed, CancellationToken ct) where TResult : class
     {
         await runtime.EnsureReadyAsync(ct).ConfigureAwait(false);

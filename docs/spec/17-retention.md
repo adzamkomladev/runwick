@@ -19,6 +19,16 @@ Not in SP-021: an explicit "delete this now" request, legal hold, per-queue poli
 - (2026-11-08, user decision, adzamkomla) Defaults accepted as written: the cleanup pace stays at the 06 values (tunable, with the "behind" indicator), and a purged job leaves no record (lookup is 404). Schema revision fixed at 16; SP-032's `ManagementDispatch/1` takes 17.
 
 - (2026-11-08) New document.
+- (2026-11-08, SP-021 build) What the PostgreSQL build does differently from the text above, and why:
+  - `cleanup_progress` has one more column, `pass_rows` (rows deleted so far in the current pass), so "a pass that deleted nothing" (§4.2 `caught_up_at`) can be told from "the last batch deleted nothing".
+  - Classes whose every scanned row is deleted (job events, scaling events, schedule occurrences, worker presence, receipts, dispatch keys, outbox mappings) keep no cursor: each batch restarts at the oldest row, which is the same rows a cursor would give, and a row skipped because it was locked is met again on the next batch.
+  - Rate grants: the scope row is taken `FOR UPDATE SKIP LOCKED` instead of waiting up to 100 ms (§3.4); a busy scope is skipped and met on the next pass.
+  - Outbox mappings: the delivery-identity lock is tried (`pg_try_advisory_xact_lock`), not waited for (§3.5); a held mapping is skipped.
+  - The Dispatch key-row repeat (§3.3) is in new copies of the server functions (`rw_dispatch_core_v3`, `dispatch_v3`, `receive_outbox_v3`, `materialize_occurrences_v3`); the `_v2` versions are dropped by `0016_retention`, because released functions are never replaced in place. SP-032's `management_dispatch_v1` must call `rw_dispatch_core_v3`. The same repeat (at most 3, then `InvariantFault key_row_missing`) is added to ManualRetry and RerunSucceeded, which seed the active key row the same way.
+  - A stale `expectedRevision` on `POST retention/policy` returns 409 `stale_revision` with `actualRevision`, the code every other management edit uses (16 §4), not `revision_conflict`. The store reply code stays `revision_conflict`.
+  - The failure back-off (5 s doubling to 5 min) is fixed, not an option.
+  - No `GRANT`s: the schema has no runtime role yet; grants for the new tables and functions come with the role work (P-18).
+  - Tests move record timestamps back with admin SQL ("seed", §8) instead of moving store time with `StoreClock`; OPS-05 runs at 5,000 jobs, not 1,000,000.
 - (2026-11-08) Amends the 03 §4 operation catalog: `CleanupBatch/1` writes **no receipt** (see §4.1); `EditRetentionPolicy/1` is a new administrative operation in class `durable`.
 
 ## 1. Record classes

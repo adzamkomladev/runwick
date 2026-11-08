@@ -141,8 +141,14 @@ internal sealed partial class PgStore : IJobControlStore
                 var job = await LockJobAsync(tx, r.JobId).ConfigureAwait(false);
                 Guid? keyHolder = null;
                 var keyRow = false;
-                if (job?.ActiveKey is { } activeKey)
+                // Retention may delete an unbound key row between the seed and the lock (17 §3.3): repeat at most 3 times.
+                for (var seeds = 0; job?.ActiveKey is { } activeKey && !keyRow; seeds++)
                 {
+                    if (seeds > 3)
+                    {
+                        throw new InvariantViolationException("key_row_missing");
+                    }
+
                     using (var insert = tx.Sql("""
                         INSERT INTO runwick.dispatch_keys (application, job_name, key_kind, key, created_at, updated_at)
                         VALUES (@application, @job_name, 'active', @key, runwick.ms_floor(clock_timestamp()), runwick.ms_floor(clock_timestamp()))

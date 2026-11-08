@@ -132,7 +132,7 @@ public sealed record AuditQuery(
 public sealed record JobSummary(
     Guid JobId, string JobName, int PayloadVersion, string Queue, string Priority, string State, int Generation, long Revision,
     DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, DateTimeOffset EligibleAt, DateTimeOffset? TerminalAt, string? TerminalReason,
-    bool CancelRequested, long ExecutionCount);
+    bool CancelRequested, long ExecutionCount, DateTimeOffset? DetailExpiredAt = null);
 
 public sealed record JobGenerationInfo(int Generation, string CreatedReason, string? CreatedBy, DateTimeOffset CreatedAt, int StartedCount, int MaxExecutions);
 
@@ -161,7 +161,7 @@ public sealed record AuditEntry(
 
 public sealed record ManagementSettings(
     string Application, string StoreKind, long SchemaRevision, string PersistenceProfile, IReadOnlyList<string> Roles,
-    IReadOnlyDictionary<string, long> Limits);
+    IReadOnlyDictionary<string, long> Limits, long RetentionPolicyRevision = 0);
 
 /// <summary>A revealed payload: the stored JSON value and headers, returned only after the disclosure audit committed.</summary>
 public sealed record RevealedPayload(Guid JobId, JsonNode? Payload, JsonNode? Headers);

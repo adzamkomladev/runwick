@@ -22,8 +22,8 @@ internal sealed partial class PgStore : IOutboxDestinationStore
         var fp = OutboxFingerprints.Command(storeId, command.Application, command.CommandId, command.NotAfter, r.DeliveryFingerprint);
         var acceptUntil = PgTime.Floor(r.AcceptUntil);
         // The delivery lock and read, the fresh clock, the mapping answer or the horizon check, the dispatch core, the
-        // mapping insert and R4 run in runwick.receive_outbox_v2 (14 §5).
-        var call = new PgCall("receive_outbox_v2").P("p_source_store_id", r.Source.SourceStoreId).P("p_message_id", r.Source.MessageId)
+        // mapping insert and R4 run in runwick.receive_outbox_v3 (14 §5).
+        var call = new PgCall("receive_outbox_v3").P("p_source_store_id", r.Source.SourceStoreId).P("p_message_id", r.Source.MessageId)
             .Bytes("p_delivery_fingerprint", r.DeliveryFingerprint).P("p_accept_until", acceptUntil)
             .P("p_profile", OutboxOperations.PostgresProfile);
         foreach (var (name, value, type) in DispatchArgs([r.Item]))

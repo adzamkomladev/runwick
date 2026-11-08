@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Claims;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
@@ -351,6 +352,20 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
             new AuditQuery(Q(ctx, "targetKind"), Q(ctx, "targetId"), QTime(ctx, "from"), QTime(ctx, "to"), QInt(ctx, "limit"), Q(ctx, "cursor")),
             ctx.RequestAborted)));
         g.MapGet("settings", async (HttpContext ctx, CancellationToken _) => Ok(await Session(ctx).GetSettingsAsync(Caller(ctx), ctx.RequestAborted)));
+
+        g.MapGet("retention", async (HttpContext ctx, CancellationToken _) =>
+        {
+            var v = await Session(ctx).GetRetentionAsync(Caller(ctx), ctx.RequestAborted);
+            return Ok(new { policy = RetentionBody.Hours(v.Policy), revision = v.Revision, classes = v.Classes, observedAt = v.ObservedAt });
+        });
+        g.MapPost("retention/policy", async (HttpContext ctx, CancellationToken _) =>
+        {
+            var b = await Body<RetentionBody>(ctx);
+            var r = await Session(ctx).EditRetentionPolicyAsync(Caller(ctx), b.CommandId, b.ExpectedRevision, b.Policy(), b.Reason, ctx.RequestAborted);
+            return r.Succeeded
+                ? Ok(new { revision = r.Revision, policy = RetentionBody.Hours(r.Policy!), replayed = r.Replayed, commandId = b.CommandId })
+                : Error(409, r.Code!, "The edit was rejected.", b.CommandId, r.Revision);
+        });
     }
 
     static ResumePolicy Policy(string? policy) => policy switch
@@ -437,6 +452,46 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
         public long ExpectedPolicyRevision { get; set; }
 
         public string? Reason { get; set; }
+    }
+
+    /// <summary>Policy values in whole hours; null keeps forever (17 §7). Worker presence is always finite.</summary>
+    sealed class RetentionBody
+    {
+        public Guid CommandId { get; set; }
+
+        public long ExpectedRevision { get; set; }
+
+        public int? CompletedDetailHours { get; set; }
+
+        public int? FailedDetailHours { get; set; }
+
+        public int? JobHistoryHours { get; set; }
+
+        public int? AuditHours { get; set; }
+
+        public int? ScalingEventsHours { get; set; }
+
+        public int? ScheduleOccurrencesHours { get; set; }
+
+        public int? WorkerPresenceHours { get; set; }
+
+        public string? Reason { get; set; }
+
+        public RetentionPolicy Policy() => new(H(CompletedDetailHours), H(FailedDetailHours), H(JobHistoryHours), H(AuditHours), H(ScalingEventsHours),
+            H(ScheduleOccurrencesHours), H(WorkerPresenceHours) ?? throw new ManagementValidationException("invalid_retention_policy",
+                "workerPresenceHours is required."));
+
+        static TimeSpan? H(int? hours) => hours is { } h ? TimeSpan.FromHours(h) : null;
+
+        static int? I(TimeSpan? t) => t is { } v ? (int)v.TotalHours : null;
+
+        /// <summary>A JSON object, so a null (forever) value is written rather than dropped.</summary>
+        public static JsonObject Hours(RetentionPolicy p) => new()
+        {
+            ["completedDetailHours"] = I(p.CompletedDetail), ["failedDetailHours"] = I(p.FailedDetail), ["jobHistoryHours"] = I(p.JobHistory),
+            ["auditHours"] = I(p.Audit), ["scalingEventsHours"] = I(p.ScalingEvents), ["scheduleOccurrencesHours"] = I(p.ScheduleOccurrences),
+            ["workerPresenceHours"] = I(p.WorkerPresence),
+        };
     }
 
     sealed class ScheduleBody
