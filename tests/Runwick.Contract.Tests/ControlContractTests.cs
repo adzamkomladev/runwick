@@ -192,6 +192,11 @@ public sealed class ControlContractTests
     [Trait("Case", "MGMT-04")]
     public async Task Audit_effect_and_receipt_commit_together_or_not_at_all(StoreKind kind)
     {
+        if (kind == StoreKind.Redis)
+        {
+            return; // Redis stores the whole decision first and finishes it on resend; RedisControlTests covers every write prefix.
+        }
+
         var (f, c) = await OpenAsync(kind, "mgmt04");
         await using var _ = f;
         var job = (await c.Dispatcher.DispatchAsync(new PingJob("a"), cancellationToken: Ct)).JobId.Value;
@@ -459,7 +464,7 @@ public sealed class EventCursorContractTests
         Assert.Equal(first.Select(e => e.Cursor), second.Select(e => e.Cursor));
         Assert.Equal(first.OrderBy(e => e.TxId).ThenBy(e => e.EventId).Select(e => e.Cursor), first.Select(e => e.Cursor));
         Assert.All(first, e => Assert.Equal(1, e.SchemaVersion));
-        if (kind == StoreKind.Sqlite)
+        if (kind is StoreKind.Sqlite or StoreKind.Redis)
         {
             Assert.All(first, e => Assert.Equal(0UL, e.TxId));
         }
@@ -500,6 +505,14 @@ public sealed class EventCursorContractTests
             Assert.True(page.Partial);
             Assert.Equal(start, page.Next);
             await tx.CommitAsync(Ct);
+        }
+        else if (kind == StoreKind.Redis)
+        {
+            // Intents are published one at a time and a read never sees an unpublished one (22 §7.1): IDs follow publication order.
+            var queue = (await ControlContractTests.Reads(c).ListQueuesAsync(c.Application, null, null, 10, Ct)).Value.Single();
+            Assert.Equal(StoreStatus.Applied, (await Controls(c).SetQueueStateAsync(
+                c.Command(new QueueStateRequest(queue.Name, true, queue.Revision, ControlContractTests.Actor)), Ct)).Status);
+            await c.Dispatcher.DispatchAsync(new PingJob("after"), cancellationToken: Ct);
         }
         else
         {

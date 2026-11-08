@@ -17,7 +17,8 @@ function M.decide()
   r.ordinal = nil
   if actor then
     local j = U.job(r.jobId)
-    U.audit('Dispatch', actor, { jobId = r.jobId, disposition = r.disposition, queue = j.queue })
+    U.audit('Dispatch', actor, { targetKind = 'job', targetId = U.uuid_text(r.jobId), resultingRevision = U.raw(j.rev),
+      details = { jobName = j.name, queue = j.queue, disposition = string.lower(r.disposition) } })
     return U.applied({ dispatch = r, generation = U.raw(j.gen), revision = U.raw(j.rev), queue = j.queue })
   end
   return U.applied(r)

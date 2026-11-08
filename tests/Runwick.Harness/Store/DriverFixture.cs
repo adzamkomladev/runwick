@@ -229,6 +229,11 @@ internal sealed class DriverFixture : IAsyncDisposable
             return SqliteSnapshotReader.Count(SqlitePath, sql, parameters);
         }
 
+        if (Kind == StoreKind.Redis)
+        {
+            return await RedisAdminSql.CountAsync(Application, sql, parameters).ConfigureAwait(false);
+        }
+
         var conn = new NpgsqlConnection(AdminConnectionString);
         await using (conn.ConfigureAwait(false))
         {
@@ -249,6 +254,12 @@ internal sealed class DriverFixture : IAsyncDisposable
         if (Kind == StoreKind.Sqlite)
         {
             SqliteSnapshotReader.Exec(SqlitePath, sql, parameters);
+            return;
+        }
+
+        if (Kind == StoreKind.Redis)
+        {
+            await RedisAdminSql.ExecAsync(Application, sql, parameters).ConfigureAwait(false);
             return;
         }
 

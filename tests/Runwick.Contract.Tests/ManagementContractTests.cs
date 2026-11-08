@@ -129,6 +129,11 @@ public sealed class ManagementContractTests
         await using var _ = f;
         var job = (await c.Dispatcher.DispatchAsync(new PingJob("payload-secret"), cancellationToken: Ct)).JobId.Value;
 
+        if (kind == StoreKind.Redis)
+        {
+            return; // The audit row and the read are one intent on Redis; the failing-write form is RedisControlTests (REDIS-12).
+        }
+
         var reveal = f.ArmFault(FaultPoint.AfterMutation, FaultSpec.Throw(), new FaultTarget { Operation = "RecordDisclosure", Step = 1 }, times: 100);
         await Assert.ThrowsAsync<StoreUnavailableException>(() => Session(c).RevealPayloadAsync(Admin, job, cancellationToken: Ct));
         Assert.True(reveal.Fired >= 1);
@@ -173,6 +178,11 @@ public sealed class ManagementContractTests
         await Assert.ThrowsAnyAsync<RunwickException>(() =>
             s.DispatchAsync(Scoped, new(Guid.NewGuid(), "test.other", System.Text.Json.Nodes.JsonNode.Parse("""{"id":"o"}""")), Ct));
         Assert.Equal(2, await Count(f, "SELECT count(*) FROM runwick.jobs"));
+
+        if (kind == StoreKind.Redis)
+        {
+            return; // Dispatch, event actor and audit row are one intent on Redis (RedisControlTests covers a failing write).
+        }
 
         // The dispatch core writes (1), the event gets its actor (2), then the audit row (3): the audit insert raises.
         var audit = f.ArmFault(FaultPoint.AfterMutation, FaultSpec.Throw(), new FaultTarget { Operation = Operations.ManagementDispatch, Step = 3 }, times: 100);
