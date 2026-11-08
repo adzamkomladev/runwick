@@ -10,8 +10,19 @@ namespace Runwick.Workloads;
 /// (<c>controlWait</c>, from the engine's own tracking). Also derives the renewal margin (previous expiry − Renew decision,
 /// both store instants) and due-to-Begin (<c>eligible_at</c> from the Reserve cursor → Begin decision).
 /// </summary>
-internal sealed class TimingStore(IRunwickStore inner, Metrics metrics, bool detailed = false) : IRunwickStore, ILeaseBatchStore, IReserveAndBeginStore, IFinishManyStore, IWakeNotificationSource
+internal sealed class TimingStore(IRunwickStore inner, Metrics metrics, bool detailed = false) : IRunwickStore, ILeaseBatchStore, IReserveAndBeginStore, IFinishManyStore, IWakeNotificationSource, IRetentionStore
 {
+    // Cleanup (17 §4.4) passes straight through; without it the worker's retention loop never ran under the workloads (SP-029).
+    IRetentionStore Retention => inner as IRetentionStore ?? throw new NotSupportedException("the inner store has no retention");
+
+    public Task<CleanupBatchResult> RunCleanupBatchAsync(string application, string recordClass, CleanupLimits limits, CancellationToken ct) =>
+        Timed("cleanupBatch", () => Retention.RunCleanupBatchAsync(application, recordClass, limits, ct), r => r.Status);
+
+    public Task<StoreRead<RetentionState>> GetRetentionAsync(string application, CancellationToken ct) => Retention.GetRetentionAsync(application, ct);
+
+    public Task<StoreReply<StoredRetentionPolicy>> EditRetentionPolicyAsync(StoreCommand<RetentionPolicyRequest> command, CancellationToken ct) =>
+        Retention.EditRetentionPolicyAsync(command, ct);
+
     // Wake notifications pass straight through (05 §7.2, PF-07); they are not store calls and are not timed.
     public Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, Action onLost, CancellationToken ct) =>
         inner is IWakeNotificationSource source ? source.ListenAsync(application, channel, onWake, onSubscribed, onLost, ct) : Task.CompletedTask;
