@@ -395,8 +395,25 @@ public sealed class ControlContractTests
         Assert.Equal(JobStates.Pending, (await PositionAsync(c, b.Value)).State);
         await NoViolations(f);
     }
+}
 
-    // ------------------------------------------------------------------ event cursor (08 §7, 20 §7.1)
+/// <summary>
+/// The event cursor (08 §7, 20 §7.1). Not run in parallel with other classes: on PostgreSQL any open transaction in the
+/// cluster holds the snapshot horizon, and a busy parallel run can hold it past the drain deadline.
+/// </summary>
+[Collection("EventCursor")]
+[Trait("Category", "Contract")]
+[Trait("Item", "SP-019")]
+public sealed class EventCursorContractTests
+{
+    public static TheoryData<StoreKind> Kinds => CoreContractTests.Kinds;
+
+    static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    static IJobControlStore Controls(TestClient c) => ControlContractTests.Controls(c);
+
+    static Task<(DriverFixture F, TestClient C)> OpenAsync(StoreKind kind, string name) => ControlContractTests.OpenAsync(kind, name);
+
 
     static async Task<List<JobEvent>> DrainAsync(TestClient c, EventCursor? from, int pageSize)
     {
@@ -514,3 +531,6 @@ public sealed class ControlContractTests
         Assert.Equal(["queue_paused", "dispatched"], events.Select(e => e.Kind));
     }
 }
+
+[CollectionDefinition("EventCursor", DisableParallelization = true)]
+public sealed class EventCursorCollection;
