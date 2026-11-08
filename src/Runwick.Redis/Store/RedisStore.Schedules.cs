@@ -207,6 +207,24 @@ internal sealed partial class RedisStore : IScheduleStore
         return SchSnapshot((string)a[2]!, (string)a[3]!);
     }
 
+    /// <summary>
+    /// The schedule read some operations make before their write. A gate refusal there (a stale layout, a foreign store) is the operation's own
+    /// UnsupportedVersion reply, as the script gives for a write (03 §10.1), not an exception.
+    /// </summary>
+    async Task<(ScheduleSnapshot? Schedule, StoreReply<T>? Refused)> SchReadBeforeWriteAsync<T>(string application, string keyOrId, bool byId, CancellationToken ct)
+        where T : class
+    {
+        try
+        {
+            return (await SchReadAsync(application, keyOrId, byId, ct).ConfigureAwait(false), null);
+        }
+        catch (StoreIncompatibleException ex)
+        {
+            var code = ex.Message.Contains(' ', StringComparison.Ordinal) ? "schema_incompatible" : ex.Message;
+            return (null, StoreReply<T>.NoEffect(StoreStatus.UnsupportedVersion, new StoreError(code), time.GetUtcNow()));
+        }
+    }
+
     /// <summary>Store time is the Redis clock (22 §4.1 step 2), ms floor.</summary>
     public async Task<DateTimeOffset> StoreNowAsync(CancellationToken ct)
     {
@@ -281,7 +299,18 @@ internal sealed partial class RedisStore : IScheduleStore
 
         // The items' digests depend on this command, so they are built from the definition read now; the script rejects the plan
         // if the revisions it holds are not the expected ones (revisions only grow, so a match means the same definition).
-        var s = r.Occurrences.Count == 0 ? null : await SchReadAsync(command.Application, r.ScheduleId.ToString("N"), true, ct).ConfigureAwait(false);
+        ScheduleSnapshot? s = null;
+        if (r.Occurrences.Count != 0)
+        {
+            var (read, refused) = await SchReadBeforeWriteAsync<ScheduleMaterialization>(command.Application, r.ScheduleId.ToString("N"), true, ct).ConfigureAwait(false);
+            if (refused is not null)
+            {
+                return refused;
+            }
+
+            s = read;
+        }
+
         var storeId = await EnsureStoreIdAsync(command.Application, ct).ConfigureAwait(false);
         var items = new List<RedisValue>();
         var count = 0;
@@ -367,7 +396,12 @@ internal sealed partial class RedisStore : IScheduleStore
             return SchInvalid<ScheduleMaterialization>(StoreStatus.InvalidRequest, "invalid_request", invalid);
         }
 
-        var s = await SchReadAsync(command.Application, r.Key, false, ct).ConfigureAwait(false);
+        var (s, refused) = await SchReadBeforeWriteAsync<ScheduleMaterialization>(command.Application, r.Key, false, ct).ConfigureAwait(false);
+        if (refused is not null)
+        {
+            return refused;
+        }
+
         var storeId = await EnsureStoreIdAsync(command.Application, ct).ConfigureAwait(false);
         var items = new List<RedisValue>();
         if (s is not null && s.DefinitionRevision == r.ExpectedDefinitionRevision)
@@ -399,7 +433,12 @@ internal sealed partial class RedisStore : IScheduleStore
         var nextDue = "";
         if (r.Resolution == "run_once")
         {
-            var s = await SchReadAsync(command.Application, r.Key, false, ct).ConfigureAwait(false);
+            var (s, refused) = await SchReadBeforeWriteAsync<ScheduleMaterialization>(command.Application, r.Key, false, ct).ConfigureAwait(false);
+            if (refused is not null)
+            {
+                return refused;
+            }
+
             if (s is { NextDueAt: { } next, Episode: { } episode } && episode.Id == r.EpisodeId)
             {
                 var storeId = await EnsureStoreIdAsync(command.Application, ct).ConfigureAwait(false);

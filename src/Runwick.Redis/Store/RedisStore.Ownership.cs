@@ -472,46 +472,46 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
                     return new ReceiptResolution.ExpiredUnknown();
                 case "Recorded":
                     return new ReceiptResolution.Recorded((string)a[1]!, int.Parse((string)a[2]!, CultureInfo.InvariantCulture), (string)a[3]!,
-                        RxReply.T((string)a[4]!), CanonicalIds((string)a[5]!));
+                        RxReply.T((string)a[4]!), JsonDocument.Parse(DashIds((string)a[5]!).ToJsonString()).RootElement.Clone());
                 default:
                     throw new StoreOutcomeUnknownException("commit_outcome_unknown", commandId, "ResolveCommand");
             }
         }
     }
 
-    /// <summary>The recorded result with job IDs in the wire form: the Lua scripts keep 32-digit hex, callers parse the dashed form (03 §8.5).</summary>
-    static JsonElement CanonicalIds(string json)
+    internal static JsonNode DashIds(string json)
     {
         var node = JsonNode.Parse(json)!;
-        Canonicalize(node);
-        return JsonDocument.Parse(node.ToJsonString()).RootElement.Clone();
-    }
+        Walk(node);
+        return node;
 
-    static void Canonicalize(JsonNode? node)
-    {
-        switch (node)
+        static void Walk(JsonNode? n)
         {
-            case JsonObject o:
-                foreach (var key in o.Select(p => p.Key).ToList())
-                {
-                    if (key is "jobId" or "conflictingJobId" && o[key] is JsonValue v && v.TryGetValue<string>(out var text) && Guid.TryParseExact(text, "N", out var id))
+            switch (n)
+            {
+                case JsonObject o:
+                    foreach (var (name, child) in o.ToList())
                     {
-                        o[key] = id.ToString("D");
+                        if (name.EndsWith("Id", StringComparison.Ordinal) && child is JsonValue v && v.TryGetValue<string>(out var s)
+                            && s.Length == 32 && Guid.TryParseExact(s, "N", out var g))
+                        {
+                            o[name] = g.ToString("D");
+                        }
+                        else
+                        {
+                            Walk(child);
+                        }
                     }
-                    else
+
+                    break;
+                case JsonArray a:
+                    foreach (var child in a)
                     {
-                        Canonicalize(o[key]);
+                        Walk(child);
                     }
-                }
 
-                break;
-            case JsonArray a:
-                foreach (var item in a)
-                {
-                    Canonicalize(item);
-                }
-
-                break;
+                    break;
+            }
         }
     }
 }
