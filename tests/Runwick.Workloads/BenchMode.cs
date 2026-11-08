@@ -18,6 +18,7 @@ namespace Runwick.Workloads;
 /// <list type="bullet">
 /// <item><c>drain</c>: dispatch <c>--n</c> jobs first (DispatchMany, 100 per call, <c>--calls n</c> callers side by side), then start the worker and time the
 /// first claim to the last confirmed finish.</item>
+/// <item><c>enqueue</c>: <c>--n</c> single-job Dispatch calls from <c>--calls</c> callers, worker never started; reports inserts/s.</item>
 /// <item><c>steady</c>: start the worker, dispatch single jobs at <c>--rate</c>/s for <c>--seconds</c> (one call at a time
 /// like the River and pg-boss benches, or open loop with <c>--calls n</c>), and measure dispatch call start to confirmed
 /// finish per job; then wait up to 60 s for the rest to finish.</item>
@@ -34,9 +35,9 @@ internal static class BenchMode
     public static async Task<int> RunAsync(Args a)
     {
         var mode = a.OptStr("mode") ?? "drain";
-        if (mode is not ("drain" or "steady"))
+        if (mode is not ("drain" or "steady" or "enqueue"))
         {
-            Console.Error.WriteLine("--mode must be drain or steady");
+            Console.Error.WriteLine("--mode must be drain, steady or enqueue");
             return 2;
         }
 
@@ -61,6 +62,7 @@ internal static class BenchMode
             ApplicationName = "bench-runwick",
             Pooling = true,
             MaxPoolSize = Math.Max(100, workers + 16),
+            Options = a.Has("trace") ? "-c track_functions=all" : null, // --trace: per-function server time in pg_stat_user_functions
         }.ConnectionString;
 
         var sc = new ServiceCollection();
@@ -161,7 +163,28 @@ internal static class BenchMode
         long sequence = 0;
         var failedDispatch = 0L;
 
-        if (mode == "drain")
+        if (mode == "enqueue")
+        {
+            // --n single-job Dispatch calls from --calls callers side by side; the worker is never started.
+            var enqueueLatency = new LatencyReservoir();
+            var nextJob = 0;
+            var watch = Stopwatch.StartNew();
+            await Task.WhenAll(Enumerable.Range(0, calls).Select(_ => Task.Run(async () =>
+            {
+                while (Interlocked.Increment(ref nextJob) <= n)
+                {
+                    var t = clock.ElapsedTicks;
+                    await dispatcher.DispatchAsync(LoadJob.Create(Interlocked.Increment(ref sequence), payload)).ConfigureAwait(false);
+                    enqueueLatency.Add(Ms(clock.ElapsedTicks - t));
+                }
+            }))).ConfigureAwait(false);
+            var es = enqueueLatency.Summarize();
+            result["jobs"] = n;
+            result["calls"] = calls;
+            result["insertsPerSec"] = Math.Round(n / watch.Elapsed.TotalSeconds, 1);
+            result["insertLatencyMs"] = new JsonObject { ["p50"] = Math.Round(es.P50Ms, 2), ["p99"] = Math.Round(es.P99Ms, 2) };
+        }
+        else if (mode == "drain")
         {
             // --calls n: n callers send DispatchMany chunks side by side (the producer admits n concurrent calls).
             var insertWatch = Stopwatch.StartNew();
@@ -315,8 +338,9 @@ internal static class BenchMode
 
         result["diagnostics"] = new JsonArray([.. engine.Health().Diagnostics.Select(x => (JsonNode?)x)]);
 
-        using (var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+        if (mode != "enqueue") // enqueue never started the worker
         {
+            using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             await hosted.StopAsync(stop.Token).ConfigureAwait(false);
         }
 
