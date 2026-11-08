@@ -317,7 +317,8 @@
         "type": "Project",
         "dependencies": {
           "Runwick": "[0.1.0-m1, )",
-          "Runwick.Postgres": "[0.1.0-m1, )"
+          "Runwick.Postgres": "[0.1.0-m1, )",
+          "Runwick.Sqlite": "[0.1.0-m1, )"
         }
       },
       "runwick.contracts": {

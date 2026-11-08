@@ -16,7 +16,7 @@
     "Runwick.Outbox.Sqlite":    { "exists": true,  "milestone": "M3", "allowedProjectRefs": ["Runwick.Outbox"], "allowedPackages": ["Microsoft.Data.Sqlite"] },
     "Runwick.OpenTelemetry":    { "exists": true,  "milestone": "M4", "allowedProjectRefs": ["Runwick"], "allowedPackages": ["OpenTelemetry"] },
     "Runwick.Dashboard.Spike":  { "exists": true,  "milestone": "M4", "packable": false, "allowedProjectRefs": [], "allowedPackages": ["Microsoft.AspNetCore.App (framework)", "Inertia.Net"] },
-    "Runwick.Cli":              { "exists": true,  "milestone": "M5", "allowedProjectRefs": ["Runwick", "Runwick.Postgres"], "allowedPackages": [] }
+    "Runwick.Cli":              { "exists": true,  "milestone": "M5", "allowedProjectRefs": ["Runwick", "Runwick.Postgres", "Runwick.Sqlite"], "allowedPackages": [] }
   },
   "producerBudget": {
     "Runwick.Samples.Contracts": { "maxNonRunwickPackages": 0 }

@@ -17,6 +17,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Runwick\Runwick.csproj" />
     <ProjectReference Include="..\Runwick.Postgres\Runwick.Postgres.csproj" />
+    <ProjectReference Include="..\Runwick.Sqlite\Runwick.Sqlite.csproj" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Runwick.Cli.Tests" />
