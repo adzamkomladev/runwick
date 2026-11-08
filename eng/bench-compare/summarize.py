@@ -15,7 +15,8 @@ for f in sorted(glob.glob(os.path.join(out, "r*-*.json"))):
     rate = j.get("insertsPerSec", j.get("completionsPerSec", 0))
     lat = j.get("latencyMs") or j.get("insertLatencyMs") or {}
     extra = f"{j.get('inserted', '')}/{j.get('completed', '')}" if "steady" in m[2] else ""
-    groups.setdefault((m[2], m[3]), []).append((int(m[1]), rate, lat.get("p50"), lat.get("p99"), load1, load1 is not None and load1 > cores, extra, j.get("system", "")))
+    label = {"a": "Runwick main", "b": "Runwick prototype"}.get(m[3])  # ab.sh variants
+    groups.setdefault((m[2], m[3]), []).append((int(m[1]), rate, lat.get("p50"), lat.get("p99"), load1, load1 is not None and load1 > cores, extra, label or j.get("system", "")))
 
 def med(xs):
     xs = [x for x in xs if x is not None]
