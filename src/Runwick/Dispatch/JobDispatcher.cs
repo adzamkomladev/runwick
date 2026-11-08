@@ -207,7 +207,7 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
             return new BatchDispatchReceipt(prepared.OperationId, [.. r.Items.Select(i => new BatchItemResult(
                 i.Ordinal,
                 i.Result is { } ok ? Receipt(prepared.OperationId, ok) : null,
-                i.Failure is { } f ? new BatchItemFailure(i.Ordinal, f.Code, f.Detail ?? f.Code, f.ConflictingJobId is { } c ? new JobId(c) : null) : null))],
+                i.Failure is { } f ? new BatchItemFailure(i.Ordinal, f.Code, f.Detail ?? "Uniqueness conflict.", f.ConflictingJobId is { } c ? new JobId(c) : null) : null))],
                 runtime.Store.AcknowledgementProfile);
         }
 
@@ -271,7 +271,7 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
                 e.GetProperty("ordinal").GetInt32(),
                 e.GetProperty("code").GetString()!,
                 "Uniqueness conflict.",
-                e.TryGetProperty("conflictingJobId", out var c) && c.ValueKind == JsonValueKind.String ? new JobId(c.GetGuid()) : null))];
+                e.TryGetProperty("conflictingJobId", out var c) && c.ValueKind == JsonValueKind.String ? new JobId(Guid.Parse(c.GetString()!)) : null))];
         }
         catch (JsonException)
         {
@@ -280,7 +280,7 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
     }
 
     DispatchReceipt ReceiptFrom(DispatchOperationId operationId, JsonElement result) =>
-        new(new JobId(result.GetProperty("jobId").GetGuid()), operationId,
+        new(new JobId(Guid.Parse(result.GetProperty("jobId").GetString()!)), operationId,
             Enum.Parse<DispatchDisposition>(result.GetProperty("disposition").GetString()!),
             Enum.Parse<DuplicateMatch>(result.GetProperty("match").GetString()!),
             result.GetProperty("policyDrift").GetBoolean(),
@@ -292,7 +292,7 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
             var ordinal = i.GetProperty("ordinal").GetInt32();
             if (i.TryGetProperty("failureCode", out var fc) && fc.ValueKind == JsonValueKind.String)
             {
-                JobId? conflicting = i.TryGetProperty("conflictingJobId", out var c) && c.ValueKind == JsonValueKind.String ? new JobId(c.GetGuid()) : null;
+                JobId? conflicting = i.TryGetProperty("conflictingJobId", out var c) && c.ValueKind == JsonValueKind.String ? new JobId(Guid.Parse(c.GetString()!)) : null;
                 return new BatchItemResult(ordinal, null, new BatchItemFailure(ordinal, fc.GetString()!, "Uniqueness conflict.", conflicting));
             }
 
