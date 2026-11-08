@@ -2,6 +2,11 @@
 
 **Sources:** docs/architecture-baseline.md, docs/architecture-plan.md, docs/architecture-acceptance.md, docs/runwick-explained.md, docs/review-2026-10-30.md, docs/v1-delivery-plan.md, docs/architecture/platform-and-packages.md, docs/architecture/provider-dependency-plan.md.
 
+## Changes (2026-11-08, SP-019 and SP-032 specs)
+
+- The SQLite store is specified in [20-sqlite.md](20-sqlite.md) (own schema revision line, starting at 1) and the CLI in [19-cli.md](19-cli.md). §10 index gains 19 and 20.
+- §6: `Runwick.Cli` may reference `Runwick`, `Runwick.Postgres` and `Runwick.Sqlite` (the providers only for `migrate`/`doctor`, 19 §1); it still has no external dependency.
+
 ## Changes (2026-10-31, SP-016)
 
 - Schedules (registration, materialization, misfire and catch-up, pause/resume, edits, manual triggers) are specified in [13-scheduler.md](13-scheduler.md), built from schema revision 6. §10 index gains 13.
@@ -141,7 +146,7 @@ All packages target `net10.0` only (no .NET 8/9, .NET Framework or .NET Standard
 | `Runwick.Outbox.Postgres` | Source staging/relay persistence | `Runwick.Outbox` | Npgsql | M3 |
 | `Runwick.Outbox.Sqlite` | Source staging/relay persistence | `Runwick.Outbox` | Microsoft.Data.Sqlite | M3 |
 | `Runwick.OpenTelemetry` | `AddRunwickInstrumentation()`, views, cardinality limits | `Runwick` | OpenTelemetry SDK | M4 |
-| `Runwick.Cli` | `dotnet tool` + single-file CLI over the public management API | (management API client) | — | M4 |
+| `Runwick.Cli` | `dotnet tool` + single-file CLI over the public management API (19) | `Runwick`; `Runwick.Postgres`, `Runwick.Sqlite` for `migrate`/`doctor` only | — | M4 |
 | `Runwick.Cloud` | Hosted-store client driver | `Runwick` | gRPC client | v1.x |
 
 Dependency rules (enforced by SP-002 packed-graph inspection, DEP-01):
@@ -228,5 +233,7 @@ These are invariants for code, API results, logs, telemetry and documentation. A
 | [14-outbox.md](14-outbox.md) | M3 SP-017: `IPostgresOutbox`/`ISqliteOutbox` Stage, source schema v1, relay state machine and budgets, `ReceiveOutbox/1`, `outbox_deliveries`, hash domains, horizon rules, OUTBOX/OUT/TX/CMD/ISO cases, P-09 | transactional-outbox, storage-command-protocol (outbox destination), driver-contract-suite |
 | [15-test-plan-g2.md](15-test-plan-g2.md) | G-2 case inventory for SP-011 … SP-017, inferred IDs (TXC, CTL, EVT, MODE, RDY, SCL), harness additions, measurements, pass rule | 07, driver-contract-suite, acceptance G-2, performance plan |
 | [16-management.md](16-management.md) | M4 SP-020: `IManagementSession`, permissions and scope, bounded reads and signed cursors, reveal with disclosure audit, client command IDs, `Runwick.AspNetCore` endpoints, auth, antiforgery, limits, MGMT cases | management-and-dashboard, management-retention-defaults, 08, 13 |
+| [19-cli.md](19-cli.md) | M4 SP-032: `runwick` CLI over the management HTTP API; contexts and credentials; human, `--output json` and `--agent` envelopes; `--agent describe`; command IDs and resend; events endpoint; `migrate`/`doctor`; CLI cases | v1-delivery-plan SP-032, implementation-backlog §6b, commercial-strategy §4, 16 |
+| [20-sqlite.md](20-sqlite.md) | M4 SP-019: SQLite store: profile and topology checks, schema translation, `BEGIN IMMEDIATE` runner, executor threads, operations vs 04, events, caller staging and completion, migrations, SQL cases | driver-capabilities §4, driver-contract-suite, provider-dependency-plan §5, 03, 04 |
 
 Test-case citations use `document:case` wherever an ID is ambiguous; `OBS-01` in particular exists in both the driver contract suite and the telemetry plan and is always cited with its document.

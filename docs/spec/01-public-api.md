@@ -2,6 +2,10 @@
 
 **Sources:** docs/architecture/public-api-contract.md §2–§10 (primary), docs/architecture/identity-and-serialization.md, docs/uniqueness-and-execution.md, docs/review-2026-10-30.md, docs/runwick-explained.md (examples; superseded where it conflicts), docs/architecture/dispatch-wire-contract.md, docs/architecture/execution-defaults-and-timing.md, docs/architecture/worker-engine-internals.md, docs/architecture/capacity-defaults-and-budgets.md, docs/architecture/management-retention-defaults.md, docs/architecture/platform-and-packages.md.
 
+## Changes (2026-11-08, SP-019 spec)
+
+The reserved SQLite twins (§18) are specified in 20: `UseSqlite(connectionString, configure)` with `SqliteOptions` (20 §2.1), `ISqliteJobDispatcher` and `ISqliteJobCompletion` (20 §8), `RunwickSqliteMigrations.MigrateAsync` (20 §9.1), and `AcknowledgementProfiles.SqliteWalFull = "sqlite.wal-synchronous-full"` (20 §1).
+
 ## Changes (2026-11-07, wider producer lane)
 
 `ProducerOptions.MaxConcurrentCalls` defaults to **8** (was 2) and must be at least 1; the PostgreSQL store's producer lane and work pool follow it (06 Changes 2026-11-07, wider producer lane).

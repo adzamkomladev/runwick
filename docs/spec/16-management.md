@@ -31,6 +31,8 @@ Not in SP-020: retention cleanup and the detail-expired projection (SP-021), the
   - **MGMT-05 dropped reply** uses the harness fault point `AfterCommitBeforeReply` with `DropReply` rather than the TCP fault proxy: the session's own resend resolves it, and a client resend replays.
   - **MGMT-12 schedule controls** act on a schedule registered by a separate scheduler-side client, since the management host runs no scheduler.
 
+- (2026-11-08, SP-032 spec) New read `ListEventsAsync` and route `GET {prefix}/v1/events?after&limit` over `EventsSince/1` (19 §6): needs `Jobs.Read` application-wide (queue-scoped → 403); `actorId` only with `Audit.Read`; plain unsigned position cursor `"<txId>.<eventId>"` (malformed → 400 `invalid_cursor`); limit 1–1,000, default 100; no schema change. The CLI (19) is the first client.
+
 ## 1. Caller, permissions and scope
 
 ```csharp
@@ -154,6 +156,7 @@ Route table (all under `{prefix}/v1`):
 | `GET schedules`; `POST schedules/{key}/pause`, `…/resume`, `…/trigger`, `…/revalidate` | ListSchedules; schedule controls |
 | `GET audit?targetKind&targetId&from&to&limit&cursor` | ListAudit |
 | `GET settings` | GetSettings |
+| `GET events?after&limit` | ListEvents (added by SP-032, 19 §6) |
 | `GET antiforgery` | token |
 
 ## 6. Store additions (PostgreSQL, schema revision 15)
