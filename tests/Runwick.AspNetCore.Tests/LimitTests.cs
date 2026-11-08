@@ -54,23 +54,27 @@ public sealed class LimitTests
         await using var h = await MgmtHost.StartAsync(f, options: _ => { }); // the defaults: 120 reads, 30 mutations, 10 reveals per minute
         Users.Seed(h);
 
-        async Task<int> AllowedAsync(Func<Task<(HttpStatusCode Status, System.Text.Json.Nodes.JsonNode? Body, HttpResponseMessage Response)>> send)
+        // Burst is a quarter of the per-minute rate; tokens keep refilling (real time) while the burst runs, so up to
+        // elapsed × rate extra requests may pass.
+        async Task AllowedAsync(int burst, int perMinute, Func<Task<(HttpStatusCode Status, System.Text.Json.Nodes.JsonNode? Body, HttpResponseMessage Response)>> send)
         {
+            var started = System.Diagnostics.Stopwatch.StartNew();
             for (var n = 0; ; n++)
             {
                 var (status, _, response) = await send();
                 if (status == HttpStatusCode.TooManyRequests)
                 {
                     Assert.True(int.Parse(response.Headers.GetValues("Retry-After").Single(), System.Globalization.CultureInfo.InvariantCulture) >= 1);
-                    return n;
+                    var refilled = (int)Math.Ceiling(started.Elapsed.TotalMinutes * perMinute);
+                    Assert.InRange(n, burst, burst + refilled);
+                    return;
                 }
             }
         }
 
-        // Burst is a quarter of the per-minute rate: 30 reads, 7 mutations, 2 reveals.
-        Assert.Equal(30, await AllowedAsync(() => h.GetAsync("settings", Users.Admin)));
-        Assert.Equal(7, await AllowedAsync(() => h.PostAsync("queues/default/pause", Users.Admin, new { commandId = Guid.NewGuid(), expectedRevision = 99 })));
-        Assert.Equal(2, await AllowedAsync(() => h.PostAsync($"jobs/{Guid.NewGuid()}/payload:reveal", Users.Admin)));
+        await AllowedAsync(30, 120, () => h.GetAsync("settings", Users.Admin));
+        await AllowedAsync(7, 30, () => h.PostAsync("queues/default/pause", Users.Admin, new { commandId = Guid.NewGuid(), expectedRevision = 99 }));
+        await AllowedAsync(2, 10, () => h.PostAsync($"jobs/{Guid.NewGuid()}/payload:reveal", Users.Admin));
 
         // Another principal has its own buckets.
         Assert.Equal(HttpStatusCode.OK, (await h.GetAsync("settings", Users.Viewer)).Status);
