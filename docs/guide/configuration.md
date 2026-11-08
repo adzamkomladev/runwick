@@ -50,7 +50,7 @@ Enabled; batches of 100 rows, 1 MiB of detail, aiming at 500 ms; 1 s pause betwe
 
 ## Scheduler (`AddScheduler`)
 
-Checks every 1 s while work is due and backs off to 5 s when idle; at most 100 jobs per second per scheduler process, burst 32.
+Needs the `scheduler` capability raised once (`runwick store activate-capability --name scheduler`, see [getting started](getting-started.md)); without it startup fails with `scheduler_not_active`. Checks every 1 s while work is due and backs off to 5 s when idle; at most 100 jobs per second per scheduler process, burst 32.
 
 ## Outbox relay (`OutboxRelayOptions`)
 

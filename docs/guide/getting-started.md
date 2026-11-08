@@ -59,6 +59,10 @@ await dispatcher.DispatchAsync(new SendWelcomeEmail(userId));   // IJobDispatche
 - `UsePostgres("Host=...;Database=...;...")`.
 - Producers and workers can run on many hosts.
 
+## Schedules (one-time setup)
+
+Registering a schedule is refused (`scheduler_not_active`) until the application has raised the `scheduler` capability. Start the application once so it registers, then run `runwick store activate-capability --name scheduler --application YOUR_APP --provider postgres --connection-env MY_CONN` (`--provider sqlite` for SQLite; Redis: `RunwickRedisMigrations.ActivateCapabilityAsync(config, "YOUR_APP", "scheduler", "ops")`), then restart. This is done once per application and cannot be undone. Rate limits need the same step with `--name rate_admission`. See [spec 23 §3.6](../spec/23-upgrades.md).
+
 ## SQLite (one machine)
 
 - One database file on a local disk. Every process that uses it must be on the same machine. A file on a network share, or an in-memory database, is refused at startup.

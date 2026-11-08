@@ -61,6 +61,59 @@ public static partial class RunwickSqliteMigrations
         }), cancellationToken);
     }
 
+    /// <summary>
+    /// Raises one capability (<c>scheduler</c> or <c>rate_admission</c>) for one application, or every registered application when
+    /// <paramref name="application"/> is null (10 §6.1, 23 §3.6). Never lowers one; a repeat reports <c>Changed = false</c>. Unlike the
+    /// store operation this writes no audit row or event, like <see cref="SetAdmissionModeAsync"/>; it records <paramref name="actor"/>.
+    /// </summary>
+    public static Task<IReadOnlyList<CapabilityChange>> ActivateCapabilityAsync(
+        string connectionString, string? application, string capability, string actor, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+        if (StoreAdminRules.CheckCapability(capability) is { } bad)
+        {
+            throw new SqliteMigrationException(bad, "The capability must be scheduler or rate_admission.");
+        }
+
+        var version = StoreAdminRules.CapabilityVersion(capability);
+        return Task.Run<IReadOnlyList<CapabilityChange>>(() => SqliteAdmin.InTransaction(connectionString, true, (conn, now) =>
+        {
+            var rows = new List<(string App, long Revision, string Required)>();
+            using (var select = conn.CreateCommand())
+            {
+                select.CommandText = "SELECT application, revision, required_capabilities FROM runwick_application_controls WHERE @app IS NULL OR application = @app ORDER BY application";
+                select.P("app", application);
+                using var r = select.ExecuteReader();
+                while (r.Read())
+                {
+                    rows.Add((r.GetString(0), r.GetInt64(1), r.GetString(2)));
+                }
+            }
+
+            if (application is not null && rows.Count == 0)
+            {
+                throw new SqliteMigrationException("application_not_registered", $"Application {application} is not registered.");
+            }
+
+            var changes = new List<CapabilityChange>();
+            foreach (var (app, revision, required) in rows)
+            {
+                if (StoreAdminRules.Raise(required, capability, version) is not { } raised)
+                {
+                    changes.Add(new CapabilityChange(app, capability, version, revision, false));
+                    continue;
+                }
+
+                using var update = conn.CreateCommand();
+                update.CommandText = "UPDATE runwick_application_controls SET required_capabilities = @caps, revision = revision + 1, updated_at = @now, actor_subject = @actor WHERE application = @app RETURNING revision";
+                update.P("caps", raised).P("now", now).P("actor", actor).P("app", app);
+                changes.Add(new CapabilityChange(app, capability, version, (long)update.ExecuteScalar()!, true));
+            }
+
+            return changes;
+        }), cancellationToken);
+    }
+
     /// <summary>Reads the store's revision, mode, application gates and the lease and presence rows an operator checks before acting (23 §6).</summary>
     public static Task<StoreAdminStatus> GetStatusAsync(string connectionString, CancellationToken cancellationToken = default) =>
         Task.Run(() => SqliteAdmin.InTransaction(connectionString, false, (conn, now) =>

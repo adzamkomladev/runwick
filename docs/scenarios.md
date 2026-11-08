@@ -36,7 +36,7 @@ SQLite is same-host only ([spec 20 §1](spec/20-sqlite.md)): all five modes appl
 
 ## Schedules (SCN-19 to SCN-21)
 
-A schedule that fires every 2 seconds, declared by two scheduler processes at once, with a third process doing the work. Pass: between 3 and 10 jobs in 14 seconds (the two schedulers must not double the fires) and all of them ran on the worker process. One step is not an operator step: activating the `scheduler` capability has no public API yet, so the scenario calls the store's internal activation call, as the tests do (a gap, see the report).
+A schedule that fires every 2 seconds, declared by two scheduler processes at once, with a third process doing the work. Pass: between 3 and 10 jobs in 14 seconds (the two schedulers must not double the fires) and all of them ran on the worker process. Setup step: the scenario raises the `scheduler` capability with the operator call (`runwick store activate-capability`, library form `ActivateCapabilityAsync`) after starting the application once.
 
 | PostgreSQL | SQLite | Redis |
 |---|---|---|
