@@ -126,6 +126,7 @@ internal static class G2Jobs
                 case "rated8": r.AddHandler<G2Rated8, G2Handler<G2Rated8>>(); break;
                 case "tick": r.AddHandler<G2Tick, G2Handler<G2Tick>>(); break;
                 case "out": r.AddHandler<G2Out, G2Handler<G2Out>>(); break;
+                case "soakwork": Sp029Workloads.AddSoakHandler(r, a); break;
                 default: throw new ArgumentException($"unknown handler '{h}'");
             }
         }
