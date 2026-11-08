@@ -578,7 +578,8 @@ CREATE TABLE runwick_management_audit (
     command_id         BLOB    NOT NULL CHECK (length(command_id) = 16),
     operation          TEXT    NOT NULL CHECK (operation IN ('Cancel', 'ManualRetry', 'RerunSucceeded', 'SetQueueState', 'EditScopePolicy',
         'EditRatePolicy', 'ActivateCapabilities', 'SetScheduleState', 'UpdateSchedule', 'TriggerSchedule', 'ResolveCatchUp', 'RevalidateSchedule',
-        'RecordScheduleEvaluationFailure', 'SetPoolOverride', 'RevealPayload', 'RevealError', 'Dispatch')),
+        'RecordScheduleEvaluationFailure', 'SetPoolOverride', 'RevealPayload', 'RevealError', 'EditRetentionPolicy', 'RetentionSummary',
+        'Dispatch')),
     target_kind        TEXT    NOT NULL CHECK (target_kind IN ('job', 'queue', 'scope', 'rate_scope', 'application', 'schedule', 'pool', 'attempt')),
     target_id          TEXT    NOT NULL CHECK (length(CAST(target_id AS BLOB)) BETWEEN 1 AND 1024),
     actor_subject      TEXT    NOT NULL CHECK (length(CAST(actor_subject AS BLOB)) BETWEEN 1 AND 256),
@@ -594,3 +595,61 @@ CREATE TABLE runwick_management_audit (
 
 CREATE INDEX runwick_management_audit_target ON runwick_management_audit (application, target_kind, target_id, audit_id);
 CREATE INDEX runwick_management_audit_list ON runwick_management_audit (application, audit_id);
+
+-- Retention (17 §2.1, §4.2, §5; SP-021 on SQLite). Times are unix ms like every other column; summary_day is 'YYYY-MM-DD'.
+CREATE TABLE runwick_retention_policies (
+    application              TEXT    NOT NULL,
+    revision                 INTEGER NOT NULL CHECK (revision >= 1),
+    completed_detail_hours   INTEGER,
+    failed_detail_hours      INTEGER,
+    job_history_hours        INTEGER,
+    audit_hours              INTEGER,
+    scaling_events_hours     INTEGER,
+    occurrence_hours         INTEGER,
+    presence_hours           INTEGER NOT NULL,
+    updated_at               INTEGER NOT NULL,
+    updated_by               TEXT    CHECK (updated_by IS NULL OR length(CAST(updated_by AS BLOB)) BETWEEN 1 AND 256),
+    CONSTRAINT retention_policies_pk PRIMARY KEY (application),
+    CONSTRAINT retention_policies_range_ck CHECK (
+        COALESCE(completed_detail_hours, 1) BETWEEN 1 AND 87600 AND COALESCE(failed_detail_hours, 1) BETWEEN 1 AND 87600
+        AND COALESCE(job_history_hours, 1) BETWEEN 1 AND 87600 AND COALESCE(audit_hours, 168) BETWEEN 168 AND 87600
+        AND COALESCE(scaling_events_hours, 1) BETWEEN 1 AND 87600 AND COALESCE(occurrence_hours, 1) BETWEEN 1 AND 87600
+        AND presence_hours BETWEEN 1 AND 87600),
+    CONSTRAINT retention_policies_order_ck CHECK (
+        job_history_hours IS NULL
+        OR (completed_detail_hours IS NOT NULL AND failed_detail_hours IS NOT NULL
+            AND job_history_hours >= max(completed_detail_hours, failed_detail_hours)))
+) STRICT;
+
+CREATE TABLE runwick_cleanup_progress (
+    application        TEXT    NOT NULL,
+    record_class       TEXT    NOT NULL CHECK (record_class IN (
+        'job_detail_completed', 'job_detail_failed', 'job_history', 'job_events', 'management_audit',
+        'schedule_audit', 'scaling_events', 'schedule_occurrences', 'worker_presence',
+        'receipts_ownership', 'receipts_durable', 'dispatch_keys', 'rate_grants', 'outbox_deliveries')),
+    cursor_at          INTEGER,
+    cursor_key         TEXT,
+    pass_started_at    INTEGER,
+    pass_rows          INTEGER NOT NULL DEFAULT 0,
+    caught_up_at       INTEGER,
+    last_batch_at      INTEGER,
+    last_rows          INTEGER NOT NULL DEFAULT 0,
+    total_rows         INTEGER NOT NULL DEFAULT 0,
+    summary_day        TEXT,
+    day_rows           INTEGER NOT NULL DEFAULT 0,
+    day_batches        INTEGER NOT NULL DEFAULT 0,
+    day_failures       INTEGER NOT NULL DEFAULT 0,
+    last_error_code    TEXT    CHECK (last_error_code IS NULL OR length(CAST(last_error_code AS BLOB)) <= 64),
+    last_error_at      INTEGER,
+    CONSTRAINT cleanup_progress_pk PRIMARY KEY (application, record_class)
+) STRICT;
+
+CREATE INDEX runwick_jobs_detail_retention ON runwick_jobs (application, state, terminal_at, job_id)
+    WHERE detail_expired_at IS NULL AND state IN ('succeeded', 'failed', 'cancelled');
+CREATE INDEX runwick_dispatch_keys_bound_job ON runwick_dispatch_keys (application, bound_job_id) WHERE bound_job_id IS NOT NULL;
+CREATE INDEX runwick_dispatch_keys_window_expiry ON runwick_dispatch_keys (application, expires_at)
+    WHERE key_kind = 'window' AND bound_job_id IS NOT NULL;
+CREATE INDEX runwick_dispatch_keys_unbound ON runwick_dispatch_keys (application, updated_at) WHERE bound_job_id IS NULL;
+CREATE INDEX runwick_scaling_events_retention ON runwick_scaling_events (application, created_at, event_id);
+CREATE INDEX runwick_schedule_occurrences_retention ON runwick_schedule_occurrences (application, materialized_at, schedule_id,
+    occurrence_kind, occurrence_key);

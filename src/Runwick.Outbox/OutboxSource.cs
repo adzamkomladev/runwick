@@ -60,6 +60,14 @@ internal interface IOutboxSource
     Task<bool> RetryLaterAsync(OutboxLease lease, TimeSpan delay, string error, CancellationToken ct);
 
     Task<bool> BlockAsync(OutboxLease lease, string reason, CancellationToken ct);
+
+    /// <summary>
+    /// Retention (17 §6): deletes one batch of <c>delivered</c> rows with <c>delivered_at</c> older than 7 days and
+    /// <c>accept_until</c> more than 24 h past, oldest first, at most <paramref name="maxRows"/> rows and — after the
+    /// first row — <paramref name="maxBytes"/> of intent bytes. Locked rows are skipped. Returns the rows deleted.
+    /// <c>pending</c>, <c>leased</c> and <c>blocked</c> rows are never deleted.
+    /// </summary>
+    Task<int> PurgeDeliveredAsync(int maxRows, long maxBytes, CancellationToken ct);
 }
 
 /// <summary>The frozen intent a source adapter inserts (14 §3.2).</summary>

@@ -239,6 +239,45 @@ internal static class Telemetry
 
     internal static void ResetRetentionForTests() => RetentionCaughtUp.Clear();
 
+    // ---- storage (18 §3.1 runwick.storage.operation.duration): one driver call, measured by the store runners
+
+    static readonly string[] IoClasses = ["renewal", "settlement", "admission", "producer", "background"];
+    static readonly Dictionary<Protocol.StoreStatus, string> StatusNames =
+        Enum.GetValues<Protocol.StoreStatus>().ToDictionary(v => v, v => Worker.WorkerEngine.Snake(v.ToString()));
+
+    /// <summary>
+    /// Runs one driver call and records its duration once it has returned or failed; <paramref name="lane"/> is the
+    /// runner's lane (renewal … background, the 04 §9.1 order). Without a listener the call runs unwrapped.
+    /// </summary>
+    public static Task<Protocol.StoreReply<T>> MeasureStorage<T>(string operation, int lane, Func<Task<Protocol.StoreReply<T>>> call) where T : class =>
+        StorageOperationDuration.Instrument.Enabled ? MeasuredAsync(operation, IoClasses[lane], call) : call();
+
+    static async Task<Protocol.StoreReply<T>> MeasuredAsync<T>(string operation, string ioClass, Func<Task<Protocol.StoreReply<T>>> call) where T : class
+    {
+        var start = Stopwatch.GetTimestamp();
+        var result = "error";
+        try
+        {
+            var reply = await call().ConfigureAwait(false);
+            result = StatusNames[reply.Status];
+            return reply;
+        }
+        catch (Protocol.StoreOutcomeUnknownException)
+        {
+            result = "outcome_unknown";
+            throw;
+        }
+        catch (Protocol.StoreNotAppliedException)
+        {
+            result = "not_applied";
+            throw;
+        }
+        finally
+        {
+            StorageOperationDuration.Record(Stopwatch.GetElapsedTime(start).TotalSeconds, operation, result, ioClass);
+        }
+    }
+
     // ---- 3.3 overflow
 
     static readonly ConcurrentDictionary<string, byte> OverflowLogged = new(StringComparer.Ordinal);

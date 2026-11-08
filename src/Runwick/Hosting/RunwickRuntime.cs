@@ -62,6 +62,17 @@ internal sealed class RunwickRuntime(JobRegistry registry, IRunwickStore store, 
         }
         catch (Exception ex) when (ex is StoreIncompatibleException or RunwickConfigurationException)
         {
+            // 1702/1703 (18 §5): core does not see the store's numbers, so "actual" is the store's own bounded reason.
+            var actual = Telemetry.Telemetry.Sanitize(ex.Message.Length > 256 ? ex.Message[..256] : ex.Message);
+            if (ex.Message.Contains("profile", StringComparison.OrdinalIgnoreCase))
+            {
+                Telemetry.RunwickLog.StoreProfileMismatch(logger, "the configured persistence profile", actual);
+            }
+            else if (ex is StoreIncompatibleException)
+            {
+                Telemetry.RunwickLog.StoreSchemaIncompatible(logger, "this binary's schema and protocol", actual);
+            }
+
             Producer.Failed(new StoreIncompatibleException(ex.Message));
             throw;
         }

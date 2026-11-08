@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <NoWarn>$(NoWarn);CA2007;CA1707;CA1861;CA2234;CA1515;CA1849</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\..\src\Runwick.Dashboard\Runwick.Dashboard.csproj" />
+    <ProjectReference Include="..\Runwick.Harness\Runwick.Harness.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Inertia.Net" />
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>

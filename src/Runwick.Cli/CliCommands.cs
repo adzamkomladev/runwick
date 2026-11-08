@@ -3,9 +3,12 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Data.Sqlite;
 using Npgsql;
 using Runwick.Management;
 using Runwick.Postgres.Migrations;
+using Runwick.Sqlite.Migrations;
+using Runwick.Sqlite.Store;
 using V = Runwick.Cli.CliValueType;
 
 namespace Runwick.Cli;
@@ -610,36 +613,37 @@ internal static class CliCommands
             : null;
     }
 
-    static void PostgresOnly(CliInvocation inv)
-    {
-        if ((inv.Opt("--provider") ?? "postgres") == "sqlite")
-        {
-            // shortcut: the SQLite provider (SP-019) is not merged yet; its Migrate/Describe plug in here once it is.
-            throw CliErrors.Usage("The sqlite provider is not part of this build yet.");
-        }
-    }
+    static bool IsSqlite(CliInvocation inv) => inv.Opt("--provider") == "sqlite";
 
     static async Task<CommandOutcome> MigrateAsync(CliInvocation inv, CancellationToken ct)
     {
-        PostgresOnly(inv);
         var cs = await ConnectionAsync(inv) ?? throw CliErrors.Usage("migrate needs --connection-env or --connection-stdin.");
         try
         {
-            var result = await RunwickPostgresMigrations.MigrateAsync(cs, ct);
-            return CommandOutcome.Ok(JsonSerializer.SerializeToNode(result, RunwickCli.Json));
+            return CommandOutcome.Ok(IsSqlite(inv)
+                ? JsonSerializer.SerializeToNode(await RunwickSqliteMigrations.MigrateAsync(cs, ct), RunwickCli.Json)
+                : JsonSerializer.SerializeToNode(await RunwickPostgresMigrations.MigrateAsync(cs, ct), RunwickCli.Json));
         }
         catch (PostgresMigrationException ex)
         {
-            // Provider codes pass through unchanged; never the inner exception (it may name the server).
-            var unavailable = ex.Code is "store_unavailable" or "migration_lock_unavailable";
-            return CommandOutcome.Fail(new CliError(ex.Code, ex.Message, unavailable, unavailable ? "Retry when the store is reachable and no other migration runs." : "See the message.",
-                null, unavailable ? CliErrors.Unavailable : CliErrors.Rejected));
+            return MigrationFailed(ex.Code, ex.Message);
         }
+        catch (SqliteMigrationException ex)
+        {
+            return MigrationFailed(ex.Code, ex.Message);
+        }
+    }
+
+    /// <summary>Provider codes pass through unchanged; never the inner exception (it may name the server or the file).</summary>
+    static CommandOutcome MigrationFailed(string code, string message)
+    {
+        var unavailable = code is "store_unavailable" or "migration_lock_unavailable" or "migration_lock_timeout";
+        return CommandOutcome.Fail(new CliError(code, message, unavailable, unavailable ? "Retry when the store is reachable and no other migration runs." : "See the message.",
+            null, unavailable ? CliErrors.Unavailable : CliErrors.Rejected));
     }
 
     static async Task<CommandOutcome> DoctorAsync(CliInvocation inv, CancellationToken ct)
     {
-        PostgresOnly(inv);
         var checks = new List<DoctorCheck>();
         var connection = await ConnectionAsync(inv);
         ApiClient? api = null;
@@ -657,12 +661,17 @@ internal static class CliCommands
             await ApiChecksAsync(api, checks, ct);
         }
 
-        if (connection is not null)
+        if (connection is not null && IsSqlite(inv))
+        {
+            SqliteStoreChecks(connection, checks);
+        }
+        else if (connection is not null)
         {
             await StoreChecksAsync(connection, checks, ct);
         }
 
-        var result = JsonSerializer.SerializeToNode(new DoctorResult(RunwickCli.Version, PgMigrator.CurrentRevision, checks), RunwickCli.Json);
+        var cli = IsSqlite(inv) ? SqliteMigrator.CurrentRevision : PgMigrator.CurrentRevision;
+        var result = JsonSerializer.SerializeToNode(new DoctorResult(RunwickCli.Version, cli, checks), RunwickCli.Json);
         var failed = checks.Where(c => c.Status == "fail").Select(c => c.Name).ToList();
         return failed.Count == 0 ? CommandOutcome.Ok(result)
             : new CommandOutcome(result, CliErrors.Of("check_failed", "Failed: " + string.Join(", ", failed) + "."), null, new Dictionary<string, JsonNode>(), []);
@@ -752,16 +761,70 @@ internal static class CliCommands
                     return;
                 }
 
-                var cli = PgMigrator.CurrentRevision;
-                checks.Add(mode != "normal" ? new DoctorCheck("store.migration", "fail", $"migration_mode={mode}")
-                    : revision == cli ? new DoctorCheck("store.migration", "pass", $"revision {revision.ToString(CultureInfo.InvariantCulture)}")
-                    : revision < cli ? new DoctorCheck("store.migration", "warn", $"store revision {revision.ToString(CultureInfo.InvariantCulture)} < CLI {cli.ToString(CultureInfo.InvariantCulture)}: run migrate")
-                    : new DoctorCheck("store.migration", "fail", $"CLI older than store (store {revision.ToString(CultureInfo.InvariantCulture)}, CLI {cli.ToString(CultureInfo.InvariantCulture)})"));
+                checks.Add(MigrationCheck(revision, mode, PgMigrator.CurrentRevision));
             }
         }
         catch (Exception ex) when (ex is NpgsqlException or IOException or TimeoutException or ArgumentException)
         {
             checks.Add(new DoctorCheck("store.settings", "unverified", "could not connect"));
+            checks.Add(new DoctorCheck("store.migration", "fail", "store_unavailable"));
+        }
+    }
+
+    static DoctorCheck MigrationCheck(long revision, string mode, long cli) =>
+        mode != "normal" ? new DoctorCheck("store.migration", "fail", $"migration_mode={mode}")
+        : revision == cli ? new DoctorCheck("store.migration", "pass", $"revision {revision.ToString(CultureInfo.InvariantCulture)}")
+        : revision < cli ? new DoctorCheck("store.migration", "warn", $"store revision {revision.ToString(CultureInfo.InvariantCulture)} < CLI {cli.ToString(CultureInfo.InvariantCulture)}: run migrate")
+        : new DoctorCheck("store.migration", "fail", $"CLI older than store (store {revision.ToString(CultureInfo.InvariantCulture)}, CLI {cli.ToString(CultureInfo.InvariantCulture)})");
+
+    /// <summary>
+    /// SQLite store checks, using the store's own startup and Describe checks (20 §2, §6): engine version, journal_mode and
+    /// topology, then revision, migration mode and schema objects. Opens the file without creating it and changes nothing.
+    /// </summary>
+    static void SqliteStoreChecks(string connectionString, List<DoctorCheck> checks)
+    {
+        try
+        {
+            var cs = SqFile.Normalize(connectionString, SqliteOpenMode.ReadWrite);
+            var topology = SqFile.CheckTopology(SqFile.FilePath(cs));
+            using var conn = new SqliteConnection(cs);
+            conn.Open();
+            var version = SqFile.CheckEngine(conn).Version;
+
+            // journal_mode is the file's own setting; synchronous and foreign_keys are per connection and the store sets them.
+            var journal = SqFile.Scalar(conn, "PRAGMA journal_mode");
+            var initialized = SqFile.Scalar(conn, "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'runwick_store_metadata'") == "1";
+            var wal = string.Equals(journal, "wal", StringComparison.OrdinalIgnoreCase);
+            checks.Add(new DoctorCheck("store.settings", !wal ? (initialized ? "fail" : "warn") : topology == "local" ? "pass" : "unverified",
+                $"sqlite_version={version} journal_mode={journal} topology={topology}"));
+
+            using var meta = conn.CreateCommand();
+            meta.CommandText = "SELECT schema_revision, migration_mode FROM runwick_store_metadata WHERE singleton_id = 1";
+            long revision;
+            string mode;
+            using (var r = initialized ? meta.ExecuteReader() : null)
+            {
+                if (r is null || !r.Read())
+                {
+                    checks.Add(new DoctorCheck("store.migration", "warn", "store not initialized: run migrate"));
+                    return;
+                }
+
+                (revision, mode) = (r.GetInt64(0), r.GetString(1));
+            }
+
+            checks.Add(revision == SqliteMigrator.CurrentRevision && mode == "normal" && !SqliteMigrator.SchemaMatches(conn)
+                ? new DoctorCheck("store.migration", "fail", "schema objects differ from this CLI's: schema_incompatible")
+                : MigrationCheck(revision, mode, SqliteMigrator.CurrentRevision));
+        }
+        catch (SqProfileException ex)
+        {
+            checks.Add(new DoctorCheck("store.settings", "fail", ex.Code));
+            checks.Add(new DoctorCheck("store.migration", "fail", ex.Code));
+        }
+        catch (SqliteException)
+        {
+            checks.Add(new DoctorCheck("store.settings", "unverified", "could not open"));
             checks.Add(new DoctorCheck("store.migration", "fail", "store_unavailable"));
         }
     }

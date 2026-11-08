@@ -33,6 +33,10 @@ public interface IManagementSession
 
     Task<ManagementPage<AuditEntry>> ListAuditAsync(ManagementCaller caller, AuditQuery query, CancellationToken cancellationToken = default);
 
+    /// <summary>Autoscaler target changes, newest first (21 §6). Needs <c>Capacity.Read</c>.</summary>
+    Task<ManagementPage<ScalingEventSummary>> ListScalingEventsAsync(ManagementCaller caller, ScalingEventQuery query,
+        CancellationToken cancellationToken = default);
+
     Task<ManagementSettings> GetSettingsAsync(ManagementCaller caller, CancellationToken cancellationToken = default);
 
     /// <summary>The retention policy and per-class cleanup progress (17 §7). Needs <c>Settings.Read</c>.</summary>
@@ -194,12 +198,7 @@ internal sealed class ManagementSession(
         }
         else
         {
-            to = query.To ?? time.GetUtcNow();
-            from = query.From ?? to - DefaultRange;
-            if (from > to || to - from > MaxRange)
-            {
-                throw new ManagementValidationException("invalid_request", "The created range must be ordered and at most 31 days.");
-            }
+            (from, to) = Range(query.From, query.To);
         }
 
         await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
@@ -287,6 +286,41 @@ internal sealed class ManagementSession(
             a => [a.AuditId.ToString(CultureInfo.InvariantCulture)]);
     }
 
+    public async Task<ManagementPage<ScalingEventSummary>> ListScalingEventsAsync(ManagementCaller caller, ScalingEventQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        Require(caller, ManagementPermissions.CapacityRead);
+        var limit = PageSize(query.Limit);
+        var filters = string.Join('|', query.InstanceId?.ToString("D"), query.Pool, query.From is { } f ? Ms(f) : "", query.To is { } t ? Ms(t) : "");
+        DateTimeOffset from, to;
+        (DateTimeOffset, Guid)? after = null;
+        if (query.Cursor is { } cursor)
+        {
+            var k = cursors.Open(cursor, "scaling-events", App, filters, "*");
+            (from, to, after) = (FromMs(k[0]), FromMs(k[1]), (FromMs(k[2]), Guid.Parse(k[3])));
+        }
+        else
+        {
+            (from, to) = Range(query.From, query.To);
+        }
+
+        await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+        var read = await Read(() => Store.ListScalingEventsAsync(App, new ScalingEventFilter(query.InstanceId, query.Pool, from, to), after, limit + 1,
+            cancellationToken)).ConfigureAwait(false);
+        return Page(read, limit, "scaling-events", filters, "*", e => [Ms(from), Ms(to), Ms(e.CreatedAt), e.EventId.ToString("D")]);
+    }
+
+    /// <summary>The created range: default the last 7 days, ordered, at most 31 days.</summary>
+    (DateTimeOffset From, DateTimeOffset To) Range(DateTimeOffset? from, DateTimeOffset? to)
+    {
+        var end = to ?? time.GetUtcNow();
+        var start = from ?? end - DefaultRange;
+        return start > end || end - start > MaxRange
+            ? throw new ManagementValidationException("invalid_request", "The created range must be ordered and at most 31 days.")
+            : (start, end);
+    }
+
     public async Task<ManagementSettings> GetSettingsAsync(ManagementCaller caller, CancellationToken cancellationToken = default)
     {
         Require(caller, ManagementPermissions.SettingsRead);
@@ -339,6 +373,11 @@ internal sealed class ManagementSession(
         var seed = await SeedAsync(commandId, Operations.AdministrativeLifetime, cancellationToken).ConfigureAwait(false);
         var r = await controls.SendAsync(Actor(caller, reason), a => new RetentionPolicyRequest(policy, expectedRevision, a), Retention.EditRetentionPolicyAsync,
             seed, cancellationToken).ConfigureAwait(false);
+        if (r.Value is { } edited && !r.Replayed)
+        {
+            Telemetry.RunwickLog.RetentionPolicyEdited(runtime.Logger, edited.Revision);
+        }
+
         return r.Value is { } v
             ? new RetentionPolicyResult(true, null, v.Revision, v.Policy, r.Replayed)
             : new RetentionPolicyResult(false, Map(r.Error?.Code), r.Error?.ActualRevision, null, false);
@@ -375,6 +414,11 @@ internal sealed class ManagementSession(
         {
             // Nothing is returned unless the audit row is known to be committed (MGMT-09).
             throw new StoreUnavailableException("The disclosure was not recorded.", ex);
+        }
+
+        if (reply.Value is { Status: "disclosed" })
+        {
+            Telemetry.RunwickLog.ManagementDisclosure(runtime.Logger, kind, jobId is null ? "attempt" : "job", (jobId ?? attemptId)!.Value, command.CommandId);
         }
 
         return reply.Value switch

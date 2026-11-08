@@ -86,7 +86,11 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
 
     // ------------------------------------------------------------------ retry and slot
 
-    async Task<StoreReply<T>> WithRetriesAsync<T, TRaw>(SqOp op, Func<SqliteConnection, TRaw> once, Func<TRaw, StoreReply<T>> map,
+    Task<StoreReply<T>> WithRetriesAsync<T, TRaw>(SqOp op, Func<SqliteConnection, TRaw> once, Func<TRaw, StoreReply<T>> map,
+        CancellationToken ct) where T : class =>
+        Telemetry.Telemetry.MeasureStorage(op.Operation, (int)op.Lane, () => WithRetriesCoreAsync(op, once, map, ct)); // 18 §3.1
+
+    async Task<StoreReply<T>> WithRetriesCoreAsync<T, TRaw>(SqOp op, Func<SqliteConnection, TRaw> once, Func<TRaw, StoreReply<T>> map,
         CancellationToken ct) where T : class
     {
         var gate = executor.Gate(op.Lane);
@@ -555,6 +559,7 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         Func<SqTx, SqRow, SqRow>? onReplay, CancellationToken ct) where T : class
     {
         var conn = transaction.Connection ?? throw new SqStagingValidationException("transaction_invalid", "The transaction is completed.");
+        ValidateCaller(conn, transaction);
         var tx = new SqTx(conn, transaction, op, faults, ct);
         tx.Raw("SAVEPOINT runwick_stage");
         try
@@ -580,6 +585,38 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         {
             EndStage(tx, release: false);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// 20 §8 rule 1, before any write: the caller's main file is the configured file and its connection has
+    /// <c>foreign_keys = 1</c> and <c>synchronous = 2</c>. The store identity is the frame's G1 gate inside the savepoint.
+    /// </summary>
+    void ValidateCaller(SqliteConnection conn, SqliteTransaction transaction)
+    {
+        string? main = null;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = transaction;
+            cmd.CommandText = "SELECT file FROM pragma_database_list WHERE name = 'main'";
+            main = cmd.ExecuteScalar() as string;
+        }
+
+        var configured = Path.GetFullPath(SqFile.FilePath(executor.ConnectionString));
+        if (string.IsNullOrEmpty(main) || !string.Equals(Path.GetFullPath(main), configured, StringComparison.Ordinal))
+        {
+            throw new SqStagingValidationException(RunwickErrorCodes.TransactionStoreMismatch, "The transaction's database file is not the configured Runwick store.");
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = transaction;
+            cmd.CommandText = "SELECT (SELECT foreign_keys FROM pragma_foreign_keys) = 1 AND (SELECT synchronous FROM pragma_synchronous) = 2";
+            if (Convert.ToInt64(cmd.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) != 1)
+            {
+                throw new SqStagingValidationException(RunwickErrorCodes.TransactionProfileMismatch,
+                    "The transaction's connection needs PRAGMA foreign_keys = 1 and PRAGMA synchronous = FULL (2).");
+            }
         }
     }
 

@@ -31,6 +31,8 @@
     <InternalsVisibleTo Include="Runwick" />
     <InternalsVisibleTo Include="Runwick.Postgres" />
     <InternalsVisibleTo Include="Runwick.Sqlite" />
+    <InternalsVisibleTo Include="Runwick.Redis" />
+    <InternalsVisibleTo Include="Runwick.Redis.Tests" />
     <InternalsVisibleTo Include="Runwick.Contract.Tests" />
     <InternalsVisibleTo Include="Runwick.Sqlite.Tests" />
     <InternalsVisibleTo Include="Runwick.Testing" />
@@ -48,5 +50,8 @@
     <InternalsVisibleTo Include="Runwick.AspNetCore.Tests" />
     <InternalsVisibleTo Include="Runwick.Cli" />
     <InternalsVisibleTo Include="Runwick.Cli.Tests" />
+    <InternalsVisibleTo Include="Runwick.Dashboard" />
+    <InternalsVisibleTo Include="Runwick.Dashboard.Tests" />
+    <InternalsVisibleTo Include="Runwick.Dashboard.Host" />
   </ItemGroup>
 </Project>

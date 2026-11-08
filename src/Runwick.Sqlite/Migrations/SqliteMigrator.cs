@@ -265,8 +265,8 @@ namespace Sqlite.Migrations
         // ------------------------------------------------------------------ manifest (20 §9.3, 04 §8.5)
 
         /// <summary>
-        /// The PostgreSQL revision-15 operation set and versions. ManagementDispatch/1 (19 §6.2) is not listed yet: it is a
-        /// named gap of SP-019 and is added with its implementation.
+        /// The PostgreSQL revision-17 operation set and versions: revision 15's set, CleanupBatch/1 and EditRetentionPolicy/1
+        /// (17, revision 16) and ManagementDispatch/1 (19 §6.2).
         /// </summary>
         internal static readonly string[] ManifestOperations =
         [
@@ -276,6 +276,7 @@ namespace Sqlite.Migrations
             "ReceiveOutbox", "ActivateCapabilities", "EditRatePolicy", "ListUnsupportedBacklog",
             .. ScheduleOperations.All,
             "SetPoolOverride", "EstimateDemand", "RecordScalingEvent", "RenewMany", "ReserveAndBegin", "FinishMany", "RecordDisclosure",
+            "CleanupBatch", "EditRetentionPolicy", "ManagementDispatch",
         ];
 
         internal static SortedDictionary<string, SortedSet<int>> Versions()

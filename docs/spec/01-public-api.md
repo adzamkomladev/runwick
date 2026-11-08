@@ -2,6 +2,12 @@
 
 **Sources:** docs/architecture/public-api-contract.md §2–§10 (primary), docs/architecture/identity-and-serialization.md, docs/uniqueness-and-execution.md, docs/review-2026-10-30.md, docs/runwick-explained.md (examples; superseded where it conflicts), docs/architecture/dispatch-wire-contract.md, docs/architecture/execution-defaults-and-timing.md, docs/architecture/worker-engine-internals.md, docs/architecture/capacity-defaults-and-budgets.md, docs/architecture/management-retention-defaults.md, docs/architecture/platform-and-packages.md.
 
+## Changes (2026-11-08, SP-025 spec)
+
+- (2026-11-08, SP-019) Error table gains `transaction_profile_mismatch` (`RunwickErrorCodes.TransactionProfileMismatch`), raised by SQLite caller staging (20 §8 rule 1).
+
+The reserved `UseRedis` (§18) is specified in 22: `UseRedis(configuration, configure)` with `RedisOptions` (22 §2.1), `RunwickRedisMigrations.MigrateAsync` (22 §9.1) and `AcknowledgementProfiles.RedisAofAlways = "redis.aof-always-single-primary-v1"` (22 §1). Redis has no staging or transactional-completion twin (22 §8). `DispatchOutcomeUnknownException` gains the code `store_recovering`: the Redis store held an unpublished intent when the call was made, so its outcome is not known yet; resend the same prepared request or call `ResolveAsync`, which can answer `DispatchResolutionStatus.Recovering` (22 §4.4, 03 Changes 2026-11-08, SP-025).
+
 ## Changes (2026-11-08, SP-019 spec)
 
 The reserved SQLite twins (§18) are specified in 20: `UseSqlite(connectionString, configure)` with `SqliteOptions` (20 §2.1), `ISqliteJobDispatcher` and `ISqliteJobCompletion` (20 §8), `RunwickSqliteMigrations.MigrateAsync` (20 §9.1), and `AcknowledgementProfiles.SqliteWalFull = "sqlite.wal-synchronous-full"` (20 §1).
@@ -1208,6 +1214,7 @@ public static class RunwickErrorCodes
 | `store_incompatible` | `StoreIncompatibleException` | KnownNotApplied |
 | `admission_closed` | `AdmissionClosedException` | KnownNotApplied |
 | `transaction_store_mismatch`, `transaction_invalid` | `TransactionValidationException` | KnownNotApplied |
+| `transaction_profile_mismatch` (SQLite caller connection without `foreign_keys = 1` and `synchronous = 2`, 20 §8) | `TransactionValidationException` | KnownNotApplied |
 | `outcome_unknown` (I/O loss, timeout or cancellation around commit; any failure after send) | `DispatchOutcomeUnknownException` | OutcomeUnknown |
 | `expired_unknown` | `DispatchOutcomeUnknownException` | OutcomeUnknown |
 | `cancelled_after_send` | `DispatchCanceledAfterSendException` | OutcomeUnknown |

@@ -4,15 +4,18 @@
     <InternalsVisibleTo Include="Runwick.Postgres.Tests" />
     <InternalsVisibleTo Include="Runwick.Contract.Tests" />
     <InternalsVisibleTo Include="Runwick.Sqlite.Tests" />
+    <InternalsVisibleTo Include="Runwick.Redis.Tests" />
     <InternalsVisibleTo Include="Runwick.Harness.Peer" />
     <InternalsVisibleTo Include="Runwick.Workloads" />
     <InternalsVisibleTo Include="Runwick.Outbox.Tests" />
     <InternalsVisibleTo Include="Runwick.AspNetCore.Tests" />
     <InternalsVisibleTo Include="Runwick.Cli.Tests" />
+    <InternalsVisibleTo Include="Runwick.Dashboard.Tests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Runwick.Postgres\Runwick.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Runwick.Sqlite\Runwick.Sqlite.csproj" />
+    <ProjectReference Include="..\..\src\Runwick.Redis\Runwick.Redis.csproj" />
     <ProjectReference Include="..\Runwick.ReferenceModel\Runwick.ReferenceModel.csproj" />
   </ItemGroup>
   <ItemGroup>

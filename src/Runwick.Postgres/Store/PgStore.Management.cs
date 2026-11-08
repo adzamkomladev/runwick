@@ -206,6 +206,26 @@ internal sealed partial class PgStore : IManagementQueryStore
                 JsonNode.Parse(r.GetString(11))!.AsObject(), PgTime.Read(r, 12))).ConfigureAwait(false);
         }, ct);
 
+    /// <summary>Served by <c>scaling_events_retention (application, created_at, event_id)</c> read backwards (21 §6).</summary>
+    public Task<StoreRead<IReadOnlyList<ScalingEventSummary>>> ListScalingEventsAsync(string application, ScalingEventFilter filter,
+        (DateTimeOffset CreatedAt, Guid EventId)? after, int limit, CancellationToken ct) =>
+        ReadAsync<IReadOnlyList<ScalingEventSummary>>(application, async tx =>
+        {
+            var sql = new StringBuilder("""
+                SELECT event_id, instance_id, pool_name, old_target, new_target, desired, candidate, reason, snapshot_at, created_at
+                FROM runwick.scaling_events WHERE application = @application AND created_at >= @from AND created_at <= @to
+                """)
+                .Append(filter.InstanceId is null ? "" : " AND instance_id = @instance")
+                .Append(filter.Pool is null ? "" : " AND pool_name = @pool")
+                .Append(after is null ? "" : " AND (created_at, event_id) < (@after_at, @after_id)")
+                .Append(" ORDER BY created_at DESC, event_id DESC LIMIT @limit");
+            using var q = tx.Sql(sql.ToString()).P("from", filter.From).P("to", filter.To).P("instance", filter.InstanceId, NpgsqlDbType.Uuid)
+                .P("pool", filter.Pool).P("after_at", after?.CreatedAt).P("after_id", after?.EventId, NpgsqlDbType.Uuid).P("limit", limit);
+            return await tx.QueryAsync(q, r => new ScalingEventSummary(r.GetGuid(0), r.GetGuid(1), r.GetString(2), r.GetInt32(3), r.GetInt32(4),
+                r.IsDBNull(5) ? null : r.GetInt32(5), r.IsDBNull(6) ? null : r.GetInt32(6), r.GetString(7), PgTime.ReadNullable(r, 8),
+                PgTime.Read(r, 9))).ConfigureAwait(false);
+        }, ct);
+
     // ------------------------------------------------------------------ RecordDisclosure/1 (16 §3)
 
     public async Task<StoreReply<Disclosure>> RecordDisclosureAsync(StoreCommand<DisclosureRequest> command, CancellationToken ct)

@@ -137,6 +137,15 @@ public sealed record JobListQuery(
 public sealed record AuditQuery(
     string? TargetKind = null, string? TargetId = null, DateTimeOffset? From = null, DateTimeOffset? To = null, int? Limit = null, string? Cursor = null);
 
+/// <summary>Scaling history filters (21 §6). The created range defaults to the last 7 days and spans at most 31.</summary>
+public sealed record ScalingEventQuery(
+    Guid? InstanceId = null, string? Pool = null, DateTimeOffset? From = null, DateTimeOffset? To = null, int? Limit = null, string? Cursor = null);
+
+/// <summary>One autoscaler target change (11 §6). The membership digest is not shown.</summary>
+public sealed record ScalingEventSummary(
+    Guid EventId, Guid InstanceId, string Pool, int OldTarget, int NewTarget, int? Desired, int? Candidate, string Reason,
+    DateTimeOffset? SnapshotAt, DateTimeOffset CreatedAt);
+
 public sealed record JobSummary(
     Guid JobId, string JobName, int PayloadVersion, string Queue, string Priority, string State, int Generation, long Revision,
     DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, DateTimeOffset EligibleAt, DateTimeOffset? TerminalAt, string? TerminalReason,

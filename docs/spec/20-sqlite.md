@@ -34,6 +34,7 @@ Not in SP-019 [choice]: cross-process wake-up notifications (polling plus wake-u
   - The harness picks SQLite by connection string (`Data Source=…`), not by a `--store` flag. SQL-02 holds the lock from a second connection in the same process, not from a Peer process.
   - The existing PostgreSQL suite classes were not moved. A new shared project, `Runwick.Contract.Tests`, runs its cases on both stores.
   - Not built yet (named gaps): `ManagementDispatch/1` (left out of the manifest until built), retention cleanup, controls and `EventsSince`, rates, schedules, scaling, outbox receive, management reads, and the §8 caller-transaction API (`ISqliteJobDispatcher`, `ISqliteJobCompletion`). Cases SQL-01, 03, 04, 05, 07 and 11 are not run yet.
+- (2026-11-08, SP-019 gaps) **Retention on SQLite.** Retention cleanup (17) runs on SQLite too, so the SQLite schema revision 1 gains the retention policy and cleanup progress tables, the cleanup indexes and the audit kinds `EditRetentionPolicy` and `RetentionSummary` (§11). Revision 1 was never released, so it is changed in place rather than adding `0002`. The manifest is now the PostgreSQL revision-17 set: revision 15's operations plus `CleanupBatch/1`, `EditRetentionPolicy/1` and `ManagementDispatch/1` (§9.3). RET-01 becomes applicable (§12).
 
 ## 1. Targets and boundaries
 

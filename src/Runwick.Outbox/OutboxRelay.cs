@@ -32,6 +32,7 @@ internal sealed class OutboxRelay(
     Task? _claimLoop;
     Task? _renewLoop;
     Task? _listener;
+    Task? _cleanupLoop;
     volatile bool _renewalUncertain;
     int _disposed;
 
@@ -71,6 +72,7 @@ internal sealed class OutboxRelay(
 
         _claimLoop = Task.Run(ClaimLoopAsync, CancellationToken.None);
         _renewLoop = Task.Run(RenewLoopAsync, CancellationToken.None);
+        _cleanupLoop = Task.Run(CleanupLoopAsync, CancellationToken.None);
         if (source is IOutboxWakeSource wake)
         {
             // Optional (14 Changes 2026-11-02, PF-07): a committed stage ends the idle poll early.
@@ -92,6 +94,11 @@ internal sealed class OutboxRelay(
         if (_listener is { } listener)
         {
             await listener.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+
+        if (_cleanupLoop is { } cleanup)
+        {
+            await cleanup.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
 
         try
@@ -127,6 +134,11 @@ internal sealed class OutboxRelay(
         if (_listener is { } listener)
         {
             await listener.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+
+        if (_cleanupLoop is { } cleanup)
+        {
+            await cleanup.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
 
         _claimStop.Dispose();
@@ -285,6 +297,45 @@ internal sealed class OutboxRelay(
         }
     }
 
+    /// <summary>Delivered source rows deleted by this relay's cleanup loop (tests and diagnostics).</summary>
+    public long Purged;
+
+    /// <summary>The 17 §4.4 budgets, fixed for the relay: 100 rows and 1 MiB of intent per batch, 1 s between batches, 60 s idle.</summary>
+    internal const int CleanupRows = 100;
+    internal const long CleanupBytes = 1 << 20;
+    static readonly TimeSpan CleanupPause = TimeSpan.FromSeconds(1), CleanupIdle = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Source cleanup (17 §6): one batch at a time until a batch deletes nothing, then the idle poll. A failed batch backs
+    /// off 5 s doubling to 5 min. It stops with claims; several relays on one source skip each other's locked rows.
+    /// </summary>
+    async Task CleanupLoopAsync()
+    {
+        var stop = _claimStop.Token;
+        var failures = 0;
+        while (!stop.IsCancellationRequested)
+        {
+            TimeSpan wait;
+            try
+            {
+                var rows = await Call(c => source.PurgeDeliveredAsync(CleanupRows, CleanupBytes, c)).ConfigureAwait(false);
+                Interlocked.Add(ref Purged, rows);
+                failures = 0;
+                wait = rows > 0 ? CleanupPause : CleanupIdle;
+            }
+            catch (Exception ex) when (!stop.IsCancellationRequested && ex is not OutOfMemoryException)
+            {
+                logger.LogDebug(ex, "Runwick outbox source cleanup failed.");
+                wait = TimeSpan.FromTicks(Math.Min(TimeSpan.FromSeconds(5).Ticks << Math.Min(failures++, 6), TimeSpan.FromMinutes(5).Ticks));
+            }
+
+            if (!await DelayAsync(wait, stop).ConfigureAwait(false))
+            {
+                return;
+            }
+        }
+    }
+
     async Task RenewLoopAsync()
     {
         var stop = _abort.Token;
@@ -430,12 +481,18 @@ internal sealed class OutboxRelay(
             {
                 // Provider call timeout: the request may still be running. A hung task keeps its slot until it returns.
             }
-            catch (StoreNotAppliedException)
+            catch (StoreNotAppliedException ex)
             {
+                Telemetry.RunwickLog.OutboxDestinationUnavailable(logger, ex.Code);
                 return null;
             }
 
             await DelayAsync(TimeSpan.FromMilliseconds(Math.Min(1000, 100 << Math.Min(attempt, 4))), _abort.Token).ConfigureAwait(false);
+        }
+
+        if (!_abort.IsCancellationRequested)
+        {
+            Telemetry.RunwickLog.OutboxDestinationUnavailable(logger, "transport_unresolved");
         }
 
         return null;
@@ -502,7 +559,7 @@ internal sealed class OutboxRelay(
 
     async Task BlockAsync(InFlight entry, string reason)
     {
-        logger.LogWarning("Runwick outbox message {MessageId} blocked: {Reason}.", entry.Lease.MessageId, reason);
+        Telemetry.RunwickLog.OutboxDeliveryBlocked(logger, entry.Lease.MessageId, reason);
         if (await Call(c => source.BlockAsync(entry.Lease, reason, c)).ConfigureAwait(false))
         {
             Interlocked.Increment(ref Blocked);

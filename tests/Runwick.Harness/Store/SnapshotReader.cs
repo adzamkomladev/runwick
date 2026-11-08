@@ -11,9 +11,9 @@ internal sealed record HarnessSnapshot(StoreSnapshot Model, IReadOnlyDictionary<
 {
     public IReadOnlyList<string> this[string table] => Tables[table];
 
-    /// <summary>Tables whose normalized rows differ between two snapshots.</summary>
+    /// <summary>Tables whose normalized rows differ between two snapshots (a Redis key that exists in only one counts as changed).</summary>
     public IReadOnlyList<string> DiffTables(HarnessSnapshot other) =>
-        [.. Tables.Keys.Where(t => !Tables[t].SequenceEqual(other.Tables[t]))];
+        [.. Tables.Keys.Union(other.Tables.Keys).Where(t => !Tables.TryGetValue(t, out var a) || !other.Tables.TryGetValue(t, out var b) || !a.SequenceEqual(b))];
 }
 
 internal static class SnapshotReader

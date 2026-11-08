@@ -35,6 +35,7 @@ Not in SP-032 [choice]: `schedules edit` (schedules are edited by changing the r
   - `GET events`: `limit` above 1,000 is clamped, not refused; an empty page returns the input cursor (or `"0.0"`) as `next`.
   - CLI: no colour; `--url` with no context means a bearer login; `context add --url` is that command's own option, not the global override; `describe` works in every output mode; `doctor` failures are error `check_failed` (exit 1) with the checks still in `result`; a reveal's `commandId` is local only (reveals carry no command ID on the wire); `events tail --limit` is the page size per request.
   - `migrate`/`doctor --provider sqlite` is a `usage_error` in this build: SQLite is SP-019's and plugs in after its merge (CLI-08's SQLite half not run).
+  - (2026-11-08, SQLite half) `migrate`/`doctor --provider sqlite` now work: `migrate` calls `RunwickSqliteMigrations.MigrateAsync`; `doctor` opens the file without creating it and uses the store's own startup and Describe checks (engine version, `journal_mode`, topology, revision, `migration_mode`, schema objects). SQLite `migration_lock_timeout` is retryable (exit 4) like PostgreSQL's `migration_lock_unavailable`. The single-file binary is named `Runwick.Cli` (the assembly name); only the tool package installs it as `runwick`.
   - The agent envelope and describe schemas are committed as `schemas/runwick-cli-agent-envelope-v1.json` and `schemas/runwick-cli-describe-v1.json`; CLI-03 fails when they differ from the generated ones (regenerate with `RUNWICK_WRITE_SCHEMAS=1`).
 
 ## 1. Package and process

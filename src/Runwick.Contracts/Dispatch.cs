@@ -97,6 +97,9 @@ public static class AcknowledgementProfiles
 
     /// <summary>A reply follows a commit with WAL and <c>synchronous=FULL</c> on the committing connection (20 §1).</summary>
     public const string SqliteWalFull = "sqlite.wal-synchronous-full";
+
+    /// <summary>A reply follows the script's writes being appended and fsynced under <c>appendfsync always</c> on the checked primary (22 §1).</summary>
+    public const string RedisAofAlways = "redis.aof-always-single-primary-v1";
 }
 
 /// <summary>What staging reported inside a caller's transaction. Makes no durability claim.</summary>

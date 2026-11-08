@@ -4,6 +4,7 @@
     <Project Path="src/Runwick/Runwick.csproj" />
     <Project Path="src/Runwick.Postgres/Runwick.Postgres.csproj" />
     <Project Path="src/Runwick.Sqlite/Runwick.Sqlite.csproj" />
+    <Project Path="src/Runwick.Redis/Runwick.Redis.csproj" />
     <Project Path="src/Runwick.Outbox/Runwick.Outbox.csproj" />
     <Project Path="src/Runwick.Outbox.Postgres/Runwick.Outbox.Postgres.csproj" />
     <Project Path="src/Runwick.Outbox.Sqlite/Runwick.Outbox.Sqlite.csproj" />
@@ -11,7 +12,7 @@
     <Project Path="src/Runwick.AspNetCore/Runwick.AspNetCore.csproj" />
     <Project Path="src/Runwick.Cli/Runwick.Cli.csproj" />
     <Project Path="src/Runwick.OpenTelemetry/Runwick.OpenTelemetry.csproj" />
-    <Project Path="src/Runwick.Dashboard.Spike/Runwick.Dashboard.Spike.csproj" />
+    <Project Path="src/Runwick.Dashboard/Runwick.Dashboard.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Runwick.ReferenceModel/Runwick.ReferenceModel.csproj" />
@@ -21,16 +22,17 @@
     <Project Path="tests/Runwick.Postgres.Tests/Runwick.Postgres.Tests.csproj" />
     <Project Path="tests/Runwick.Contract.Tests/Runwick.Contract.Tests.csproj" />
     <Project Path="tests/Runwick.Sqlite.Tests/Runwick.Sqlite.Tests.csproj" />
+    <Project Path="tests/Runwick.Redis.Tests/Runwick.Redis.Tests.csproj" />
     <Project Path="tests/Runwick.Outbox.Tests/Runwick.Outbox.Tests.csproj" />
     <Project Path="tests/Runwick.Workloads/Runwick.Workloads.csproj" />
     <Project Path="tests/Runwick.AspNetCore.Tests/Runwick.AspNetCore.Tests.csproj" />
     <Project Path="tests/Runwick.Cli.Tests/Runwick.Cli.Tests.csproj" />
     <Project Path="tests/Runwick.Redis.Prototype.Tests/Runwick.Redis.Prototype.Tests.csproj" />
-    <Project Path="tests/Runwick.Dashboard.Spike.Tests/Runwick.Dashboard.Spike.Tests.csproj" />
+    <Project Path="tests/Runwick.Dashboard.Tests/Runwick.Dashboard.Tests.csproj" />
   </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/Runwick.Samples.Contracts/Runwick.Samples.Contracts.csproj" />
     <Project Path="samples/Runwick.Samples.Host/Runwick.Samples.Host.csproj" />
-    <Project Path="samples/Runwick.Dashboard.SpikeHost/Runwick.Dashboard.SpikeHost.csproj" />
+    <Project Path="samples/Runwick.Dashboard.Host/Runwick.Dashboard.Host.csproj" />
   </Folder>
 </Solution>

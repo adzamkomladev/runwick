@@ -37,6 +37,7 @@ internal static class PeerWorker
 
                 var business = m["bcs"]?.GetValue<string>();
                 _host = WorkerHost.Create(m["cs"]!.GetValue<string>(), m["app"]!.GetValue<string>(), faults, m["concurrency"]?.GetValue<int>() ?? 4,
+                    jobs: m["contended"]?.GetValue<bool>() == true ? WorkerHost.Contended : null, divisor: m["divisor"]?.GetValue<int>(),
                     queue: m["queue"]?.GetValue<string>() ?? "default");
                 _host.Script.Default = (job, ctx, ct) =>
                     job.Id.StartsWith("block", StringComparison.Ordinal) ? Task.Delay(Timeout.InfiniteTimeSpan, CancellationToken.None)
@@ -79,6 +80,8 @@ internal static class PeerWorker
                     ["invoked"] = invoked,
                     ["finishesSent"] = Interlocked.Read(ref h.Engine.FinishesSent),
                     ["stagedObserved"] = Interlocked.Read(ref h.Engine.StagedCompletionsObserved),
+                    ["renewed"] = h.EventCount("renewed"),
+                    ["lost"] = h.Events.Count(e => e.Name.StartsWith("lost:", StringComparison.Ordinal)),
                 };
             case "workerDispatch":
                 var options = m["queue"]?.GetValue<string>() is { } q ? new DispatchOptions { Queue = q } : null;
@@ -103,12 +106,53 @@ internal static class PeerWorker
                 var seen = await ObserveAsync(Host(), m["kind"]!.GetValue<string>(), m["jobId"]?.GetValue<string>() is { } j ? Guid.Parse(j) : null,
                     TimeSpan.FromSeconds(m["timeoutSeconds"]?.GetValue<int>() ?? 90)).ConfigureAwait(false);
                 return new JsonObject { ["actorId"] = seen.ActorId, ["kind"] = seen.Kind };
+            case "telemetryListen":
+                // OBS-08: this process's own measurements, which die with it.
+                _meters ??= Listen();
+                return [];
+            case "telemetryRead":
+                var counts = new JsonObject();
+                foreach (var (name, value) in Measured)
+                {
+                    counts[name] = value;
+                }
+
+                return counts;
             default:
                 throw new InvalidOperationException($"unknown worker command '{cmd}'");
         }
     }
 
     static WorkerHost Host() => _host ?? throw new InvalidOperationException("send 'startWorker' first");
+
+    static System.Diagnostics.Metrics.MeterListener? _meters;
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> Measured = new(StringComparer.Ordinal);
+
+    /// <summary>Counts every Runwick measurement by instrument name: counter values summed, histogram records counted.</summary>
+    static System.Diagnostics.Metrics.MeterListener Listen()
+    {
+        var listener = new System.Diagnostics.Metrics.MeterListener
+        {
+            InstrumentPublished = (instrument, l) =>
+            {
+                if (instrument.Meter.Name == "Runwick")
+                {
+                    l.EnableMeasurementEvents(instrument);
+                }
+            },
+        };
+        listener.SetMeasurementEventCallback<long>((i, v, _, _) => Measured.AddOrUpdate(i.Name, v, (_, s) => s + v));
+        listener.SetMeasurementEventCallback<double>((i, _, tags, _) =>
+        {
+            Measured.AddOrUpdate(i.Name, 1, (_, s) => s + 1);
+            foreach (var tag in tags)
+            {
+                Measured.AddOrUpdate(i.Name + "|" + tag.Value, 1, (_, s) => s + 1);
+            }
+        });
+        listener.Start();
+        return listener;
+    }
 
     static ManagementActor Actor(JsonObject m) =>
         new(m["actor"]?.GetValue<string>() ?? "user:ops", m["actorName"]?.GetValue<string>() ?? "Ops", "host");
