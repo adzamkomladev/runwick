@@ -72,5 +72,7 @@ internal sealed class SqliteStoreRegistration(string connectionString, SqliteOpt
         services.AddSingleton<IScalingStore>(sp => sp.GetRequiredService<SqliteStore>());
         services.AddSingleton<IOutboxDestinationStore>(sp => sp.GetRequiredService<SqliteStore>());
         services.AddSingleton<IRetentionStore>(sp => sp.GetRequiredService<SqliteStore>());
+        services.AddSingleton<IJobControlStore>(sp => sp.GetRequiredService<SqliteStore>());
+        services.AddSingleton<IManagementQueryStore>(sp => sp.GetRequiredService<SqliteStore>());
     }
 }
