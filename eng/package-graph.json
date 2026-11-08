@@ -8,7 +8,7 @@
     "Runwick.Postgres":         { "exists": true,  "allowedProjectRefs": ["Runwick"], "allowedPackages": ["Npgsql"] },
     "Runwick.Testing":          { "exists": true,  "allowedProjectRefs": ["Runwick"], "allowedPackages": [] },
     "Runwick.Sqlite":           { "exists": true,  "milestone": "M4", "allowedProjectRefs": ["Runwick"], "allowedPackages": ["Microsoft.Data.Sqlite"] },
-    "Runwick.Redis":            { "exists": false, "milestone": "M4", "allowedProjectRefs": ["Runwick"], "allowedPackages": ["StackExchange.Redis"] },
+    "Runwick.Redis":            { "exists": true,  "milestone": "M4", "allowedProjectRefs": ["Runwick"], "allowedPackages": ["StackExchange.Redis"] },
     "Runwick.AspNetCore":       { "exists": true,  "milestone": "M5", "allowedProjectRefs": ["Runwick"], "allowedPackages": ["Microsoft.AspNetCore.App (framework)"] },
     "Runwick.Dashboard":        { "exists": false, "milestone": "M5", "allowedProjectRefs": ["Runwick.AspNetCore"], "allowedPackages": ["Inertia.Net"] },
     "Runwick.Outbox":           { "exists": true,  "milestone": "M3", "allowedProjectRefs": ["Runwick"], "allowedPackages": [] },
@@ -32,7 +32,8 @@
     "NodaTime": "3.3.7",
     "OpenTelemetry": "1.20.1",
     "OpenTelemetry.Exporter.InMemory": "1.20.1",
-    "deferred": { "StackExchange.Redis": "3.4.20", "Inertia.Net": "1.7.0" }
+    "StackExchange.Redis": "3.4.20",
+    "deferred": { "Inertia.Net": "1.7.0" }
   },
   "notes": [
     "Test runner: xunit.v3 on VSTest (Microsoft.NET.Test.Sdk + xunit.runner.visualstudio) so `dotnet test --filter Trait=Value` works; the test projects are also self-hosting executables."

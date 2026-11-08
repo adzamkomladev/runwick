@@ -360,6 +360,11 @@
         "resolved": "5.0.0",
         "contentHash": "dDoKi0PnDz31yAyETfRntsLArTlVAVzUzCIvvEDsDsucrl33Dl8pIJG06ePTJTI3tGpeyHS9Cq7Foc/s4EeKcg=="
       },
+      "RESPite": {
+        "type": "Transitive",
+        "resolved": "3.4.20",
+        "contentHash": "MRBfXbMStwHGzM2UsbWsmh7mF/WDh4kNonrhOj5HLfkVp+PIstu4MuElusyJLHu5MkOIQj9+u1xWQ5YeJTveHQ=="
+      },
       "SharpZipLib": {
         "type": "Transitive",
         "resolved": "1.4.2",
@@ -405,6 +410,11 @@
         "type": "Transitive",
         "resolved": "10.0.14",
         "contentHash": "O/RzNwWoDzehkLlAG9hR8xooY5L41U7VUaYlcKvE3+FhHohBJqF10oLUzuv0v59VeJ62hv3uw9VoeX12zej7Sg=="
+      },
+      "System.IO.Hashing": {
+        "type": "Transitive",
+        "resolved": "10.0.13",
+        "contentHash": "ZlcywyQ7FJmgOV2nctdfOEPGS0kRK8T2CdOoPr6F4HPYpmjSo6GQfj3yTyOzNO6B+2U84/JKSPkJJMWqLmVsMw=="
       },
       "System.Security.AccessControl": {
         "type": "Transitive",
@@ -493,6 +503,7 @@
           "Microsoft.Extensions.Hosting": "[10.0.14, )",
           "Microsoft.Extensions.TimeProvider.Testing": "[10.11.0, )",
           "Runwick.Postgres": "[0.1.0-m1, )",
+          "Runwick.Redis": "[0.1.0-m1, )",
           "Runwick.ReferenceModel": "[0.1.0-m1, )",
           "Runwick.Sqlite": "[0.1.0-m1, )",
           "Testcontainers.PostgreSql": "[4.16.0, )",
@@ -504,6 +515,13 @@
         "dependencies": {
           "Npgsql": "[10.0.3, )",
           "Runwick": "[0.1.0-m1, )"
+        }
+      },
+      "runwick.redis": {
+        "type": "Project",
+        "dependencies": {
+          "Runwick": "[0.1.0-m1, )",
+          "StackExchange.Redis": "[3.4.20, )"
         }
       },
       "runwick.referencemodel": {
@@ -648,6 +666,17 @@
         "contentHash": "7nb5YzXuvWWJxB0J8DiyL3we+X4FOctZrt0fIBnucOIaIevFEEwGQVZKtiu9olXdlNAK1eNgqSral6r/jlhI4w==",
         "dependencies": {
           "Microsoft.Extensions.Logging.Abstractions": "10.0.0"
+        }
+      },
+      "StackExchange.Redis": {
+        "type": "CentralTransitive",
+        "requested": "[3.4.20, )",
+        "resolved": "3.4.20",
+        "contentHash": "eIPMxCzqw3BMWp1GOOcafs7RPrScSHiCT9b1DIEJ49h9b7tHBw21+rN6gLWdQmJzvR+Wzwx3obmCp3FpgKuUSg==",
+        "dependencies": {
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.13",
+          "RESPite": "3.4.20",
+          "System.IO.Hashing": "10.0.13"
         }
       },
       "Testcontainers": {
