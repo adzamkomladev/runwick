@@ -26,7 +26,7 @@ public sealed class RedisPrefixTests
     {
         var store = Store(c);
         var interrupted = 0;
-        for (var n = 1; n <= 120; n++)
+        for (var n = 1; n <= 400; n++)
         {
             var call = await prepare();
             store.Runner.Client.FailAfter = n;
@@ -179,6 +179,23 @@ public sealed class RedisPrefixTests
             }
         });
 
+        // A batch of 60 jobs is larger than one call (100 after-images): prefixes fall between its projection batches too.
+        var bigSeq = 0;
+        counts["DispatchMany60"] = await Sweep<BatchDispatchReceipt>(c, () =>
+        {
+            var p = c.Prepared.PrepareMany([.. Enumerable.Range(0, 60).Select(i => new BatchDispatchItem(new PingJob($"big{bigSeq}-{i}")))]);
+            bigSeq++;
+            return Task.FromResult<Func<Task<BatchDispatchReceipt>>>(() => c.Prepared.DispatchAsync(p, Ct));
+        }, (again, first) =>
+        {
+            Assert.Equal(60, again.Items.Count);
+            Assert.All(again.Items, i => Assert.Equal(DispatchDisposition.Created, i.Receipt!.Disposition));
+            if (first is not null)
+            {
+                Assert.Equal(first.Items, again.Items);
+            }
+        });
+
         foreach (var (op, n) in counts)
         {
             Assert.True(n >= 2, $"{op}: only {n} interrupted prefixes");
@@ -188,5 +205,73 @@ public sealed class RedisPrefixTests
         var snapshot = await f.ReadCommittedSnapshot();
         Assert.Empty(SnapshotInvariants.Violations(snapshot.Model));
         Assert.Equal("", (string?)await db.HashGetAsync(RxClient.Meta(f.Application), "guard") ?? "");
+    }
+
+    [Fact]
+    [Trait("Case", "REDIS-01")]
+    public async Task Every_write_prefix_of_retention_cleanup_batches_recovers_and_the_pass_still_completes()
+    {
+        var f = await DriverFixture.StartAsync("redis01cl_" + Guid.NewGuid().ToString("N")[..8], StoreKind.Redis);
+        await using var _ = f;
+        var c = await f.OpenClient(configure: r => TestJobs.Register(r));
+        for (var i = 0; i < 40; i++)
+        {
+            await c.Dispatcher.DispatchAsync(new PingJob("p" + i), cancellationToken: Ct);
+            var lease = (await c.ReserveAsync()).Value!.Lease.Handle;
+            await c.BeginAsync(lease);
+            Assert.Equal(StoreStatus.Applied, (await c.FinishAsync(lease, AttemptOutcome.Succeeded)).Status);
+        }
+
+        var mux = await RedisServer.AdminAsync();
+        var db = mux.GetDatabase();
+        var server = mux.GetServer(mux.GetEndPoints()[0]);
+        await foreach (var k in server.KeysAsync(db.Database, RxClient.KeyPrefix(f.Application) + "job:*"))
+        {
+            var at = long.Parse((string)(await db.HashGetAsync(k, "terminalat"))!, System.Globalization.CultureInfo.InvariantCulture);
+            await db.HashSetAsync(k, "terminalat", at - (long)TimeSpan.FromDays(400).TotalMilliseconds);
+        }
+
+        var retention = (IRetentionStore)c.Driver;
+        var limits = new CleanupLimits(10, 1 << 20, TimeSpan.FromSeconds(5));
+        var store = Store(c);
+        var interrupted = 0;
+        var step = 0;
+        foreach (var recordClass in RecordClasses.All)
+        {
+            for (var i = 0; i < 200; i++)
+            {
+                store.Runner.Client.FailAfter = 1 + step++ % 9;
+                try
+                {
+                    var attempt = await retention.RunCleanupBatchAsync(c.Application, recordClass, limits, Ct);
+                    if (attempt.Status != "done")
+                    {
+                        interrupted++;
+                    }
+                }
+                catch (StoreOutcomeUnknownException)
+                {
+                    interrupted++;
+                }
+                finally
+                {
+                    store.Runner.Client.FailAfter = 0;
+                }
+
+                var r = await retention.RunCleanupBatchAsync(c.Application, recordClass, limits, Ct);
+                Assert.True(r.Status == "done", $"{recordClass}: {r.Status} {r.ErrorCode}");
+                if (r.PassComplete)
+                {
+                    break;
+                }
+
+                Assert.True(i < 199, "pass did not complete");
+            }
+        }
+
+        Assert.True(interrupted >= 5, $"only {interrupted} interrupted cleanup batches");
+        Assert.Equal("", (string?)await db.HashGetAsync(RxClient.Meta(f.Application), "guard") ?? "");
+        Assert.Equal(0, await db.SortedSetLengthAsync(RxClient.KeyPrefix(f.Application) + "idx:created"));
+        Assert.Empty(SnapshotInvariants.Violations((await f.ReadCommittedSnapshot()).Model));
     }
 }
