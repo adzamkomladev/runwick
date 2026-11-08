@@ -36,9 +36,12 @@ builder.Services.AddRunwick(r =>
 });
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(o => o.LoginPath = "/login");
+// The presets leave out payload, error and audit reads (16 §1); the sample's staff get them explicitly.
+IReadOnlyList<ManagementGrant> WithDisclosure(IReadOnlyList<ManagementGrant> preset) => [.. preset,
+    new(ManagementPermissions.JobsReadPayload), new(ManagementPermissions.JobsReadError), new(ManagementPermissions.AuditRead)];
 var grants = new Dictionary<string, IReadOnlyList<ManagementGrant>>(StringComparer.Ordinal)
 {
-    ["admin"] = ManagementRoles.Administrator, ["operator"] = ManagementRoles.Operator, ["viewer"] = ManagementRoles.Viewer,
+    ["admin"] = WithDisclosure(ManagementRoles.Administrator), ["operator"] = WithDisclosure(ManagementRoles.Operator), ["viewer"] = ManagementRoles.Viewer,
 };
 builder.Services.AddRunwickManagement(m => m
     .AuthenticationSchemes(CookieAuthenticationDefaults.AuthenticationScheme)
@@ -69,7 +72,7 @@ app.MapGet("/login/{user}", async (HttpContext ctx, string user, string? returnU
     var display = user == "operator" ? Hostile : user; // the operator's display name is hostile text too
     await ctx.SignInAsync(new ClaimsPrincipal(new ClaimsIdentity(
         [new Claim(ClaimTypes.NameIdentifier, user), new Claim(ClaimTypes.Name, display)], CookieAuthenticationDefaults.AuthenticationScheme)));
-    return Results.LocalRedirect(string.IsNullOrEmpty(returnUrl) || !returnUrl.StartsWith("/ops/", StringComparison.Ordinal) ? "/ops/runwick" : returnUrl[4..]);
+    return Results.LocalRedirect(string.IsNullOrEmpty(returnUrl) || !returnUrl.StartsWith("/ops/", StringComparison.Ordinal) ? "/ops/runwick" : returnUrl);
 });
 app.MapGet("/logout", async (HttpContext ctx) =>
 {
@@ -80,12 +83,12 @@ app.MapGet("/logout", async (HttpContext ctx) =>
 await app.StartAsync();
 var dispatcher = app.Services.GetRequiredService<IJobDispatcher>();
 var later = new DispatchOptions { NotBefore = DateTimeOffset.UtcNow.AddDays(1) };
-await dispatcher.DispatchAsync(new Report(Hostile), later);
 for (var i = 0; i < 3; i++)
 {
     await dispatcher.DispatchAsync(new Report($"ops-{i}@example.com"), later);
 }
 
+await dispatcher.DispatchAsync(new Report(Hostile), later); // newest, so first in the list: the reveal rate limit allows few tries
 await dispatcher.DispatchAsync(new Flaky("fails with a hostile error code"));
 Console.WriteLine($"ready http://127.0.0.1:{port}/ops/runwick");
 await app.WaitForShutdownAsync();

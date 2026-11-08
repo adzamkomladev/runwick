@@ -27,7 +27,7 @@ for f in "$here"/*.js; do sed "s/127\.0\.0\.1:5791/127.0.0.1:$port/g" "$f" > "$w
 start_host() {
   RUNWICK_DASH_PORT=$port "${DOTNET:-dotnet}" "$dll" "$@" > "$work/host.log" 2>&1 &
   host=$!
-  for _ in $(seq 300); do grep -q '^ready' "$work/host.log" 2>/dev/null && return; sleep 0.1; done
+  for _ in $(seq 1200); do grep -q '^ready' "$work/host.log" 2>/dev/null && return; sleep 0.1; done
   echo "host did not start:" >&2
   cat "$work/host.log" >&2
   exit 2

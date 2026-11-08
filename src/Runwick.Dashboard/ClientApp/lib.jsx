@@ -132,7 +132,10 @@ export function CommandBar({ command }) {
 /** A reveal (21 §5.1): plain fetch, the value kept in component state only and cleared on navigation. */
 export function useReveal() {
   const [value, setValue] = useState(null)
-  useEffect(() => router.on('navigate', () => setValue(null)), [])
+  useEffect(() => { // 'success' also covers the 303 that follows a command on the same page
+    const off = [router.on('navigate', () => setValue(null)), router.on('success', () => setValue(null))]
+    return () => off.forEach((f) => f())
+  }, [])
   const reveal = async (key, url) => {
     acting++
     try {

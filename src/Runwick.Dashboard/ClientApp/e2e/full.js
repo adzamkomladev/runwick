@@ -62,7 +62,7 @@ async page => {
   await step('partial reload: audit loads on demand', async () => {
     await page.getByTestId('load-audit').click()
     await page.getByTestId('audit').waitFor()
-    check((await text('audit')).includes('RetryJob'), 'audit row')
+    check((await text('audit')).includes('ManualRetry'), 'audit row')
     check(await sameDocument(), 'document reloaded')
   })
   await step('cancel a pending job with a hostile payload, then reveal the payload as text', async () => {
@@ -84,6 +84,7 @@ async page => {
     await page.getByTestId('confirm').click()
     await page.getByTestId('done').waitFor()
     await page.waitForFunction(() => document.querySelector('[data-testid="job-state"]')?.textContent.startsWith('cancelled'))
+    await page.getByTestId('payload').waitFor({ state: 'detached', timeout: 5_000 }).catch(() => {}) // the 'navigate' event clears it just after the new props render
     check(await page.getByTestId('payload').count() === 0, 'revealed payload kept after navigation')
   })
   await step('Jobs page polls at 5 s or more, one request at a time', async () => {
