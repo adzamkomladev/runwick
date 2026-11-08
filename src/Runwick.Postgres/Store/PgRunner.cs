@@ -813,7 +813,7 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
     internal static async Task<ReceiptRow?> ReadReceiptAsync(PgTx tx, string retentionClass)
     {
         using var r2 = tx.Sql("""
-            SELECT operation, operation_version, fingerprint, not_after, status, result::text, decided_at
+            SELECT operation, operation_version, fingerprint, not_after, status, result::text, decided_at, receipt_codec_version
             FROM runwick.storage_commands
             WHERE application = @application AND retention_class = @class AND command_id = @command_id
             FOR UPDATE
@@ -822,7 +822,7 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
             r.GetString(0), r.GetInt32(1), (byte[])r[2], PgTime.Read(r, 3),
             r.IsDBNull(4) ? null : r.GetString(4),
             r.IsDBNull(5) ? null : JsonNode.Parse(r.GetString(5))!.AsObject(),
-            PgTime.ReadNullable(r, 6))).ConfigureAwait(false);
+            PgTime.ReadNullable(r, 6), r.GetInt32(7))).ConfigureAwait(false);
         return rows.Count == 0 ? null : rows[0];
     }
 

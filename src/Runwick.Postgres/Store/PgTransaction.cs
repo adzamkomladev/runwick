@@ -207,7 +207,7 @@ internal abstract record PgOutcome<T> where T : class
 
 /// <summary>A committed receipt row read by R2.</summary>
 internal sealed record ReceiptRow(string Operation, int OperationVersion, byte[] Fingerprint, DateTimeOffset NotAfter,
-    string? Status, JsonObject? Result, DateTimeOffset? DecidedAt);
+    string? Status, JsonObject? Result, DateTimeOffset? DecidedAt, int CodecVersion = 1);
 
 /// <summary>
 /// Statements sent together as one <see cref="NpgsqlBatch"/> (04 §6.1: inputs that do not depend on prior results). Each

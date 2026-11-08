@@ -19,7 +19,7 @@ public sealed class SqliteMigrationException(string code, string message, Except
 }
 
 /// <summary>The explicit deployment migrator for the SQLite store. Workers never migrate on startup.</summary>
-public static class RunwickSqliteMigrations
+public static partial class RunwickSqliteMigrations
 {
     /// <summary>Creates the schema in one transaction, or does nothing when it is already applied (20 §9.2).</summary>
     public static Task<SqliteMigrationResult> MigrateAsync(string connectionString, CancellationToken cancellationToken = default) =>
