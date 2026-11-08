@@ -282,7 +282,7 @@ UPG-03,UPG,driver,spec 23,yes,applicable,applicable,n/a: Redis has no caller tra
 UPG-04,UPG,driver,spec 23,yes,applicable,applicable,applicable,Case=UPG-04,
 UPG-05,UPG,driver,spec 23,yes,applicable,n/a: the whole migration is one transaction (23 s2),n/a: install is one HSET (23 s2),Case=UPG-05,
 UPG-06,UPG,driver,spec 10; spec 15; spec 23,yes,applicable,applicable,applicable,Case=UPG-06,
-UPG-07,UPG,driver,spec 23,yes,applicable,"partial: replay is tested; the unknown-codec check is not built for SQLite (23 s2, SP-026 gap)","partial: replay is tested; the unknown-codec check is not built for Redis (23 s2, SP-026 gap)",Case=UPG-07,
+UPG-07,UPG,driver,spec 23,yes,applicable,applicable,applicable,Case=UPG-07,
 UPG-08,UPG,driver,spec 23,yes,applicable,applicable,applicable,Case=UPG-08,Redis reports no lease or presence counts (null) but still returns the quiescence notice (23 s2)
 UPG-09,UPG,driver,spec 23,yes,applicable,applicable,applicable,Case=UPG-09,
 UPG-10,UPG,driver,spec 23,yes,applicable,applicable,applicable,Case=UPG-10,
