@@ -510,7 +510,7 @@ public sealed class WorkerTests
         await Task.Delay(TimeSpan.FromSeconds(2));
         Assert.Equal(["succeeded"], await Outcomes(f, job));
         Assert.Equal(1, w.Script.InvocationsOf("j"));
-        Assert.Contains(w.Engine.Health().Diagnostics, d => d.Contains("dispose fault", StringComparison.Ordinal));
+        Assert.Contains(w.Engine.Health().Diagnostics, d => d.Contains("threw InvalidOperationException", StringComparison.Ordinal));
     }
 
     [Fact]
