@@ -7,6 +7,7 @@
     <Project Path="src/Runwick.Outbox.Postgres/Runwick.Outbox.Postgres.csproj" />
     <Project Path="src/Runwick.Outbox.Sqlite/Runwick.Outbox.Sqlite.csproj" />
     <Project Path="src/Runwick.Testing/Runwick.Testing.csproj" />
+    <Project Path="src/Runwick.AspNetCore/Runwick.AspNetCore.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Runwick.ReferenceModel/Runwick.ReferenceModel.csproj" />

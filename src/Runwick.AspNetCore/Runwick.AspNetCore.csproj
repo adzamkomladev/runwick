@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Runwick management API over ASP.NET Core: authenticated, permission-checked /v1 endpoints for the management session.</Description>
+    <!-- ASP.NET Core has no synchronization context; endpoint lambdas await without ConfigureAwait. -->
+    <NoWarn>$(NoWarn);CA2007</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Runwick\Runwick.csproj" />
+  </ItemGroup>
+</Project>
