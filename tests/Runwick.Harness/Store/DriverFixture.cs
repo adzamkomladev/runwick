@@ -12,7 +12,7 @@ namespace Runwick.Harness.Store;
 internal enum StoreProfile { DirectPrimary, DirectPrimaryViaProxy }
 
 /// <summary>The store a driver-suite case runs against (20 §12).</summary>
-public enum StoreKind { Postgres, Sqlite }
+public enum StoreKind { Postgres, Sqlite, Redis }
 
 /// <summary>Per-test store fixture (07 §2.1): a PostgreSQL database, or a SQLite file in its own temp directory (20 §12).</summary>
 internal sealed class DriverFixture : IAsyncDisposable
@@ -52,7 +52,12 @@ internal sealed class DriverFixture : IAsyncDisposable
     public HarnessFaultInjector Faults { get; } = new();
 
     /// <summary>Direct (unproxied) admin connection string for the per-test database.</summary>
-    public string AdminConnectionString => Kind == StoreKind.Sqlite ? $"Data Source={SqlitePath}" : Server.ConnectionStringFor(DatabaseName, "rw:harness:admin");
+    public string AdminConnectionString => Kind switch
+    {
+        StoreKind.Sqlite => $"Data Source={SqlitePath}",
+        StoreKind.Redis => RedisServer.Prefix + RedisServer.Configuration,
+        _ => Server.ConnectionStringFor(DatabaseName, "rw:harness:admin"),
+    };
 
     public static async Task<DriverFixture> StartAsync(string isolatedNamespace, StoreProfile profile = StoreProfile.DirectPrimary)
     {
@@ -62,6 +67,13 @@ internal sealed class DriverFixture : IAsyncDisposable
     /// <summary>A fixture of the given kind; SQLite gets a fresh temp directory and a migrated file.</summary>
     public static async Task<DriverFixture> StartAsync(string isolatedNamespace, StoreKind kind, StoreProfile profile = StoreProfile.DirectPrimary)
     {
+        if (kind == StoreKind.Redis)
+        {
+            // 22 §11: one shared server; each fixture is its own application namespace (rw:{hex(app)}:*).
+            await RedisServer.EnsureMigratedAsync().ConfigureAwait(false);
+            return new DriverFixture(null!, isolatedNamespace, isolatedNamespace, profile, null, StoreKind.Redis);
+        }
+
         if (kind == StoreKind.Sqlite)
         {
             var dir = Directory.CreateTempSubdirectory("runwick-sqlite-").FullName;
@@ -80,7 +92,7 @@ internal sealed class DriverFixture : IAsyncDisposable
     /// <summary>Client connection string tagged <c>rw:&lt;identity&gt;</c> (the driver appends <c>:control</c>/<c>:work</c>), routed through the proxy when the profile says so.</summary>
     public string ClientConnectionString(string identity, string? role = null)
     {
-        if (Kind == StoreKind.Sqlite)
+        if (Kind is StoreKind.Sqlite or StoreKind.Redis)
         {
             return AdminConnectionString;
         }
@@ -108,7 +120,12 @@ internal sealed class DriverFixture : IAsyncDisposable
     }
 
     public Task<HarnessSnapshot> ReadCommittedSnapshot() =>
-        Kind == StoreKind.Sqlite ? Task.FromResult(SqliteSnapshotReader.Read(SqlitePath)) : SnapshotReader.ReadAsync(AdminConnectionString);
+        Kind switch
+        {
+            StoreKind.Sqlite => Task.FromResult(SqliteSnapshotReader.Read(SqlitePath)),
+            StoreKind.Redis => RedisServer.SnapshotAsync(Application),
+            _ => SnapshotReader.ReadAsync(AdminConnectionString),
+        };
 
     /// <summary>
     /// Replays every job's committed history through the ReferenceModel (15 §12.2 rule 4); empty when all are accepted.
@@ -268,6 +285,12 @@ internal sealed class DriverFixture : IAsyncDisposable
         if (Proxy is not null)
         {
             await Proxy.DisposeAsync().ConfigureAwait(false);
+        }
+
+        if (Kind == StoreKind.Redis)
+        {
+            await RedisServer.DropApplicationAsync(Application).ConfigureAwait(false);
+            return;
         }
 
         if (Kind == StoreKind.Sqlite)

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Runwick Redis store (one primary under appendonly + appendfsync always) built on StackExchange.Redis.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Runwick\Runwick.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="StackExchange.Redis" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Lua\*.lua" LogicalName="Runwick.Redis.Lua.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Lua\ops\*.lua" LogicalName="Runwick.Redis.Lua.ops.%(Filename)%(Extension)" />
+    <InternalsVisibleTo Include="Runwick.Contract.Tests" />
+    <InternalsVisibleTo Include="Runwick.Redis.Tests" />
+    <InternalsVisibleTo Include="Runwick.Harness" />
+    <InternalsVisibleTo Include="Runwick.Harness.Peer" />
+  </ItemGroup>
+</Project>

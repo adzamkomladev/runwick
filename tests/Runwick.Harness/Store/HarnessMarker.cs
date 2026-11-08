@@ -14,6 +14,7 @@ internal static class HarnessMarker
     {
         Runwick.Postgres.Store.PgRunner.HarnessMarker = true;
         Runwick.Sqlite.Store.SqRunner.HarnessMarker = true;
+        Runwick.Redis.Store.RxClient.HarnessMarker = true;
     }
 #pragma warning restore CA2255
 }

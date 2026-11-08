@@ -101,7 +101,8 @@ internal sealed class WorkerHost : IAsyncDisposable
         sc.AddRunwick(r =>
         {
             r.Application(application);
-            _ = TestClient.IsSqlite(connectionString) ? r.UseSqlite(connectionString) : r.UsePostgres(connectionString);
+            _ = RedisServer.IsRedis(connectionString) ? r.UseRedis(RedisServer.ConfigurationOf(connectionString))
+                : TestClient.IsSqlite(connectionString) ? r.UseSqlite(connectionString) : r.UsePostgres(connectionString);
             RegisterWork(r, queue, jobs);
             r.AddHandler<WorkJob, ScriptedWorkHandler>();
             r.AddWorker(w =>

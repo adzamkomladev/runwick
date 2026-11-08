@@ -31,7 +31,11 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
         services.AddRunwick(r =>
         {
             r.Application(application);
-            if (IsSqlite(connectionString))
+            if (RedisServer.IsRedis(connectionString))
+            {
+                r.UseRedis(RedisServer.ConfigurationOf(connectionString));
+            }
+            else if (IsSqlite(connectionString))
             {
                 r.UseSqlite(connectionString);
             }
