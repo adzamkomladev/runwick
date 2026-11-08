@@ -29,6 +29,7 @@ internal static partial class PostgresServices
         services.AddSingleton<IOutboxDestinationStore>(sp => sp.GetRequiredService<PgStore>());
         services.AddSingleton<IScheduleStore>(sp => sp.GetRequiredService<PgStore>());
         services.AddSingleton<IScalingStore>(sp => sp.GetRequiredService<PgStore>());
+        services.AddSingleton<IManagementQueryStore>(sp => sp.GetRequiredService<PgStore>());
         services.AddScoped<IPostgresJobCompletion, PostgresJobCompletion>();
         services.AddSingleton<IPostgresJobDispatcher, PostgresJobDispatcher>();
     }

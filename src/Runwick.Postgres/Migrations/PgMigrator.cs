@@ -183,6 +183,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         new("0012_set_claim", LoadSql("0012_set_claim.sql"), 12),
         new("0013_set_finish", LoadSql("0013_set_finish.sql"), 13),
         new("0014_set_dispatch", LoadSql("0014_set_dispatch.sql"), 14),
+        new("0015_management", LoadSql("0015_management.sql"), 15),
     ];
 
     /// <summary>The schema revision this binary writes to (03 §10.1): the last migration's target.</summary>
@@ -643,6 +644,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         [12] = [],
         [13] = [],
         [14] = [],
+        [15] = ["RecordDisclosure"],
     };
 
     internal static IReadOnlyList<string> OperationsAt(long revision) => [.. VersionsAt(revision).Keys];
