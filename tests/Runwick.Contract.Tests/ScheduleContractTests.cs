@@ -100,7 +100,7 @@ public sealed class ScheduleContractTests
         var cutoff = await Store(c).StoreNowAsync(Ct);
         var first = definition.Kind == ScheduleOperations.OneTime
             ? definition.DueAt
-            : ScheduleRecurrence.For(definition, TzdbArtifact.Pinned, TimeProvider.System)(cutoff)?.At;
+            : ScheduleRecurrence.For(definition, TzdbArtifact.Pinned, FrozenBudgetClock.Instance)(cutoff)?.At;
         return await Store(c).RegisterScheduleAsync(c.Command(new RegisterScheduleRequest(key, definition, cutoff, first)), Ct);
     }
 

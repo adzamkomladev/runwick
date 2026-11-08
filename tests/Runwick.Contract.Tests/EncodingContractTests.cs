@@ -53,13 +53,14 @@ public sealed class EncodingContractTests
         Assert.Equal(StoreStatus.CommandExpired, (await c.BeginAsync(reserved.Lease.Handle, notAfter: past)).Reply.Status);
     }
 
-    /// <summary>A dispatch command that proposes the given job ID for the prepared dispatch (other fields as Prepare made them).</summary>
-    static StoreCommand<DispatchRequest> CommandFor(PreparedDispatch p, Guid jobId)
+    /// <summary>One DispatchMany command that proposes the given job IDs (items as PrepareMany made them), so every job shares one decision time.</summary>
+    static StoreCommand<DispatchBatchRequest> BatchFor(PreparedBatch p, IReadOnlyList<Guid> jobIds)
     {
-        var intent = p.Intent with { ProposedJobId = jobId };
+        var intents = p.Items.Select((intent, i) => intent with { ProposedJobId = jobIds[i] }).ToList();
         var id = Guid.CreateVersion7();
-        var digests = Fingerprints.ForDispatch(p.StoreId, p.Application, id, p.NotAfterMs, intent);
-        return new StoreCommand<DispatchRequest>(p.Application, id, p.NotAfter, new DispatchRequest(new DispatchItem(intent, p.Scopes, digests), p.StoreId, digests.Command));
+        var (digests, command) = Fingerprints.ForBatch(p.StoreId, p.Application, id, p.NotAfter.ToUnixTimeMilliseconds(), false, intents);
+        var items = intents.Select((intent, i) => new DispatchItem(intent, p.Scopes[i], digests[i])).ToList();
+        return new StoreCommand<DispatchBatchRequest>(p.Application, id, p.NotAfter, new DispatchBatchRequest(items, false, p.StoreId, command));
     }
 
     [Theory]
@@ -67,16 +68,16 @@ public sealed class EncodingContractTests
     [Trait("Case", "ENC-01")]
     public async Task Uuid_order_of_the_driver_comparer_matches_the_stores_candidate_order(StoreKind kind)
     {
-        // v7, v4 and byte patterns on which the little-endian Guid.ToByteArray() order and big-endian order differ.
+        // v7, v4 and byte patterns on which the little-endian Guid.ToByteArray() order and big-endian order differ (one batch holds at most 100).
         var random = new Random(20261031);
         var ids = new List<Guid>();
-        for (var i = 0; i < 60; i++)
+        for (var i = 0; i < 33; i++)
         {
             ids.Add(Guid.CreateVersion7(DateTimeOffset.UnixEpoch + TimeSpan.FromMilliseconds(random.NextInt64(0, 1L << 47))));
             ids.Add(Guid.NewGuid());
         }
 
-        for (var i = 0; i < 60; i++)
+        for (var i = 0; i < 34; i++)
         {
             var bytes = new byte[16];
             bytes[random.Next(16)] = (byte)random.Next(256);
@@ -88,22 +89,12 @@ public sealed class EncodingContractTests
         var expected = ids.OrderBy(g => g, UuidOrder.Instance).ToList();
         Assert.NotEqual(expected, ids.OrderBy(g => g.ToByteArray(), Comparer<byte[]>.Create((x, y) => x.AsSpan().SequenceCompareTo(y))).ToList());
 
-        // Every job has the same eligible_at, so the store's candidate order is decided by the job ID alone.
+        // One command decides every job, so they all have the same eligible_at and the store's candidate order is decided by the job ID alone.
         await using var f = await DriverFixture.StartAsync(Ns("enc01b"), kind);
         var c = await f.OpenClient(configure: r => TestJobs.Register(r));
-        var at = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 12_000);
-        var p = c.Prepared.Prepare(new PingJob("x"), new DispatchOptions { NotBefore = at });
-        foreach (var id in ids.OrderBy(_ => random.Next()))
-        {
-            Assert.Equal(StoreStatus.Applied, (await c.Driver.DispatchAsync(CommandFor(p, id), CancellationToken.None)).Status);
-        }
-
-        Assert.True(DateTimeOffset.UtcNow < at, "the dispatches took longer than the not-before instant, so the jobs would not share one eligible_at");
+        var prepared = c.Prepared.PrepareMany([.. ids.Select(_ => new BatchDispatchItem(new PingJob("x")))]);
+        Assert.Equal(StoreStatus.Applied, (await c.Driver.DispatchManyAsync(BatchFor(prepared, [.. ids.OrderBy(_ => random.Next())]), CancellationToken.None)).Status);
         Assert.Single((await Model(f)).Jobs.Select(j => j.EligibleAt).Distinct());
-        while (DateTimeOffset.UtcNow <= at + TimeSpan.FromMilliseconds(200))
-        {
-            await Task.Delay(100);
-        }
 
         var order = new List<Guid>();
         StoreReply<ReservedJob> next;
@@ -111,6 +102,7 @@ public sealed class EncodingContractTests
         {
             order.Add(next.Value!.Position.JobId);
         }
+
 
         var model = await Model(f);
         var at0 = expected.Zip(order).TakeWhile(x => x.First == x.Second).Count();

@@ -29,6 +29,14 @@ public sealed class ConfigContractTests
 
     static readonly ControlActor Actor = new("user:cfg", null, "host", "cfg-01");
 
+    /// <summary>The planner's wall-clock evaluation budget is not under test here, and a loaded host would otherwise exhaust it.</summary>
+    sealed class FrozenBudgetClock : TimeProvider
+    {
+        public static readonly FrozenBudgetClock Instance = new();
+
+        public override long GetTimestamp() => 0;
+    }
+
     /// <summary>Operation versions every driver's installed manifest lists (the M3 set of 15 §3, §4).</summary>
     static readonly (string Operation, int Version)[] Operations =
     [
@@ -137,7 +145,7 @@ public sealed class ConfigContractTests
         var preparer = c.Services.GetRequiredService<DispatchPreparer>();
         var definition = ScheduleCompiler.Compile(new ScheduleDeclaration("nightly", new ScheduleTickJob("n")) { Cron = "* * * * *" }, preparer, TzdbArtifact.Pinned);
         var cutoff = await schedules.StoreNowAsync(ct);
-        var first = ScheduleRecurrence.For(definition, TzdbArtifact.Pinned, TimeProvider.System)(cutoff)?.At;
+        var first = ScheduleRecurrence.For(definition, TzdbArtifact.Pinned, FrozenBudgetClock.Instance)(cutoff)?.At;
         Assert.Equal(StoreStatus.Applied, (await schedules.RegisterScheduleAsync(c.Command(new RegisterScheduleRequest("nightly", definition, cutoff, first)), ct)).Status);
         var schedule = (await schedules.ReadScheduleAsync(c.Application, "nightly", ct))!;
         var position = (await Model(f)).Job(waiting);
