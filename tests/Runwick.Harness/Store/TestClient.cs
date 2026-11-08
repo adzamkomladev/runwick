@@ -30,7 +30,16 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
 
         services.AddRunwick(r =>
         {
-            r.Application(application).UsePostgres(connectionString);
+            r.Application(application);
+            if (IsSqlite(connectionString))
+            {
+                r.UseSqlite(connectionString);
+            }
+            else
+            {
+                r.UsePostgres(connectionString);
+            }
+
             configure?.Invoke(r);
         });
         var client = new TestClient(services.BuildServiceProvider(), application);
@@ -41,6 +50,9 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
 
         return client;
     }
+
+    /// <summary>A SQLite store is named by its file (20 §12: the harness store kind follows the connection string).</summary>
+    internal static bool IsSqlite(string connectionString) => connectionString.StartsWith("Data Source=", StringComparison.OrdinalIgnoreCase);
 
     public ServiceProvider Services => provider;
 
@@ -53,6 +65,9 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
     public IPreparedJobDispatcher Prepared => provider.GetRequiredService<IPreparedJobDispatcher>();
 
     internal PgStore Store => provider.GetRequiredService<PgStore>();
+
+    /// <summary>The protocol store of either kind (PostgreSQL or SQLite).</summary>
+    internal IRunwickStore Driver => provider.GetRequiredService<IRunwickStore>();
 
     internal JobRegistry Registry => provider.GetRequiredService<JobRegistry>();
 
@@ -84,7 +99,7 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
     {
         var cmd = Command(new ReserveRequest(WorkerInstanceId, queue, priority, contracts ?? Contracts, after, lease ?? TimeSpan.FromSeconds(30)), commandId, notAfter);
         return Record(new StoreCommand<object>(application, cmd.CommandId, cmd.NotAfter, cmd.Body), Operations.Reserve,
-            () => Store.TryReserveAsync(cmd, CancellationToken.None), v => (v?.Position.JobId, v?.Lease.Handle.AttemptId));
+            () => Driver.TryReserveAsync(cmd, CancellationToken.None), v => (v?.Position.JobId, v?.Lease.Handle.AttemptId));
     }
 
     internal async Task<BeginReply> BeginAsync(LeaseHandle lease, Guid? commandId = null, DateTimeOffset? notAfter = null)
@@ -93,7 +108,7 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
         BeginReply? full = null;
         await Record(new StoreCommand<object>(application, cmd.CommandId, cmd.NotAfter, cmd.Body), Operations.Begin, async () =>
         {
-            full = await Store.BeginExecutionAsync(cmd, CancellationToken.None).ConfigureAwait(false);
+            full = await Driver.BeginExecutionAsync(cmd, CancellationToken.None).ConfigureAwait(false);
             return full.Reply;
         }, _ => (lease.JobId, lease.AttemptId)).ConfigureAwait(false);
         return full!;
@@ -103,7 +118,7 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
     {
         var cmd = Command(new RenewRequest(lease, duration ?? TimeSpan.FromSeconds(30)), notAfter: notAfter);
         return Record(new StoreCommand<object>(application, cmd.CommandId, cmd.NotAfter, cmd.Body), Operations.Renew,
-            () => Store.RenewAsync(cmd, CancellationToken.None), _ => (lease.JobId, lease.AttemptId));
+            () => Driver.RenewAsync(cmd, CancellationToken.None), _ => (lease.JobId, lease.AttemptId));
     }
 
     /// <summary>RenewMany/1 (PF-06) over the given leases; one history entry for the call.</summary>
@@ -111,7 +126,7 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
     {
         var cmd = Command(new RenewManyRequest(leases, duration ?? TimeSpan.FromSeconds(30)), notAfter: notAfter);
         return Record(new StoreCommand<object>(application, cmd.CommandId, cmd.NotAfter, cmd.Body), Operations.RenewMany,
-            () => ((ILeaseBatchStore)Store).RenewManyAsync(cmd, CancellationToken.None));
+            () => ((ILeaseBatchStore)Driver).RenewManyAsync(cmd, CancellationToken.None));
     }
 
     /// <summary>ReserveAndBegin/1 (PF-06 batched claim); one history entry for the call.</summary>
@@ -121,7 +136,7 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
         var cmd = Command(new ReserveAndBeginRequest(WorkerInstanceId, queue, priority, Contracts, after, lease ?? TimeSpan.FromSeconds(30), maxJobs),
             commandId, notAfter);
         return Record(new StoreCommand<object>(application, cmd.CommandId, cmd.NotAfter, cmd.Body), Operations.ReserveAndBegin,
-            () => ((IReserveAndBeginStore)Store).ReserveAndBeginAsync(cmd, CancellationToken.None));
+            () => ((IReserveAndBeginStore)Driver).ReserveAndBeginAsync(cmd, CancellationToken.None));
     }
 
     internal Task<StoreReply<FinishedAttempt>> FinishAsync(LeaseHandle lease, AttemptOutcome outcome, TimeSpan? elapsed = null,
@@ -129,7 +144,7 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
     {
         var cmd = Command(new FinishRequest(lease, outcome, elapsed ?? TimeSpan.FromMilliseconds(5), requestedDelay, error), commandId, notAfter);
         return Record(new StoreCommand<object>(application, cmd.CommandId, cmd.NotAfter, cmd.Body), Operations.Finish,
-            () => Store.FinishAsync(cmd, CancellationToken.None), _ => (lease.JobId, lease.AttemptId));
+            () => Driver.FinishAsync(cmd, CancellationToken.None), _ => (lease.JobId, lease.AttemptId));
     }
 
     /// <summary>One Finish/1 command as a batch item carries it (its own ID and NotAfter); not sent, not recorded.</summary>
@@ -140,7 +155,7 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
     /// <summary>Finish/1 for a prepared command (the same ID and body a batch item carried): a per-item resolution.</summary>
     internal Task<StoreReply<FinishedAttempt>> FinishAsync(StoreCommand<FinishRequest> cmd) =>
         Record(new StoreCommand<object>(application, cmd.CommandId, cmd.NotAfter, cmd.Body), Operations.Finish,
-            () => Store.FinishAsync(cmd, CancellationToken.None), _ => (cmd.Body.Lease.JobId, cmd.Body.Lease.AttemptId));
+            () => Driver.FinishAsync(cmd, CancellationToken.None), _ => (cmd.Body.Lease.JobId, cmd.Body.Lease.AttemptId));
 
     /// <summary>FinishMany/1 (PF-06 batched finish) over prepared Finish commands; one history entry for the call.</summary>
     internal Task<StoreReply<FinishedMany>> FinishManyAsync(IReadOnlyList<StoreCommand<FinishRequest>> items, Guid? commandId = null,
@@ -148,21 +163,21 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
     {
         var cmd = Command(new FinishManyRequest(items), commandId, notAfter ?? (items.Count == 0 ? null : items.Max(i => i.NotAfter)));
         return Record(new StoreCommand<object>(application, cmd.CommandId, cmd.NotAfter, cmd.Body), Operations.FinishMany,
-            () => ((IFinishManyStore)Store).FinishManyAsync(cmd, CancellationToken.None));
+            () => ((IFinishManyStore)Driver).FinishManyAsync(cmd, CancellationToken.None));
     }
 
     internal Task<StoreReply<FinishedAttempt>> RecoverAsync(ExpiredLease expired, Guid? commandId = null, DateTimeOffset? notAfter = null)
     {
         var cmd = Command(new RecoverRequest(expired.JobId, expired.AttemptId, expired.OwnershipToken), commandId, notAfter);
         return Record(new StoreCommand<object>(application, cmd.CommandId, cmd.NotAfter, cmd.Body), Operations.Recover,
-            () => Store.RecoverAsync(cmd, CancellationToken.None), _ => (expired.JobId, expired.AttemptId));
+            () => Driver.RecoverAsync(cmd, CancellationToken.None), _ => (expired.JobId, expired.AttemptId));
     }
 
     internal Task<StoreReply<ReleasedReservation>> ReleaseAsync(LeaseHandle lease, Guid? commandId = null, DateTimeOffset? notAfter = null)
     {
         var cmd = Command(new ReleaseRequest(lease), commandId, notAfter);
         return Record(new StoreCommand<object>(application, cmd.CommandId, cmd.NotAfter, cmd.Body), Operations.ReleaseReservation,
-            () => Store.ReleaseReservationAsync(cmd, CancellationToken.None), _ => (lease.JobId, lease.AttemptId));
+            () => Driver.ReleaseReservationAsync(cmd, CancellationToken.None), _ => (lease.JobId, lease.AttemptId));
     }
 
     public async ValueTask DisposeAsync() => await provider.DisposeAsync().ConfigureAwait(false);

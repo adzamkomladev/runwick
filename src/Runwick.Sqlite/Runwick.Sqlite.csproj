@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Runwick SQLite store (single host, one database file) built on Microsoft.Data.Sqlite.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Runwick\Runwick.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Sql\*.sql" LogicalName="Runwick.Sqlite.Sql.%(Filename)%(Extension)" />
+    <InternalsVisibleTo Include="Runwick.Contract.Tests" />
+    <InternalsVisibleTo Include="Runwick.Sqlite.Tests" />
+    <InternalsVisibleTo Include="Runwick.Harness" />
+    <InternalsVisibleTo Include="Runwick.Harness.Peer" />
+  </ItemGroup>
+</Project>

@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Runwick.Harness.Jobs;
+using Runwick.Harness.Store;
 using Runwick.Harness.Timing;
 using Runwick.Hosting;
 using Runwick.Protocol;
@@ -99,7 +100,8 @@ internal sealed class WorkerHost : IAsyncDisposable
         services?.Invoke(sc);
         sc.AddRunwick(r =>
         {
-            r.Application(application).UsePostgres(connectionString);
+            r.Application(application);
+            _ = TestClient.IsSqlite(connectionString) ? r.UseSqlite(connectionString) : r.UsePostgres(connectionString);
             RegisterWork(r, queue, jobs);
             r.AddHandler<WorkJob, ScriptedWorkHandler>();
             r.AddWorker(w =>

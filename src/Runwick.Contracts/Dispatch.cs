@@ -94,6 +94,9 @@ public interface IJobDispatcher
 public static class AcknowledgementProfiles
 {
     public const string PostgresSynchronousCommit = "postgres.synchronous-commit";
+
+    /// <summary>A reply follows a commit with WAL and <c>synchronous=FULL</c> on the committing connection (20 §1).</summary>
+    public const string SqliteWalFull = "sqlite.wal-synchronous-full";
 }
 
 /// <summary>What staging reported inside a caller's transaction. Makes no durability claim.</summary>
