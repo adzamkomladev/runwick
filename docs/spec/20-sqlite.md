@@ -26,6 +26,14 @@ Not in SP-019 [choice]: cross-process wake-up notifications (polling plus wake-u
 - (2026-11-08, user decision, adzamkomla) **Batched operations from the start.** `ReserveAndBegin/1`, `RenewMany/1` and `FinishMany/1` are in the SQLite manifest and implemented on the writer thread, one `BEGIN IMMEDIATE` per batch (§5.1, §7.2); `DispatchMany/1` uses multi-row statements, the SQLite form of PostgreSQL's set-based dispatch (§7.2). Cases SQL-12 and OWN-04 with `RenewMany`. Replaces the earlier deferral. `synchronous=FULL` stays the only profile.
 - (2026-11-08) `ManagementDispatch/1` (19 §6.2) is in the SQLite manifest and schema from the start (§9.3).
 - (2026-11-08) Public API additions recorded in 01 Changes: `UseSqlite`, `SqliteOptions`, `ISqliteJobDispatcher`, `ISqliteJobCompletion`, `RunwickSqliteMigrations`, `AcknowledgementProfiles.SqliteWalFull`.
+- (2026-11-08, SP-019 build) Bundled engine recorded: Microsoft.Data.Sqlite 10.0.14 → SQLitePCLRaw.bundle_e_sqlite3 2.1.13 → SQLite **3.53.3** (source id `2026-06-26 20:14:12 d4c0e51e…d782c62`), above the 3.38 minimum (§1, SQL-08).
+- (2026-11-08, SP-019 build) What the first build does differently, and what it leaves out:
+  - Microsoft.Data.Sqlite retries a busy statement until its command timeout (set to 1 s), so the real lock wait is max(`WriterBusyTimeout`, about 1 s) (§4).
+  - `ReserveAndBegin/1` and `FinishMany/1` run each item in turn inside the one `BEGIN IMMEDIATE` transaction, not as multi-row statements. `DispatchMany/1` is multi-row and chunked (§7.2).
+  - SQLite has no wake notification source. Workers poll.
+  - The harness picks SQLite by connection string (`Data Source=…`), not by a `--store` flag. SQL-02 holds the lock from a second connection in the same process, not from a Peer process.
+  - The existing PostgreSQL suite classes were not moved. A new shared project, `Runwick.Contract.Tests`, runs its cases on both stores.
+  - Not built yet (named gaps): `ManagementDispatch/1` (left out of the manifest until built), retention cleanup, controls and `EventsSince`, rates, schedules, scaling, outbox receive, management reads, and the §8 caller-transaction API (`ISqliteJobDispatcher`, `ISqliteJobCompletion`). Cases SQL-01, 03, 04, 05, 07 and 11 are not run yet.
 
 ## 1. Targets and boundaries
 
