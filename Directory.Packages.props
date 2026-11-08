@@ -24,7 +24,10 @@
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.16.0" />
+    <!-- SP-023 dashboard spike: the host-side Inertia adapter under test, and the in-memory ASP.NET Core test server. -->
+    <PackageVersion Include="Inertia.Net" Version="1.5.3" />
+    <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="10.0.14" />
   </ItemGroup>
   <!-- Later milestones (recorded, not referenced yet):
-    StackExchange.Redis 3.4.20, Inertia.Net 1.5.3 -->
+    StackExchange.Redis 3.4.20 -->
 </Project>
