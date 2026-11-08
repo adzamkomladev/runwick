@@ -74,6 +74,11 @@ public sealed class PackageGraphTests
             {
                 var project = Path.GetFileName(Path.GetDirectoryName(lockFile)!);
                 using var doc = JsonDocument.Parse(File.ReadAllBytes(lockFile));
+                if (project != "Runwick" && !doc.RootElement.GetProperty("dependencies").EnumerateObject().Any(f => f.Value.TryGetProperty("runwick", out _)))
+                {
+                    continue; // does not build on Runwick (the dashboard spike), so the evaluators never flow into it
+                }
+
                 foreach (var framework in doc.RootElement.GetProperty("dependencies").EnumerateObject())
                 {
                     if (!framework.Value.TryGetProperty(package, out var entry))
