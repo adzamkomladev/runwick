@@ -32,14 +32,19 @@ internal sealed class RedisNode : IAsyncDisposable
     public string Configuration => "127.0.0.1:" + Port;
 
     /// <summary>Starts a container; <paramref name="args"/> replaces the profile (pass [] for the image defaults).</summary>
-    public static async Task<RedisNode> StartAsync(string[]? args = null, string? dataDir = null)
+    public static async Task<RedisNode> StartAsync(string[]? args = null, string? dataDir = null, string? volumesFrom = null, int? port = null)
     {
-        var port = FreePort();
-        var node = new RedisNode("runwick-g4c-" + Guid.NewGuid().ToString("N")[..8], port);
+        port ??= FreePort();
+        var node = new RedisNode("runwick-g4c-" + Guid.NewGuid().ToString("N")[..8], port.Value);
         List<string> run = ["run", "-d", "--name", node.Name, "-p", $"127.0.0.1:{port}:6379"];
         if (dataDir is not null)
         {
             run.AddRange(["-v", dataDir + ":/data"]);
+        }
+
+        if (volumesFrom is not null)
+        {
+            run.AddRange(["--volumes-from", volumesFrom]);
         }
 
         run.Add(Image);
@@ -80,6 +85,12 @@ internal sealed class RedisNode : IAsyncDisposable
     /// <summary>One redis-cli command inside the container; returns stdout (use it for reads that must survive restarts).</summary>
     public async Task<string> CliAsync(params string[] command) =>
         (await Docker(["exec", Name, "redis-cli", .. command])).Output.Trim();
+
+    public async Task<string> IpAsync() => (await Docker("inspect", "-f", "{{.NetworkSettings.Networks.bridge.IPAddress}}", Name)).Output.Trim();
+
+    /// <summary>Like <see cref="WithDataAsync"/> with one host directory also mounted at /backup.</summary>
+    public async Task<string> WithDataAndBackupAsync(string hostDir, string shell) =>
+        (await Docker("run", "--rm", "--volumes-from", Name, "-v", hostDir + ":/backup", "--entrypoint", "sh", Image, "-c", shell)).Output;
 
     /// <summary>A shell command in a throwaway container that mounts this (stopped or running) node's /data.</summary>
     public async Task<string> WithDataAsync(string shell) =>
