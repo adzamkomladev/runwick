@@ -23,15 +23,14 @@ What this is: every test case the specs require of this driver, with what happen
 ## Counts
 
 - cases in the registry: 321
-- pass: 161, fail: 0, partial: 1, not-run: 1, N/A: 158
+- pass: 162, fail: 0, partial: 1, not-run: 0, N/A: 158
 - mandatory cases that apply to this driver: 163
-- mandatory applicable cases without a passing result: 2
+- mandatory applicable cases without a passing result: 1
 
 ## Missing for G-4
 
 These mandatory applicable cases have no passing result:
 
-- **CLN-05** (not-run): no test result for this driver in the recorded run
 - **SQL-08** (partial): linux-x64 and the version check run; win-x64 was not run (SP-019 report)
 
 ## Documented exemptions
@@ -78,7 +77,7 @@ A test listed here returns early or is skipped for this driver. It is shown, nev
 | CLN-02 | spec 17 | yes | applicable | pass | RetentionContractTests.Cln02_a_closed_day_writes_one_summary_per_class(kind: Sqlite) [2026-11-08 8f64ffb] |
 | CLN-03 | spec 17 | yes | applicable | pass | RetentionCleanupContractTests.Cln03_a_failed_batch_records_its_error_and_the_next_resumes_without_double_co... [2026-11-08 8f64ffb] |
 | CLN-04 | spec 17 | yes | applicable | pass | RetentionCleanupContractTests.Cln04_no_batch_starts_once_the_worker_drains(kind: Sqlite) [2026-11-08 8f64ffb] |
-| CLN-05 | spec 17 | yes | applicable | not-run | no test result for this driver in the recorded run |
+| CLN-05 | spec 17 | yes | applicable | pass | SourceCleanupTests.The_relay_runs_cleanup_on_its_own_and_version_1_sources_upgrade_in_place(kind: Postgres,...; SourceCleanupTests.The_relay_runs_cleanup_on_its_own_and_version_1_sources_upgrade_in_place(kind: Sqlite, s... [2026-11-08 8f64ffb] |
 | CMD-01 | contract-suite; spec 07; spec 13; spec 14; spec 15 | yes | applicable | pass | CoreContractTests.A_resent_command_replays_its_receipt_and_a_changed_body_conflicts(kind: Sqlite); RateScalingContractTests.Pool_overrides_are_revisioned_replayable_and_audited(kind: Sqlite) (+1 more) [2026-11-08 8f64ffb] |
 | CMD-02 | contract-suite; spec 07; spec 14; spec 15 | yes | applicable | pass | ScheduleContractTests.Schedule_controls_follow_the_receipt_protocol(kind: Sqlite) [2026-11-08 8f64ffb] |
 | CMD-03 | contract-suite; spec 07; spec 14; spec 15 | yes | applicable | pass | ScheduleContractTests.Schedule_controls_follow_the_receipt_protocol(kind: Sqlite) [2026-11-08 8f64ffb] |

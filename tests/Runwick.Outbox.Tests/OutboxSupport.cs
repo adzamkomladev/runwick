@@ -22,20 +22,40 @@ public static class OutboxData
 {
     /// <summary>Every Stage/relay case runs on both source adapters (TX analogues "on both sources").</summary>
     public static TheoryData<SourceKind> Sources => new() { SourceKind.Postgres, SourceKind.Sqlite };
+
+    /// <summary>Both sources times every destination store kind (RUNWICK_TEST_STORES narrows the stores, as for the contract suite).</summary>
+    public static TheoryData<SourceKind, StoreKind> SourcesAndStores
+    {
+        get
+        {
+            var data = new TheoryData<SourceKind, StoreKind>();
+            foreach (var store in Enum.GetValues<StoreKind>().Where(k => Environment.GetEnvironmentVariable("RUNWICK_TEST_STORES") is not { Length: > 0 } only
+                || only.Split(',').Contains(k.ToString(), StringComparer.OrdinalIgnoreCase)))
+            {
+                data.Add(SourceKind.Postgres, store);
+                data.Add(SourceKind.Sqlite, store);
+            }
+
+            return data;
+        }
+    }
 }
 
 /// <summary>
 /// One outbox source (PostgreSQL database or same-host SQLite file) plus relay hosts that deliver into a per-test
-/// PostgreSQL destination (14 §9.1). Source and destination are separate databases; nothing here fakes a protocol effect.
+/// destination store (PostgreSQL unless a test picks another kind; 14 §9.1). Source and destination are separate databases; nothing here fakes a protocol effect.
 /// </summary>
 internal sealed class OutboxFixture : IAsyncDisposable
 {
     readonly List<OutboxHost> _hosts = [];
     readonly string? _sourceDatabase;
+    readonly StoreServer? _sourceServer;
     readonly string? _sqlitePath;
 
-    OutboxFixture(DriverFixture destination, SourceKind kind, string sourceConnectionString, string? sourceDatabase, string? sqlitePath)
+    OutboxFixture(DriverFixture destination, SourceKind kind, string sourceConnectionString, string? sourceDatabase, string? sqlitePath,
+        StoreServer? sourceServer = null)
     {
+        _sourceServer = sourceServer;
         Destination = destination;
         Kind = kind;
         SourceConnectionString = sourceConnectionString;
@@ -67,15 +87,17 @@ internal sealed class OutboxFixture : IAsyncDisposable
         o.RetryMax = TimeSpan.FromSeconds(1);
     }
 
-    public static async Task<OutboxFixture> StartAsync(string name, SourceKind kind, StoreProfile profile = StoreProfile.DirectPrimary)
+    public static async Task<OutboxFixture> StartAsync(string name, SourceKind kind, StoreProfile profile = StoreProfile.DirectPrimary,
+        StoreKind store = StoreKind.Postgres)
     {
         var ns = name + "_" + (kind == SourceKind.Postgres ? "pg" : "sl") + "_" + Guid.NewGuid().ToString("N")[..8];
-        var destination = await DriverFixture.StartAsync(ns, profile);
+        var destination = await DriverFixture.StartAsync(ns, store, profile);
         OutboxFixture fixture;
         if (kind == SourceKind.Postgres)
         {
-            var db = await destination.Server.CreateEmptyDatabaseAsync(ns + "_src");
-            fixture = new OutboxFixture(destination, kind, destination.Server.ConnectionStringFor(db, "rw:outbox:business"), db, null);
+            var server = destination.Server ?? await StoreServer.SharedAsync();
+            var db = await server.CreateEmptyDatabaseAsync(ns + "_src");
+            fixture = new OutboxFixture(destination, kind, server.ConnectionStringFor(db, "rw:outbox:business"), db, null, server);
             fixture.SourceStoreId = await PostgresOutboxSchema.InstallAsync(fixture.SourceConnectionString);
         }
         else
@@ -107,7 +129,7 @@ internal sealed class OutboxFixture : IAsyncDisposable
 
         services.AddRunwick(r =>
         {
-            r.Application(application ?? Destination.Application).UsePostgres(Destination.ClientConnectionString(identity));
+            Destination.UseStore(r.Application(application ?? Destination.Application), identity);
             if (configure is null)
             {
                 TestJobs.Register(r);
@@ -139,8 +161,6 @@ internal sealed class OutboxFixture : IAsyncDisposable
                 : new SqliteOutboxSource(RelayConnectionString)));
         }
 
-        // Until the shared edit registers it in UsePostgres (sp-017-shared-edits §6), the tests wire the destination themselves.
-        services.TryAddSingleton<IOutboxDestinationStore>(sp => sp.GetRequiredService<PgStore>());
         var host = new OutboxHost(services.BuildServiceProvider(), Kind);
         _hosts.Add(host);
         if (ensureReady)
@@ -304,7 +324,7 @@ internal sealed class OutboxFixture : IAsyncDisposable
         await Destination.DisposeAsync();
         if (_sourceDatabase is not null)
         {
-            await Destination.Server.DropDatabaseAsync(_sourceDatabase);
+            await _sourceServer!.DropDatabaseAsync(_sourceDatabase);
         }
 
         if (_sqlitePath is not null)

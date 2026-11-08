@@ -1,5 +1,6 @@
 using Npgsql;
 using Runwick.Harness.Jobs;
+using Runwick.Harness.Store;
 using Runwick.Outbox.Postgres;
 using Runwick.Outbox.Sqlite;
 
@@ -97,13 +98,13 @@ public sealed class SourceCleanupTests
     }
 
     [Theory]
-    [MemberData(nameof(OutboxData.Sources), MemberType = typeof(OutboxData))]
+    [MemberData(nameof(OutboxData.SourcesAndStores), MemberType = typeof(OutboxData))]
     [Trait("Category", "Contract")]
     [Trait("Item", "SP-021")]
     [Trait("Case", "CLN-05")]
-    public async Task The_relay_runs_cleanup_on_its_own_and_version_1_sources_upgrade_in_place(SourceKind kind)
+    public async Task The_relay_runs_cleanup_on_its_own_and_version_1_sources_upgrade_in_place(SourceKind kind, StoreKind store)
     {
-        await using var o = await OutboxFixture.StartAsync("srcloop", kind);
+        await using var o = await OutboxFixture.StartAsync("srcloop", kind, store: store);
 
         // Schema version 2 (the delivered index); a version 1 source is still readable and InstallAsync upgrades it.
         Assert.Equal(2, await o.SourceCountAsync("SELECT schema_version FROM {metadata}"));
