@@ -149,6 +149,7 @@ public sealed class SqliteStagingTests
     [Fact]
     [Trait("Category", "Fault")]
     [Trait("Case", "SQL-03")]
+    [Trait("Case", "TX-03")]
     public async Task Busy_snapshot_reaches_the_caller_unchanged_and_whole_unit_retry_stages_once()
     {
         var (f, c) = await StartAsync("sql03a");
