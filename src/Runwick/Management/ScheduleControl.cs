@@ -38,10 +38,18 @@ internal sealed class ScheduleControlService(RunwickRuntime runtime, IScheduleSt
 
     public Task<ScheduleControlResult> PauseAsync(string key, long expectedControlRevision, ManagementActor actor, string? reason = null,
         CancellationToken cancellationToken = default) =>
-        StateAsync(new ScheduleStateRequest(key, true, null, expectedControlRevision, Actor(actor, reason)), cancellationToken);
+        StateAsync(new ScheduleStateRequest(key, true, null, expectedControlRevision, Actor(actor, reason)), null, cancellationToken);
 
     public Task<ScheduleControlResult> ResumeAsync(string key, long expectedControlRevision, ResumePolicy policy, ManagementActor actor,
-        string? reason = null, CancellationToken cancellationToken = default)
+        string? reason = null, CancellationToken cancellationToken = default) =>
+        ResumeAsync(key, expectedControlRevision, policy, actor, reason, null, cancellationToken);
+
+    internal Task<ScheduleControlResult> PauseAsync(string key, long expectedControlRevision, ManagementActor actor, string? reason, CommandSeed? seed,
+        CancellationToken ct) =>
+        StateAsync(new ScheduleStateRequest(key, true, null, expectedControlRevision, Actor(actor, reason)), seed, ct);
+
+    internal Task<ScheduleControlResult> ResumeAsync(string key, long expectedControlRevision, ResumePolicy policy, ManagementActor actor,
+        string? reason, CommandSeed? seed, CancellationToken cancellationToken)
     {
         var wire = policy switch
         {
@@ -49,15 +57,20 @@ internal sealed class ScheduleControlService(RunwickRuntime runtime, IScheduleSt
             ResumePolicy.CatchUp => ScheduleOperations.MisfireCatchUp,
             _ => ScheduleOperations.ResumeSkipPaused,
         };
-        return StateAsync(new ScheduleStateRequest(key, false, wire, expectedControlRevision, Actor(actor, reason)), cancellationToken);
+        return StateAsync(new ScheduleStateRequest(key, false, wire, expectedControlRevision, Actor(actor, reason)), seed, cancellationToken);
     }
 
-    public async Task<ScheduleControlResult> TriggerAsync(string key, long expectedDefinitionRevision, Guid triggerId, ManagementActor actor,
-        string? reason = null, CancellationToken cancellationToken = default)
+    public Task<ScheduleControlResult> TriggerAsync(string key, long expectedDefinitionRevision, Guid triggerId, ManagementActor actor,
+        string? reason = null, CancellationToken cancellationToken = default) =>
+        TriggerAsync(key, expectedDefinitionRevision, triggerId, Guid.CreateVersion7(), actor, reason, null, cancellationToken);
+
+    /// <summary>A trigger whose proposed job ID the caller fixes, so a resent command has the same body (SP-020).</summary>
+    internal async Task<ScheduleControlResult> TriggerAsync(string key, long expectedDefinitionRevision, Guid triggerId, Guid proposedJobId,
+        ManagementActor actor, string? reason, CommandSeed? seed, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(key);
-        var reply = await SendAsync(new TriggerScheduleRequest(key, expectedDefinitionRevision, triggerId, Guid.CreateVersion7(), Actor(actor, reason)),
-            Store.TriggerScheduleAsync, cancellationToken).ConfigureAwait(false);
+        var reply = await SendAsync(new TriggerScheduleRequest(key, expectedDefinitionRevision, triggerId, proposedJobId, Actor(actor, reason)),
+            Store.TriggerScheduleAsync, seed, cancellationToken).ConfigureAwait(false);
         return reply.Value is { } v
             ? new ScheduleControlResult(key, true, null, null, null, expectedDefinitionRevision, null,
                 v.Occurrences[0].JobId is { } job ? new JobId(job) : null, reply.Replayed)
@@ -65,17 +78,20 @@ internal sealed class ScheduleControlService(RunwickRuntime runtime, IScheduleSt
     }
 
     public Task<ScheduleControlResult> RevalidateAsync(string key, long expectedDefinitionRevision, ManagementActor actor, string? reason = null,
-        CancellationToken cancellationToken = default) =>
-        StateAsync(new RevalidateScheduleRequest(key, expectedDefinitionRevision, Actor(actor, reason)), Store.RevalidateScheduleAsync, key, cancellationToken);
+        CancellationToken cancellationToken = default) => RevalidateAsync(key, expectedDefinitionRevision, actor, reason, null, cancellationToken);
 
-    Task<ScheduleControlResult> StateAsync(ScheduleStateRequest request, CancellationToken ct) =>
-        StateAsync(request, Store.SetScheduleStateAsync, request.Key, ct);
+    internal Task<ScheduleControlResult> RevalidateAsync(string key, long expectedDefinitionRevision, ManagementActor actor, string? reason,
+        CommandSeed? seed, CancellationToken cancellationToken) =>
+        StateAsync(new RevalidateScheduleRequest(key, expectedDefinitionRevision, Actor(actor, reason)), Store.RevalidateScheduleAsync, key, seed, cancellationToken);
+
+    Task<ScheduleControlResult> StateAsync(ScheduleStateRequest request, CommandSeed? seed, CancellationToken ct) =>
+        StateAsync(request, Store.SetScheduleStateAsync, request.Key, seed, ct);
 
     async Task<ScheduleControlResult> StateAsync<TRequest>(TRequest request, Func<StoreCommand<TRequest>, CancellationToken, Task<StoreReply<ScheduleState>>> send,
-        string key, CancellationToken ct)
+        string key, CommandSeed? seed, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(key);
-        var reply = await SendAsync(request, send, ct).ConfigureAwait(false);
+        var reply = await SendAsync(request, send, seed, ct).ConfigureAwait(false);
         return reply.Value is { } v
             ? new ScheduleControlResult(key, true, null, v.Paused, v.NeedsReview, v.DefinitionRevision, v.ControlRevision, null, reply.Replayed)
             : Failed(key, reply);
@@ -85,12 +101,11 @@ internal sealed class ScheduleControlService(RunwickRuntime runtime, IScheduleSt
         new(key, false, reply.Error?.Code, null, null, null, null, null, false);
 
     async Task<StoreReply<TResult>> SendAsync<TRequest, TResult>(TRequest body, Func<StoreCommand<TRequest>, CancellationToken, Task<StoreReply<TResult>>> send,
-        CancellationToken ct) where TResult : class
+        CommandSeed? seed, CancellationToken ct) where TResult : class
     {
         await runtime.EnsureReadyAsync(ct).ConfigureAwait(false);
-        var notAfter = time.GetUtcNow() + ScheduleOperations.SchedulerLifetime;
-        var command = new StoreCommand<TRequest>(runtime.Registry.Application, Guid.CreateVersion7(),
-            DateTimeOffset.FromUnixTimeMilliseconds(notAfter.ToUnixTimeMilliseconds()), body);
+        var s = seed ?? CommandSeed.New(time, ScheduleOperations.SchedulerLifetime);
+        var command = new StoreCommand<TRequest>(runtime.Registry.Application, s.CommandId, s.NotAfter, body);
         var delay = TimeSpan.FromMilliseconds(100);
         while (true)
         {
