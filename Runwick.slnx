@@ -3,6 +3,7 @@
     <Project Path="src/Runwick.Contracts/Runwick.Contracts.csproj" />
     <Project Path="src/Runwick/Runwick.csproj" />
     <Project Path="src/Runwick.Postgres/Runwick.Postgres.csproj" />
+    <Project Path="src/Runwick.Sqlite/Runwick.Sqlite.csproj" />
     <Project Path="src/Runwick.Outbox/Runwick.Outbox.csproj" />
     <Project Path="src/Runwick.Outbox.Postgres/Runwick.Outbox.Postgres.csproj" />
     <Project Path="src/Runwick.Outbox.Sqlite/Runwick.Outbox.Sqlite.csproj" />
