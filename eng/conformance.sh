@@ -8,7 +8,8 @@
 #                                        its results replace an earlier failure and the report says so
 #
 # Environment (nothing is started for you):
-#   RUNWICK_TEST_PG        PostgreSQL admin connection string (default: the local runwick-pg container on 55499)
+#   RUNWICK_TEST_PG        PostgreSQL admin connection string (default: the local runwick-pg container on 55499;
+#                          set it empty for a --rerun of RequiresDocker=true cases, which start their own container)
 #   RUNWICK_TEST_TEMPLATE  template database name, unique per concurrent run (default rw_template_cnf)
 #   RUNWICK_TEST_REDIS     Redis host:port of an AOF-always server (22 §2), required for the redis rows
 #   CONFORMANCE_OUT        result directory (default artifacts/conformance)
@@ -16,7 +17,7 @@
 set -u
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.dotnet:$PATH" DOTNET_NOLOGO=1
-export RUNWICK_TEST_PG="${RUNWICK_TEST_PG:-Host=127.0.0.1;Port=55499;Username=postgres;Password=pg;Database=postgres}"
+export RUNWICK_TEST_PG="${RUNWICK_TEST_PG-Host=127.0.0.1;Port=55499;Username=postgres;Password=pg;Database=postgres}"
 export RUNWICK_TEST_TEMPLATE="${RUNWICK_TEST_TEMPLATE:-rw_template_cnf}"
 OUT="${CONFORMANCE_OUT:-artifacts/conformance}"
 export CONFORMANCE_OUT="$OUT"
@@ -64,7 +65,13 @@ for d in "${drivers[@]}"; do
   case "$d" in postgres) own=Runwick.Postgres.Tests;; sqlite) own=Runwick.Sqlite.Tests;; redis) own=Runwick.Redis.Tests;; esac
   meta "$d"
   run_project "$d" Runwick.Contract.Tests "$stores"
-  run_project "$d" "$own" "$stores"
+  if [ "$d" = postgres ]; then
+    # Restart/fault cases restart their own Testcontainers server, so they cannot use the shared RUNWICK_TEST_PG.
+    run_project "$d" "$own" "$stores" "RequiresDocker!=true"
+    RUNWICK_TEST_PG= run_project "$d/docker" "$own" "$stores" "RequiresDocker=true"
+  else
+    run_project "$d" "$own" "$stores"
+  fi
   case "$d" in
     postgres) srv=$(docker exec runwick-pg psql -U postgres -tAc 'select version()' 2>/dev/null | cut -c1-60);;
     sqlite) srv="Microsoft.Data.Sqlite bundled engine: $(grep -h -o 'sqlite_version[^,]*' "$OUT"/sqlite/*/*.trx 2>/dev/null | head -1)";;
