@@ -65,7 +65,14 @@ public sealed class TelemetryPeerTests
         var probe = (await local.Dispatcher.DispatchAsync(new WorkJob("after-restart"))).JobId.Value;
         await WorkerHost.WaitUntil(() => f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE job_id = @j AND state = 'succeeded'", ("j", probe)).Result == 1,
             Long, "the restarted worker runs new work");
-        var seenByB = await b.SendAsync("telemetryRead");
+
+        // The row turns 'succeeded' at COMMIT, before the Finish reply is back and the settlement is measured: wait for the measurement.
+        JsonObject seenByB = [];
+        await WorkerHost.WaitUntil(() =>
+        {
+            seenByB = b.SendAsync("telemetryRead").Result;
+            return Count(seenByB, "runwick.settlement.duration|confirmed") >= 1;
+        }, Long, "the restarted worker's settlement measurement");
 
         // Exactly the new job: one authorization and one confirmed settlement; the killed attempt is not replayed or recounted.
         Assert.Equal(1, Count(seenByB, "runwick.execution.authorized"));
