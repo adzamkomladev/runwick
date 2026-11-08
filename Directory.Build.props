@@ -63,5 +63,6 @@
     <InternalsVisibleTo Include="Runwick.Dashboard" />
     <InternalsVisibleTo Include="Runwick.Dashboard.Tests" />
     <InternalsVisibleTo Include="Runwick.Dashboard.Host" />
+    <InternalsVisibleTo Include="Runwick.Scenarios" />
   </ItemGroup>
 </Project>

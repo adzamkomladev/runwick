@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- SP-027: executable scenarios SCN-01..SCN-33 (docs/scenarios.md). `node` is one deployment process; `run <id>` runs one scenario. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Sample code: no ConfigureAwait noise, console messages are plain strings, scenarios catch broadly to report FAIL lines. -->
+    <NoWarn>$(NoWarn);CA2007;CA1303;CA1031;CA1305;CA1307;CA1308;CA1812;CA1849;CA2000;CA2234;CA1861</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Runwick.Postgres\Runwick.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\Runwick.Sqlite\Runwick.Sqlite.csproj" />
+    <ProjectReference Include="..\..\src\Runwick.Redis\Runwick.Redis.csproj" />
+    <ProjectReference Include="..\..\src\Runwick.AspNetCore\Runwick.AspNetCore.csproj" />
+    <ProjectReference Include="..\..\src\Runwick.Outbox.Postgres\Runwick.Outbox.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\Runwick.Outbox.Sqlite\Runwick.Outbox.Sqlite.csproj" />
+    <!-- Built alongside so SCN-18 can start it as a process; not referenced as a library. -->
+    <ProjectReference Include="..\Runwick.Dashboard.Host\Runwick.Dashboard.Host.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

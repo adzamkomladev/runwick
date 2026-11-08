@@ -34,5 +34,6 @@
     <Project Path="samples/Runwick.Samples.Contracts/Runwick.Samples.Contracts.csproj" />
     <Project Path="samples/Runwick.Samples.Host/Runwick.Samples.Host.csproj" />
     <Project Path="samples/Runwick.Dashboard.Host/Runwick.Dashboard.Host.csproj" />
+    <Project Path="samples/Runwick.Scenarios/Runwick.Scenarios.csproj" />
   </Folder>
 </Solution>
