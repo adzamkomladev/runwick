@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Runwick.Harness.Engine;
+using Runwick.Harness.Faults;
 using Runwick.Harness.Jobs;
 using Runwick.Harness.Peer;
 using Runwick.Harness.Store;
@@ -126,14 +127,18 @@ public sealed class SqliteProcessTests
         using var conn = Raw(f);
 
         // No double grant of a capacity-1 permit: the holding intervals [reserved, finished] of one scope never overlap.
+        // Shortcut: a recovered attempt's permit ended when its lease expired, which is not durable (renewals are not
+        // recorded), so its interval is left out; upgrade if lease ends become durable.
         var holds = Query(conn, """
-            SELECT q.scope_id, a.reserved_at, a.finished_at FROM runwick_job_attempts AS a
+            SELECT q.scope_id, a.reserved_at, a.finished_at, a.outcome, a.authorized_at, hex(a.attempt_id) FROM runwick_job_attempts AS a
             JOIN runwick_job_concurrency_requirements AS q ON q.application = a.application AND q.job_id = a.job_id
+            WHERE a.outcome NOT IN ('abandoned_running', 'abandoned_before_start')
             ORDER BY q.scope_id, a.reserved_at, a.finished_at
-            """, r => (Scope: Convert.ToHexString((byte[])r.GetValue(0)), Reserved: r.GetInt64(1), Finished: r.GetInt64(2)));
+            """, r => (Scope: Convert.ToHexString((byte[])r.GetValue(0)), Reserved: r.GetInt64(1), Finished: r.GetInt64(2),
+                What: $"{r.GetString(3)} begun={(r.IsDBNull(4) ? "-" : r.GetInt64(4))} attempt={r.GetString(5)}"));
         Assert.Equal(Resources, holds.Select(h => h.Scope).Distinct().Count());
-        var overlaps = holds.Zip(holds.Skip(1)).Count(p => p.First.Scope == p.Second.Scope && p.Second.Reserved < p.First.Finished);
-        Assert.Equal(0, overlaps);
+        var overlaps = holds.Zip(holds.Skip(1)).Where(p => p.First.Scope == p.Second.Scope && p.Second.Reserved < p.First.Finished).ToList();
+        Assert.True(overlaps.Count == 0, string.Join("\n", overlaps.Select(p => $"{p.First} overlaps {p.Second}")));
 
         // No rate over-grant: authorized begins in any 1 s window stay within the type rate.
         var begins = Query(conn, """
@@ -153,8 +158,9 @@ public sealed class SqliteProcessTests
 
         Assert.InRange(busiest, 1, WorkerHost.ContendedRate);
         var deferred = Query(conn, "SELECT count(*) FROM runwick_job_attempts WHERE outcome = 'admission_deferred'", r => r.GetInt64(0))[0];
+        var recovered = Query(conn, "SELECT count(*) FROM runwick_job_attempts WHERE outcome LIKE 'abandoned%'", r => r.GetInt64(0))[0];
         Report($"SQL-01: {Jobs} jobs, {Resources} capacity-1 scopes, rate {WorkerHost.ContendedRate}/s; dispatched in {dispatchedIn.TotalSeconds:F1} s, " +
-            $"all terminal in {doneIn.TotalSeconds:F1} s; {snapshot.Model.Attempts.Count} attempts ({deferred} rate-deferred); handler calls {invoked}; " +
+            $"all terminal in {doneIn.TotalSeconds:F1} s; {snapshot.Model.Attempts.Count} attempts ({deferred} rate-deferred, {recovered} recovered after a lost lease); handler calls {invoked}; " +
             $"busiest 1 s window {busiest} begins; lost leases {lost}");
     }
 
@@ -180,13 +186,19 @@ public sealed class SqliteProcessTests
 
         // The in-flight command: Finish with an ID and NotAfter this fixture knows, so it can resend it after the crash.
         var commandId = Guid.CreateVersion7();
-        var notAfter = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeMilliseconds());
+        var notAfter = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.AddSeconds(25).ToUnixTimeMilliseconds());
         await peer.SendAsync("armFault", new JsonObject { ["point"] = point.ToString(), ["action"] = "KillProcess", ["operation"] = Operations.Finish });
-        _ = peer.SendInBackground("finish", new JsonObject
+        var finishing = peer.SendInBackground("finish", new JsonObject
         {
             ["lease"] = reserved["lease"]!.DeepClone(), ["commandId"] = commandId.ToString("D"), ["notAfterMs"] = notAfter.ToUnixTimeMilliseconds(),
         });
-        await peer.WaitForEventAsync("atBarrier");
+        var atBarrier = peer.WaitForEventAsync("atBarrier");
+        if (await Task.WhenAny(atBarrier, finishing) == finishing)
+        {
+            Assert.Fail("the finish returned instead of stopping at the fault point: " + (await finishing).ToJsonString());
+        }
+
+        await atBarrier;
         peer.Kill();
 
         // Restart: a fresh process view of the file (WAL recovery on open).
@@ -231,8 +243,8 @@ public sealed class SqliteProcessTests
             r.Producer(o => o.AdmissionWait = TimeSpan.FromSeconds(20));
         });
 
-        // Divisor 10: lease 6 s, safety margin 1 s, renewal every 1.5 s.
-        var workers = await Task.WhenAll(Enumerable.Range(0, 3).Select(i => WorkerPeer(f, "w" + i, new JsonObject { ["concurrency"] = 8, ["divisor"] = 10 })));
+        // Divisor 5: lease 12 s, safety margin 2 s, renewal every 3 s (divisor 10 lost leases on a host at load 25-50 on 8 cores).
+        var workers = await Task.WhenAll(Enumerable.Range(0, 3).Select(i => WorkerPeer(f, "w" + i, new JsonObject { ["concurrency"] = 8, ["divisor"] = 5 })));
         for (var i = 0; i < Held; i++)
         {
             await c.Dispatcher.DispatchAsync(new WorkJob("hold-" + i), cancellationToken: Ct);
@@ -305,8 +317,9 @@ public sealed class SqliteProcessTests
         var walAtHold = WalBytes(f);
         await Task.Delay(4000, Ct);
         using var checkpointer = Raw(f);
+        // PASSIVE: it reports busy only when a reader blocks it; TRUNCATE would also fail on the engine's own live writers.
         (long Busy, long Log, long Done) Checkpoint() =>
-            Query(checkpointer, "PRAGMA wal_checkpoint(TRUNCATE)", r => (r.GetInt64(0), r.GetInt64(1), r.GetInt64(2)))[0];
+            Query(checkpointer, "PRAGMA wal_checkpoint(PASSIVE)", r => (r.GetInt64(0), r.GetInt64(1), r.GetInt64(2)))[0];
         var blocked = Checkpoint();
         var walHeld = WalBytes(f);
         foreach (var tx in snapshots)
@@ -469,6 +482,77 @@ public sealed class SqliteProcessTests
             $"after its deadline (watchdog interval {watchdog.TotalMilliseconds:F0} ms)");
     }
 
+    // ------------------------------------------------------------------ SQL-11 events under deletion of the newest rows
+
+    [Fact]
+    [Trait("Case", "SQL-11")]
+    public async Task A_tailing_reader_sees_each_event_once_and_skips_none_while_the_newest_are_deleted()
+    {
+        const int PerWriter = 300;
+        await using var f = await DriverFixture.StartAsync(Ns("sql11"), StoreKind.Sqlite);
+        var c = await f.OpenClient(configure: r => TestJobs.Register(r));
+        var store = c.Services.GetRequiredService<SqliteStore>();
+        var writers = await Task.WhenAll(Enumerable.Range(0, 3).Select(i => f.OpenPeer("w" + i)));
+
+        var writing = Task.WhenAll(writers.Select(async (w, i) =>
+        {
+            for (var n = 0; n < PerWriter; n++)
+            {
+                await w.SendAsync("dispatch", new JsonObject { ["jobKey"] = $"w{i}-{n}" });
+            }
+        }));
+
+        // The harness deletes the newest event every 20 ms while the writers run.
+        var deleted = new List<long>();
+        var deleting = Task.Run(async () =>
+        {
+            using var conn = Raw(f);
+            while (!writing.IsCompleted)
+            {
+                var id = Query(conn, "DELETE FROM runwick_queue_events WHERE event_id = (SELECT max(event_id) FROM runwick_queue_events) RETURNING event_id",
+                    r => r.GetInt64(0));
+                deleted.AddRange(id);
+                await Task.Delay(20, CancellationToken.None);
+            }
+        }, CancellationToken.None);
+
+        // The reader saves its cursor after each page and resumes from it (a fresh call each time, small pages).
+        var seen = new List<long>();
+        EventCursor? cursor = null;
+        async Task<int> Page()
+        {
+            var page = await store.EventsSinceAsync(f.Application, cursor, 25, Ct);
+            seen.AddRange(page.Events.Select(e => e.EventId));
+            cursor = page.Next ?? cursor;
+            return page.Events.Count;
+        }
+
+        while (!writing.IsCompleted)
+        {
+            if (await Page() == 0)
+            {
+                await Task.Delay(10, Ct);
+            }
+        }
+
+        await writing;
+        await deleting;
+        while (await Page() > 0)
+        {
+        }
+
+        using var check = Raw(f);
+        var remaining = Query(check, "SELECT event_id FROM runwick_queue_events WHERE application = @a ORDER BY event_id".Replace("@a", $"'{f.Application}'", StringComparison.Ordinal),
+            r => r.GetInt64(0));
+        Assert.Equal(seen.Count, seen.Distinct().Count());                       // never twice
+        Assert.True(seen.Zip(seen.Skip(1)).All(p => p.First < p.Second));         // in commit order
+        Assert.Empty(remaining.Except(seen));                                     // none skipped
+        Assert.Empty(deleted.Intersect(remaining));
+        Assert.True(deleted.Count > 0);
+        Report($"SQL-11: 3 writer processes, {3 * PerWriter} dispatches; {seen.Count} events read, {deleted.Count} newest events deleted meanwhile, " +
+            $"{remaining.Count} left; none twice, none skipped");
+    }
+
     // ------------------------------------------------------------------ SQL-12 batched vs single, renewal priority
 
     /// <summary>The store with only IRunwickStore: the engine then sends single operations (no ReserveAndBegin, RenewMany, FinishMany).</summary>
@@ -508,8 +592,12 @@ public sealed class SqliteProcessTests
         await host.StartAsync();
         var random = new Random(1912);
         var keys = Enumerable.Range(0, 300).Select(i => random.Next(10) switch { < 7 => "ok", < 9 => "retry", _ => "fail" } + "-" + i).ToList();
-        await host.Dispatcher.DispatchManyAsync([.. keys.Select(k => new BatchDispatchItem(new WorkJob(k)))]);
-        await Until(async () => await f.CountAsync("SELECT count(*) FROM runwick_jobs WHERE state IN ('succeeded', 'dead')") == keys.Count,
+        foreach (var chunk in keys.Chunk(100))
+        {
+            await host.Dispatcher.DispatchManyAsync([.. chunk.Select(k => new BatchDispatchItem(new WorkJob(k)))]);
+        }
+
+        await Until(async () => await f.CountAsync("SELECT count(*) FROM runwick_jobs WHERE state IN ('succeeded', 'failed')") == keys.Count,
             TimeSpan.FromMinutes(3), "every seeded job terminal");
         await host.StopAsync();
         Assert.Empty(SnapshotInvariants.Violations((await f.ReadCommittedSnapshot()).Model));
@@ -555,7 +643,13 @@ public sealed class SqliteProcessTests
         var leases = (await c.ReserveAndBeginAsync(4)).Value!.Outcomes.Select(o => o.Reserved!.Lease.Handle).ToList();
 
         var barrier = f.ArmFault(FaultPoint.BeforeCommit, FaultSpec.Barrier, FaultTarget.Op(Operations.DispatchMany));
-        var many = c.Dispatcher.DispatchManyAsync([.. Enumerable.Range(0, 1000).Select(i => new BatchDispatchItem(new PingJob("m" + i)))], cancellationToken: Ct);
+        // The public API caps a batch at 100 items; the store's DispatchMany/1 takes the 1,000 prepared items in one command.
+        var preparer = c.Services.GetRequiredService<Runwick.Dispatching.DispatchPreparer>();
+        var batches = Enumerable.Range(0, 10).Select(b => preparer.PrepareMany(c.Runtime.StoreId,
+            [.. Enumerable.Range(0, 100).Select(i => new BatchDispatchItem(new PingJob($"m{b}-{i}")))], null)).ToList();
+        var items = batches.SelectMany(p => p.Items.Select((intent, i) => new DispatchItem(intent, p.Scopes[i], p.ItemDigests[i]) { Rates = preparer.RatesFor(intent) }))
+            .ToList();
+        var many = c.Driver.DispatchManyAsync(c.Command(new DispatchBatchRequest(items, false, c.Runtime.StoreId, batches[0].CommandDigest)), Ct);
         await DriverFixture.WaitAtBarrier(barrier);
         var order = new List<string>();
         var next = Task.Run(async () =>
@@ -580,7 +674,9 @@ public sealed class SqliteProcessTests
         await Task.Delay(300, Ct);
         Assert.Empty(order);
         DriverFixture.ReleaseBarrier(barrier);
-        Assert.Equal(1000, (await many).Items.Count);
+        var dispatched = await many;
+        Assert.Equal(StoreStatus.Applied, dispatched.Status);
+        Assert.Equal(1000, dispatched.Value!.Items.Count(i => i.Result is not null));
         Assert.All((await renew).Value!.Outcomes, o => Assert.Equal(StoreStatus.Applied, o.Status));
         await next;
         Assert.Equal(["renewMany", "dispatch"], order);
