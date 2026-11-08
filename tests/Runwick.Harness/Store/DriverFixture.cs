@@ -224,6 +224,11 @@ internal sealed class DriverFixture : IAsyncDisposable
             return SqliteSnapshotReader.Count(SqlitePath, sql, parameters);
         }
 
+        if (Kind == StoreKind.Redis)
+        {
+            return await RedisAdminSql.CountAsync(Application, sql, parameters).ConfigureAwait(false);
+        }
+
         var conn = new NpgsqlConnection(AdminConnectionString);
         await using (conn.ConfigureAwait(false))
         {
@@ -241,6 +246,12 @@ internal sealed class DriverFixture : IAsyncDisposable
     /// <summary>Runs admin SQL against the per-test database (setup only; never used to fake protocol effects under test).</summary>
     public async Task ExecAsync(string sql, params (string Name, object Value)[] parameters)
     {
+        if (Kind == StoreKind.Redis)
+        {
+            await RedisAdminSql.ExecAsync(Application, sql, parameters).ConfigureAwait(false);
+            return;
+        }
+
         var conn = new NpgsqlConnection(AdminConnectionString);
         await using (conn.ConfigureAwait(false))
         {

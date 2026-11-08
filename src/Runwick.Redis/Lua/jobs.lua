@@ -164,6 +164,7 @@ function U.reserve_job(id, leaseMs, worker, token, entropy)
   local number = U.must(U.inc(j.rcount))
   U.attw(j, attempt, 'gen', j.gen)
   U.attw(j, attempt, 'res', number)
+  U.hset('attempts', attempt, id) -- attempt -> job, for management reads and RevealError (22 §7.2)
   U.attw(j, attempt, 'worker', worker)
   U.attw(j, attempt, 'token', token)
   U.attw(j, attempt, 'reserved', NOWS)
@@ -520,4 +521,9 @@ function U.audit(action, actor, fields)
   U.hset('audit:data', U.S(id), U.enc(row))
   U.hset('meta', 'nextaudit', U.S(id + 1))
   return id
+end
+
+-- Dashed UUID text (8-4-4-4-12) of a 32-hex ID, as management audit target IDs are stored on PostgreSQL.
+function U.uuid_text(hex)
+  return string.sub(hex, 1, 8) .. '-' .. string.sub(hex, 9, 12) .. '-' .. string.sub(hex, 13, 16) .. '-' .. string.sub(hex, 17, 20) .. '-' .. string.sub(hex, 21, 32)
 end
