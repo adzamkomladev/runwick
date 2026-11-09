@@ -1,14 +1,14 @@
 import { cn } from './ui/utils'
 
 // One colour per state, the same in every table, badge and timeline node. Text and tint pairs meet WCAG AA in both themes
-// (700-on-50 light, 300-on-tinted dark). Live states (running, reserved) pulse; nothing else moves.
+// (700/800-on-tint light, 200-400-on-tint dark), all from the Runwick palette. Live states (running, reserved) pulse; nothing else moves.
 export const TONES = {
-  neutral: { badge: 'bg-zinc-100 text-zinc-700 ring-zinc-500/20 dark:bg-zinc-400/10 dark:text-zinc-300 dark:ring-zinc-400/25', dot: 'bg-zinc-400' },
-  blue: { badge: 'bg-sky-50 text-sky-800 ring-sky-600/20 dark:bg-sky-400/10 dark:text-sky-300 dark:ring-sky-400/25', dot: 'bg-sky-500' },
-  indigo: { badge: 'bg-indigo-50 text-indigo-700 ring-indigo-600/20 dark:bg-indigo-400/10 dark:text-indigo-300 dark:ring-indigo-400/30', dot: 'bg-indigo-500' },
-  amber: { badge: 'bg-amber-50 text-amber-800 ring-amber-600/25 dark:bg-amber-400/10 dark:text-amber-300 dark:ring-amber-400/25', dot: 'bg-amber-500' },
-  green: { badge: 'bg-emerald-50 text-emerald-800 ring-emerald-600/20 dark:bg-emerald-400/10 dark:text-emerald-300 dark:ring-emerald-400/25', dot: 'bg-emerald-500' },
-  red: { badge: 'bg-rose-50 text-rose-700 ring-rose-600/20 dark:bg-rose-400/10 dark:text-rose-300 dark:ring-rose-400/25', dot: 'bg-rose-500' },
+  neutral: { badge: 'bg-midnight-violet-100 text-midnight-violet-700 ring-midnight-violet-600/20 dark:bg-midnight-violet-400/10 dark:text-midnight-violet-200 dark:ring-midnight-violet-400/25', dot: 'bg-midnight-violet-400' },
+  blue: { badge: 'bg-pine-blue-50 text-pine-blue-700 ring-pine-blue-600/20 dark:bg-pine-blue-400/10 dark:text-pine-blue-300 dark:ring-pine-blue-400/25', dot: 'bg-pine-blue-400' },
+  indigo: { badge: 'bg-pine-blue-100 text-pine-blue-800 ring-pine-blue-600/30 dark:bg-pine-blue-400/15 dark:text-pine-blue-200 dark:ring-pine-blue-400/30', dot: 'bg-pine-blue-600 dark:bg-pine-blue-300' },
+  amber: { badge: 'bg-chocolate-50 text-chocolate-700 ring-chocolate-600/25 dark:bg-chocolate-400/10 dark:text-chocolate-300 dark:ring-chocolate-400/25', dot: 'bg-chocolate-400' },
+  green: { badge: 'bg-lime-yellow-100 text-lime-yellow-800 ring-lime-yellow-700/25 dark:bg-lime-yellow-400/10 dark:text-lime-yellow-400 dark:ring-lime-yellow-400/25', dot: 'bg-lime-yellow-600 dark:bg-lime-yellow-500' },
+  red: { badge: 'bg-chocolate-100 text-chocolate-800 ring-chocolate-700/30 dark:bg-chocolate-500/15 dark:text-chocolate-200 dark:ring-chocolate-400/30', dot: 'bg-chocolate-600 dark:bg-chocolate-400' },
 }
 
 const STATES = {

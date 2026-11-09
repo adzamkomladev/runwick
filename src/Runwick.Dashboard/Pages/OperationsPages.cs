@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Inertia.Net;
 using Runwick.Management;
 using Runwick.Scheduling;
 using P = Runwick.Management.ManagementPermissions;
@@ -126,7 +128,7 @@ internal sealed class SchedulesPage : DashboardPage
     };
 }
 
-/// <summary>Scaling (21 §4, §6): <c>/scaling?instance&amp;pool&amp;from&amp;to&amp;cursor</c>. Read only.</summary>
+/// <summary>Scaling (21 §4, §6): <c>/scaling?instance&amp;pool&amp;range|from&amp;to&amp;cursor</c>. Read only.</summary>
 internal sealed class ScalingPage : DashboardPage
 {
     public static readonly ScalingPage Instance = new();
@@ -139,13 +141,16 @@ internal sealed class ScalingPage : DashboardPage
 
     protected override async Task<object?> LoadAsync(DashboardRequest r, string prop) => prop switch
     {
-        "events" => await r.ListAsync(cursor => r.Session.ListScalingEventsAsync(r.Caller,
-            new ScalingEventQuery(r.QGuid("instance"), r.Q("pool"), r.QTime("from"), r.QTime("to"), r.QInt("limit"), cursor), r.Ct)),
-        _ => new { instance = r.Q("instance"), pool = r.Q("pool"), from = r.Q("from"), to = r.Q("to") },
+        "events" => await r.ListAsync(cursor =>
+        {
+            var (from, to) = r.Range();
+            return r.Session.ListScalingEventsAsync(r.Caller, new ScalingEventQuery(r.QGuid("instance"), r.Q("pool"), from, to, r.QInt("limit"), cursor), r.Ct);
+        }),
+        _ => new { instance = r.Q("instance"), pool = r.Q("pool"), range = r.Q("range"), from = r.Q("from"), to = r.Q("to") },
     };
 }
 
-/// <summary>Audit (21 §4): <c>/audit?targetKind&amp;targetId&amp;from&amp;to&amp;cursor</c>. Read only.</summary>
+/// <summary>Audit (21 §4): <c>/audit?targetKind&amp;targetId&amp;range|from&amp;to&amp;cursor</c>. Read only.</summary>
 internal sealed class AuditPage : DashboardPage
 {
     public static readonly AuditPage Instance = new();
@@ -160,7 +165,7 @@ internal sealed class AuditPage : DashboardPage
     {
         "audit" => await r.ListAsync(cursor =>
         {
-            var (from, to) = (r.QTime("from"), r.QTime("to"));
+            var (from, to) = r.Range();
             // The page keeps the 31-day range cap of Jobs and Scaling (21 §4); the audit read itself takes any range.
             if (from is { } f && ((to ?? DateTimeOffset.UtcNow) - f > TimeSpan.FromDays(31) || f > (to ?? DateTimeOffset.MaxValue)))
             {
@@ -169,11 +174,11 @@ internal sealed class AuditPage : DashboardPage
 
             return r.Session.ListAuditAsync(r.Caller, new AuditQuery(r.Q("targetKind"), r.Q("targetId"), from, to, r.QInt("limit"), cursor), r.Ct);
         }),
-        _ => new { targetKind = r.Q("targetKind"), targetId = r.Q("targetId"), from = r.Q("from"), to = r.Q("to") },
+        _ => new { targetKind = r.Q("targetKind"), targetId = r.Q("targetId"), range = r.Q("range"), from = r.Q("from"), to = r.Q("to") },
     };
 }
 
-/// <summary>Settings (21 §4): <c>/settings</c>. Read only, not polled.</summary>
+/// <summary>Settings (21 §4): <c>/settings</c>. Read only, not polled; a once prop the client keeps for five minutes.</summary>
 internal sealed class SettingsPage : DashboardPage
 {
     public static readonly SettingsPage Instance = new();
@@ -183,6 +188,9 @@ internal sealed class SettingsPage : DashboardPage
     public override string Permission => P.SettingsRead;
 
     public override IReadOnlyDictionary<string, string> Props { get; } = Pages.Props.Of(("settings", P.SettingsRead));
+
+    protected override InertiaProp Wrap(string prop, Func<CancellationToken, Task<JsonElement>> load) =>
+        Inertia.Net.Inertia.Once(load).Until(TimeSpan.FromMinutes(5));
 
     protected override async Task<object?> LoadAsync(DashboardRequest r, string prop) => await r.Session.GetSettingsAsync(r.Caller, r.Ct);
 }

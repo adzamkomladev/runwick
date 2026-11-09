@@ -12,6 +12,20 @@ public sealed class DashboardOptions
     /// <summary>The page title. Default "Runwick".</summary>
     public string Title { get; set; } = "Runwick";
 
+    /// <summary>
+    /// The host's sign-out route, as an absolute path on this origin, PathBase included ("/account/logout"). The sidebar's Sign out button posts an empty form
+    /// to it (no dashboard token: it is the host's route, and the CSP allows only same-origin form targets). Null hides the button.
+    /// </summary>
+    public string? SignOutPath
+    {
+        get => _signOutPath;
+        set => _signOutPath = value is null || (value.StartsWith('/') && !value.StartsWith("//", StringComparison.Ordinal) && !value.Contains('\\'))
+            ? value
+            : throw new ArgumentException("SignOutPath must be a same-origin path starting with a single '/'.", nameof(value));
+    }
+
+    string? _signOutPath;
+
     internal List<string> Schemes { get; } = [];
 
     internal Func<ClaimsPrincipal, IReadOnlyList<ManagementGrant>>? Grants { get; private set; }

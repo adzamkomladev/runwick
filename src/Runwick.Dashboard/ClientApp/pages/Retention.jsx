@@ -1,47 +1,79 @@
-import { IconAlertTriangle, IconCheck, IconDeviceFloppy } from '@tabler/icons-react'
+import { IconAlertTriangle, IconCheck, IconDeviceFloppy, IconPencil } from '@tabler/icons-react'
+import { useState } from 'react'
 import { Badge } from '../components/ui/badge'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../components/ui/card'
-import { Input } from '../components/ui/input'
+import { Button } from '../components/ui/button'
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from '../components/ui/card'
+import { Label } from '../components/ui/label'
+import { NumberField } from '../components/ui/number-field'
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '../components/ui/sheet'
+import { Textarea } from '../components/ui/textarea'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
-import { AnimatedNumber, CommandBar, CommandButton, Layout, TableCard, time, useCommand, usePoll } from '../lib'
+import { AnimatedNumber, CommandButton, Copyable, Layout, TableCard, time, useCommand, usePoll } from '../lib'
 
 const NAMES = [['completedDetailHours', 'Completed job detail'], ['failedDetailHours', 'Failed job detail'], ['jobHistoryHours', 'Job history'],
   ['auditHours', 'Audit'], ['scalingEventsHours', 'Scaling events'], ['scheduleOccurrencesHours', 'Schedule occurrences'],
   ['workerPresenceHours', 'Worker presence']]
 
+const hours = (h) => (h == null ? 'forever' : h % 24 === 0 ? `${h / 24} d` : `${h} h`)
+
+/** The policy edit in a side sheet: seven whole-hour values (empty keeps forever) and an optional reason. */
+function PolicySheet({ open, onOpenChange, retention, url, command }) {
+  // Remounted on every open (key below), so the fields start from the policy the page shows.
+  const [values, setValues] = useState(() => Object.fromEntries(NAMES.map(([n]) => [n, retention.policy[n] == null ? '' : String(retention.policy[n])])))
+  const [reason, setReason] = useState('')
+  const submit = (e) => {
+    e.preventDefault()
+    const body = { expectedRevision: retention.revision, reason: reason || null }
+    for (const [name] of NAMES) body[name] = values[name] === '' ? null : Number(values[name])
+    command.run('Change the retention policy', url, body)
+    onOpenChange(false)
+  }
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent data-testid="policy-sheet">
+        <SheetHeader><SheetTitle>Retention policy</SheetTitle><SheetDescription>Hours each record class is kept. Empty keeps it forever.</SheetDescription></SheetHeader>
+        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+          <div className="grid flex-1 content-start gap-4 overflow-y-auto px-5">
+            {NAMES.map(([name, label]) => (
+              <div key={name} className="grid gap-1.5">
+                <Label htmlFor={`policy-${name}`}>{label}</Label>
+                <NumberField id={`policy-${name}`} aria-label={label} min={1} placeholder="forever" suffix="h" value={values[name] ?? ''} onChange={(v) => setValues((x) => ({ ...x, [name]: v }))} />
+              </div>
+            ))}
+            <div className="grid gap-1.5"><Label htmlFor="policy-reason">Reason <span className="font-normal text-muted-foreground">(optional, kept in audit)</span></Label>
+              <Textarea id="policy-reason" value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} /></div>
+          </div>
+          <SheetFooter>
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button type="submit" data-testid="save-policy"><IconDeviceFloppy />Save policy</Button>
+          </SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
 export default function Retention({ base, can, retention }) {
   const live = usePoll(['retention'], 30)
   const command = useCommand()
+  const [editing, setEditing] = useState(false)
   const url = `${base}/retention/policy`
-  const submit = (e) => {
-    e.preventDefault()
-    const form = new FormData(e.target)
-    const body = { expectedRevision: retention.revision }
-    for (const [name] of NAMES) body[name] = form.get(name) === '' ? null : Number(form.get(name))
-    command.ask('Change the retention policy', url, body)
-  }
   return (
     <Layout heading="Retention" live={live}
-      description={<>Policy revision <span data-testid="retention-revision">{retention.revision}</span>. Values in hours; empty keeps forever.</>}>
-      <CommandBar command={command} />
-      <Card>
-        <CardHeader><CardTitle>Policy</CardTitle><CardDescription>How long each kind of record is kept before cleanup removes it.</CardDescription></CardHeader>
-        <form onSubmit={submit} data-testid="policy" key={retention.revision} className="grid gap-4">
-          <CardContent className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+      actions={can.retentionManage && <CommandButton command={command} url={url} variant="default" data-testid="edit-policy" icon={IconPencil} onClick={() => setEditing(true)}>Edit policy</CommandButton>}>
+      <PolicySheet key={editing ? `open-${retention.revision}` : 'closed'} open={editing} onOpenChange={setEditing} retention={retention} url={url} command={command} />
+      <Card className="gap-4">
+        <CardHeader><CardTitle>Policy</CardTitle><CardAction><Badge variant="secondary">revision <span data-testid="retention-revision" className="ml-1">{retention.revision}</span></Badge></CardAction></CardHeader>
+        <CardContent>
+          <dl data-testid="policy" className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
             {NAMES.map(([name, label]) => (
-              <label key={name} className="grid gap-1.5 text-sm">
-                <span className="text-muted-foreground">{label}</span>
-                {can.retentionManage
-                  ? <span className="relative"><Input name={name} type="number" min="1" defaultValue={retention.policy[name] ?? ''} aria-label={label} placeholder="forever" className="pr-14" />
-                    <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-xs text-muted-foreground">hours</span></span>
-                  : <span className="font-medium">{retention.policy[name] ?? 'forever'}</span>}
-              </label>
+              <div key={name} className="grid gap-1 rounded-lg border bg-muted/30 p-3">
+                <dt className="text-xs text-muted-foreground">{label}</dt>
+                <dd className="text-lg font-semibold tabular-nums">{hours(retention.policy[name])}</dd>
+              </div>
             ))}
-          </CardContent>
-          {can.retentionManage && <CardFooter className="justify-end">
-            <CommandButton command={command} url={url} type="submit" variant="default" data-testid="save-policy" icon={IconDeviceFloppy}>Save policy</CommandButton>
-          </CardFooter>}
-        </form>
+          </dl>
+        </CardContent>
       </Card>
       <TableCard title="Cleanup progress" pager={<p className="px-4 pt-3 text-xs text-muted-foreground border-t">as of {new Date(retention.observedAt).toLocaleTimeString()}</p>}>
         <Table data-testid="classes">
@@ -55,7 +87,7 @@ export default function Retention({ base, can, retention }) {
               <TableCell className="whitespace-nowrap text-muted-foreground">{time(c.lastBatchAt)}</TableCell><TableCell className="whitespace-nowrap text-muted-foreground">{time(c.caughtUpAt)}</TableCell>
               <TableCell className="text-right"><AnimatedNumber value={c.totalRows} /></TableCell>
               <TableCell className="text-xs whitespace-nowrap">{c.todayRows} rows, {c.todayBatches} batches, {c.todayFailures} failures</TableCell>
-              <TableCell>{c.lastErrorCode ? <code className="text-destructive">{c.lastErrorCode}</code> : '—'}</TableCell>
+              <TableCell>{c.lastErrorCode ? <Copyable value={c.lastErrorCode} label="Copy error code"><code className="text-destructive">{c.lastErrorCode}</code></Copyable> : '—'}</TableCell>
             </TableRow>
           ))}</TableBody>
         </Table>

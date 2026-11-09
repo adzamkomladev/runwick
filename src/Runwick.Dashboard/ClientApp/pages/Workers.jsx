@@ -1,12 +1,50 @@
-import { Link } from '@inertiajs/react'
-import { IconCheck } from '@tabler/icons-react'
+import { router } from '@inertiajs/react'
+import { IconPencil } from '@tabler/icons-react'
+import { useState } from 'react'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
-import { Input } from '../components/ui/input'
+import { Label } from '../components/ui/label'
+import { NumberField } from '../components/ui/number-field'
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '../components/ui/sheet'
+import { Switch } from '../components/ui/switch'
+import { Textarea } from '../components/ui/textarea'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { cn } from '../components/ui/utils'
-import { AnimatedNumber, CommandBar, CommandButton, Layout, Pager, StateBadge, TableCard, time, useChanged, useCommand, usePoll, useSort } from '../lib'
+import { AnimatedNumber, CommandButton, Copyable, Layout, Pager, StateBadge, TableCard, time, useChanged, useCommand, usePoll, useSort } from '../lib'
+
+/** Edit a scope's capacity in a side sheet: the new value and an optional reason, checked against the policy revision shown. */
+function CapacitySheet({ scope, url, command, onClose }) {
+  const [capacity, setCapacity] = useState(String(scope?.capacity ?? ''))
+  const [reason, setReason] = useState('')
+  const submit = (e) => {
+    e.preventDefault()
+    command.run(`Set ${scope.kind}/${scope.key} capacity to ${capacity}`, url, { capacity: Number(capacity), expectedPolicyRevision: scope.policyRevision, reason: reason || null })
+    onClose()
+  }
+  return (
+    <Sheet open={!!scope} onOpenChange={(o) => { if (!o) onClose() }}>
+      <SheetContent data-testid="capacity-sheet">
+        {scope && <>
+          <SheetHeader><SheetTitle>Capacity of {scope.kind}/{scope.key}</SheetTitle>
+            <SheetDescription>Policy revision {scope.policyRevision}; {scope.livePermits} permits in use now.</SheetDescription></SheetHeader>
+          <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+            <div className="grid content-start gap-4 px-5">
+              <div className="grid gap-1.5"><Label htmlFor="capacity">Capacity</Label>
+                <NumberField id="capacity" name="capacity" aria-label="capacity" value={capacity} onChange={setCapacity} min={0} /></div>
+              <div className="grid gap-1.5"><Label htmlFor="capacity-reason">Reason <span className="font-normal text-muted-foreground">(optional, kept in audit)</span></Label>
+                <Textarea id="capacity-reason" value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} /></div>
+            </div>
+            <SheetFooter>
+              <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+              <Button type="submit" data-testid="set-capacity" disabled={capacity === '' || Number(capacity) === scope.capacity}>Save</Button>
+            </SheetFooter>
+          </form>
+        </>}
+      </SheetContent>
+    </Sheet>
+  )
+}
 
 export default function Workers({ base, can, workers, scopes, query }) {
   const live = usePoll(['workers', 'scopes'], 10)
@@ -15,14 +53,10 @@ export default function Workers({ base, can, workers, scopes, query }) {
   const [scopeRows, scopeHead] = useSort(scopes.items)
   const changed = useChanged(scopes.items, (s) => `${s.kind}/${s.key}`, (s) => `${s.capacity}/${s.livePermits}`)
   const capacityUrl = (s) => `${base}/scopes/${encodeURIComponent(s.kind)}/${encodeURIComponent(s.key)}/capacity`
-  const setCapacity = (s, e) => {
-    e.preventDefault()
-    const capacity = Number(new FormData(e.target).get('capacity'))
-    command.ask(`Set ${s.kind}/${s.key} capacity to ${capacity}`, capacityUrl(s), { capacity, expectedPolicyRevision: s.policyRevision })
-  }
+  const [editing, setEditing] = useState(null)
   return (
     <Layout heading="Workers and capacity" live={live}>
-      <CommandBar command={command} />
+      <CapacitySheet key={editing ? `${editing.kind}/${editing.key}` : 'none'} scope={editing} url={editing && capacityUrl(editing)} command={command} onClose={() => setEditing(null)} />
       <Tabs defaultValue="workers">
         <TabsList>
           <TabsTrigger value="workers">Workers <Badge variant="secondary" className="px-1.5">{workers.next ? '50+' : workers.items.length}</Badge></TabsTrigger>
@@ -30,9 +64,9 @@ export default function Workers({ base, can, workers, scopes, query }) {
         </TabsList>
         <TabsContent value="workers">
           <TableCard pager={<Pager page={workers} />} empty={workers.items.length === 0 && 'No live workers.'}
-            toolbar={<Button asChild size="sm" variant="outline">
-              {query.expired ? <Link href={`${base}/workers`}>Hide expired</Link> : <Link href={`${base}/workers?expired=true`}>Show expired</Link>}
-            </Button>}>
+            toolbar={<label className="ml-auto flex items-center gap-2 text-sm">
+              <Switch data-testid="show-expired" checked={!!query.expired} onCheckedChange={(on) => router.get(`${base}/workers${on ? '?expired=true' : ''}`, {}, { preserveScroll: true })} />Show expired
+            </label>}>
             <Table data-testid="workers">
               <TableHeader><TableRow className="hover:bg-transparent">
                 {workerHead('host', 'Host', (w) => w.hostName)}{workerHead('pid', 'Process', (w) => w.processId)}{workerHead('build', 'Build', (w) => w.buildId)}
@@ -40,7 +74,7 @@ export default function Workers({ base, can, workers, scopes, query }) {
               </TableRow></TableHeader>
               <TableBody>{workerRows.map((w) => (
                 <TableRow key={w.instanceId}>
-                  <TableCell className="font-medium">{w.hostName}</TableCell><TableCell className="tabular-nums">{w.processId}</TableCell><TableCell><code>{w.buildId}</code></TableCell>
+                  <TableCell className="font-medium">{w.hostName}</TableCell><TableCell className="tabular-nums">{w.processId}</TableCell><TableCell><Copyable value={w.buildId} label="Copy build ID"><code>{w.buildId}</code></Copyable></TableCell>
                   <TableCell><StateBadge state={w.status} /></TableCell>
                   <TableCell className="whitespace-nowrap text-muted-foreground">{time(w.heartbeatAt)}</TableCell><TableCell className="whitespace-nowrap text-muted-foreground">{time(w.expiresAt)}</TableCell>
                 </TableRow>
@@ -63,11 +97,8 @@ export default function Workers({ base, can, workers, scopes, query }) {
                     <TableCell className="text-muted-foreground">{s.kind}</TableCell><TableCell className="font-medium">{s.key}</TableCell>
                     <TableCell data-testid="scope-capacity" className="tabular-nums">{s.capacity}</TableCell>
                     <TableCell><AnimatedNumber value={s.livePermits} /></TableCell><TableCell className="tabular-nums">{s.policyRevision}</TableCell>
-                    {can.capacityEdit && <TableCell>
-                      <form onSubmit={(e) => setCapacity(s, e)} className="flex items-center justify-end gap-2">
-                        <Input name="capacity" type="number" min="0" defaultValue={s.capacity} aria-label="capacity" className="h-8 w-24" />
-                        <CommandButton command={command} url={capacityUrl(s)} type="submit" data-testid="set-capacity" icon={IconCheck}>Set</CommandButton>
-                      </form>
+                    {can.capacityEdit && <TableCell className="text-right">
+                      <CommandButton command={command} url={capacityUrl(s)} data-testid="edit-capacity" icon={IconPencil} onClick={() => setEditing(s)}>Edit</CommandButton>
                     </TableCell>}
                   </TableRow>
                 )

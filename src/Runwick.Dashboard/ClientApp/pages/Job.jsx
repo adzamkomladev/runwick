@@ -4,9 +4,9 @@ import { Fragment } from 'react'
 import { buildSteps, duration, Timeline } from '../components/timeline'
 import { UsageCard } from '../components/usage'
 import { Button } from '../components/ui/button'
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
-import { CommandBar, CommandButton, CopyButton, Layout, Revealed, StateBadge, TableCard, time, useCommand, usePoll, useReveal } from '../lib'
+import { CommandBar, CommandButton, Copyable, Layout, Revealed, StateBadge, TableCard, time, useCommand, usePoll, useReveal } from '../lib'
 
 const Field = ({ label, children }) => <div className="grid min-w-0 gap-1"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="min-w-0 text-sm">{children}</dd></div>
 
@@ -25,7 +25,7 @@ export default function Job({ base, can, job: detail, audit }) {
   return (
     <Layout live={live}
       heading={<span className="flex min-w-0 items-center gap-3"><span data-testid="job-name" className="truncate">{job.jobName}</span><StateBadge state={job.state} key={job.state} className="animate-page-in" /></span>}
-      description={<span className="flex items-center gap-1"><code className="text-xs">{job.jobId}</code><CopyButton value={job.jobId} label="Copy job ID" /></span>}
+      description={<Copyable value={job.jobId} label="Copy job ID"><code className="text-xs">{job.jobId}</code></Copyable>}
       actions={<>
         {can.cancel && <CommandButton command={command} url={`${url}/cancel`} data-testid="cancel" icon={IconBan} onClick={() => control('cancel', 'Cancel')}>Cancel</CommandButton>}
         {can.retry && <CommandButton command={command} url={`${url}/retry`} data-testid="retry" icon={IconRefresh} onClick={() => control('retry', 'Retry')}>Retry</CommandButton>}
@@ -39,8 +39,8 @@ export default function Job({ base, can, job: detail, audit }) {
           <Card>
             <CardContent>
               <dl className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-                <Field label="Queue"><span data-testid="job-queue" className="font-medium">{job.queue}</span></Field>
-                <Field label="State"><span data-testid="job-state"><StateBadge state={job.state} />{job.cancelRequested && <span data-testid="cancel-requested" className="ml-1.5 text-xs text-amber-700 dark:text-amber-300"> (cancel requested)</span>}</span></Field>
+                <Field label="Queue"><Copyable value={job.queue} label="Copy queue name"><span data-testid="job-queue" className="font-medium">{job.queue}</span></Copyable></Field>
+                <Field label="State"><span data-testid="job-state"><StateBadge state={job.state} />{job.cancelRequested && <span data-testid="cancel-requested" className="ml-1.5 text-xs text-warning">cancel requested</span>}</span></Field>
                 <Field label="Generation / revision"><span className="tabular-nums"><span data-testid="generation">{job.generation}</span> / <span data-testid="revision">{job.revision}</span></span></Field>
                 <Field label="Executions">{job.executionCount}</Field>
                 <Field label="Created">{time(job.createdAt)}</Field>
@@ -52,7 +52,7 @@ export default function Job({ base, can, job: detail, audit }) {
             </CardContent>
           </Card>
           {value?.key === 'payload' && <Revealed value={value} testId="payload" title="Payload" onHide={clear} />}
-          <TableCard title="Attempts" description="Errors show as a code until revealed." empty={detail.attempts.length === 0 && 'No attempts yet.'}>
+          <TableCard title="Attempts" empty={detail.attempts.length === 0 && 'No attempts yet.'}>
             <Table data-testid="attempts">
               <TableHeader><TableRow className="hover:bg-transparent"><TableHead>#</TableHead><TableHead>Reserved</TableHead><TableHead>Ran for</TableHead><TableHead>Outcome</TableHead><TableHead>Error code</TableHead><TableHead /></TableRow></TableHeader>
               <TableBody>{detail.attempts.map((a, i) => (
@@ -62,7 +62,7 @@ export default function Job({ base, can, job: detail, audit }) {
                     <TableCell className="whitespace-nowrap text-muted-foreground">{time(a.reservedAt)}</TableCell>
                     <TableCell className="whitespace-nowrap tabular-nums">{ran(a)}</TableCell>
                     <TableCell>{a.outcome ? <StateBadge state={a.outcome} /> : <StateBadge state="running" />}</TableCell>
-                    <TableCell data-testid="error-code" className="max-w-72 font-mono text-xs break-all">{a.errorCode ?? '—'}</TableCell>
+                    <TableCell data-testid="error-code" className="max-w-72 font-mono text-xs">{a.errorCode ? <Copyable value={a.errorCode} label="Copy error code" /> : '—'}</TableCell>
                     <TableCell className="text-right">
                       {a.errorCode && can.revealError &&
                         <Button size="sm" variant="ghost" data-testid="reveal-error" disabled={loading === a.attemptId}
@@ -93,12 +93,11 @@ export default function Job({ base, can, job: detail, audit }) {
           <Card>
             <CardHeader>
               <CardTitle>Status history</CardTitle>
-              <CardDescription>Each step with its time and how long the previous one lasted.</CardDescription>
             </CardHeader>
             <CardContent><Timeline key={job.jobId} steps={buildSteps(detail, audit)} /></CardContent>
           </Card>
           {can.audit && <Card>
-            <CardHeader><CardTitle>Audit</CardTitle><CardDescription>Who acted on this job, and why.</CardDescription>
+            <CardHeader><CardTitle>Audit</CardTitle>
               {!audit && <CardAction><Button size="sm" variant="outline" data-testid="load-audit" onClick={() => router.reload({ only: ['audit'] })}>Show audit</Button></CardAction>}
             </CardHeader>
             {audit && <CardContent>

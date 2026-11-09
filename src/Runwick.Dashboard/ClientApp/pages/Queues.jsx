@@ -1,7 +1,7 @@
-import { IconChartLine, IconPlayerPause, IconPlayerPlay } from '@tabler/icons-react'
+import { IconPlayerPause, IconPlayerPlay } from '@tabler/icons-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { cn } from '../components/ui/utils'
-import { CommandBar, CommandButton, Layout, Pager, StateBadge, TableCard, useChanged, useCommand, usePoll, useSort } from '../lib'
+import { CommandBar, CommandButton, Copyable, Layout, Pager, StateBadge, TableCard, useChanged, useCommand, usePoll, useSort } from '../lib'
 
 export default function Queues({ base, can, queues }) {
   const live = usePoll(['queues'], 10)
@@ -9,8 +9,7 @@ export default function Queues({ base, can, queues }) {
   const [rows, head] = useSort(queues.items)
   const changed = useChanged(queues.items, (q) => q.name, (q) => q.paused)
   return (
-    <Layout heading="Queues" live={live}
-      description={<span className="inline-flex items-center gap-1.5"><IconChartLine className="size-4" />Paused state and revision only. Queue depth and age are in the telemetry dashboard (runwick.queue.* metrics).</span>}>
+    <Layout heading="Queues" live={live}>
       <CommandBar command={command} />
       <TableCard pager={<Pager page={queues} />} empty={queues.items.length === 0 && 'No queues.'}>
         <Table data-testid="queues">
@@ -23,7 +22,7 @@ export default function Queues({ base, can, queues }) {
             const url = `${base}/queues/${encodeURIComponent(q.name)}/${op}`
             return (
               <TableRow key={`${q.name}:${changed[q.name] ?? 0}`} data-testid="queue-row" className={cn(changed[q.name] && 'animate-flash')}>
-                <TableCell className="font-medium">{q.name}</TableCell>
+                <TableCell className="font-medium"><Copyable value={q.name} label="Copy queue name" /></TableCell>
                 <TableCell data-testid="queue-state"><StateBadge state={q.paused ? 'paused' : 'running'} /></TableCell>
                 <TableCell className="tabular-nums">{q.revision}</TableCell>
                 {can.queueControl && <TableCell className="text-right">

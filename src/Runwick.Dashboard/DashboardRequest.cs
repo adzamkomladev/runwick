@@ -53,6 +53,29 @@ internal sealed class DashboardRequest(DashboardMount mount, HttpContext http, M
         ? DateTimeOffset.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var v) ? v : throw Invalid(name)
         : null;
 
+    /// <summary>The date range presets of the range picker (21 §4.2): <c>range=15m</c> means the 15 minutes before the read.</summary>
+    internal static readonly IReadOnlyDictionary<string, TimeSpan> Ranges = new Dictionary<string, TimeSpan>(StringComparer.Ordinal)
+    {
+        ["5m"] = TimeSpan.FromMinutes(5), ["15m"] = TimeSpan.FromMinutes(15), ["30m"] = TimeSpan.FromMinutes(30), ["1h"] = TimeSpan.FromHours(1),
+        ["3h"] = TimeSpan.FromHours(3), ["6h"] = TimeSpan.FromHours(6), ["1d"] = TimeSpan.FromDays(1), ["3d"] = TimeSpan.FromDays(3),
+        ["7d"] = TimeSpan.FromDays(7), ["30d"] = TimeSpan.FromDays(30),
+    };
+
+    /// <summary>
+    /// The page's time range: a preset (<c>range</c>), else <c>from</c>/<c>to</c>, else <paramref name="fallback"/> before now. A
+    /// preset is relative, so every poll moves it forward.
+    /// </summary>
+    public (DateTimeOffset? From, DateTimeOffset? To) Range(TimeSpan? fallback = null)
+    {
+        if (Q("range") is { } preset)
+        {
+            return Ranges.TryGetValue(preset, out var span) ? (DateTimeOffset.UtcNow - span, null) : throw Invalid("range");
+        }
+
+        var (from, to) = (QTime("from"), QTime("to"));
+        return from is null && to is null && fallback is { } f ? (DateTimeOffset.UtcNow - f, null) : (from, to);
+    }
+
     public Guid? QGuid(string name) => Q(name) is { } s ? Guid.TryParse(s, out var v) ? v : throw Invalid(name) : null;
 
     static ManagementValidationException Invalid(string name) => new("invalid_request", $"Query parameter '{name}' is not valid.");

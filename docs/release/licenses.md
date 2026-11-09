@@ -16,6 +16,7 @@ Runwick itself is MIT-licensed (`LICENSE` at the repository root; every package 
 | PostgreSQL | permissive (Npgsql uses it) |
 | npm: MIT | the dashboard's bundled web libraries |
 | npm: Apache-2.0 | `class-variance-authority`, used by the dashboard's shadcn/ui components (added 2026-11-09) |
+| npm: OFL-1.1, two named packages only | the dashboard fonts `@fontsource-variable/space-grotesk` and `@fontsource-variable/geist-mono`, self-hosted in the dashboard assets. The user allowed the SIL Open Font License for fonts only (2026-11-09): it permits bundling in software; the fonts may not be sold on their own, and a modified font must be renamed. Code dependencies stay MIT/Apache. |
 
 Anything else (GPL, LGPL, MPL, AGPL, SSPL, "custom", missing) is not allowed automatically. Flag it for the owner; do not add it to the list to make the check pass.
 

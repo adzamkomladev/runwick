@@ -1,5 +1,6 @@
 # Allowed licences for anything that ships or is bundled. One entry per line.
 # A bare SPDX expression is matched against the nuspec <license>; "npm:<license>" against package-lock.json;
+# "npm:<package> <license>" allows one npm package under that licence (fonts only, see docs/release/licenses.md);
 # "<name> <version>" allows one package with no SPDX expression (needs a recorded reason in docs/release/licenses.md).
 MIT
 Apache-2.0
@@ -8,3 +9,5 @@ BSD-2-Clause
 PostgreSQL
 npm:MIT
 npm:Apache-2.0
+npm:@fontsource-variable/space-grotesk OFL-1.1
+npm:@fontsource-variable/geist-mono OFL-1.1

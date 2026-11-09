@@ -1,10 +1,16 @@
+using System.Text.Json;
+using Inertia.Net;
 using Microsoft.AspNetCore.Http;
 using Runwick.Management;
 using P = Runwick.Management.ManagementPermissions;
 
 namespace Runwick.Dashboard.Pages;
 
-/// <summary>Jobs (21 §4): <c>/</c>, <c>/jobs?queue&amp;state&amp;jobName&amp;from&amp;to&amp;cursor</c>; bulk cancel of up to 100 rows.</summary>
+/// <summary>
+/// Jobs (21 §4): <c>/</c>, <c>/jobs?queue&amp;state&amp;jobName&amp;range|from&amp;to&amp;cursor</c>; bulk cancel of up to 100 rows.
+/// <c>jobs</c> is a merge prop: "Load more" asks for the next page and the client appends its rows (matched on the job ID).
+/// The queue names for the filter are a once prop, kept by the client for five minutes.
+/// </summary>
 internal sealed class JobsPage : DashboardPage
 {
     public static readonly JobsPage Instance = new();
@@ -13,13 +19,26 @@ internal sealed class JobsPage : DashboardPage
 
     public override string Permission => P.JobsRead;
 
-    public override IReadOnlyDictionary<string, string> Props { get; } = Pages.Props.Of(("jobs", P.JobsRead), ("query", P.JobsRead));
+    public override IReadOnlyDictionary<string, string> Props { get; } = Pages.Props.Of(("jobs", P.JobsRead), ("query", P.JobsRead), ("queueNames", P.QueuesRead));
+
+    protected override InertiaProp Wrap(string prop, Func<CancellationToken, Task<JsonElement>> load) => prop switch
+    {
+        "jobs" => Inertia.Net.Inertia.Merge(load).Append("items", "jobId"),
+        "queueNames" => Inertia.Net.Inertia.Once(load).Until(TimeSpan.FromMinutes(5)),
+        _ => base.Wrap(prop, load),
+    };
 
     protected override async Task<object?> LoadAsync(DashboardRequest r, string prop) => prop switch
     {
-        "jobs" => await r.ListAsync(cursor => r.Session.ListJobsAsync(r.Caller,
-            new JobListQuery(r.Q("queue"), r.Q("state"), r.Q("jobName"), r.QTime("from"), r.QTime("to"), r.QInt("limit"), cursor), r.Ct)),
-        _ => new { queue = r.Q("queue"), state = r.Q("state"), jobName = r.Q("jobName"), from = r.Q("from"), to = r.Q("to") },
+        "jobs" => await r.ListAsync(cursor =>
+        {
+            var (from, to) = r.Range();
+            return r.Session.ListJobsAsync(r.Caller, new JobListQuery(r.Q("queue"), r.Q("state"), r.Q("jobName"), from, to, r.QInt("limit"), cursor), r.Ct);
+        }),
+        "queueNames" => r.Has(P.QueuesRead)
+            ? (await r.Session.ListQueuesAsync(r.Caller, ManagementSession.MaxPageSize, null, r.Ct)).Items.Select(q => q.Name).ToList()
+            : null,
+        _ => new { queue = r.Q("queue"), state = r.Q("state"), jobName = r.Q("jobName"), range = r.Q("range"), from = r.Q("from"), to = r.Q("to") },
     };
 
     /// <summary><c>POST /jobs:cancel</c>: one command ID per item, in the body; results in request order (16 §4).</summary>

@@ -110,7 +110,7 @@ export function Timeline({ steps }) {
                 {s.actor && <span className="inline-flex items-center gap-1"><IconUserBolt className="size-3.5" aria-hidden />{s.actor}</span>}
               </div>
               {s.note && <p className="text-xs text-muted-foreground">{s.note}</p>}
-              {s.error && <p className="w-fit max-w-full rounded-md bg-rose-50 px-2 py-1 font-mono text-xs break-all text-rose-700 ring-1 ring-rose-600/15 ring-inset dark:bg-rose-400/10 dark:text-rose-300">{s.error}</p>}
+              {s.error && <p className="w-fit max-w-full rounded-md bg-chocolate-50 px-2 py-1 font-mono text-xs break-all text-chocolate-700 ring-1 ring-chocolate-600/15 ring-inset dark:bg-chocolate-400/10 dark:text-chocolate-300">{s.error}</p>}
             </div>
           </li>
         )

@@ -1,8 +1,8 @@
 import { Link, router, usePage } from '@inertiajs/react'
 import {
-  IconActivity, IconAlertTriangle, IconArrowDown, IconArrowRight, IconArrowUp, IconArrowsSort, IconBolt, IconCalendarTime, IconCheck,
-  IconCircleDashed, IconCopy, IconDeviceDesktop, IconFilter, IconGauge, IconHistory, IconLayoutDashboard, IconListDetails, IconLoader2,
-  IconMoon, IconServer2, IconSettings, IconStack2, IconSun, IconTrash, IconX,
+  IconAlertTriangle, IconArrowDown, IconArrowRight, IconArrowUp, IconArrowsSort, IconBell, IconBolt, IconCalendarTime, IconCheck,
+  IconCopy, IconDeviceDesktop, IconFilter, IconGauge, IconHistory, IconLayoutDashboard, IconListDetails, IconLoader2, IconLogout,
+  IconMoon, IconPlayerPause, IconSelector, IconServer2, IconSettings, IconStack2, IconSun, IconTrash, IconX,
 } from '@tabler/icons-react'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
@@ -12,12 +12,15 @@ import { Badge } from './components/ui/badge'
 import { Button } from './components/ui/button'
 import { Card } from './components/ui/card'
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuSegment, DropdownMenuSeparator, DropdownMenuTrigger,
 } from './components/ui/dropdown-menu'
+import { useQueryNav } from './components/date-range'
+import { Combobox } from './components/ui/combobox'
 import { Input } from './components/ui/input'
 import { Label } from './components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select'
-import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenuButton, SidebarProvider, SidebarTrigger } from './components/ui/sidebar'
+import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenuButton, SidebarProvider, SidebarTrigger, useSidebar } from './components/ui/sidebar'
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from './components/ui/sheet'
 import { Skeleton } from './components/ui/skeleton'
 import { TableHead } from './components/ui/table'
 import { dismissToast, toast } from './components/ui/toast'
@@ -62,6 +65,7 @@ export function usePoll(only, seconds) {
       let ok = false
       router.reload({
         only: key.split(','),
+        reset: key.split(','), // a poll replaces a merge prop's first page instead of appending to it
         async: true,
         onSuccess: () => { ok = true },
         onHttpException: () => false, // 429/5xx: no error dialog, just back off
@@ -91,9 +95,8 @@ export function usePoll(only, seconds) {
 const RESULT_TOAST = 'command-result'
 
 /**
- * One control at a time (21 §5): confirm, then post with a fresh command ID. "Try again" and "Check again" resend the same
- * command ID and body. Success is shown from the request's callback, not from a prop: "done" and rejections as a toast, the
- * answers that need a next step (unknown, failed, bulk) inline in CommandBar.
+ * One control at a time (21 §5): confirm, then post with a fresh command ID. Every result is a toast: applied, rejected, unknown
+ * (with Resend: the same command ID and body, so it is applied at most once), no answer (Try again) and bulk results.
  */
 export function useCommand() {
   const [state, setState] = useState(null)
@@ -101,37 +104,42 @@ export function useCommand() {
     acting++
     dismissToast(RESULT_TOAST)
     setState({ ...s, status: 'sending' })
+    const resend = (label) => ({ label, testId: 'again', onClick: () => send(s) })
+    const failed = (code) => toast({ id: RESULT_TOAST, variant: 'error', testId: 'failed', duration: Infinity, title: `${s.label}: no answer`,
+      description: <>Code <code data-testid="failed-code">{code}</code>. Nothing is known to have changed.</>, action: resend('Try again') })
     router.post(s.url, s.body, {
       headers: { 'X-Runwick-Csrf': csrf(), 'X-Runwick-Command-Id': s.commandId },
       preserveScroll: true,
       onSuccess: (page) => {
-        const outcome = page.props.outcome
-        const status = !outcome ? 'done' : outcome.items ? 'bulk' : outcome.code === 'outcome_unknown' ? 'unknown'
-          : ['store_unavailable', 'query_budget_exceeded', 'busy'].includes(outcome.code) ? 'failed' : 'rejected'
-        if (status === 'done') {
-          toast({ id: RESULT_TOAST, variant: 'success', testId: 'done', title: s.label, description: s.done })
-        } else if (status === 'rejected') {
-          toast({ id: RESULT_TOAST, variant: 'destructive', testId: 'rejected', title: `${s.label}: not applied`,
-            description: <>Code <code>{outcome.code}</code>{outcome.actualRevision != null && <> (current revision {outcome.actualRevision})</>}. The page shows the current state.</> })
+        const o = page.props.outcome
+        if (!o) {
+          toast({ id: RESULT_TOAST, variant: 'success', testId: 'done', title: s.label, description: s.done === 'done' ? 'Applied.' : s.done })
+        } else if (o.items) {
+          const bad = o.items.filter((i) => i.code)
+          toast({ id: RESULT_TOAST, variant: bad.length ? 'warning' : 'success', testId: 'bulk', duration: bad.length ? Infinity : undefined, title: s.label,
+            description: <span data-testid="bulk-summary">{o.items.length - bad.length} applied{bad.length > 0 && <>, {bad.length} not: {[...new Set(bad.map((i) => i.code))].map((c) => <code key={c} className="mr-1">{c}</code>)}</>}</span> })
+        } else if (o.code === 'outcome_unknown') {
+          toast({ id: RESULT_TOAST, variant: 'warning', testId: 'unknown', duration: Infinity, title: `${s.label}: result not known yet`,
+            description: 'It may still be applied. Resend sends the same command, which is applied at most once.', action: resend('Resend') })
+        } else if (['store_unavailable', 'query_budget_exceeded', 'busy'].includes(o.code)) {
+          failed(o.code)
+        } else {
+          toast({ id: RESULT_TOAST, variant: 'error', testId: 'rejected', title: `${s.label}: not applied`,
+            description: <>Code <code>{o.code}</code>{o.actualRevision != null && <> (now at revision {o.actualRevision})</>}. The page shows the current state.</> })
         }
-        setState(status === 'done' || status === 'rejected' ? null : { ...s, status, outcome })
+        setState(null)
       },
-      onHttpException: (response) => {
-        setState({ ...s, status: 'failed', outcome: { code: response.data?.code ?? `http_${response.status}` } })
-        return false
-      },
-      onNetworkError: () => {
-        setState({ ...s, status: 'failed', outcome: { code: 'no_answer' } })
-        return false
-      },
+      onHttpException: (response) => { failed(response.data?.code ?? `http_${response.status}`); setState(null); return false },
+      onNetworkError: () => { failed('no_answer'); setState(null); return false },
       onFinish: () => { acting-- },
     })
   }
   return {
     state,
     ask: (label, url, body, done = 'done') => setState({ label, url, body, done, status: 'confirm' }),
+    /** Sends at once, without the confirm dialog (a form in a sheet is its own confirmation). */
+    run: (label, url, body, done = 'done') => send({ label, url, body, done, commandId: crypto.randomUUID() }),
     confirm: () => send({ ...state, commandId: crypto.randomUUID() }),
-    again: () => send(state),
     close: () => setState(null),
     bulk: (label, url, items, reason) =>
       send({ label, url, body: { items: items.map((i) => ({ ...i, commandId: crypto.randomUUID() })), reason }, done: 'done', commandId: '' }),
@@ -151,52 +159,22 @@ export function CommandButton({ command, url, onClick, icon: Icon, children, ...
   )
 }
 
-/** The confirm dialog, and the answers that need a next step: unknown (Check again), failed (Try again) and bulk results. */
+/** The confirm dialog. Results arrive as toasts (useCommand). */
 export function CommandBar({ command }) {
   const s = command.state
-  const o = s?.outcome
   return (
-    <>
-      <AlertDialog open={s?.status === 'confirm'} onOpenChange={(open) => { if (!open) command.close() }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{s?.label}</AlertDialogTitle>
-            <AlertDialogDescription>Are you sure? The change is checked against the revision this page shows.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Back</AlertDialogCancel>
-            <Button data-testid="confirm" onClick={command.confirm}>Confirm</Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      {s && ['unknown', 'failed', 'bulk', 'sending'].includes(s.status) && (
-        <div role="status" data-testid="command" data-status={s.status}
-          className={cn('flex animate-page-in items-start gap-3 rounded-lg border p-4 text-sm',
-            s.status === 'failed' ? 'border-destructive/40 bg-destructive/5' : s.status === 'unknown' ? 'border-warning/40 bg-warning/5' : 'bg-card')}>
-          {s.status === 'sending' ? <IconLoader2 className="mt-0.5 size-4 shrink-0 animate-spin text-primary" />
-            : s.status === 'failed' ? <IconAlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
-              : <IconActivity className="mt-0.5 size-4 shrink-0 text-warning" />}
-          <div className="grid min-w-0 flex-1 gap-2">
-            <strong className="font-medium">{s.label}</strong>
-            {s.status === 'sending' && <span className="text-muted-foreground">Sending…</span>}
-            {s.status === 'unknown' && <span>The result is not known yet (command <code>{o.commandId}</code>). It may still be applied.</span>}
-            {s.status === 'failed' && <span>No result: <code data-testid="failed-code">{o.code}</code>. Nothing is known to have changed.</span>}
-            {s.status === 'bulk' && <ul data-testid="bulk" className="grid gap-1">
-              {o.items.map((i) => (
-                <li key={i.jobId} className="flex flex-wrap items-center gap-2">
-                  <code className="text-muted-foreground">{i.jobId}</code>
-                  <Badge variant={i.code ? 'destructive' : 'success'}>{i.status}</Badge>{i.code && <code>{i.code}</code>}
-                </li>
-              ))}
-            </ul>}
-            {(s.status === 'unknown' || s.status === 'failed') && <div>
-              <Button size="sm" data-testid="again" onClick={command.again}>{s.status === 'unknown' ? 'Check again' : 'Try again'}</Button>
-            </div>}
-          </div>
-          {s.status !== 'sending' && <Button size="icon-sm" variant="ghost" onClick={command.close} aria-label="Dismiss"><IconX /></Button>}
-        </div>
-      )}
-    </>
+    <AlertDialog open={s?.status === 'confirm'} onOpenChange={(open) => { if (!open) command.close() }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{s?.label}</AlertDialogTitle>
+          <AlertDialogDescription>Checked against the revision this page shows.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Back</AlertDialogCancel>
+          <Button data-testid="confirm" onClick={command.confirm}>Confirm</Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 
@@ -263,31 +241,67 @@ function setTheme(theme) {
   themeListeners.forEach((l) => l())
 }
 
-function ThemeToggle() {
-  const theme = useSyncExternalStore((l) => { themeListeners.add(l); return () => themeListeners.delete(l) }, readTheme)
+const THEMES = [['light', 'Light', IconSun], ['system', 'System', IconDeviceDesktop], ['dark', 'Dark', IconMoon]]
+
+// ---- Notifications: recent failures, scaling changes and paused queues since the last look (unread state in this browser). ----
+
+const SEEN_KEY = 'runwick-dashboard-seen'
+const readSeen = () => { try { return JSON.parse(localStorage.getItem(SEEN_KEY)) ?? {} } catch { return {} } }
+
+function useNotifications() {
+  const { notifications: n } = usePage().props
+  useEffect(() => { // the prop is deferred and kept for a minute; refresh it each minute while the tab is visible
+    const t = setInterval(() => { if (!document.hidden && acting === 0) router.reload({ only: ['notifications'], async: true, onHttpException: () => false, onNetworkError: () => false }) }, 60_000)
+    return () => clearInterval(t)
+  }, [])
+  const [seen, setSeen] = useState(readSeen)
+  const at = seen.at ? Date.parse(seen.at) : 0
+  const items = [
+    ...(n?.failed ?? []).map((f) => ({ key: `f${f.jobId}`, kind: 'failed', at: f.at, title: f.jobName, text: `failed on ${f.queue}`, href: `/jobs/${f.jobId}` })),
+    ...(n?.scaling ?? []).map((e) => ({ key: `s${e.eventId}`, kind: 'scaling', at: e.at, title: e.pool, text: `target ${e.oldTarget} → ${e.newTarget}`, href: '/scaling' })),
+    ...(n?.paused ?? []).map((q) => ({ key: `p${q.name}@${q.revision}`, kind: 'paused', at: null, title: q.name, text: 'queue paused', href: '/queues' })),
+  ].sort((a, b) => (b.at ? Date.parse(b.at) : Infinity) - (a.at ? Date.parse(a.at) : Infinity))
+  const unread = (i) => (i.at ? Date.parse(i.at) > at : !(seen.paused ?? []).includes(i.key))
+  const markSeen = () => {
+    const next = { at: new Date().toISOString(), paused: items.filter((i) => i.kind === 'paused').map((i) => i.key) }
+    try { localStorage.setItem(SEEN_KEY, JSON.stringify(next)) } catch { /* not remembered */ }
+    setSeen(next)
+  }
+  return { loaded: n !== undefined, items, unread, count: items.filter(unread).length, markSeen }
+}
+
+const KIND = { failed: [IconAlertTriangle, 'text-destructive'], scaling: [IconGauge, 'text-primary'], paused: [IconPlayerPause, 'text-warning'] }
+
+/** The notifications list, in a sheet opened from the account menu; closing it marks everything seen. */
+function NotificationsSheet({ open, onOpenChange, notes }) {
+  const { base } = usePage().props
+  const { loaded, items, unread, markSeen } = notes
   return (
-    <DropdownMenu>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label="Theme">
-              <IconSun className="scale-100 rotate-0 transition-transform duration-300 dark:scale-0 dark:-rotate-90" />
-              <IconMoon className="absolute scale-0 rotate-90 transition-transform duration-300 dark:scale-100 dark:rotate-0" />
-            </Button>
-          </DropdownMenuTrigger>
-        </TooltipTrigger>
-        <TooltipContent>Theme</TooltipContent>
-      </Tooltip>
-      <DropdownMenuContent align="end">
-        <DropdownMenuLabel>Theme</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={theme} onValueChange={setTheme}>
-          <DropdownMenuRadioItem value="light"><IconSun />Light</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="dark"><IconMoon />Dark</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="system"><IconDeviceDesktop />System</DropdownMenuRadioItem>
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <Sheet open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) markSeen() }}>
+      <SheetContent side="right" className="gap-0 p-0" data-testid="notifications-panel">
+        <SheetHeader className="border-b"><SheetTitle>Notifications</SheetTitle><SheetDescription>The last 24 hours</SheetDescription></SheetHeader>
+        {!loaded ? <div className="grid gap-2 p-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12" />)}</div>
+          : items.length === 0 ? <p className="px-3 py-12 text-center text-sm text-muted-foreground">Nothing new.</p>
+            : <ul className="min-h-0 flex-1 overflow-y-auto p-2">{items.map((i) => {
+              const [Icon, tone] = KIND[i.kind]
+              return (
+                <li key={i.key}>
+                  <Link href={base + i.href} onClick={() => onOpenChange(false)} className="flex items-start gap-3 rounded-md px-2.5 py-2.5 text-sm outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50">
+                    <Icon aria-hidden className={cn('mt-0.5 size-4 shrink-0', tone)} />
+                    <span className="grid min-w-0 flex-1"><span className="truncate font-medium">{i.title}</span><span className="text-xs text-muted-foreground">{i.text}{i.at && <> · {relativeTime(i.at)}</>}</span></span>
+                    {unread(i) && <span aria-label="new" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-highlight ring-2 ring-highlight/30" />}
+                  </Link>
+                </li>
+              )
+            })}</ul>}
+      </SheetContent>
+    </Sheet>
   )
+}
+
+const relativeTime = (iso) => {
+  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000)
+  return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`
 }
 
 // ---- Layout -----------------------------------------------------------------------------------------------------------------
@@ -333,27 +347,79 @@ function Brand() {
   const { title } = usePage().props
   return (
     <div className="flex h-9 items-center gap-2.5 px-0.5">
-      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-primary to-primary/70 text-primary-foreground shadow-sm ring-1 ring-primary/20">
+      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-midnight-violet-950 text-highlight ring-1 ring-midnight-violet-800 dark:bg-highlight dark:text-midnight-violet-950 dark:ring-0">
         <IconBolt className="size-4.5" aria-hidden />
       </span>
-      <span className="grid min-w-0 leading-tight transition-opacity duration-200 group-data-[sidebar=collapsed]/sidebar:sr-only">
-        <span className="truncate font-semibold tracking-tight" data-testid="title">{title}</span>
-        <span className="truncate text-xs text-muted-foreground">Jobs dashboard</span>
-      </span>
+      <span className="truncate font-semibold tracking-tight transition-opacity duration-200 group-data-[sidebar=collapsed]/sidebar:sr-only" data-testid="title">{title}</span>
     </div>
   )
 }
 
-function UserRow() {
-  const { user } = usePage().props
+const Avatar = ({ name, className }) => (
+  <span aria-hidden className={cn('grid size-8 shrink-0 place-items-center rounded-lg bg-primary/15 text-xs font-semibold text-primary dark:bg-primary/20', className)}>{initials(name)}</span>
+)
+
+/**
+ * The footer: one account button (who is signed in) that opens a menu with notifications, settings, the theme switch and
+ * sign out. In the icon rail only the avatar shows; a dot on it says there are unread notifications.
+ */
+function Footer() {
+  const { user, userDetail, signOut, can, base } = usePage().props
+  const { open, mobile } = useSidebar()
+  const theme = useSyncExternalStore((l) => { themeListeners.add(l); return () => themeListeners.delete(l) }, readTheme)
+  const notes = useNotifications()
+  const [sheet, setSheet] = useState(false)
+  const sheetNext = useRef(false) // open the sheet only once the menu has closed, so the two modal layers never overlap
+  const rail = !open && !mobile
   return (
-    <div className="flex h-10 min-w-0 items-center gap-2.5 px-0.5">
-      <span aria-hidden className="grid size-8 shrink-0 place-items-center rounded-full bg-accent text-xs font-semibold text-accent-foreground ring-1 ring-border">{initials(user)}</span>
-      <span className="grid min-w-0 text-sm leading-tight group-data-[sidebar=collapsed]/sidebar:sr-only">
-        <span className="text-xs text-muted-foreground">Signed in as</span>
-        <span className="truncate font-medium" data-testid="user">{user}</span>
-      </span>
-    </div>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button type="button" data-testid="account" aria-label={notes.count ? `Account, ${notes.count} new notifications` : 'Account'}
+            className={cn('flex w-full min-w-0 items-center gap-2.5 rounded-lg bg-sidebar-accent/60 p-1.5 text-left outline-none ring-1 ring-sidebar-border transition-colors hover:bg-sidebar-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[state=open]:bg-sidebar-accent', rail && 'justify-center bg-transparent p-1 ring-0')}>
+            <span className="relative">
+              <Avatar name={user} />
+              {notes.count > 0 && <span data-testid="unread" className="absolute -top-1 -right-1 size-2.5 rounded-full bg-highlight ring-2 ring-sidebar" />}
+            </span>
+            <span className={cn('grid min-w-0 flex-1 leading-tight', rail && 'sr-only')}>
+              <span className="truncate text-sm font-medium" data-testid="user">{user}</span>
+              {userDetail && <span className="truncate text-xs text-muted-foreground">{userDetail}</span>}
+            </span>
+            {!rail && <IconSelector aria-hidden className="size-4 shrink-0 text-muted-foreground" />}
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side={mobile ? 'top' : 'right'} align="end" sideOffset={mobile ? 6 : 10} className="w-64 rounded-xl p-0 shadow-lg" data-testid="account-menu"
+          onCloseAutoFocus={(e) => { if (sheetNext.current) { sheetNext.current = false; e.preventDefault(); setSheet(true) } }}>
+          <div className="flex items-center gap-2.5 p-2.5">
+            <Avatar name={user} />
+            <span className="grid min-w-0 leading-tight"><span className="truncate text-sm font-semibold">{user}</span>
+              {userDetail && <span className="truncate text-xs text-muted-foreground">{userDetail}</span>}</span>
+          </div>
+          <DropdownMenuSeparator className="mx-0 my-0" />
+          <div className="p-1">
+            <DropdownMenuItem data-testid="notifications" onSelect={() => { sheetNext.current = true }}>
+              <IconBell />Notifications
+              {notes.count > 0 && <span className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-highlight px-1.5 text-[0.6875rem] font-semibold text-highlight-foreground tabular-nums">{notes.count > 9 ? '9+' : notes.count}</span>}
+            </DropdownMenuItem>
+            {can.settings && <DropdownMenuItem asChild><Link href={`${base}/settings`} data-testid="account-settings"><IconSettings />Settings</Link></DropdownMenuItem>}
+          </div>
+          <DropdownMenuSeparator className="mx-0 my-0" />
+          <div className="flex items-center justify-between gap-2 py-1.5 pr-1.5 pl-3">
+            <span className="text-sm">Theme</span>
+            <DropdownMenuRadioGroup value={theme} onValueChange={setTheme} aria-label="Theme" className="flex items-center gap-0.5 rounded-full bg-muted p-0.5" data-testid="theme">
+              {THEMES.map(([v, label, I]) => <DropdownMenuSegment key={v} value={v} aria-label={label} title={label} data-testid={`theme-${v}`} onSelect={(e) => e.preventDefault()}><I /></DropdownMenuSegment>)}
+            </DropdownMenuRadioGroup>
+          </div>
+          {signOut && <>
+            <DropdownMenuSeparator className="mx-0 my-0" />
+            <form method="post" action={signOut} className="p-1">
+              <DropdownMenuItem asChild><button type="submit" className="w-full" data-testid="sign-out"><IconLogout />Log out</button></DropdownMenuItem>
+            </form>
+          </>}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <NotificationsSheet open={sheet} onOpenChange={setSheet} notes={notes} />
+    </>
   )
 }
 
@@ -365,7 +431,7 @@ function LiveIndicator({ seconds }) {
     <Tooltip>
       <TooltipTrigger asChild>
         <span tabIndex={0} className="inline-flex items-center gap-2 rounded-full border bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
-          <span className={cn('size-2 rounded-full', hidden ? 'bg-muted-foreground/50' : 'animate-live bg-success')} />
+          <span className={cn('size-2 rounded-full', hidden ? 'bg-muted-foreground/50' : 'animate-live bg-highlight')} />
           {hidden ? 'Paused' : 'Live'}
         </span>
       </TooltipTrigger>
@@ -401,7 +467,7 @@ export function Layout({ heading, description, actions, live, children }) {
       <Sidebar label="Dashboard">
         <SidebarHeader><Brand /></SidebarHeader>
         <SidebarContent><Nav /></SidebarContent>
-        <SidebarFooter><UserRow /></SidebarFooter>
+        <SidebarFooter><Footer /></SidebarFooter>
       </Sidebar>
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/80 px-3 backdrop-blur-md md:px-5">
@@ -410,7 +476,6 @@ export function Layout({ heading, description, actions, live, children }) {
           <p className="min-w-0 truncate text-sm text-muted-foreground"><span className="hidden sm:inline">Runwick / </span><span className="font-medium text-foreground">{TITLES[component] ?? component}</span></p>
           <div className="flex-1" />
           <LiveIndicator seconds={live} />
-          <ThemeToggle />
         </header>
         <main className="mx-auto grid w-full max-w-[96rem] min-w-0 flex-1 content-start gap-6 p-4 md:p-6">
           <div className="flex flex-wrap items-end justify-between gap-3">
@@ -420,8 +485,8 @@ export function Layout({ heading, description, actions, live, children }) {
             </div>
             {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
           </div>
-          {notice && <p className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm" data-testid="notice">
-            <IconAlertTriangle className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          {notice && <p className="flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm" data-testid="notice">
+            <IconAlertTriangle className="size-4 shrink-0 text-warning" />
             {notice === 'invalid_cursor' ? 'That page link expired or is not valid; showing the first page.' : <span>The filter was not accepted: <code>{notice}</code></span>}
           </p>}
           {navigating ? <PageSkeleton /> : <div key={component} className="grid min-w-0 animate-page-in gap-6">{children}</div>}
@@ -463,38 +528,58 @@ export function Pager({ page, cursorParam = 'cursor' }) {
 }
 
 /**
- * A GET filter form: submits as an Inertia visit with the non-empty fields as the query. A field is [name, label] (text) or
- * [name, label, options] (a select; 'any' sends nothing).
+ * Filters in a side sheet (21 §4.2): a "Filters" button showing how many are set, and a sheet with one control per field.
+ * A field is { name, label, options?, free? }: options make it a select (or, with `free`, a searchable combobox that also takes
+ * typed text); none makes it a text field. Apply visits the page with the set fields as the query (other query values, such as
+ * the date range, are kept); Clear removes them all.
  */
-export function Filters({ fields, values }) {
-  const { url } = usePage()
-  const path = new URL(url, window.location.href).pathname
-  const active = fields.some(([name]) => values?.[name])
-  const submit = (e) => {
+export function FilterSheet({ fields, values }) {
+  const go = useQueryNav()
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState({})
+  const count = fields.filter((f) => values?.[f.name]).length
+  const set = (name, v) => setDraft((d) => ({ ...d, [name]: v }))
+  const apply = (e) => {
     e.preventDefault()
-    const data = Object.fromEntries([...new FormData(e.target)].filter(([, v]) => v !== '' && v !== 'any'))
-    router.get(path, data)
+    setOpen(false)
+    go(Object.fromEntries(fields.map((f) => [f.name, draft[f.name] && draft[f.name] !== 'any' ? draft[f.name] : null])))
   }
   return (
-    <form className="flex flex-wrap items-end gap-3" onSubmit={submit} data-testid="filters">
-      {fields.map(([name, label, options]) => (
-        <div key={name} className="grid gap-1.5">
-          <Label htmlFor={`filter-${name}`} className="text-xs text-muted-foreground">{label}</Label>
-          {options
-            ? <Select name={name} defaultValue={values?.[name] ?? 'any'}>
-              <SelectTrigger id={`filter-${name}`} className="h-8 min-w-36"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="any">Any</SelectItem>
-                {options.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            : <Input id={`filter-${name}`} name={name} defaultValue={values?.[name] ?? ''} className="h-8 w-40"
-              placeholder={name === 'from' || name === 'to' ? 'YYYY-MM-DDThh:mmZ' : 'Any'} />}
-        </div>
-      ))}
-      <Button type="submit" size="sm"><IconFilter />Filter</Button>
-      {active && <Button asChild size="sm" variant="ghost"><Link href={path}><IconX />Clear</Link></Button>}
-    </form>
+    <Sheet open={open} onOpenChange={(o) => { setOpen(o); if (o) setDraft(Object.fromEntries(fields.map((f) => [f.name, values?.[f.name] ?? '']))) }}>
+      <div className="flex items-center gap-1">
+        <SheetTrigger asChild>
+          <Button variant="outline" size="sm" data-testid="filters"><IconFilter />Filters{count > 0 && <Badge variant="default" className="h-5 min-w-5 justify-center rounded-full px-1">{count}</Badge>}</Button>
+        </SheetTrigger>
+        {count > 0 && <Button variant="ghost" size="icon-sm" aria-label="Clear filters" data-testid="clear-filters" onClick={() => go(Object.fromEntries(fields.map((f) => [f.name, null])))}><IconX /></Button>}
+      </div>
+      <SheetContent data-testid="filter-sheet">
+        <SheetHeader><SheetTitle>Filters</SheetTitle><SheetDescription className="sr-only">Narrow the list</SheetDescription></SheetHeader>
+        <form onSubmit={apply} className="flex min-h-0 flex-1 flex-col">
+          <div className="grid flex-1 content-start gap-4 overflow-y-auto px-5">
+            {fields.map((f) => (
+              <div key={f.name} className="grid gap-1.5">
+                <Label htmlFor={`filter-${f.name}`}>{f.label}</Label>
+                {f.options && f.free
+                  ? <Combobox id={`filter-${f.name}`} label={f.label} value={draft[f.name] ?? ''} onChange={(v) => set(f.name, v)} options={f.options} free />
+                  : f.options
+                    ? <Select value={draft[f.name] || 'any'} onValueChange={(v) => set(f.name, v)}>
+                      <SelectTrigger id={`filter-${f.name}`} data-testid={`filter-${f.name}`} className="w-full"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="any">Any</SelectItem>
+                        {f.options.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    : <Input id={`filter-${f.name}`} data-testid={`filter-${f.name}`} value={draft[f.name] ?? ''} placeholder="Any" onChange={(e) => set(f.name, e.target.value)} />}
+              </div>
+            ))}
+          </div>
+          <SheetFooter>
+            <Button type="button" variant="ghost" onClick={() => setDraft(Object.fromEntries(fields.map((f) => [f.name, ''])))}>Reset</Button>
+            <Button type="submit" data-testid="apply-filters">Apply</Button>
+          </SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -543,30 +628,46 @@ export function useChanged(items, key, value) {
 
 export { StatusBadge as StateBadge } from './components/status'
 
-/** Copies a value; the icon turns into a check for a moment, and screen readers hear "Copied". */
-export function CopyButton({ value, label = 'Copy' }) {
+async function copy(value) {
+  try {
+    await navigator.clipboard.writeText(value)
+    toast({ id: 'copied', variant: 'copied', testId: 'copied', title: 'Copied' })
+    return true
+  } catch { return false } // the browser refused; nothing to confirm
+}
+
+/** Copies a value; the icon turns into a check for a moment and a "Copied" toast shows (also read out). */
+export function CopyButton({ value, label = 'Copy', className }) {
   const [copied, setCopied] = useState(false)
   if (!navigator.clipboard) return null
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch { /* the browser refused; nothing to confirm */ }
+  const onClick = async (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (await copy(value)) { setCopied(true); setTimeout(() => setCopied(false), 1500) }
   }
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button type="button" size="icon-sm" variant="ghost" onClick={copy} aria-label={label} className="size-7 text-muted-foreground">
-          <span className="relative size-4">
-            <IconCopy className={cn('absolute inset-0 size-4 transition-all duration-200', copied ? 'scale-50 opacity-0' : 'scale-100 opacity-100')} />
-            <IconCheck className={cn('absolute inset-0 size-4 text-success transition-all duration-200', copied ? 'scale-100 opacity-100' : 'scale-50 opacity-0')} />
+        <button type="button" onClick={onClick} aria-label={label} data-testid="copy"
+          className={cn('inline-grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50', className)}>
+          <span className="relative size-3.5">
+            <IconCopy className={cn('absolute inset-0 size-3.5 transition-all duration-200', copied ? 'scale-50 opacity-0' : 'scale-100 opacity-100')} />
+            <IconCheck className={cn('absolute inset-0 size-3.5 text-success transition-all duration-200', copied ? 'scale-100 opacity-100' : 'scale-50 opacity-0')} />
           </span>
-        </Button>
+        </button>
       </TooltipTrigger>
       <TooltipContent>{copied ? 'Copied' : label}</TooltipContent>
-      <span className="sr-only" aria-live="polite">{copied ? 'Copied' : ''}</span>
     </Tooltip>
+  )
+}
+
+/** A value (ID, error code, queue or job name) with a copy button that appears on hover or keyboard focus. */
+export function Copyable({ value, children, label, className }) {
+  return (
+    <span className={cn('group/copy inline-flex max-w-full min-w-0 items-center gap-1', className)}>
+      <span className="min-w-0 truncate">{children ?? value}</span>
+      <CopyButton value={String(value)} label={label ?? 'Copy'} className="opacity-0 transition-opacity group-hover/copy:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100" />
+    </span>
   )
 }
 

@@ -45,7 +45,8 @@ for k, v in sorted(lockf["packages"].items()):
     if not k or v.get("dev") or v.get("link"):  # a link entry points at a local package, checked under its own path
         continue
     lic = v.get("license", "MISSING")
-    ok = f"npm:{lic}" in allow
+    name = k.split("node_modules/")[-1]
+    ok = f"npm:{lic}" in allow or f"npm:{name} {lic}" in allow  # the second form allows one named package (fonts under OFL-1.1)
     n_npm += 1
     print(f"{'ok ' if ok else 'BAD'} npm {k.split('node_modules/')[-1]} {v['version']} {lic}")
     if not ok:

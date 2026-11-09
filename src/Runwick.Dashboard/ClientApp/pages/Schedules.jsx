@@ -4,7 +4,7 @@ import { Label } from '../components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { cn } from '../components/ui/utils'
-import { CommandBar, CommandButton, Layout, Pager, StateBadge, TableCard, time, useChanged, useCommand, usePoll, useSort } from '../lib'
+import { CommandBar, CommandButton, Copyable, Layout, Pager, StateBadge, TableCard, time, useChanged, useCommand, usePoll, useSort } from '../lib'
 
 export default function Schedules({ base, can, schedules }) {
   const live = usePoll(['schedules'], 10)
@@ -35,8 +35,8 @@ export default function Schedules({ base, can, schedules }) {
           </TableRow></TableHeader>
           <TableBody>{rows.map((s) => (
             <TableRow key={`${s.key}:${changed[s.key] ?? 0}`} data-testid="schedule-row" className={cn(changed[s.key] && 'animate-flash')}>
-              <TableCell className="font-medium">{s.key}</TableCell>
-              <TableCell data-testid="schedule-state"><StateBadge state={s.paused ? 'paused' : 'active'} />{s.needsReview && <span className="ml-1.5 text-xs text-warning"> (needs review)</span>}</TableCell>
+              <TableCell className="font-medium"><Copyable value={s.key} label="Copy schedule key" /></TableCell>
+              <TableCell data-testid="schedule-state"><StateBadge state={s.paused ? 'paused' : 'active'} />{s.needsReview && <span className="ml-1.5 text-xs text-warning">needs review</span>}</TableCell>
               <TableCell className="whitespace-nowrap">{time(s.nextDueAt)}</TableCell><TableCell className="whitespace-nowrap text-muted-foreground">{time(s.lastMaterializedAt)}</TableCell>
               <TableCell className="text-xs whitespace-nowrap text-muted-foreground">definition {s.definitionRevision}, control {s.controlRevision}</TableCell>
               <TableCell>

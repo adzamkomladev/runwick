@@ -6,14 +6,18 @@
     "build": "vite build && node source-hash.mjs"
   },
   "dependencies": {
+    "@fontsource-variable/geist-mono": "5.3.0",
+    "@fontsource-variable/space-grotesk": "5.3.0",
     "@inertiajs/core": "3.9.1",
     "@inertiajs/react": "3.9.1",
     "@tabler/icons-react": "3.49.0",
     "aria-hidden": "file:shims/aria-hidden",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
+    "date-fns": "4.4.0",
     "radix-ui": "1.8.1",
     "react": "19.3.1",
+    "react-day-picker": "10.0.2",
     "react-dom": "19.3.1",
     "react-remove-scroll": "file:shims/react-remove-scroll",
     "tailwind-merge": "3.7.0",
