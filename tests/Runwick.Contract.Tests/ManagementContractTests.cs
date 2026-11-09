@@ -20,6 +20,9 @@ public sealed class ManagementContractTests
 {
     public static TheoryData<StoreKind> Kinds => CoreContractTests.Kinds;
 
+    /// <summary>PostgreSQL only, when the run covers it: the fault point that holds a read exists on the PostgreSQL runner.</summary>
+    public static TheoryData<StoreKind> PostgresKind => [.. CoreContractTests.Kinds.Select(row => row.Data).Where(k => k == StoreKind.Postgres)];
+
     static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     static readonly ManagementCaller Admin = new(new ManagementActor("admin", null, "test"), [.. ManagementPermissions.All.Select(p => new ManagementGrant(p))]);
@@ -138,6 +141,22 @@ public sealed class ManagementContractTests
         await Assert.ThrowsAsync<StoreUnavailableException>(() => Session(c).RevealPayloadAsync(Admin, job, cancellationToken: Ct));
         Assert.True(reveal.Fired >= 1);
         Assert.Equal(0, await Count(f, "SELECT count(*) FROM runwick.management_audit"));
+    }
+
+    [Theory]
+    [MemberData(nameof(PostgresKind))]
+    [Trait("Category", "Fault")]
+    public async Task A_read_the_caller_cancels_is_a_cancellation_not_an_unavailable_store(StoreKind kind)
+    {
+        // The read is held at the PostgreSQL runner's BeforeGateLock point; the session mapping it checks is shared by every store.
+        // SP-029 P-07: a dashboard viewer stopped mid-read got StoreUnavailableException instead of a cancellation.
+        var (f, c) = await OpenAsync(kind, "mgmtcancel");
+        await using var _ = f;
+        var hold = f.ArmFault(FaultPoint.BeforeGateLock, FaultSpec.Sleep(TimeSpan.FromSeconds(30)), new FaultTarget { Operation = "ManagementRead" }, times: 1);
+        using var viewer = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        viewer.CancelAfter(TimeSpan.FromMilliseconds(200));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Session(c).ListJobsAsync(Admin, new JobListQuery(), viewer.Token));
+        Assert.Equal(1, hold.Fired);
     }
 
     [Theory]
