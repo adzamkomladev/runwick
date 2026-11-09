@@ -15,7 +15,7 @@ internal abstract class DashboardPage
     /// <summary>Page and action names to the permission each needs: the <c>can</c> map and the navigation (a display hint only).</summary>
     public static readonly IReadOnlyDictionary<string, string> Abilities = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        ["jobs"] = P.JobsRead, ["queues"] = P.QueuesRead, ["workers"] = P.CapacityRead, ["schedules"] = P.SchedulesRead,
+        ["overview"] = P.JobsRead, ["jobs"] = P.JobsRead, ["queues"] = P.QueuesRead, ["workers"] = P.CapacityRead, ["schedules"] = P.SchedulesRead,
         ["scaling"] = P.CapacityRead, ["settings"] = P.SettingsRead, ["retention"] = P.SettingsRead, ["audit"] = P.AuditRead,
         ["cancel"] = P.JobsCancel, ["retry"] = P.JobsRetry, ["rerun"] = P.JobsRerun, ["revealPayload"] = P.JobsReadPayload,
         ["revealError"] = P.JobsReadError, ["queueControl"] = P.QueuesControl, ["capacityEdit"] = P.CapacityEdit,

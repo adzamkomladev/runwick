@@ -1,0 +1,9 @@
+{
+  "name": "react-remove-scroll",
+  "version": "0.0.0-runwick",
+  "description": "Runwick shim: locks body scroll through a data attribute and static CSS. The real package injects a <style> tag (blocked by the dashboard CSP) and pulls tslib.",
+  "license": "MIT",
+  "type": "module",
+  "main": "index.js",
+  "peerDependencies": { "react": "*" }
+}

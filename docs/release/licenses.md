@@ -15,6 +15,7 @@ Runwick itself is MIT-licensed (`LICENSE` at the repository root; every package 
 | BSD-2-Clause, BSD-3-Clause | permissive, attribution only |
 | PostgreSQL | permissive (Npgsql uses it) |
 | npm: MIT | the dashboard's bundled web libraries |
+| npm: Apache-2.0 | `class-variance-authority`, used by the dashboard's shadcn/ui components (added 2026-11-09) |
 
 Anything else (GPL, LGPL, MPL, AGPL, SSPL, "custom", missing) is not allowed automatically. Flag it for the owner; do not add it to the list to make the check pass.
 
@@ -29,6 +30,8 @@ NuGet, grouped by licence:
 - PostgreSQL: Npgsql 10.0.3.
 
 npm (all MIT; built into the dashboard's `dist/` assets by `npm run build`): @inertiajs/core 3.9.1, @inertiajs/react 3.9.1, react 19.3.1, react-dom 19.3.1, scheduler 0.28.0, es-toolkit 1.53.2, laravel-precognition 2.1.1, @jridgewell/resolve-uri 3.1.2, @jridgewell/sourcemap-codec 1.6.0, @jridgewell/trace-mapping 0.3.31. Build-only tools (vite, @vitejs/plugin-react) are not shipped and are not checked.
+
+Update (2026-11-09, dashboard rebuilt on shadcn/ui): 82 npm production packages, all MIT except `class-variance-authority` 0.7.1 (Apache-2.0), now on the allow-list. The new ones are `radix-ui` 1.8.1 and its `@radix-ui/*` and `@floating-ui/*` parts, `@tabler/icons-react` and `@tabler/icons` 3.49.0, `tailwindcss` 4.3.3, `tw-animate-css` 1.4.0, `clsx` 2.1.1, `tailwind-merge` 3.7.0 and `class-variance-authority`; `eng/check-licenses.sh` prints the full list. Not taken, because each needs an owner decision: `lucide-react` and Recharts' d3 packages (ISC), and `tslib` (0BSD), which `react-remove-scroll` and `aria-hidden` pull in; those two are replaced by local MIT shims in `ClientApp/shims/`. Build-only tools (`@tailwindcss/vite` and its native parts) are not shipped and are not checked. `THIRD-PARTY-NOTICES.md` was regenerated from the new lock file.
 
 ## Bundled native SQLite
 

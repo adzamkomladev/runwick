@@ -1,16 +1,136 @@
-:root { color-scheme: light dark; --line: #8884; --muted: #777; }
-body { font-family: system-ui, sans-serif; margin: 0; }
-header { display: flex; gap: 1.5rem; align-items: center; padding: .75rem 1.5rem; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-header nav { display: flex; gap: 1rem; flex-wrap: wrap; }
-.brand { font-weight: 600; }
-.user { margin-left: auto; color: var(--muted); }
-main { padding: 1rem 1.5rem; }
-table { border-collapse: collapse; margin: .5rem 0; }
-td, th { border: 1px solid var(--line); padding: .25rem .5rem; text-align: left; vertical-align: top; }
-.notice { padding: .5rem; border: 1px solid #888; margin: 1rem 0; }
-.pager, .muted { color: var(--muted); }
-.filters { display: flex; gap: .75rem; flex-wrap: wrap; align-items: end; margin: .5rem 0; }
-pre { white-space: pre-wrap; word-break: break-all; border: 1px solid var(--line); padding: .5rem; }
-button { margin-right: .25rem; }
-dl { display: grid; grid-template-columns: max-content auto; gap: .25rem 1rem; }
-dt { color: var(--muted); }
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Theme: shadcn/ui token names, Runwick colours. System fonts only (the CSP allows no outside font). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(0.985 0.002 250);
+  --foreground: oklch(0.2 0.02 260);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2 0.02 260);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2 0.02 260);
+  --primary: oklch(0.47 0.16 264);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.955 0.008 260);
+  --secondary-foreground: oklch(0.25 0.02 260);
+  --muted: oklch(0.955 0.008 260);
+  --muted-foreground: oklch(0.48 0.02 260);
+  --accent: oklch(0.94 0.02 264);
+  --accent-foreground: oklch(0.25 0.06 264);
+  --destructive: oklch(0.53 0.2 27);
+  --success: oklch(0.5 0.13 155);
+  --warning: oklch(0.52 0.13 65);
+  --border: oklch(0.91 0.008 260);
+  --input: oklch(0.88 0.01 260);
+  --ring: oklch(0.55 0.16 264);
+  --chart-1: oklch(0.55 0.16 264);
+  --chart-2: oklch(0.6 0.15 160);
+  --chart-3: oklch(0.6 0.2 27);
+  --chart-4: oklch(0.68 0.15 75);
+  --chart-5: oklch(0.6 0.14 300);
+  --sidebar: oklch(0.97 0.004 260);
+  --sidebar-border: oklch(0.91 0.008 260);
+  color-scheme: light;
+}
+
+.dark {
+  --background: oklch(0.16 0.012 265);
+  --foreground: oklch(0.96 0.005 260);
+  --card: oklch(0.2 0.014 265);
+  --card-foreground: oklch(0.96 0.005 260);
+  --popover: oklch(0.21 0.014 265);
+  --popover-foreground: oklch(0.96 0.005 260);
+  --primary: oklch(0.72 0.13 264);
+  --primary-foreground: oklch(0.18 0.03 264);
+  --secondary: oklch(0.26 0.014 265);
+  --secondary-foreground: oklch(0.96 0.005 260);
+  --muted: oklch(0.26 0.014 265);
+  --muted-foreground: oklch(0.72 0.015 260);
+  --accent: oklch(0.29 0.03 264);
+  --accent-foreground: oklch(0.96 0.005 260);
+  --destructive: oklch(0.7 0.17 25);
+  --success: oklch(0.74 0.14 155);
+  --warning: oklch(0.8 0.13 80);
+  --border: oklch(1 0 0 / 11%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.72 0.13 264);
+  --chart-1: oklch(0.72 0.13 264);
+  --chart-2: oklch(0.74 0.14 160);
+  --chart-3: oklch(0.7 0.17 25);
+  --chart-4: oklch(0.8 0.13 80);
+  --chart-5: oklch(0.72 0.13 300);
+  --sidebar: oklch(0.18 0.013 265);
+  --sidebar-border: oklch(1 0 0 / 9%);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-border: var(--sidebar-border);
+  --animate-flash: flash 1.6s ease-out;
+  --animate-page-in: page-in 0.22s ease-out;
+  --animate-live: live 2s ease-out infinite;
+}
+
+@keyframes flash {
+  from { background-color: color-mix(in oklch, var(--primary) 22%, transparent); }
+  to { background-color: transparent; }
+}
+@keyframes page-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes live {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--success) 55%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 6px transparent; }
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  body { @apply bg-background text-foreground antialiased; }
+  /* Set by the react-remove-scroll shim while a dialog, sheet or menu is open. */
+  body[data-scroll-locked] { overflow: hidden; }
+  code { @apply font-mono text-[0.85em]; }
+}
+
+/* Every animation and transition is cut to nothing when the person asks for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

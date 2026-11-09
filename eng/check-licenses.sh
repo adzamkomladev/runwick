@@ -42,7 +42,7 @@ cdir = "src/Runwick.Dashboard/ClientApp"
 lockf = json.load(open(f"{cdir}/package-lock.json"))
 n_npm = 0
 for k, v in sorted(lockf["packages"].items()):
-    if not k or v.get("dev"):
+    if not k or v.get("dev") or v.get("link"):  # a link entry points at a local package, checked under its own path
         continue
     lic = v.get("license", "MISSING")
     ok = f"npm:{lic}" in allow

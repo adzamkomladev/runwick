@@ -30,7 +30,7 @@ async page => {
     await page.getByTestId('nav-jobs').click()
     await page.getByTestId('job-row').first().waitFor()
     check(await page.getByTestId('job-row').count() >= 5, 'rows')
-    for (const nav of ['jobs', 'queues', 'workers', 'schedules', 'scaling', 'settings', 'retention', 'audit']) {
+    for (const nav of ['overview', 'jobs', 'queues', 'workers', 'schedules', 'scaling', 'settings', 'retention', 'audit']) {
       check(await page.getByTestId(`nav-${nav}`).count() === 1, `nav-${nav}`)
     }
   })
@@ -112,7 +112,7 @@ async page => {
     check(polls.length === 1, `${polls.length} polls on becoming visible`)
   })
   await step('every other page renders', async () => {
-    for (const [nav, id] of [['queues', 'queues'], ['workers', 'workers'], ['schedules', 'schedules'], ['scaling', 'events'], ['settings', 'settings'],
+    for (const [nav, id] of [['overview', 'kpi-created'], ['queues', 'queues'], ['workers', 'workers'], ['schedules', 'schedules'], ['scaling', 'events'], ['settings', 'settings'],
       ['retention', 'policy'], ['audit', 'audit']]) {
       await page.getByTestId(`nav-${nav}`).click()
       await page.getByTestId(id).waitFor()
