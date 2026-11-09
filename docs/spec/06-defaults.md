@@ -6,7 +6,7 @@ Every numeric default used by milestone M2 is in this file. Behavior that uses e
 
 ## Changes (2026-11-09, attempt usage)
 
-`WorkerOptions.RecordResourceUsage` = **true**. Per attempt the worker reads process CPU time and allocated bytes at both ends of the attempt (measured cost about 2 × 6 µs and 2 × 13 ns), and one shared timer reads the working set every 250 ms (about 0.1 ms per read) while any attempt runs. The measured end-to-end overhead is in the attempt-usage report. With it off nothing is read and attempts store no usage (16 §2.2).
+`WorkerOptions.RecordResourceUsage` = **true**. Per attempt the worker reads process CPU time and allocated bytes at both ends of the attempt (measured cost about 2 × 6 µs and 2 × 13 ns), and one shared timer reads the working set every 250 ms (about 0.1 ms per read) while any attempt runs. End to end, three alternating on/off drain runs (20 000 jobs, 16 workers, PostgreSQL) gave a median of 103.5 jobs/s on and 100.2 off: no difference above the run-to-run spread of about 15%. Details in `docs/reports/attempt-usage.md`. With it off nothing is read and attempts store no usage (16 §2.2).
 
 ## Changes (2026-11-08, SP-025 spec)
 
