@@ -1,6 +1,5 @@
 import { Link, usePage } from '@inertiajs/react'
 import { DateRangePicker, presetMs } from '../components/date-range'
-import { Skeleton } from '../components/ui/skeleton'
 import {
   IconAlertTriangle, IconArrowDownRight, IconArrowRight, IconArrowUpRight, IconCircleCheck, IconListDetails, IconLoader, IconMinus,
 } from '@tabler/icons-react'
@@ -12,7 +11,7 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { cn } from '../components/ui/utils'
-import { AnimatedNumber, Layout, time, usePoll } from '../lib'
+import { AnimatedNumber, Layout, SkeletonScope, standIn, time, usePoll } from '../lib'
 
 // Every figure is computed from one page (up to 200 rows) of a read that already exists; there is no count read (16). The
 // cards and charts cover the range in the picker (default the last 24 hours). When the read hit the 200-row limit, the captions
@@ -39,16 +38,6 @@ function useRange(now) {
   const to = custom && q.to ? Date.parse(q.to) : now
   const fmt = (t) => new Date(t).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
   return { query: q, from, to, label: custom ? `${fmt(from)} to ${q.to ? fmt(to) : 'now'}` : `the last ${fmtSpan(to - from)}` }
-}
-
-/** The page's outline while its deferred props load (three groups: charts, in-flight counts, side panels). */
-function OverviewSkeleton() {
-  return (
-    <div className="grid gap-6" aria-busy="true" aria-label="Loading">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-40 rounded-xl" />)}</div>
-      <div className="grid gap-6 xl:grid-cols-3"><Skeleton className="h-80 rounded-xl xl:col-span-2" /><Skeleton className="h-80 rounded-xl" /></div>
-    </div>
-  )
 }
 
 function bucketize(items, field, { from, to }, filter = () => true) {
@@ -135,11 +124,20 @@ export default function Overview(props) {
   const now = Date.now()
   const range = useRange(now)
   const ready = [recent, failed, pending, running].every((p) => p !== undefined)
+  // Until the deferred props arrive, the same body is drawn as a skeleton from stand-in props (21 §4.3).
+  const stand = useStandIn(props)
   return (
     <Layout heading="Overview" live={ready ? live : 0} actions={<DateRangePicker query={range.query} fallback="1d" />}>
-      {ready ? <OverviewBody {...props} now={now} range={range} /> : <OverviewSkeleton />}
+      {ready ? <div className="grid min-w-0 animate-page-in gap-6"><OverviewBody {...props} now={now} range={range} /></div>
+        : <SkeletonScope className="grid min-w-0 gap-6"><OverviewBody {...stand} now={now} range={range} /></SkeletonScope>}
     </Layout>
   )
+}
+
+/** The page's props with each missing (still deferred) one filled from its stand-in. */
+function useStandIn(props) {
+  const stand = standIn('Overview', {})
+  return Object.fromEntries(Object.entries({ ...stand, ...props }).map(([k, v]) => [k, v === undefined ? stand[k] : v]))
 }
 
 function OverviewBody({ base, can, recent, failed, pending, running, queues, workers, events, now, range }) {
@@ -175,8 +173,6 @@ function OverviewBody({ base, can, recent, failed, pending, running, queues, wor
   const sampleNote = whole ? `${recent.items.length} jobs in ${range.label}` : `newest 200 jobs in ${range.label} (back to ${since(span.sampleFrom)})`
   const ended = sum(ok) + sum(bad), rateAll = rate(sum(ok), sum(bad))
   const noDelta = <span className="text-muted-foreground">sample too short to compare halves</span>
-  const pool = events?.items[0]?.pool
-  const poolEvents = events ? events.items.filter((e) => e.pool === pool).slice(0, 24).reverse() : []
   return (
     <>
       <section aria-label="Key figures" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -259,7 +255,19 @@ function OverviewBody({ base, can, recent, failed, pending, running, queues, wor
           {failed.items.length === 0 && <p className="px-5 py-10 text-center text-sm text-muted-foreground">No failures in this range.</p>}
         </Card>
         <div className="grid content-start gap-6">
-          {workers === undefined ? <Skeleton className="h-56 rounded-xl" /> : workers ? <Panel title="Workers" testId="overview-workers" description={`${workers.next ? '200+' : workers.items.length} live`} action={<More href={`${base}/workers`}>Details</More>}>
+          {workers === undefined ? <SkeletonScope><WorkersPanel base={base} now={now} workers={standIn('Overview', {}).workers} /></SkeletonScope>
+            : workers && <div className="animate-page-in"><WorkersPanel base={base} now={now} workers={workers} /></div>}
+          {events === undefined ? <SkeletonScope><ScalingPanel base={base} now={now} events={standIn('Overview', {}).events} /></SkeletonScope>
+            : events && <div className="animate-page-in"><ScalingPanel base={base} now={now} events={events} /></div>}
+        </div>
+      </div>
+    </>
+  )
+}
+
+function WorkersPanel({ base, now, workers }) {
+  return (
+          <Panel title="Workers" testId="overview-workers" description={`${workers.next ? '200+' : workers.items.length} live`} action={<More href={`${base}/workers`}>Details</More>}>
             <ul className="grid gap-2">{workers.items.slice(0, 5).map((w) => {
               const age = now - Date.parse(w.heartbeatAt), ttl = Math.max(Date.parse(w.expiresAt) - Date.parse(w.heartbeatAt), 1)
               return (
@@ -273,17 +281,21 @@ function OverviewBody({ base, can, recent, failed, pending, running, queues, wor
               )
             })}</ul>
             {workers.items.length === 0 && <p className="text-sm text-muted-foreground">No live workers.</p>}
-          </Panel> : null}
-          {events === undefined ? <Skeleton className="h-48 rounded-xl" /> : events ? <Panel title={pool ? `Scaling target, ${pool}` : 'Scaling target'} description={events.items[0] ? `Last change ${relative(events.items[0].createdAt, now)}` : 'No scaling events in this range'}
+          </Panel>
+  )
+}
+
+function ScalingPanel({ base, now, events }) {
+  const pool = events.items[0]?.pool
+  const poolEvents = events.items.filter((e) => e.pool === pool).slice(0, 24).reverse()
+  return (
+          <Panel title={pool ? `Scaling target, ${pool}` : 'Scaling target'} description={events.items[0] ? `Last change ${relative(events.items[0].createdAt, now)}` : 'No scaling events in this range'}
             action={<More href={`${base}/scaling`}>History</More>}>
             {poolEvents.length > 0 ? <Chart type="bar" height={140} label={`Worker target of pool ${pool} at each change`}
               data={poolEvents.map((e) => ({ label: new Date(e.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), title: `${e.reason} (${time(e.createdAt)})`, target: e.newTarget }))}
               series={[{ key: 'target', label: 'Target', color: 'text-chart-5' }]} />
               : <p className="text-sm text-muted-foreground">The autoscaler has not changed a target recently.</p>}
-          </Panel> : null}
-        </div>
-      </div>
-    </>
+          </Panel>
   )
 }
 

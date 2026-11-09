@@ -16,6 +16,7 @@ Not in SP-024: server-side rendering, a live push channel (SSE or WebSocket), qu
 
 ## Changes
 
+- (2026-11-09, skeletons) Every page and late panel loads behind a skeleton drawn from the page's own components (§4.5), replacing the generic navigation skeleton and the fixed-height blocks; content fades in without moving; an e2e step checks layout shift.
 - (2026-11-09, Overview range fix) The Overview's key figures and charts cover the range in the picker (default the last 24 hours, as the picker shows), replacing the fitted 15 min to 24 h span of entry 4 below. Figures are tallies over the range from the 200-row samples; when a sample hit the limit, the caption says "newest 200 jobs in <range> (back to <time>)", the count shows "200+" and no half-vs-half delta is shown (the delta compares the range's second half with its first only when the sample covers the whole range). "In flight now" and "Pending by queue" are live snapshots and are labelled as such. The shared textarea has no resize grip (`resize-none`).
 - (2026-11-09, round 3) Dashboard updates and cleanups:
   1. **Sidebar footer.** One account button (initials, name and a second line: the subject under a display name, else the sign-in scheme; only the initials in the icon rail, with a dot when notifications are unread). It opens a menu: the same header, Notifications (with the unread count; opens a side sheet, §4.4), Settings, a three-way theme switch (light, system, dark; the menu stays open) and Log out. Log out posts an empty form to the host's route, set with the new `DashboardOptions.SignOutPath` (§2); without one the button is hidden. The theme toggle leaves the header.
@@ -289,6 +290,16 @@ The rest load with the page. Overview shows a skeleton until its first two group
 ### 4.4 Notifications
 
 The Notifications item in the account menu opens a side sheet that lists, from the `notifications` prop: failed jobs and scaling changes of the last 24 hours (the newest 20 of each, `Jobs.Read` and `Capacity.Read`) and the queues paused now (`Queues.Read`); a part the caller may not read is null. Each item links to its page. The unread count is what arrived since the sheet was last closed in this browser (a time and the paused queues seen, in `localStorage`); nothing about it is stored on the server.
+
+### 4.5 Skeletons
+
+A skeleton is the real page drawn with stand-in props, never a separate outline, so it cannot drift from the page:
+
+- **Mode.** `SkeletonScope` renders its children inert and hidden from assistive tech (one "Loading" label instead) under a `.skeleton` class. There, text keeps its box but is transparent, and a bar in the `--muted` token is drawn over each text run (a 0.6em line-through), so every line has the width and line height of the text that replaces it. Icons and chart drawings are hidden; badges, buttons, bars, charts and palette-filled pieces take a soft muted fill. The scope pulses gently; under `prefers-reduced-motion` it is static. Hooks with side effects (polling) do nothing inside it.
+- **Stand-in props.** The props the page last rendered with in this tab (memory only, never stored), else a small per-page placeholder of the right shape (`components/placeholders.js`). One visit's props replace the previous visit's; props that arrive later in the same visit (deferred, on demand) are added. A revisit therefore draws the same rows and sizes; a first visit is close but not exact.
+- **Where.** A page visit slower than 150 ms draws the destination page's skeleton inside the shell (the sidebar highlights the destination), not a generic one. Overview draws its body as a skeleton until its deferred groups arrive, and the Workers and Scaling panels until theirs; the notifications sheet draws its list as a skeleton until the prop arrives.
+- **Loading in.** Content replacing a skeleton fades in over 150 ms (opacity only, no movement). Charts reserve their height before they are measured.
+- **Test.** The Chromium flow opens each page with page visits and deferred props slowed by 1.2 s and checks that the heading and every card keep their box within 2 px from skeleton to loaded page, and that the summed `layout-shift` entries stay below 0.02.
 
 ## 5. Controls
 

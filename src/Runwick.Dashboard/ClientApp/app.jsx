@@ -2,11 +2,12 @@ import { createInertiaApp } from '@inertiajs/react'
 import { createRoot } from 'react-dom/client'
 import { Toaster } from './components/ui/toast'
 import { TooltipProvider } from './components/ui/tooltip'
-import { applyTheme } from './lib'
+import { applyTheme, registerPages } from './lib'
 import './app.css'
 
 const pages = import.meta.glob('./pages/*.jsx', { eager: true })
 
+registerPages(Object.fromEntries(Object.entries(pages).map(([path, m]) => [path.slice(8, -4), m.default])))
 applyTheme() // before the first render, so a dark theme never flashes light
 
 createInertiaApp({

@@ -4,7 +4,8 @@ import {
   IconCopy, IconDeviceDesktop, IconFilter, IconGauge, IconHistory, IconLayoutDashboard, IconListDetails, IconLoader2, IconLogout,
   IconMoon, IconPlayerPause, IconSelector, IconServer2, IconSettings, IconStack2, IconSun, IconTrash, IconX,
 } from '@tabler/icons-react'
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { createContext, use, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { NOTIFICATIONS, PLACEHOLDERS } from './components/placeholders'
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from './components/ui/alert-dialog'
@@ -21,7 +22,6 @@ import { Label } from './components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select'
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenuButton, SidebarProvider, SidebarTrigger, useSidebar } from './components/ui/sidebar'
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from './components/ui/sheet'
-import { Skeleton } from './components/ui/skeleton'
 import { TableHead } from './components/ui/table'
 import { dismissToast, toast } from './components/ui/toast'
 import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip'
@@ -49,7 +49,8 @@ const useHidden = () => useSyncExternalStore((l) => {
 export function usePoll(only, seconds) {
   const { url } = usePage()
   const key = only.join(',')
-  const active = !!seconds && !!key && !new URL(url, window.location.href).searchParams.has('cursor')
+  const skeleton = useSkeleton()
+  const active = !skeleton && !!seconds && !!key && !new URL(url, window.location.href).searchParams.has('cursor')
   useEffect(() => {
     if (!active) return undefined
     const base = Math.max(seconds, 5) * 1000
@@ -248,6 +249,12 @@ const THEMES = [['light', 'Light', IconSun], ['system', 'System', IconDeviceDesk
 const SEEN_KEY = 'runwick-dashboard-seen'
 const readSeen = () => { try { return JSON.parse(localStorage.getItem(SEEN_KEY)) ?? {} } catch { return {} } }
 
+const notificationItems = (n) => [
+  ...(n?.failed ?? []).map((f) => ({ key: `f${f.jobId}`, kind: 'failed', at: f.at, title: f.jobName, text: `failed on ${f.queue}`, href: `/jobs/${f.jobId}` })),
+  ...(n?.scaling ?? []).map((e) => ({ key: `s${e.eventId}`, kind: 'scaling', at: e.at, title: e.pool, text: `target ${e.oldTarget} → ${e.newTarget}`, href: '/scaling' })),
+  ...(n?.paused ?? []).map((q) => ({ key: `p${q.name}@${q.revision}`, kind: 'paused', at: null, title: q.name, text: 'queue paused', href: '/queues' })),
+].sort((a, b) => (b.at ? Date.parse(b.at) : Infinity) - (a.at ? Date.parse(a.at) : Infinity))
+
 function useNotifications() {
   const { notifications: n } = usePage().props
   useEffect(() => { // the prop is deferred and kept for a minute; refresh it each minute while the tab is visible
@@ -256,11 +263,7 @@ function useNotifications() {
   }, [])
   const [seen, setSeen] = useState(readSeen)
   const at = seen.at ? Date.parse(seen.at) : 0
-  const items = [
-    ...(n?.failed ?? []).map((f) => ({ key: `f${f.jobId}`, kind: 'failed', at: f.at, title: f.jobName, text: `failed on ${f.queue}`, href: `/jobs/${f.jobId}` })),
-    ...(n?.scaling ?? []).map((e) => ({ key: `s${e.eventId}`, kind: 'scaling', at: e.at, title: e.pool, text: `target ${e.oldTarget} → ${e.newTarget}`, href: '/scaling' })),
-    ...(n?.paused ?? []).map((q) => ({ key: `p${q.name}@${q.revision}`, kind: 'paused', at: null, title: q.name, text: 'queue paused', href: '/queues' })),
-  ].sort((a, b) => (b.at ? Date.parse(b.at) : Infinity) - (a.at ? Date.parse(a.at) : Infinity))
+  const items = notificationItems(n)
   const unread = (i) => (i.at ? Date.parse(i.at) > at : !(seen.paused ?? []).includes(i.key))
   const markSeen = () => {
     const next = { at: new Date().toISOString(), paused: items.filter((i) => i.kind === 'paused').map((i) => i.key) }
@@ -280,22 +283,28 @@ function NotificationsSheet({ open, onOpenChange, notes }) {
     <Sheet open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) markSeen() }}>
       <SheetContent side="right" className="gap-0 p-0" data-testid="notifications-panel">
         <SheetHeader className="border-b"><SheetTitle>Notifications</SheetTitle><SheetDescription>The last 24 hours</SheetDescription></SheetHeader>
-        {!loaded ? <div className="grid gap-2 p-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12" />)}</div>
+        {!loaded ? <SkeletonScope><NotificationList items={notificationItems(NOTIFICATIONS)} base={base} unread={() => false} /></SkeletonScope>
           : items.length === 0 ? <p className="px-3 py-12 text-center text-sm text-muted-foreground">Nothing new.</p>
-            : <ul className="min-h-0 flex-1 overflow-y-auto p-2">{items.map((i) => {
-              const [Icon, tone] = KIND[i.kind]
-              return (
-                <li key={i.key}>
-                  <Link href={base + i.href} onClick={() => onOpenChange(false)} className="flex items-start gap-3 rounded-md px-2.5 py-2.5 text-sm outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50">
-                    <Icon aria-hidden className={cn('mt-0.5 size-4 shrink-0', tone)} />
-                    <span className="grid min-w-0 flex-1"><span className="truncate font-medium">{i.title}</span><span className="text-xs text-muted-foreground">{i.text}{i.at && <> · {relativeTime(i.at)}</>}</span></span>
-                    {unread(i) && <span aria-label="new" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-highlight ring-2 ring-highlight/30" />}
-                  </Link>
-                </li>
-              )
-            })}</ul>}
+            : <div className="min-h-0 flex-1 overflow-y-auto animate-page-in"><NotificationList items={items} base={base} unread={unread} onPick={() => onOpenChange(false)} /></div>}
       </SheetContent>
     </Sheet>
+  )
+}
+
+function NotificationList({ items, base, unread, onPick }) {
+  return (
+    <ul className="p-2">{items.map((i) => {
+      const [Icon, tone] = KIND[i.kind]
+      return (
+        <li key={i.key}>
+          <Link href={base + i.href} onClick={onPick} className="flex items-start gap-3 rounded-md px-2.5 py-2.5 text-sm outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50">
+            <Icon aria-hidden className={cn('mt-0.5 size-4 shrink-0', tone)} />
+            <span className="grid min-w-0 flex-1"><span className="truncate font-medium">{i.title}</span><span className="text-xs text-muted-foreground">{i.text}{i.at && <> · {relativeTime(i.at)}</>}</span></span>
+            {unread(i) && <span aria-label="new" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-highlight ring-2 ring-highlight/30" />}
+          </Link>
+        </li>
+      )
+    })}</ul>
   )
 }
 
@@ -323,8 +332,9 @@ const NAV = [
 ]
 const TITLES = Object.fromEntries(NAV.flatMap(([, items]) => items.flatMap(([, label, , , components]) => components.map((c) => [c, label]))))
 
-function Nav() {
-  const { component, props: { base, can } } = usePage()
+function Nav({ target }) {
+  const { component: current, props: { base, can } } = usePage()
+  const component = target ?? current // during a slow visit, the page being opened
   return (
     <nav data-testid="nav" aria-label="Dashboard" className="grid gap-4">
       {NAV.map(([group, items]) => {
@@ -442,66 +452,111 @@ function LiveIndicator({ seconds }) {
 
 const initials = (name) => (name ?? '?').trim().split(/\s+/).slice(0, 2).map((w) => [...w][0] ?? '').join('').toUpperCase()
 
-/** True from 150 ms after a page visit starts (not polls, controls or partial reloads) until it finishes. */
-function useNavigating() {
-  const [navigating, setNavigating] = useState(false)
+// ---- Skeletons: the real page rendered with stand-in props, every text run drawn as a bar (app.css .skeleton) --------------------
+
+const SkeletonContext = createContext(false)
+/** True inside a skeleton: pages and hooks skip side effects (polling) there. */
+export const useSkeleton = () => use(SkeletonContext)
+
+let PAGES = {}
+/** The page components by name (app.jsx), so a navigation can draw the target page's skeleton. */
+export const registerPages = (pages) => { PAGES = pages }
+
+// The props each page last rendered with, in this tab's memory only: a revisit's skeleton then has the same rows and sizes. One
+// visit's props replace the previous visit's; within a visit, props that arrive later (deferred, on demand) are added.
+const lastProps = {}
+const remember = (component, url, props) => {
+  const defined = Object.fromEntries(Object.entries(props).filter(([, v]) => v !== undefined))
+  const prev = lastProps[component]
+  lastProps[component] = prev?.url === url ? { ...prev.props, ...defined } : defined
+  lastProps[component] = { url, props: lastProps[component] }
+}
+/** Stand-in props for a page: its last props in this tab, else a placeholder of the right shape. */
+export const standIn = (component, shared) => ({ ...shared, ...PLACEHOLDERS[component]?.(), ...lastProps[component]?.props })
+
+/** Wraps stand-in content: inert, hidden from assistive tech (one "Loading" label instead), drawn as a skeleton. */
+export function SkeletonScope({ className, children }) {
+  return (
+    <div className={cn('skeleton', className)} data-skeleton aria-busy="true">
+      <span className="sr-only">Loading</span>
+      <div inert aria-hidden="true" className="contents"><SkeletonContext value>{children}</SkeletonContext></div>
+    </div>
+  )
+}
+
+const ROUTES = [[/^\/?$/, 'Jobs'], [/^\/jobs\/?$/, 'Jobs'], [/^\/jobs\/[^/]+$/, 'Job'], [/^\/overview$/, 'Overview'], [/^\/queues$/, 'Queues'], [/^\/workers$/, 'Workers'],
+  [/^\/schedules$/, 'Schedules'], [/^\/scaling$/, 'Scaling'], [/^\/audit$/, 'Audit'], [/^\/retention$/, 'Retention'], [/^\/settings$/, 'Settings']]
+
+/** The page a slow page visit is going to: set 150 ms after the visit starts (not polls, controls or partial reloads) until it ends. */
+function useNavigatingTo(base) {
+  const [target, setTarget] = useState(null)
   useEffect(() => {
     let timer = 0
     const off = [
       router.on('start', (e) => {
         const v = e.detail.visit
-        if (v.method === 'get' && !v.async && !(v.only?.length)) timer = setTimeout(() => setNavigating(true), 150)
+        if (v.method !== 'get' || v.async || v.only?.length) return
+        const path = v.url.pathname.startsWith(base) ? v.url.pathname.slice(base.length) : null
+        const name = path != null && ROUTES.find(([re]) => re.test(path))?.[1]
+        if (name) timer = setTimeout(() => setTarget(name), 150)
       }),
-      router.on('finish', () => { clearTimeout(timer); setNavigating(false) }),
+      router.on('finish', () => { clearTimeout(timer); setTarget(null) }),
     ]
     return () => { clearTimeout(timer); off.forEach((f) => f()) }
-  }, [])
-  return navigating
+  }, [base])
+  return target
 }
 
-export function Layout({ heading, description, actions, live, children }) {
-  const { component, props: { notice } } = usePage()
-  const navigating = useNavigating()
+export function Layout(props) {
+  const { component, url, props: pageProps } = usePage()
+  const skeleton = useSkeleton()
+  useEffect(() => { if (!skeleton) remember(component, url, pageProps) })
+  const target = useNavigatingTo(pageProps.base)
+  if (skeleton) return <LayoutBody {...props} /> // a page drawn inside another page's shell (navigation skeleton)
+  const Target = target && PAGES[target]
   return (
     <SidebarProvider>
       <Sidebar label="Dashboard">
         <SidebarHeader><Brand /></SidebarHeader>
-        <SidebarContent><Nav /></SidebarContent>
+        <SidebarContent><Nav target={target} /></SidebarContent>
         <SidebarFooter><Footer /></SidebarFooter>
       </Sidebar>
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/80 px-3 backdrop-blur-md md:px-5">
           <SidebarTrigger />
           <span aria-hidden className="h-5 w-px bg-border" />
-          <p className="min-w-0 truncate text-sm text-muted-foreground"><span className="hidden sm:inline">Runwick / </span><span className="font-medium text-foreground">{TITLES[component] ?? component}</span></p>
+          <p className="min-w-0 truncate text-sm text-muted-foreground"><span className="hidden sm:inline">Runwick / </span><span className="font-medium text-foreground">{TITLES[target ?? component] ?? component}</span></p>
           <div className="flex-1" />
-          <LiveIndicator seconds={live} />
+          <LiveIndicator seconds={target ? 0 : props.live} />
         </header>
         <main className="mx-auto grid w-full max-w-[96rem] min-w-0 flex-1 content-start gap-6 p-4 md:p-6">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div className="grid min-w-0 gap-1">
-              <h1 className="truncate text-2xl font-semibold tracking-tight">{heading}</h1>
-              {description && <p className="text-sm text-muted-foreground">{description}</p>}
-            </div>
-            {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
-          </div>
-          {notice && <p className="flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm" data-testid="notice">
-            <IconAlertTriangle className="size-4 shrink-0 text-warning" />
-            {notice === 'invalid_cursor' ? 'That page link expired or is not valid; showing the first page.' : <span>The filter was not accepted: <code>{notice}</code></span>}
-          </p>}
-          {navigating ? <PageSkeleton /> : <div key={component} className="grid min-w-0 animate-page-in gap-6">{children}</div>}
+          {Target ? <SkeletonScope className="grid min-w-0 gap-6"><Target {...standIn(target, pageProps)} /></SkeletonScope>
+            : <div key={component} className="grid min-w-0 animate-page-in gap-6"><LayoutBody {...props} /></div>}
         </main>
       </div>
     </SidebarProvider>
   )
 }
 
-function PageSkeleton() {
+/** The page itself: heading, actions, notice and content. The same markup for the page and for its skeleton. */
+function LayoutBody({ heading, description, actions, children }) {
+  const { notice } = usePage().props
+  const skeleton = useSkeleton()
   return (
-    <div className="grid gap-4" aria-busy="true" aria-label="Loading">
-      <div className="flex gap-3"><Skeleton className="h-9 w-48" /><Skeleton className="h-9 w-32" /></div>
-      <Card className="gap-3 p-4">{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-8 w-full" />)}</Card>
-    </div>
+    <>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="grid min-w-0 gap-1">
+          <h1 className="truncate text-2xl font-semibold tracking-tight">{heading}</h1>
+          {description && <p className="text-sm text-muted-foreground">{description}</p>}
+        </div>
+        {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      </div>
+      {notice && !skeleton && <p className="flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm" data-testid="notice">
+        <IconAlertTriangle className="size-4 shrink-0 text-warning" />
+        {notice === 'invalid_cursor' ? 'That page link expired or is not valid; showing the first page.' : <span>The filter was not accepted: <code>{notice}</code></span>}
+      </p>}
+      {children}
+    </>
   )
 }
 

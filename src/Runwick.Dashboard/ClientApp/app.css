@@ -176,7 +176,8 @@
   --color-sidebar: var(--sidebar);
   --color-sidebar-border: var(--sidebar-border);
   --animate-flash: flash 1.6s ease-out;
-  --animate-page-in: page-in 0.22s ease-out;
+  --animate-page-in: page-in 150ms ease-out;
+  --animate-skeleton: skeleton 1.6s ease-in-out infinite;
   --animate-live: live 2s ease-out infinite;
 }
 
@@ -184,10 +185,36 @@
   from { background-color: color-mix(in oklch, var(--primary) 22%, transparent); }
   to { background-color: transparent; }
 }
+/* Content replacing a skeleton fades in without moving. */
 @keyframes page-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
+@keyframes skeleton {
+  50% { opacity: 0.6; }
+}
+
+/*
+ * Skeletons (21 §4.5): the real page rendered with stand-in props inside .skeleton. Text keeps its box but is invisible, and a
+ * bar in the muted token is drawn over each run (a thick line-through), so every line has the width and line height of the text
+ * that will replace it. Icons and chart drawings hide; filled pieces (badges, buttons, bars, charts) take a soft muted fill.
+ */
+.skeleton { animation: var(--animate-skeleton); pointer-events: none; user-select: none; }
+.skeleton, .skeleton * {
+  color: transparent !important;
+  text-decoration: line-through 0.6em var(--muted) !important;
+  text-decoration-skip-ink: none !important;
+  caret-color: transparent;
+}
+.skeleton svg, .skeleton img { visibility: hidden; }
+.skeleton :is([data-slot=badge], [data-slot=status], [data-slot=button], [data-slot=checkbox], [data-slot=switch], [data-slot=bar], [data-slot=chart],
+  [class*="bg-primary"], [class*="bg-highlight"], [class*="bg-lime"], [class*="bg-chocolate"], [class*="bg-pine"], [class*="bg-midnight"], [class*="bg-current"]) {
+  background-color: color-mix(in oklch, var(--muted) 55%, transparent) !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+.skeleton [data-slot=chart] { border-radius: var(--radius-md); }
+.skeleton [data-slot=status] > span { visibility: hidden; } /* the state dot */
 @keyframes live {
   0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--success) 55%, transparent); }
   70%, 100% { box-shadow: 0 0 0 6px transparent; }
