@@ -106,21 +106,31 @@ namespace Runwick
             }, cancellationToken);
         }
 
-        /// <summary>Reads the store's layout revision, mode and application gates (23 §6). Redis reports no lease or presence counts.</summary>
+        /// <summary>
+        /// Reads the store's layout revision, mode, application gates and lease and presence counts (23 §6). Owned leases are the
+        /// members of every application's <c>leases</c> index, presences the rows of <c>workers</c>, and expired presences those whose
+        /// <c>workers:exp</c> score is at or before the server's clock.
+        /// </summary>
         public static Task<StoreAdminStatus> GetStatusAsync(string configuration, CancellationToken cancellationToken = default) =>
             RedisMigrator.WithLockAsync(configuration, async (db, server) =>
             {
                 var store = await RedisOps.RequireStoreAsync(db).ConfigureAwait(false);
                 var apps = new List<ApplicationAdmissionState>();
+                var now = new DateTimeOffset(await server.TimeAsync().ConfigureAwait(false), TimeSpan.Zero).ToUnixTimeMilliseconds();
+                long leases = 0, presences = 0, expired = 0;
                 foreach (var (name, meta) in await RedisOps.ApplicationsAsync(server, db, null, cancellationToken).ConfigureAwait(false))
                 {
+                    var prefix = ((string)meta!)[..^"meta".Length];
+                    leases += await db.SortedSetLengthAsync(prefix + "leases").ConfigureAwait(false);
+                    presences += await db.HashLengthAsync(prefix + "workers").ConfigureAwait(false);
+                    expired += await db.SortedSetLengthAsync(prefix + "workers:exp", double.NegativeInfinity, now).ConfigureAwait(false);
                     apps.Add(new ApplicationAdmissionState(name, (string?)await db.HashGetAsync(meta, "admission").ConfigureAwait(false) ?? "open",
                         long.Parse((string?)await db.HashGetAsync(meta, "gaterev").ConfigureAwait(false) ?? "1", CultureInfo.InvariantCulture),
                         (string?)await db.HashGetAsync(meta, "caps").ConfigureAwait(false) ?? "{}"));
                 }
 
                 return new StoreAdminStatus(Guid.ParseExact(store["store"]!, "N"), long.Parse(store["layout"]!, CultureInfo.InvariantCulture),
-                    RedisMigrator.CurrentLayout, store["mode"]!, apps, null, null, null, StoreAdminRules.QuiescenceNotice);
+                    RedisMigrator.CurrentLayout, store["mode"]!, apps, (int)leases, (int)presences, (int)expired, StoreAdminRules.QuiescenceNotice);
             }, cancellationToken);
 
         /// <summary>
