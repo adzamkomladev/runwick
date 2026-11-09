@@ -32,7 +32,7 @@ public sealed class SqliteUpgradeTests
         await using var _ = f;
         await c.Dispatcher.DispatchAsync(new PingJob("a"), cancellationToken: Ct);
         var before = await f.ReadCommittedSnapshot();
-        await f.ExecAsync("UPDATE runwick_store_metadata SET schema_revision = 2");
+        await f.ExecAsync("UPDATE runwick_store_metadata SET schema_revision = 3");
         Assert.Equal("UnsupportedVersion/schema_incompatible", Reply(await c.ReserveAsync()));
         await Assert.ThrowsAnyAsync<RunwickException>(() => c.Dispatcher.DispatchAsync(new PingJob("x"), cancellationToken: Ct));
         // Revision 0 is an unvalidated install: maintenance.

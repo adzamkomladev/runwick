@@ -68,8 +68,8 @@ public sealed class CliSqliteTests : IDisposable
 
         var first = await MigrateAsync(v);
         Assert.Equal(0, first.Exit);
-        Assert.Equal(1, first.Result!["schemaRevision"]!.GetValue<long>());
-        Assert.Equal(3, first.Result["appliedPhases"]!.AsArray().Count);
+        Assert.Equal(2, first.Result!["schemaRevision"]!.GetValue<long>());
+        Assert.Equal(6, first.Result["appliedPhases"]!.AsArray().Count);
         var again = await MigrateAsync(v);
         Assert.Equal(0, again.Exit);
         Assert.Empty(again.Result!["appliedPhases"]!.AsArray());
@@ -78,11 +78,11 @@ public sealed class CliSqliteTests : IDisposable
         var doctor = await DoctorAsync(v);
         Assert.Equal(0, doctor.Exit);
         var checks = Checks(doctor);
-        Assert.Equal(("pass", "revision 1"), checks["store.migration"]);
+        Assert.Equal(("pass", "revision 2"), checks["store.migration"]);
         Assert.Contains("journal_mode=wal", checks["store.settings"].Detail, StringComparison.Ordinal);
         Assert.NotEqual("fail", checks["store.settings"].Status);
         Assert.Equal("unverified", checks["api.reachable"].Status);
-        Assert.Equal(1, doctor.Result!["cliSchemaRevision"]!.GetValue<long>());
+        Assert.Equal(2, doctor.Result!["cliSchemaRevision"]!.GetValue<long>());
 
         Exec(v, "UPDATE runwick_store_metadata SET schema_revision = schema_revision + 1 WHERE singleton_id = 1");
         var ahead = await DoctorAsync(v);
@@ -90,7 +90,7 @@ public sealed class CliSqliteTests : IDisposable
         Assert.Equal("fail", Checks(ahead)["store.migration"].Status);
         Assert.Contains("CLI older than store", Checks(ahead)["store.migration"].Detail, StringComparison.Ordinal);
 
-        Exec(v, "UPDATE runwick_store_metadata SET schema_revision = 1 WHERE singleton_id = 1");
+        Exec(v, "UPDATE runwick_store_metadata SET schema_revision = 2 WHERE singleton_id = 1");
         Exec(v, "CREATE INDEX runwick_extra ON runwick_jobs (job_name)");
         var changed = await DoctorAsync(v);
         Fails(changed, "check_failed", 1);

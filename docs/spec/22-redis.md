@@ -17,6 +17,7 @@ Not in SP-025 [choice]: Redis Cluster, Sentinel or any replica-promotion profile
 
 ## Changes
 
+- (2026-11-09, attempt usage) Finish/1 and FinishMany/1 store the attempt's usage (16 §2.2) as one more field of the job hash, `a:<attempt>:usage` (JSON text), and `mread` returns it. No layout revision: the field is new data in an existing hash, the scripts ship with the binary, a binary that does not know the field never reads it, and cleanup deletes the whole hash as before.
 - (2026-11-08) New document.
 - (2026-11-08) SP-018's "What SP-025 must do", carried in: (1) a bound on how much one command may hold the application, with a measured renewal-wait budget (§4.3, §10, REDIS-07); (2) exact int64 counting in Lua with decimal strings, never `HINCRBY` or `INCR` in after-images (§3.2, REDIS-08); (3) decisions inside the script with the server clock, and the decision time stored in the intent so recovery after NotAfter publishes the original decision (§4.1, REDIS-09); (4) the qualified server's modules recorded next to the image digest, and a `CONFIG` that cannot be read treated as "profile unavailable" (§2.3, §6, REDIS-10).
 - (2026-11-08) SP-018's three "Spec changes needed", applied:

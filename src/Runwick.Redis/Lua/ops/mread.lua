@@ -78,7 +78,7 @@ elseif SUB == 'job' then
         end
         atts[#atts + 1] = { n = tonumber(val), row = { id = a, generation = num(af('gen')), reservation = num(val), execution = num(af('exec')),
           worker = af('worker'), reserved = num(af('reserved')), authorized = num(af('auth')), finished = num(af('fin')), outcome = str(af('outcome')),
-          disposition = str(af('disp')), reason = str(af('reason')), errorCode = code } }
+          disposition = str(af('disp')), reason = str(af('reason')), errorCode = code, usage = str(af('usage')) } }
       end
     end
     table.sort(gens, function(x, y) return x.n < y.n end)

@@ -58,15 +58,23 @@ internal static class CommandEnvelopes
         .Add("jobId", Fingerprints.Uuid(r.JobId))
         .Build();
 
-    public static CanonicalValue Finish(FinishRequest r) => CanonicalValue.Object()
+    // "usage" joins the body only when recorded, so a Finish without it keeps the fingerprint older releases computed.
+    public static CanonicalValue Finish(FinishRequest r)
+    {
+        var body = FinishBody(r);
+        return r.Usage is { } u ? body.Add("usage", CanonicalValue.Object()
+            .Add("allocBytes", u.ProcessAllocatedBytes).Add("cpuUs", u.ProcessCpuMicroseconds).Add("overlap", u.OverlappingAttempts)
+            .Add("wsEnd", u.WorkingSetEndBytes).Add("wsPeak", u.WorkingSetPeakBytes).Add("wsStart", u.WorkingSetStartBytes).Build()).Build() : body.Build();
+    }
+
+    static CanonicalObjectBuilder FinishBody(FinishRequest r) => CanonicalValue.Object()
         .Add("error", r.Error is { } e
             ? CanonicalValue.Object().Add("code", e.Code).Add("exceptionType", e.ExceptionType).Add("message", e.Message).Add("stackTrace", e.StackTrace).Build()
             : CanonicalValue.Null)
         .Add("executionElapsed", Fingerprints.CeilMs(r.ExecutionElapsed))
         .Add("lease", Lease(r.Lease))
         .Add("outcome", r.Outcome.ToString())
-        .Add("requestedRetryDelay", r.RequestedRetryDelay is { } d ? CanonicalValue.Int(Fingerprints.CeilMs(d)) : CanonicalValue.Null)
-        .Build();
+        .Add("requestedRetryDelay", r.RequestedRetryDelay is { } d ? CanonicalValue.Int(Fingerprints.CeilMs(d)) : CanonicalValue.Null);
 
     public static CanonicalValue RegisterApplication() => CanonicalValue.Object().Build();
 

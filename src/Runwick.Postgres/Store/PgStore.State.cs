@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using NpgsqlTypes;
 using Runwick.Protocol;
 using Runwick.Serialization;
+using Runwick.Worker;
 
 namespace Runwick.Postgres.Store;
 
@@ -96,13 +97,14 @@ internal sealed partial class PgStore
         var fingerprint = CommandEnvelopes.Fingerprint(StoreId, command.Application, Operations.Finish, command.CommandId, command.NotAfter,
             CommandEnvelopes.Finish(request));
         // J, G, K (a terminal close), S, the fresh clock, the ownership check, the retry delay and A -> P -> J' -> K' -> E
-        // with R4 run in runwick.finish_v2 through rw_finish_job_v1 (04 §7.7); staged, the same call runs inside the caller's savepoint (08 §8.1).
+        // with R4 run in runwick.finish_v2 (behind finish_v3, which then stores the attempt's usage) through rw_finish_job_v1 (04 §7.7); staged, the same call runs inside the caller's savepoint (08 §8.1).
         var op = Op(command.Application, command.CommandId, Operations.Finish, command.NotAfter, fingerprint, PgLane.Settlement);
-        var call = new PgCall("finish_v2").P("p_job_id", lease.JobId).P("p_attempt_id", lease.AttemptId).P("p_worker_id", lease.WorkerInstanceId)
+        var call = new PgCall("finish_v3").P("p_job_id", lease.JobId).P("p_attempt_id", lease.AttemptId).P("p_worker_id", lease.WorkerInstanceId)
             .P("p_token", lease.OwnershipToken).P("p_generation", lease.Generation).P("p_outcome", Snake(request.Outcome))
             .P("p_elapsed_ms", (long)Math.Max(0, request.ExecutionElapsed.TotalMilliseconds))
             .P("p_requested_delay_ms", request.RequestedRetryDelay is { } d ? (long?)Math.Max(1, CeilMs(d)) : null)
-            .Json("p_error", ErrorJson(request.Error)).Entropy("p_entropy");
+            .Json("p_error", ErrorJson(request.Error)).Entropy("p_entropy")
+            .P("p_usage", request.Usage is { } u ? ResourceUsageJson.Write(u) : null, NpgsqlDbType.Jsonb);
         return transaction is null
             ? runner.CallAsync(op, call, MapFinished, ct)
             : runner.StageCallAsync(transaction, op, call, MapFinished, ct);

@@ -16,6 +16,13 @@ Not in SP-024: server-side rendering, a live push channel (SSE or WebSocket), qu
 
 ## Changes
 
+- (2026-11-09, attempt usage) The job page's "CPU and memory: not recorded" card becomes **Resources used**. It shows the latest measured attempt's figures:
+  - process CPU time, with its share of one core while the attempt ran;
+  - process allocations;
+  - working-set peak, and the working set at start and end.
+
+  A badge says whether the attempt ran alone in the worker process or alongside N others. With two or more measured attempts the card adds two bar charts (CPU time and working-set peak per attempt), and a table lists every attempt, where an attempt without figures reads "not recorded". The labels say plainly that these are worker-process figures, not the job's alone (16 §2.2). There are new test ids `usage`, `usage-cpu`, `usage-alloc`, `usage-peak` and `usage-rows`, and a new e2e step.
+
 - (2026-11-08) New document. Decisions taken where the inputs were silent are marked **[choice]** in the text. The list:
   1. Public API is `AddRunwickDashboard(id, ...)` plus `MapRunwickDashboard(path, id)` (§2).
   2. Permissions come from the management grant mapping, optionally overridden per mount. The spike's `ViewPolicy`/`OperatePolicy` are dropped (§3).

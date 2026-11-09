@@ -6,6 +6,10 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-09, attempt usage)
+
+- Migration `0018_attempt_usage`, schema revision 18: `job_attempts.usage jsonb NULL` (no default, so no rewrite and no backfill) and two new functions. `finish_v3` and `finish_many_v3` run `finish_v2` and `finish_many_v2` unchanged, then, when the Finish (or each batch item) applied, set `usage` on that attempt if it is still null. The attempt row is already locked by the close, so the lock order of §5 is unchanged. Released functions are not edited; `finish_v2` and `finish_many_v2` stay. The manifest changes only `schemaRevision`; `Finish/1` and `FinishMany/1` keep version 1 (16 §2.2: `usage` is an optional body field).
+
 ## Changes (2026-11-08, SP-026)
 
 - §7.15 (application-gate change) is no longer harness only: `RunwickPostgresMigrations.SetAdmissionModeAsync` runs the same statements with a 5 s `lock_timeout` as the migration role (23 §3). §8.1: a lost migration session is `migration_connection_lost` (23 §4). `ResolveCommand` throws `StoreIncompatibleException` for a receipt whose codec or operation version this binary does not know (23 §8).

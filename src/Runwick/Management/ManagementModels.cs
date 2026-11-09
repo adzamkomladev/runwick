@@ -157,7 +157,19 @@ public sealed record JobGenerationInfo(int Generation, string CreatedReason, str
 public sealed record JobAttemptInfo(
     Guid AttemptId, int Generation, long ReservationNumber, int? ExecutionNumber, Guid WorkerInstanceId,
     DateTimeOffset ReservedAt, DateTimeOffset? AuthorizedAt, DateTimeOffset? FinishedAt,
-    string? Outcome, string? Disposition, string? AppliedReason, string? ErrorCode);
+    string? Outcome, string? Disposition, string? AppliedReason, string? ErrorCode, AttemptResourceUsage? Usage = null);
+
+/// <summary>
+/// What the worker process used while one attempt ran (Begin to the handler's end); null = not recorded (an older worker, a
+/// worker with <c>RecordResourceUsage</c> off, or an attempt that never ran). Every figure is the whole worker process's
+/// during that window, not the job's alone: .NET cannot attribute CPU or allocations to one async job.
+/// <see cref="OverlappingAttempts"/> is how many other attempts ran in the same process during part of the window; at 0 the
+/// figures are this job's plus the worker's own background work. CPU time and allocated bytes are exact at both ends of the
+/// window; working set (start, end and peak) is sampled about every 250 ms, so a short attempt may show one sample for all three.
+/// </summary>
+public sealed record AttemptResourceUsage(
+    long ProcessCpuMicroseconds, long ProcessAllocatedBytes, long WorkingSetStartBytes, long WorkingSetEndBytes, long WorkingSetPeakBytes,
+    int OverlappingAttempts);
 
 public sealed record JobDetail(JobSummary Job, IReadOnlyList<JobGenerationInfo> Generations, IReadOnlyList<JobAttemptInfo> Attempts);
 

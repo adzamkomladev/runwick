@@ -4,6 +4,10 @@
 
 Every numeric default used by milestone M2 is in this file. Behavior that uses each value is specified in [05-worker-engine.md](05-worker-engine.md) (cited as `05 §n`) and the storage/protocol specs. A value listed here is the default; a host may change configurable values only within the startup inequalities of §3. Values marked *profile constant* are not host-configurable (raising them requires a new serializer profile/format version).
 
+## Changes (2026-11-09, attempt usage)
+
+`WorkerOptions.RecordResourceUsage` = **true**. Per attempt the worker reads process CPU time and allocated bytes at both ends of the attempt (measured cost about 2 × 6 µs and 2 × 13 ns), and one shared timer reads the working set every 250 ms (about 0.1 ms per read) while any attempt runs. The measured end-to-end overhead is in the attempt-usage report. With it off nothing is read and attempts store no usage (16 §2.2).
+
 ## Changes (2026-11-08, SP-025 spec)
 
 The Redis store's own numbers (intent limits 256 keys / 1,024 after-images / 4 MiB, 100 after-images per call, 5,000-entry management page bound, profile recheck 30 s, migration lock 60 s, renewal-wait test bound p99 ≤ 250 ms) are in 22 §10. The call-class ceilings of §1.7 apply to it unchanged, as logical in-flight limits (22 §5.1).

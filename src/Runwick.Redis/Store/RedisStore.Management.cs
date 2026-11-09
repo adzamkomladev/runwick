@@ -79,7 +79,7 @@ internal sealed partial class RedisStore : IManagementQueryStore
             var attempts = o["attempts"]!.AsArray().Select(x => new JobAttemptInfo(Guid.Parse(x!["id"]!.GetValue<string>()), x["generation"]!.GetValue<int>(),
                 x["reservation"]!.GetValue<long>(), x["execution"]?.GetValue<int>(), Guid.Parse(x["worker"]!.GetValue<string>()), MsTime(x["reserved"]),
                 MsTimeN(x["authorized"]), MsTimeN(x["finished"]), x["outcome"]?.GetValue<string>(), x["disposition"]?.GetValue<string>(),
-                x["reason"]?.GetValue<string>(), x["errorCode"]?.GetValue<string>())).ToList();
+                x["reason"]?.GetValue<string>(), x["errorCode"]?.GetValue<string>(), Runwick.Worker.ResourceUsageJson.Read(x["usage"]?.GetValue<string>()))).ToList();
             return new JobDetail(ReadSummary(o["job"]!), generations, attempts);
         }, ct).ConfigureAwait(false);
 
