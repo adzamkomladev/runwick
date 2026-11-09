@@ -79,7 +79,7 @@ public sealed class PackageGraphTests
                     continue; // does not build on Runwick (the dashboard spike), so the evaluators never flow into it
                 }
 
-                foreach (var framework in doc.RootElement.GetProperty("dependencies").EnumerateObject())
+                foreach (var framework in doc.RootElement.GetProperty("dependencies").EnumerateObject().Where(f => !f.Name.Contains('/'))) // a "net10.0/win-x64" section lists only runtime-specific natives
                 {
                     if (!framework.Value.TryGetProperty(package, out var entry))
                     {
