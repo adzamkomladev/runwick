@@ -6,6 +6,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Runwick.Postgres.Migrations;
+using Runwick.Sqlite.Migrations;
 using Runwick.Worker;
 
 namespace Runwick.Workloads;
@@ -35,9 +36,9 @@ internal static class BenchMode
     public static async Task<int> RunAsync(Args a)
     {
         var mode = a.OptStr("mode") ?? "drain";
-        if (mode is not ("drain" or "steady" or "enqueue"))
+        if (mode is not ("drain" or "steady" or "enqueue" or "bulk"))
         {
-            Console.Error.WriteLine("--mode must be drain, steady or enqueue");
+            Console.Error.WriteLine("--mode must be drain, steady, enqueue or bulk");
             return 2;
         }
 
@@ -50,27 +51,60 @@ internal static class BenchMode
         var adminCs = a.OptStr("conn") ?? DefaultAdmin;
         var calls = Math.Max(1, a.Int("calls", 1));
 
-        // Fresh database per run.
-        var admin = new NpgsqlConnectionStringBuilder(adminCs) { ApplicationName = "bench:admin", Pooling = false }.ConnectionString;
-        await G2Orchestrator.ExecAsync(admin, $"DROP DATABASE IF EXISTS {database} WITH (FORCE)").ConfigureAwait(false);
-        await G2Orchestrator.ExecAsync(admin, $"CREATE DATABASE {database}").ConfigureAwait(false);
-        await RunwickPostgresMigrations.MigrateAsync(new NpgsqlConnectionStringBuilder(adminCs)
-            { Database = database, ApplicationName = "bench:migrate", Pooling = false }.ConnectionString).ConfigureAwait(false);
-        var storeCs = new NpgsqlConnectionStringBuilder(adminCs)
+        // Fresh store per run: a new PostgreSQL database, a new SQLite file, or a flushed Redis (only the instance named by --redis).
+        var store = a.OptStr("store") ?? "postgres";
+        if (store is not ("postgres" or "sqlite" or "redis"))
         {
-            Database = database,
-            ApplicationName = "bench-runwick",
-            Pooling = true,
-            MaxPoolSize = Math.Max(100, workers + 16),
-            Options = a.Has("trace") ? "-c track_functions=all" : null, // --trace: per-function server time in pg_stat_user_functions
-        }.ConnectionString;
+            Console.Error.WriteLine("--store must be postgres, sqlite or redis");
+            return 2;
+        }
+
+        Action<RunwickBuilder> useStore;
+        string? sqliteDir = null;
+        if (store == "sqlite")
+        {
+            sqliteDir = a.OptStr("sqlite-dir") ?? Path.Combine(Path.GetTempPath(), "bench-runwick-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(sqliteDir);
+            var sqliteCs = $"Data Source={Path.Combine(sqliteDir, "runwick.db")}";
+            await RunwickSqliteMigrations.MigrateAsync(sqliteCs).ConfigureAwait(false);
+            useStore = r => r.UseSqlite(sqliteCs);
+        }
+        else if (store == "redis")
+        {
+            var redisCfg = a.OptStr("redis") ?? throw new ArgumentException("--store redis needs --redis host:port (a dedicated, throwaway instance: it is FLUSHALLed)");
+            using (var adminRedis = await StackExchange.Redis.ConnectionMultiplexer.ConnectAsync(redisCfg + ",allowAdmin=true").ConfigureAwait(false))
+            {
+                await adminRedis.GetServer(adminRedis.GetEndPoints()[0]).FlushAllDatabasesAsync().ConfigureAwait(false);
+            }
+
+            await RunwickRedisMigrations.MigrateAsync(redisCfg).ConfigureAwait(false);
+            useStore = r => r.UseRedis(redisCfg);
+        }
+        else
+        {
+            var admin = new NpgsqlConnectionStringBuilder(adminCs) { ApplicationName = "bench:admin", Pooling = false }.ConnectionString;
+            await G2Orchestrator.ExecAsync(admin, $"DROP DATABASE IF EXISTS {database} WITH (FORCE)").ConfigureAwait(false);
+            await G2Orchestrator.ExecAsync(admin, $"CREATE DATABASE {database}").ConfigureAwait(false);
+            await RunwickPostgresMigrations.MigrateAsync(new NpgsqlConnectionStringBuilder(adminCs)
+                { Database = database, ApplicationName = "bench:migrate", Pooling = false }.ConnectionString).ConfigureAwait(false);
+            var storeCs = new NpgsqlConnectionStringBuilder(adminCs)
+            {
+                Database = database,
+                ApplicationName = "bench-runwick",
+                Pooling = true,
+                MaxPoolSize = Math.Max(100, workers + 16),
+                Options = a.Has("trace") ? "-c track_functions=all" : null, // --trace: per-function server time in pg_stat_user_functions
+            }.ConnectionString;
+            useStore = r => r.UsePostgres(storeCs);
+        }
 
         var sc = new ServiceCollection();
         sc.AddLogging(b => b.AddSimpleConsole(o => o.SingleLine = true).SetMinimumLevel(LogLevel.Warning));
         sc.AddSingleton(new LoadBehaviour(TimeSpan.Zero));
         sc.AddRunwick(r =>
         {
-            r.Application("bench").UsePostgres(storeCs);
+            r.Application("bench");
+            useStore(r);
             LoadRegistration.Register(r, typeCeiling: null);
             r.AddHandler<LoadJob, LoadHandler>();
             r.Producer(o => o.MaxConcurrentCalls = Math.Max(2, calls));
@@ -154,7 +188,8 @@ internal static class BenchMode
 
         var result = new JsonObject
         {
-            ["system"] = "runwick",
+            ["system"] = "runwick-" + store,
+            ["store"] = store,
             ["mode"] = mode,
             ["workers"] = workers,
             ["payloadBytes"] = payload,
@@ -183,6 +218,26 @@ internal static class BenchMode
             result["calls"] = calls;
             result["insertsPerSec"] = Math.Round(n / watch.Elapsed.TotalSeconds, 1);
             result["insertLatencyMs"] = new JsonObject { ["p50"] = Math.Round(es.P50Ms, 2), ["p99"] = Math.Round(es.P99Ms, 2) };
+        }
+        else if (mode == "bulk")
+        {
+            // --n jobs added with DispatchMany, 100 per call, from --calls callers side by side; worker never started.
+            var watch = Stopwatch.StartNew();
+            var nextChunk = -1;
+            await Task.WhenAll(Enumerable.Range(0, calls).Select(_ => Task.Run(async () =>
+            {
+                for (var c = Interlocked.Increment(ref nextChunk); c * Chunk < n; c = Interlocked.Increment(ref nextChunk))
+                {
+                    var items = Enumerable.Range(0, Math.Min(Chunk, n - c * Chunk))
+                        .Select(_ => new BatchDispatchItem(LoadJob.Create(Interlocked.Increment(ref sequence), payload))).ToList();
+                    var receipt = await dispatcher.DispatchManyAsync(items).ConfigureAwait(false);
+                    Interlocked.Add(ref failedDispatch, receipt.Items.Count(x => x.Receipt is null));
+                }
+            }))).ConfigureAwait(false);
+            result["jobs"] = n;
+            result["calls"] = calls;
+            result["failedDispatch"] = failedDispatch;
+            result["insertsPerSec"] = Math.Round((n - failedDispatch) / watch.Elapsed.TotalSeconds, 1);
         }
         else if (mode == "drain")
         {
@@ -217,7 +272,7 @@ internal static class BenchMode
                 }
             }) : Task.CompletedTask;
             var deadline = Stopwatch.StartNew();
-            while (Interlocked.Read(ref finished) < expected && deadline.Elapsed < TimeSpan.FromMinutes(30))
+            while (Interlocked.Read(ref finished) < expected && deadline.Elapsed < TimeSpan.FromSeconds(a.Double("max-seconds", 1800)))
             {
                 await Task.Delay(5).ConfigureAwait(false);
             }
@@ -338,10 +393,15 @@ internal static class BenchMode
 
         result["diagnostics"] = new JsonArray([.. engine.Health().Diagnostics.Select(x => (JsonNode?)x)]);
 
-        if (mode != "enqueue") // enqueue never started the worker
+        if (mode is not ("enqueue" or "bulk")) // those never started the worker
         {
             using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             await hosted.StopAsync(stop.Token).ConfigureAwait(false);
+        }
+
+        if (sqliteDir is not null)
+        {
+            try { Directory.Delete(sqliteDir, true); } catch (IOException) { }
         }
 
         var json = result.ToJsonString(Json.Indented);
