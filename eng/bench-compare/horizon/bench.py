@@ -2,7 +2,7 @@
 """Laravel Horizon benchmark driver (PHP 8.3, laravel/framework 13.40.0, laravel/horizon 5.50.1, phpredis).
   bench.py --redis 127.0.0.1:56391 --mode enqueue|bulk|drain|steady [--n 20000] [--calls 1] [--workers 16] [--rate 100] [--seconds 30] [--out f.json]
 Producers are `php artisan bench:produce` processes (one per concurrent caller). Consumers are real Horizon: `php artisan horizon`
-(master supervisor + one supervisor with --workers PHP worker processes, balance=false). The Redis instance is FLUSHALLed: dedicated, throwaway only."""
+(master supervisor + one supervisor with --workers PHP worker processes, balance=simple). The Redis instance is FLUSHALLed: dedicated, throwaway only."""
 import argparse, json, os, socket, subprocess, sys, time
 
 ap = argparse.ArgumentParser()

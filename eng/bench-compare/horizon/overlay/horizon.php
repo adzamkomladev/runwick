@@ -200,7 +200,7 @@ return [
         'supervisor-1' => [
             'connection' => 'redis',
             'queue' => ['default'],
-            'balance' => false,
+            'balance' => 'simple', // fixed number of worker processes (Horizon docs, Simple Balancing)
             'autoScalingStrategy' => 'time',
             'maxProcesses' => 1,
             'maxTime' => 0,
@@ -215,7 +215,7 @@ return [
     'environments' => [
         'production' => [
             'supervisor-1' => [
-                'maxProcesses' => (int) env('BENCH_WORKERS', 16),
+                'minProcesses' => (int) env('BENCH_WORKERS', 16), 'maxProcesses' => (int) env('BENCH_WORKERS', 16), // min = max: a fixed number of PHP worker processes
             ],
         ],
 

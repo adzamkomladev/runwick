@@ -197,6 +197,11 @@ internal static class BenchMode
         };
         long sequence = 0;
         var failedDispatch = 0L;
+        var check = a.Has("check"); // drain: tolerate and report outcome-unknown bulk adds, then compare jobs run with jobs accepted
+        long unknownChunks = 0, acceptedItems = 0, unresolvedItems = 0;
+        var unknownCodes = new ConcurrentDictionary<string, long>();
+        var resolutions = new ConcurrentDictionary<string, long>();
+        var resolveErrors = new ConcurrentDictionary<string, long>();
 
         if (mode == "enqueue")
         {
@@ -250,14 +255,64 @@ internal static class BenchMode
                 {
                     var items = Enumerable.Range(0, Math.Min(Chunk, n - c * Chunk))
                         .Select(_ => new BatchDispatchItem(LoadJob.Create(Interlocked.Increment(ref sequence), payload))).ToList();
-                    var receipt = await dispatcher.DispatchManyAsync(items).ConfigureAwait(false);
-                    Interlocked.Add(ref failedDispatch, receipt.Items.Count(x => x.Receipt is null));
+                    BatchDispatchReceipt? receipt = null;
+                    try
+                    {
+                        receipt = await dispatcher.DispatchManyAsync(items).ConfigureAwait(false);
+                    }
+                    catch (DispatchOutcomeUnknownException ex) when (check)
+                    {
+                        // --check: record the exact error, then ask the store what happened to that operation.
+                        Interlocked.Increment(ref unknownChunks);
+                        unknownCodes.AddOrUpdate($"{ex.Code}: {ex.InnerException?.GetType().Name}: {ex.InnerException?.Message}", 1, (_, v) => v + 1);
+                        DispatchResolution? resolution = null;
+                        for (var attempt = 0; attempt < 40 && resolution is null; attempt++)
+                        {
+                            try
+                            {
+                                resolution = await provider.GetRequiredService<IPreparedJobDispatcher>().ResolveAsync(ex.OperationId).ConfigureAwait(false);
+                            }
+                            catch (Exception rex) when (rex is not OperationCanceledException)
+                            {
+                                resolveErrors.AddOrUpdate($"{rex.GetType().Name}: {rex.Message}", 1, (_, v) => v + 1);
+                                await Task.Delay(500).ConfigureAwait(false); // the store may still be finishing a pending write
+                            }
+                        }
+
+                        resolutions.AddOrUpdate(resolution?.Status.ToString() ?? "StillUnresolvedAfter20s", 1, (_, v) => v + 1);
+                        receipt = resolution?.BatchReceipt;
+                        if (receipt is null)
+                        {
+                            Interlocked.Add(ref unresolvedItems, items.Count);
+                        }
+                    }
+
+                    if (receipt is not null)
+                    {
+                        var rejected = receipt.Items.Count(x => x.Receipt is null);
+                        Interlocked.Add(ref failedDispatch, rejected);
+                        Interlocked.Add(ref acceptedItems, receipt.Items.Count - rejected);
+                    }
                 }
             }))).ConfigureAwait(false);
 
+            if (check)
+            {
+                result["check"] = new JsonObject
+                {
+                    ["chunks"] = (n + Chunk - 1) / Chunk,
+                    ["chunksWithUnknownOutcome"] = Interlocked.Read(ref unknownChunks),
+                    ["errors"] = new JsonObject([.. unknownCodes.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)kv.Value))]),
+                    ["resolveAttemptErrors"] = new JsonObject([.. resolveErrors.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)kv.Value))]),
+                    ["resolutions"] = new JsonObject([.. resolutions.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)kv.Value))]),
+                    ["itemsAccepted"] = Interlocked.Read(ref acceptedItems),
+                    ["itemsInUnresolvedChunks"] = Interlocked.Read(ref unresolvedItems),
+                };
+            }
+
             result["insertSeconds"] = Math.Round(insertWatch.Elapsed.TotalSeconds, 3);
             result["insertCalls"] = calls;
-            var expected = n - failedDispatch;
+            var expected = check ? Interlocked.Read(ref acceptedItems) : n - failedDispatch;
             var startTicks = clock.ElapsedTicks;
             await hosted.StartAsync(CancellationToken.None).ConfigureAwait(false);
             using var sampling = new CancellationTokenSource();
@@ -275,6 +330,13 @@ internal static class BenchMode
             while (Interlocked.Read(ref finished) < expected && deadline.Elapsed < TimeSpan.FromSeconds(a.Double("max-seconds", 1800)))
             {
                 await Task.Delay(5).ConfigureAwait(false);
+            }
+
+            if (check)
+            {
+                await Task.Delay(5000).ConfigureAwait(false); // grace: any extra job run beyond the accepted count shows up here
+                (result["check"] as JsonObject)!["jobsRun"] = Interlocked.Read(ref finished);
+                (result["check"] as JsonObject)!["jobsRunMinusAccepted"] = Interlocked.Read(ref finished) - expected;
             }
 
             await sampling.CancelAsync().ConfigureAwait(false);

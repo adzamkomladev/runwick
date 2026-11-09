@@ -33,21 +33,21 @@ def cmd(cfg, test, outf):
         if store == "redis": c += ["--redis", REDIS["always"]]
         if mode == "enqueue": c += ["--calls", str(k)]
         if mode == "bulk": c += ["--calls", "1"]
-        if mode == "drain": c += ["--calls", "8", "--max-seconds", str(MAXS[test])]
+        if mode == "drain": c += ["--calls", "1" if store == "redis" else "8", "--max-seconds", str(MAXS[test])]  # 8 concurrent DispatchMany callers on Redis end in "outcome unknown" (see report)
         if mode == "steady": c += ["--rate", str(rate), "--seconds", str(secs), "--calls", "16"]
         return c
     if kind == "river":
         c = [f"{HERE}/river/bench-river", "-mode", mode, "-n", str(n), "-workers", str(w), "-out", outf]
         if mode == "enqueue": c += ["-calls", str(k)]
         if mode == "drain": c += ["-cooldown-ms", "1", "-max-seconds", str(MAXS[test])]
-        if mode == "steady": c += ["-rate", str(rate), "-seconds", str(secs), "-calls", "16"]
+        if mode == "steady": c += ["-rate", str(rate), "-seconds", str(secs), "-calls", "16", "-cooldown-ms", "1"]  # same throughput setting as the drains; default 100 ms caps 16 workers near 160 jobs/s
         return c
     if kind == "pgboss":
         c = ["node", f"{HERE}/pgboss/bench.mjs", "--mode", mode, "--n", str(n), "--out", outf]
         if mode == "enqueue": c += ["--calls", str(k), "--concurrency", str(k)]
         if mode == "bulk": c += ["--concurrency", "1"]
         if mode == "drain": c += ["--concurrency", "1", "--batch", str(w), "--burst", "--max-seconds", str(MAXS[test])]
-        if mode == "steady": c += ["--rate", str(rate), "--seconds", str(secs), "--concurrency", "16", "--batch", "1", "--calls", "16"]
+        if mode == "steady": c += ["--rate", str(rate), "--seconds", str(secs), "--concurrency", "1", "--batch", str(rate), "--burst", "--calls", "16"]  # polls every 0.5 s (its minimum), so the batch must hold one second of arrivals; batch 1 x 16 workers = 32 jobs/s at most
         return c
     if kind == "fastendpoints":
         if mode == "bulk": return None  # FastEndpoints has no bulk-queue API
