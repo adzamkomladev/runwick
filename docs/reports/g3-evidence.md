@@ -1,6 +1,6 @@
 # G-3 evidence summary (for the owner's sign-off)
 
-Date: 2026-11-09. Status: **not passed, waiting on the owner's decision.** This page collects the evidence so you can decide in one read. It does not record a decision. If you accept, add a line at the bottom with your name, the date and "G-3 passed"; if not, write what is missing.
+Date: 2026-11-09. Status: **passed** (owner decision, 2026-11-09; see the end). This page collects the evidence the decision rests on.
 
 G-3, as defined in `docs/v1-delivery-plan.md` §10: "Basic/host/OIDC embedded and standalone; every protected path enforces authz/antiforgery; audit atomic with changes; adapter isolation tests; dashboard areas within budgets; CLI parity".
 
@@ -18,7 +18,7 @@ Where the results come from: the SP-020 (management API), SP-024 (dashboard) and
 | Dashboard areas within budgets | Polls no faster than every 5 s, paused while the tab is hidden, one in flight (Chromium flow, 17 of 17 steps); request limits (120 reads, 30 mutations, 10 reveals per minute, 16 active) give 429 or 503; each read has a 1 s query budget; page cap 200, 31-day range. | MGMT-10, DASH-04, Chromium flow in SP-024 | This is my reading of "budgets": the spec's poll and request limits. There is no page-load time budget in spec 21, so none was measured. Timing tests ran on a loaded shared host and passed. |
 | CLI parity | Every read and mutation of the API works through `runwick`, with the same results in JSON and agent output, command-ID replay, exit codes, streams, paging and secrets kept out of output. | CLI-01 to CLI-10 | The CLI has no Redis store support (`migrate`, `doctor`, `store ...`). Spec 19 leaves this out on purpose; it is listed as an owner option in `sp-030.md`. Management over HTTP works for every store. |
 
-## What is open, in one list
+## Known limits (accepted with the sign-off)
 
 1. DASH-07 WebKit smoke, owed on a Mac or a Linux machine with the WebKit libraries (steps in `sp-030.md`).
 2. OIDC proven only with a stand-in identity provider.
@@ -27,4 +27,4 @@ Where the results come from: the SP-020 (management API), SP-024 (dashboard) and
 
 ## Decision
 
-_Not recorded. The owner writes it here._
+Decision: G-3 passed. Reviewer: Komla Adzam, 2026-11-09. The four points above are accepted as known limits. (Point 4 is being addressed: `runwick migrate` and `doctor` are gaining Redis support.)

@@ -487,6 +487,10 @@ internal static class G2Workloads
 
     // ------------------------------------------------------------------------------------------------ P-06 scheduler half
 
+    /// <summary>P-06 lag bound (owner decision 2026-11-09): all schedules fall due together and the scheduler emits at the default
+    /// <c>SchedulerOptions.JobsPerSecond</c> (100), so the last one waits schedules ÷ 100 s by design; 3 s is the allowance on top.</summary>
+    static double LagBoundS(int schedules) => (schedules / 100.0) + 3;
+
     /// <summary>
     /// P-06 scheduler half (SP-016). Phase 1: a scheduler process with <c>--schedules</c> (1,000) minute schedules and
     /// <c>--workers</c> (2) worker processes running the occurrences; materialization lag (scheduled instant →
@@ -579,7 +583,7 @@ internal static class G2Workloads
                 ["coalescedOrRangeCovered"] = Convert.ToInt64(lag[0][5], CultureInfo.InvariantCulture),
                 ["p50S"] = Round(lag[0][1]), ["p95S"] = Round(lag[0][2]), ["p99S"] = p99 is { } p ? Math.Round(p, 3) : null, ["maxS"] = Round(lag[0][4]),
                 ["p99IsCensoredLowerBound"] = missing > 0 && missing >= 0.01 * expected,
-                ["threshold"] = new JsonObject { ["rule"] = "p99 ≤ 3 s", ["result"] = p99 is { } x && x <= 3 && missing == 0 ? "pass" : "miss" },
+                ["threshold"] = new JsonObject { ["rule"] = $"p99 ≤ schedules ÷ JobsPerSecond + 3 s = {LagBoundS(schedules)} s", ["boundS"] = LagBoundS(schedules), ["result"] = p99 is { } x && x <= LagBoundS(schedules) && missing == 0 ? "pass" : "miss" },
             };
 
             // Distinct occurrence identities: one row per (schedule, instant), one job per created occurrence, no extra scheduled jobs.
@@ -692,6 +696,7 @@ internal static class G2Workloads
         runs.Add(run);
         summary["lagP99S"] = run["extra"]?["materializationLag"]?["p99S"]?.DeepClone();
         summary["lagThreshold"] = run["extra"]?["materializationLag"]?["threshold"]?["result"]?.DeepClone();
+        summary["lagBoundS"] = run["extra"]?["materializationLag"]?["threshold"]?["boundS"]?.DeepClone();
         summary["catchUp"] = run["extra"]?["catchUp"]?.DeepClone();
         summary["leaseLosses"] = run["correctness"]?["leaseLosses"]?.DeepClone();
     }

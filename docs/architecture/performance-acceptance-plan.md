@@ -39,7 +39,7 @@ Warm up 5 min; ordinary measured runs last 15 min, three repetitions. Drain all 
 | Healthy control I/O | p99 ≤100 ms including local admission; zero lease-safety losses in declared healthy-load runs |
 | P-04 fairness | Stable continuously claimable shares within 2 percentage points over ≥10,000 admissions with aging disabled; aging separately follows CAP vectors |
 | P-05 efficiency | With unconstrained independent work, three replicas deliver ≥2× single-replica throughput before a measured shared bottleneck; hot-key runs report the bottleneck rather than claiming linearity |
-| P-06 scheduler | Steady materialization lag p99 ≤3 s, distinct occurrence identities, bounded catch-up and no worker lease loss |
+| P-06 scheduler | Steady materialization lag p99 ≤ schedules ÷ `JobsPerSecond` + 3 s (13 s for 1,000 schedules at the default 100/s; owner decision 2026-11-09), distinct occurrence identities, bounded catch-up and no worker lease loss |
 | P-07 management | Safe list queries p95 ≤250 ms / p99 ≤1 s; concurrent worker throughput degradation ≤20%; no unbounded exact-count scan |
 | Instrumentation cost | Exporter absent vs bounded telemetry enabled: throughput degradation ≤10%, allocations/job increase ≤15% on P-01; include raw allocation totals |
 | P-08 outage | Resource counts remain within declared caps; admission pauses; after restoration readiness recovers within 30 s absent a declared review/history fault |
