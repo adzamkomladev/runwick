@@ -7,8 +7,11 @@ using Microsoft.Data.Sqlite;
 using Npgsql;
 using Runwick.Management;
 using Runwick.Postgres.Migrations;
+using Runwick.Redis.Migrations;
+using Runwick.Redis.Store;
 using Runwick.Sqlite.Migrations;
 using Runwick.Sqlite.Store;
+using StackExchange.Redis;
 using V = Runwick.Cli.CliValueType;
 
 namespace Runwick.Cli;
@@ -58,7 +61,7 @@ internal static class CliCommands
     static readonly CliOption ExpectedRevision = Opt("--expected-revision", V.Integer, "Revision last observed; read from the server when absent (not with --agent).", agent: true);
     static readonly CliOption ConnectionEnv = Opt("--connection-env", V.String, "Name of the environment variable holding the connection string.");
     static readonly CliOption ConnectionStdin = Opt("--connection-stdin", V.Flag, "Read the connection string from the first line of stdin.");
-    static readonly CliOption Provider = Opt("--provider", V.String, "Store provider.", allowed: ["postgres", "sqlite"], def: "postgres");
+    static readonly CliOption Provider = Opt("--provider", V.String, "Store provider.", allowed: ["postgres", "sqlite", "redis"], def: "postgres");
 
     static CliCommand Read(string name, string summary, string permission, Type result, Func<CliInvocation, string> path, CliArgument[]? args = null,
         CliOption[]? options = null, HumanColumn[]? columns = null, bool list = false) =>
@@ -142,7 +145,7 @@ internal static class CliCommands
         Read("settings", "Show the management host's settings (allowlisted).", ManagementPermissions.SettingsRead, typeof(ManagementSettings), _ => "settings"),
 
         Local("migrate", "Apply this CLI's store migrations.", typeof(PostgresMigrationResult), MigrateAsync,
-            options: [Opt("--provider", V.String, "Store provider.", required: true, allowed: ["postgres", "sqlite"]), ConnectionEnv, ConnectionStdin],
+            options: [Opt("--provider", V.String, "Store provider.", required: true, allowed: ["postgres", "sqlite", "redis"]), ConnectionEnv, ConnectionStdin],
             permission: "migration role"),
         Local("store status", "Show the store's revision, mode, application gates and the lease and presence rows (never proof that processes stopped).", typeof(StoreAdminStatus), StoreStatusAsync,
             options: [Provider, ConnectionEnv, ConnectionStdin], permission: "migration role"),
@@ -626,63 +629,68 @@ internal static class CliCommands
             : null;
     }
 
-    static bool IsSqlite(CliInvocation inv) => inv.Opt("--provider") == "sqlite";
+    static string ProviderOf(CliInvocation inv) => inv.Opt("--provider") ?? "postgres";
 
     static async Task<CommandOutcome> MigrateAsync(CliInvocation inv, CancellationToken ct)
     {
         var cs = await ConnectionAsync(inv) ?? throw CliErrors.Usage("migrate needs --connection-env or --connection-stdin.");
-        try
+        return await ProviderCallAsync(async () => ProviderOf(inv) switch
         {
-            return CommandOutcome.Ok(IsSqlite(inv)
-                ? JsonSerializer.SerializeToNode(await RunwickSqliteMigrations.MigrateAsync(cs, ct), RunwickCli.Json)
-                : JsonSerializer.SerializeToNode(await RunwickPostgresMigrations.MigrateAsync(cs, ct), RunwickCli.Json));
-        }
-        catch (PostgresMigrationException ex)
-        {
-            return MigrationFailed(ex.Code, ex.Message);
-        }
-        catch (SqliteMigrationException ex)
-        {
-            return MigrationFailed(ex.Code, ex.Message);
-        }
+            "sqlite" => JsonSerializer.SerializeToNode(await RunwickSqliteMigrations.MigrateAsync(cs, ct), RunwickCli.Json),
+            "redis" => JsonSerializer.SerializeToNode(await RunwickRedisMigrations.MigrateAsync(cs, ct), RunwickCli.Json),
+            _ => JsonSerializer.SerializeToNode(await RunwickPostgresMigrations.MigrateAsync(cs, ct), RunwickCli.Json),
+        });
     }
 
-    static async Task<CommandOutcome> StoreAsync<T>(CliInvocation inv, Func<string, bool, Task<T>> run)
+    static async Task<CommandOutcome> StoreAsync<T>(CliInvocation inv, Func<string, Task<T>> postgres, Func<string, Task<T>> sqlite, Func<string, Task<T>> redis)
     {
         var cs = await ConnectionAsync(inv) ?? throw CliErrors.Usage(inv.Command.Name + " needs --connection-env or --connection-stdin.");
+        var run = ProviderOf(inv) switch { "sqlite" => sqlite, "redis" => redis, _ => postgres };
+        return await ProviderCallAsync(async () => JsonSerializer.SerializeToNode(await run(cs), RunwickCli.Json));
+    }
+
+    static async Task<CommandOutcome> ProviderCallAsync(Func<Task<JsonNode?>> call)
+    {
         try
         {
-            return CommandOutcome.Ok(JsonSerializer.SerializeToNode(await run(cs, IsSqlite(inv)), RunwickCli.Json));
+            return CommandOutcome.Ok(await call());
         }
         catch (PostgresMigrationException ex)
         {
             return MigrationFailed(ex.Code, ex.Message);
         }
         catch (SqliteMigrationException ex)
+        {
+            return MigrationFailed(ex.Code, ex.Message);
+        }
+        catch (RedisMigrationException ex)
         {
             return MigrationFailed(ex.Code, ex.Message);
         }
     }
 
     static Task<CommandOutcome> StoreStatusAsync(CliInvocation inv, CancellationToken ct) =>
-        StoreAsync(inv, (cs, sqlite) => sqlite ? RunwickSqliteMigrations.GetStatusAsync(cs, ct) : RunwickPostgresMigrations.GetStatusAsync(cs, ct));
+        StoreAsync(inv, cs => RunwickPostgresMigrations.GetStatusAsync(cs, ct), cs => RunwickSqliteMigrations.GetStatusAsync(cs, ct),
+            cs => RunwickRedisMigrations.GetStatusAsync(cs, ct));
 
     static Task<CommandOutcome> StoreAdmissionAsync(CliInvocation inv, CancellationToken ct)
     {
         var mode = inv.Opt("--mode")!;
         var application = inv.Opt("--application");
-        return StoreAsync(inv, async (cs, sqlite) => new AdmissionResult(sqlite
-            ? await RunwickSqliteMigrations.SetAdmissionModeAsync(cs, application, mode, "cli", ct)
-            : await RunwickPostgresMigrations.SetAdmissionModeAsync(cs, application, mode, "cli", ct)));
+        return StoreAsync(inv,
+            async cs => new AdmissionResult(await RunwickPostgresMigrations.SetAdmissionModeAsync(cs, application, mode, "cli", ct)),
+            async cs => new AdmissionResult(await RunwickSqliteMigrations.SetAdmissionModeAsync(cs, application, mode, "cli", ct)),
+            async cs => new AdmissionResult(await RunwickRedisMigrations.SetAdmissionModeAsync(cs, application, mode, "cli", ct)));
     }
 
     static Task<CommandOutcome> StoreActivateCapabilityAsync(CliInvocation inv, CancellationToken ct)
     {
         var name = inv.Opt("--name")!;
         var application = inv.Opt("--application");
-        return StoreAsync(inv, async (cs, sqlite) => new CapabilityResult(sqlite
-            ? await RunwickSqliteMigrations.ActivateCapabilityAsync(cs, application, name, "cli", ct)
-            : await RunwickPostgresMigrations.ActivateCapabilityAsync(cs, application, name, "cli", ct)));
+        return StoreAsync(inv,
+            async cs => new CapabilityResult(await RunwickPostgresMigrations.ActivateCapabilityAsync(cs, application, name, "cli", ct)),
+            async cs => new CapabilityResult(await RunwickSqliteMigrations.ActivateCapabilityAsync(cs, application, name, "cli", ct)),
+            async cs => new CapabilityResult(await RunwickRedisMigrations.ActivateCapabilityAsync(cs, application, name, "cli", ct)));
     }
 
     internal sealed record CapabilityResult(IReadOnlyList<CapabilityChange> Changes);
@@ -690,7 +698,8 @@ internal static class CliCommands
     internal sealed record AdmissionResult(IReadOnlyList<AdmissionChange> Changes);
 
     static Task<CommandOutcome> StoreReidentifyAsync(CliInvocation inv, CancellationToken ct) =>
-        StoreAsync(inv, (cs, sqlite) => sqlite ? RunwickSqliteMigrations.ReassignStoreIdAsync(cs, ct) : RunwickPostgresMigrations.ReassignStoreIdAsync(cs, ct));
+        StoreAsync(inv, cs => RunwickPostgresMigrations.ReassignStoreIdAsync(cs, ct), cs => RunwickSqliteMigrations.ReassignStoreIdAsync(cs, ct),
+            cs => RunwickRedisMigrations.ReassignStoreIdAsync(cs, ct));
 
     /// <summary>Provider codes pass through unchanged; never the inner exception (it may name the server or the file).</summary>
     static CommandOutcome MigrationFailed(string code, string message)
@@ -719,16 +728,24 @@ internal static class CliCommands
             await ApiChecksAsync(api, checks, ct);
         }
 
-        if (connection is not null && IsSqlite(inv))
+        var provider = ProviderOf(inv);
+        if (connection is not null)
         {
-            SqliteStoreChecks(connection, checks);
-        }
-        else if (connection is not null)
-        {
-            await StoreChecksAsync(connection, checks, ct);
+            switch (provider)
+            {
+                case "sqlite":
+                    SqliteStoreChecks(connection, checks);
+                    break;
+                case "redis":
+                    await RedisStoreChecksAsync(connection, checks, ct);
+                    break;
+                default:
+                    await StoreChecksAsync(connection, checks, ct);
+                    break;
+            }
         }
 
-        var cli = IsSqlite(inv) ? SqliteMigrator.CurrentRevision : PgMigrator.CurrentRevision;
+        var cli = provider switch { "sqlite" => SqliteMigrator.CurrentRevision, "redis" => RedisMigrator.CurrentLayout, _ => PgMigrator.CurrentRevision };
         var result = JsonSerializer.SerializeToNode(new DoctorResult(RunwickCli.Version, cli, checks), RunwickCli.Json);
         var failed = checks.Where(c => c.Status == "fail").Select(c => c.Name).ToList();
         return failed.Count == 0 ? CommandOutcome.Ok(result)
@@ -883,6 +900,58 @@ internal static class CliCommands
         catch (SqliteException)
         {
             checks.Add(new DoctorCheck("store.settings", "unverified", "could not open"));
+            checks.Add(new DoctorCheck("store.migration", "fail", "store_unavailable"));
+        }
+    }
+
+    /// <summary>
+    /// Redis store checks (22 §2.3, §9): the store's own profile and topology check, then <c>rw:store</c>'s layout revision, mode and
+    /// manifest digest against this CLI's. Reads only: no migration lock, nothing written.
+    /// </summary>
+    static async Task RedisStoreChecksAsync(string configuration, List<DoctorCheck> checks, CancellationToken ct)
+    {
+        try
+        {
+            var options = RxClient.Options(configuration, TimeSpan.FromSeconds(5));
+            options.AllowAdmin = true; // CONFIG GET for the profile check
+            options.ClientName = "runwick:doctor";
+            var mux = await ConnectionMultiplexer.ConnectAsync(options).WaitAsync(ct);
+            await using (mux)
+            {
+                if (!mux.IsConnected)
+                {
+                    throw new TimeoutException("Could not connect to Redis.");
+                }
+
+                var db = mux.GetDatabase();
+                var report = await RxProfile.CheckAsync(mux.GetServer(mux.GetEndPoints(configuredOnly: true).Single()), db);
+                var facts = $"redis_version={report.Facts["redis_version"]} appendonly={report.Facts["config.appendonly"]} appendfsync={report.Facts["config.appendfsync"]}";
+                checks.Add(report.Verified
+                    ? new DoctorCheck("store.settings", "pass", facts)
+                    : new DoctorCheck("store.settings", "fail", $"{report.FailureCode}: {report.Failure} ({facts})"));
+
+                var store = (await db.HashGetAllAsync(RedisMigrator.StoreKey)).ToDictionary(e => (string)e.Name!, e => (string?)e.Value, StringComparer.Ordinal);
+                if (store.Count == 0)
+                {
+                    checks.Add(new DoctorCheck("store.migration", "warn", "store not initialized: run migrate"));
+                    return;
+                }
+
+                var layout = long.TryParse(store.GetValueOrDefault("layout"), NumberStyles.None, CultureInfo.InvariantCulture, out var l) ? l : -1;
+                var mode = store.GetValueOrDefault("mode") ?? "<missing>";
+                checks.Add(layout == RedisMigrator.CurrentLayout && mode == "normal" && store.GetValueOrDefault("digest") != Convert.ToHexStringLower(RedisMigrator.Manifest().Digest)
+                    ? new DoctorCheck("store.migration", "fail", "manifest differs from this CLI's: schema_validation_failed")
+                    : MigrationCheck(layout, mode, RedisMigrator.CurrentLayout));
+            }
+        }
+        catch (RxProfileException ex)
+        {
+            checks.Add(new DoctorCheck("store.settings", "fail", ex.Code));
+            checks.Add(new DoctorCheck("store.migration", "fail", ex.Code));
+        }
+        catch (Exception ex) when (ex is RedisException or TimeoutException)
+        {
+            checks.Add(new DoctorCheck("store.settings", "unverified", "could not connect"));
             checks.Add(new DoctorCheck("store.migration", "fail", "store_unavailable"));
         }
     }
