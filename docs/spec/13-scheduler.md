@@ -2,6 +2,10 @@
 
 **Sources:** [scheduling-internals.md](../architecture/scheduling-internals.md) §2–§10 (primary); [scheduler-evaluator-and-defaults.md](../architecture/scheduler-evaluator-and-defaults.md) §3, §5; [postgres-schema-and-operations.md](../architecture/postgres-schema-and-operations.md) §4–§6; [storage-command-protocol.md](../architecture/storage-command-protocol.md); [management-retention-defaults.md](../architecture/management-retention-defaults.md) (command lifetimes, schedule retention); [public-api-contract.md](../architecture/public-api-contract.md) §9, §18; 12 (evaluator); 08 (actor, audit, events, receipts); 10 (rate scopes, capability activation pattern); 03 §3, §8.
 
+## Changes (2026-11-09, P-06 threshold)
+
+- P-06's lag rule is now "p99 ≤ schedules ÷ `JobsPerSecond` + 3 s" (13 s for 1,000 schedules at the default 100/s), by owner decision. All schedules fall due in the same second, and the scheduler's default allowance of 100 jobs per second makes the last one wait schedules ÷ 100 s by design. Defaults are unchanged. See `docs/reports/sp-029.md`.
+
 ## Changes (2026-11-02, idle caps)
 
 - **Cap.** While the schedule listener is healthy (from a successful (re)subscription until the session is lost or refused, or the listener stops), the idle back-off doubles to **3 × `IdlePollInterval`** (15 s by default) instead of `IdlePollInterval` (5 s). Otherwise it is 5 s, as before. A lost session ends the current idle wait at once (one pass, then the back-off from `PollInterval`).
@@ -261,7 +265,7 @@ Occurrence detail is retained 30 days after materialization (cleanup is SP-021).
 | CMD-01 … 05 | `Schedule_commands_follow_the_receipt_protocol` (theory per operation) | Concurrent and sequential sends apply once; changed body → `CommandConflict`; DropReply resolves; lock past NotAfter → `CommandExpired`; pruned receipt → `CommandExpired` |
 | ISO-01 | `The_same_schedule_key_in_two_applications_never_interacts` | Two applications, one key: separate rows, jobs and revisions |
 | PGX-04 (materialization) | `ScheduleCaseTests.Materialization_and_scope_creation_in_opposite_orders_never_deadlock`, `…Materialization_versus_scope_creation_and_edits_in_both_orders` | 30 free races and two barrier orders with new scopes created in opposite orders, plus an edit waiting on the row: every command applies, no deadlock |
-| P-06 (scheduler half) | not yet written | 1,000 minute schedules plus one 1,000-occurrence catch-up; lag p99 ≤ 3 s; worker lease loss 0 |
+| P-06 (scheduler half) | not yet written | 1,000 minute schedules plus one 1,000-occurrence catch-up; lag p99 ≤ schedules ÷ `JobsPerSecond` + 3 s (13 s for 1,000 schedules at the default 100/s; owner decision 2026-11-09); worker lease loss 0 |
 
 Added 2026-11-01:
 

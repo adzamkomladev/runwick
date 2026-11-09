@@ -13,15 +13,14 @@
     <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
     <PackageId>$(MSBuildProjectName)</PackageId>
     <Version>0.1.0-m1</Version>
-    <Authors>Runwick contributors</Authors>
+    <Authors>Komla Adzam</Authors>
     <Product>Runwick</Product>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryType>git</RepositoryType>
-    <!-- Placeholder: no remote exists yet; set the real URL at publish time (docs/release/release-checklist.md). -->
-    <RepositoryUrl>https://example.invalid/runwick/runwick</RepositoryUrl>
-    <PackageProjectUrl>https://example.invalid/runwick/runwick</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/adzamkomladev/runwick.git</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/adzamkomladev/runwick</PackageProjectUrl>
     <PackageTags>background-jobs;job-queue;postgresql;sqlite;redis;dotnet</PackageTags>
-    <Copyright>Copyright (c) Runwick contributors</Copyright>
+    <Copyright>Copyright (c) 2026 Komla Adzam</Copyright>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <IsSrcProject>$(MSBuildProjectDirectory.Contains('$([System.IO.Path]::DirectorySeparatorChar)src$([System.IO.Path]::DirectorySeparatorChar)'))</IsSrcProject>
   </PropertyGroup>
@@ -31,7 +30,8 @@
     <!-- Public XML docs are written per item; missing ones are tracked, not build-breaking, until SP-033. -->
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <IsPackable>true</IsPackable>
-    <!-- Symbols ship as .snupkg; no SourceLink because there is no remote to link to. -->
+    <!-- Symbols ship as .snupkg. SourceLink is built into the .NET SDK: it links to the commit once the build runs in a clone whose origin is the GitHub repository. -->
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>

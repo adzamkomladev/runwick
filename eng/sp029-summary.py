@@ -140,12 +140,13 @@ add("P-05 efficiency", f"3 replicas / 1 replica = {ratio}", "≥ 2× before a me
 # P-06 scheduler and rate.
 p06s = get(results["P-06s"], "summary") or {}
 lag = p06s.get("lagP99S")
+bound = p06s.get("lagBoundS") or 13  # owner decision 2026-11-09: 1,000 schedules ÷ 100/s + 3 s (older results lack lagBoundS)
 catch = p06s.get("catchUp") or {}
 p06r_v = get(results["P-06r"], "correctnessViolations")
 add("P-06 scheduler", f"materialization lag p99 {lag} s; catch-up {catch.get('occurrencesEmitted')} of {catch.get('occurrencesRequested')} emitted; "
     f"lease losses {p06s.get('leaseLosses')}; rate-window violations {p06r_v}",
-    "lag p99 ≤ 3 s, distinct occurrences, bounded catch-up, no lease loss",
-    (lag <= 3 and p06s.get("leaseLosses") == 0 and p06r_v == 0 and results["P-06s"]["correctnessViolations"] == 0) if isinstance(lag, (int, float)) and p06r_v is not None else None)
+    f"lag p99 ≤ schedules ÷ JobsPerSecond + 3 s ({bound} s), distinct occurrences, bounded catch-up, no lease loss",
+    (lag <= bound and p06s.get("leaseLosses") == 0 and p06r_v == 0 and results["P-06s"]["correctnessViolations"] == 0) if isinstance(lag, (int, float)) and p06r_v is not None else None)
 
 # P-07 management.
 p07 = [v for v in (get(results["P-07"], "summary") or {}).values() if v]

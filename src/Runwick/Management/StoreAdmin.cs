@@ -34,6 +34,19 @@ public static class StoreAdminRules
         : previous == "open" && mode == "maintenance" ? "drain_first"
         : null;
 
+    /// <summary>The audit <c>actor_scheme</c> of an operator command; the subject is the caller's <c>actor</c> string (08 §2).</summary>
+    internal const string OperatorScheme = "operator";
+
+    /// <summary>The operator actor becomes an audit subject: 1 to 256 UTF-8 bytes without control characters (08 §2).</summary>
+    internal static void CheckActor(string actor)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+        if (System.Text.Encoding.UTF8.GetByteCount(actor) > 256 || actor.Any(char.IsControl))
+        {
+            throw new ArgumentException("The actor must be at most 256 UTF-8 bytes without control characters.", nameof(actor));
+        }
+    }
+
     /// <summary>Capabilities an operator can raise; the rest are active from the first registration.</summary>
     public static readonly IReadOnlyList<string> ActivatableCapabilities = ["scheduler", "rate_admission"];
 

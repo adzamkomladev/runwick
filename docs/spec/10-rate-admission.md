@@ -22,6 +22,8 @@ Implementation choices *[choice]*:
 
 Changes (2026-11-01, owed cases):
 
+- 2026-11-09 (user decision, sp-030 item 7): the operator path now writes the same `capabilities_activated` event and `ActivateCapabilities` audit row as the store operation, with the operator as actor (23 §3.6). The SP-028 entry below no longer holds on that point.
+
 - 2026-11-08 (SP-028): §6.1 names no caller. The operator path is `ActivateCapabilityAsync` on the three migration classes and `runwick store activate-capability --name rate_admission` (23 §3.6); it writes no audit row or event. The store operation stays for in-process callers.
 
 - 2026-11-01: The capacity-control §6 rate rows are cases RATE-05 … RATE-10 (15 I-1). The enlargement/cleanup race has no ID and stays with SP-021.

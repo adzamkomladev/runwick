@@ -4,6 +4,10 @@
 
 This document lists the cases gate **G-2** (milestone M3) requires, the case IDs inferred here, the harness additions, the G-2 measurements and the pass rule. The suites, traits, harness contract (07 §1–§2) and the case definitions already in 07 are reused unchanged. A case here that 07 defined (CMD, ISO, CFG, UNI, PGX, CAP, WRK, TIME) keeps 07's definition. G-2 adds only the sub-parts that 07 deferred, or the new operations it runs on.
 
+## Changes (2026-11-09, P-06 threshold)
+
+- P-06's lag rule is now "p99 ≤ schedules ÷ `JobsPerSecond` + 3 s" (13 s for 1,000 schedules at the default 100/s), by owner decision. All schedules fall due in the same second, and the scheduler's default allowance of 100 jobs per second makes the last one wait schedules ÷ 100 s by design. Defaults are unchanged. See `docs/reports/sp-029.md`.
+
 ## Changes (2026-11-03)
 
 - (2026-11-03) **CAP-02 real-store half, return window.** After "default" is resumed, the 40-admission share window starts at the first "default" admission after the resume, not 8 admissions after it. The resume is not notified, so the worker sees it only after its current hint (≤ 2 s) expires, and the batched claim (05 §9.6) fits far more than 8 admissions into that time (24 in one traced run). The case also asserts that the first "default" admission comes within hint age + 8 s of the resume, so a worker that never sees the return still fails. Counting, ratio (10 ± 1 of 40) and "never two in a row" are unchanged. The Core case `CapacityCaseTests.A_queue_hidden_by_a_stale_hint_returns_at_zero_with_its_exact_share_while_batches_run` (Pure, CAP-02, PF-06) reproduces the old miscount over fake time and checks the exact 10 of 40 from the return (05 Changes 2026-11-03).
@@ -334,7 +338,7 @@ OUTBOX-01 … OUTBOX-07, OUT-01, OUT-02, TX-01 … TX-04 analogues for Stage on 
 | P-04 fairness | SP-012 | performance-acceptance-plan P-04 |
 | P-05 contention subset, 1/3/6 replicas | SP-012 | performance-acceptance-plan P-05 |
 | P-06 rate half (100 authorizations/s; 1 and 8 scopes; rejected-Begin churn; grant rows and WAL) | SP-013 | performance-acceptance-plan P-06 |
-| P-06 scheduler half (1,000 minute schedules; a 1,000-occurrence catch-up) | SP-016 | lag p99 ≤ 3 s; worker lease loss = 0 |
+| P-06 scheduler half (1,000 minute schedules; a 1,000-occurrence catch-up) | SP-016 | lag p99 ≤ schedules ÷ `JobsPerSecond` + 3 s (13 s for 1,000 schedules at the default 100/s; owner decision 2026-11-09); worker lease loss = 0 |
 | P-09 outbox | SP-017 | ≥ 100 deliveries/s; p99 ≤ 2 s |
 
 Environment fields, raw-sample retention and the thresholds rule are as in 07 §14.2–§14.5. `eng/run-g2.sh` mirrors `eng/run-g1.sh`. No measurement substitutes for an invariant test.

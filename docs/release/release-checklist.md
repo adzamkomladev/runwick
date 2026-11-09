@@ -15,8 +15,8 @@ Steps 5 and 6 have passed on linux-x64 only; win-x64 is owed on a Windows machin
 
 Owner decisions and actions before publishing:
 
-1. Confirm the licence (MIT) and the copyright holder in `LICENSE` ("Runwick contributors" is a placeholder).
-2. Set the real repository URL: `RepositoryUrl` and `PackageProjectUrl` in `Directory.Build.props` are `https://example.invalid/runwick/runwick` placeholders because no remote exists. When a remote exists, consider adding SourceLink (`Microsoft.SourceLink.*` package) so symbols link to source.
+1. Licence: MIT, copyright holder Komla Adzam (set 2026-11-09).
+2. Repository URL: https://github.com/adzamkomladev/runwick (set 2026-11-09). Build the release packages in a clone whose origin is that repository, so the SDK's built-in SourceLink links symbols to the commit.
 3. Choose the final version (now `0.1.0-m1`) in `Directory.Build.props`.
 4. Check that the package name `Runwick` is free on NuGet (spec 00 §7 asks for this).
 5. Confirm the SQLite public-domain point in [licenses.md](licenses.md).

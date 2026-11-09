@@ -1,5 +1,7 @@
+using Microsoft.Extensions.DependencyInjection;
 using Runwick.Harness.Jobs;
 using Runwick.Harness.Store;
+using Runwick.Protocol;
 
 namespace Runwick.Cli.Tests;
 
@@ -82,6 +84,12 @@ public sealed class CliUpgradeTests
         Assert.True(first.Result!["changes"]![0]!["changed"]!.GetValue<bool>());
         var again = await RunAsync(cs, [.. Store(kind, "store", "activate-capability"), "--name", "scheduler"]);
         Assert.False(again.Result!["changes"]![0]!["changed"]!.GetValue<bool>());
+
+        // The raise wrote one audit row with the CLI as operator actor; the repeat wrote none.
+        var audit = (await c.Services.GetRequiredService<IManagementQueryStore>().ListAuditAsync(
+            f.Application, new AuditFilter("application", f.Application, null, null), null, 100, TestContext.Current.CancellationToken)).Value;
+        var row = Assert.Single(audit);
+        Assert.Equal(("ActivateCapabilities", "cli", "operator"), (row.Operation, row.ActorSubject, row.ActorScheme));
         var status = await RunAsync(cs, Store(kind, "store", "status"));
         Assert.Contains("scheduler", status.Result!["applications"]![0]!["requiredCapabilities"]!.GetValue<string>(), StringComparison.Ordinal);
 

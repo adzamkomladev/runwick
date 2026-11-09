@@ -69,12 +69,13 @@ namespace Runwick
         /// <summary>
         /// Raises one capability (<c>scheduler</c> or <c>rate_admission</c>) in each application's <c>meta</c> hash with one script per
         /// application (10 §6.1, 23 §3.6). Never lowers one; a repeat reports <c>Changed = false</c>. An application with a pending intent
-        /// is refused with <c>intent_pending</c>. Like admission, no audit row or event is written; <paramref name="actor"/> is recorded.
+        /// is refused with <c>intent_pending</c>. A raise also writes the store operation's <c>capabilities_activated</c> event and
+        /// <c>ActivateCapabilities</c> audit row, with <paramref name="actor"/> as the subject and scheme <c>operator</c>; a repeat writes nothing.
         /// </summary>
         public static Task<IReadOnlyList<CapabilityChange>> ActivateCapabilityAsync(
             string configuration, string? application, string capability, string actor, CancellationToken cancellationToken = default)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+            StoreAdminRules.CheckActor(actor);
             if (StoreAdminRules.CheckCapability(capability) is { } bad)
             {
                 throw new RedisMigrationException(bad, "The capability must be scheduler or rate_admission.");
@@ -93,7 +94,13 @@ namespace Runwick
                 var changes = new List<CapabilityChange>();
                 foreach (var (name, meta) in apps)
                 {
-                    var result = (RedisResult[])(await db.ScriptEvaluateAsync(RedisOps.ActivateCapability, new { meta, capability, version, actor }).ConfigureAwait(false))!;
+                    var prefix = ((string)meta!)[..^"meta".Length];
+                    var result = (RedisResult[])(await db.ScriptEvaluateAsync(RedisOps.ActivateCapability, new
+                    {
+                        meta, capability, version, actor, application = name, command = RxClient.Hex(Guid.NewGuid()), scheme = StoreAdminRules.OperatorScheme,
+                        events = (RedisKey)(prefix + "events"), eventsData = (RedisKey)(prefix + "events:data"),
+                        audit = (RedisKey)(prefix + "audit"), auditData = (RedisKey)(prefix + "audit:data"),
+                    }).ConfigureAwait(false))!;
                     if ((string?)result[0] == "PENDING")
                     {
                         throw new RedisMigrationException("intent_pending", $"Application {name} has a pending intent; let recovery finish and retry.");
@@ -189,8 +196,25 @@ namespace Runwick.Redis
             "local rev = tonumber(redis.call('HGET', @meta, 'gaterev') or '1') " +
             "local caps = cjson.decode(redis.call('HGET', @meta, 'caps') or '{}') " +
             "if (caps[@capability] or 0) >= tonumber(@version) then return {'OK', rev, 0} end " +
-            "caps[@capability] = tonumber(@version) rev = rev + 1 " +
-            "redis.call('HSET', @meta, 'caps', cjson.encode(caps), 'gaterev', rev, 'actor', @actor) return {'OK', rev, 1}");
+            "caps[@capability] = tonumber(@version) local before = rev rev = rev + 1 " +
+            "local enc = cjson.encode(caps) " +
+            "redis.call('HSET', @meta, 'caps', enc, 'gaterev', rev, 'actor', @actor) " +
+            // The store operation's capabilities_activated event and ActivateCapabilities audit row (activate_capabilities.lua), keys in byte order.
+            "local t = redis.call('TIME') local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000) " +
+            "local function d(n) return string.format('%d', n) end " +
+            "local who, cmd = cjson.encode(@actor), cjson.encode(@command) " +
+            "local ev = tonumber(redis.call('HGET', @meta, 'nextevent') or '1') " +
+            "redis.call('ZADD', @events, ev, d(ev)) " +
+            "redis.call('HSET', @eventsData, d(ev), '{\"actorId\":' .. who .. ',\"attemptId\":null,\"commandId\":' .. cmd .. " +
+            "',\"details\":{\"requiredCapabilities\":' .. enc .. ',\"revision\":' .. d(rev) .. '},\"eventId\":' .. d(ev) .. " +
+            "',\"jobId\":null,\"kind\":\"capabilities_activated\",\"occurredAt\":' .. d(now) .. '}') " +
+            "local au = tonumber(redis.call('HGET', @meta, 'nextaudit') or '1') " +
+            "redis.call('ZADD', @audit, au, d(au)) " +
+            "redis.call('HSET', @auditData, d(au), '{\"action\":\"ActivateCapabilities\",\"at\":' .. d(now) .. ',\"auditId\":' .. d(au) .. " +
+            "',\"commandId\":' .. cmd .. ',\"details\":{\"requiredCapabilities\":' .. enc .. '},\"display\":null,\"expectedRevision\":' .. d(before) .. " +
+            "',\"reason\":null,\"resultingRevision\":' .. d(rev) .. ',\"scheme\":' .. cjson.encode(@scheme) .. ',\"subject\":' .. who .. " +
+            "',\"targetId\":' .. cjson.encode(@application) .. ',\"targetKind\":\"application\"}') " +
+            "redis.call('HSET', @meta, 'nextevent', d(ev + 1), 'nextaudit', d(au + 1)) return {'OK', rev, 1}");
 
         internal static readonly LuaScript SetStore = LuaScript.Prepare(
             "local i = redis.call('HGET', @meta, 'intent') if i and i ~= '' then return {'PENDING', 0} end " +

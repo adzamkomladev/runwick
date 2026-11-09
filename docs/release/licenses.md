@@ -32,7 +32,7 @@ npm (all MIT; built into the dashboard's `dist/` assets by `npm run build`): @in
 
 ## Bundled native SQLite
 
-`Runwick.Sqlite` brings the SQLite engine (3.53.3 at the last build) through `SQLitePCLRaw.lib.e_sqlite3`. The package wrapper is Apache-2.0. SQLite itself is in the public domain (the authors dedicate it to the public domain; it has no licence conditions). The nuspec check sees only the wrapper's Apache-2.0, so the public-domain status of the engine rests on SQLite's own statement at sqlite.org/copyright.html; the owner should confirm that is acceptable. The same native library is the only native code Runwick ships.
+`Runwick.Sqlite` brings the SQLite engine (3.53.3 at the last build) through `SQLitePCLRaw.lib.e_sqlite3`. The package wrapper is Apache-2.0. SQLite itself is in the public domain (the authors dedicate it to the public domain; it has no licence conditions). The nuspec check sees only the wrapper's Apache-2.0, so the public-domain status of the engine rests on SQLite's own statement at sqlite.org/copyright.html; the owner accepted this on 2026-11-09. The same native library is the only native code Runwick ships.
 
 ## Third-party notices
 
