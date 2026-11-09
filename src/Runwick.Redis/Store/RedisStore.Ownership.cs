@@ -440,13 +440,14 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
         frame[4] = fingerprint is null ? "" : Convert.ToHexStringLower(fingerprint);
         frame[5] = Ms(notAfter);
         frame[7] = (long)floor.TotalMilliseconds;
-        for (var attempt = 0; ; attempt++)
+        var deadline = runner.Budget();
+        while (true)
         {
             var a = await runner.Client.EvalAsync(RxLane.Producer, RxScript.Write("resolve"), RxClient.Meta(application), frame, null, ct).ConfigureAwait(false);
             switch ((string)a[0]!)
             {
                 case "RECOVERING":
-                    if (attempt < 4 && await runner.RecoverAsync(application, "", RxLane.Producer, ct).ConfigureAwait(false))
+                    if (await runner.RecoveredAsync(application, RxLane.Producer, deadline, ct).ConfigureAwait(false))
                     {
                         continue;
                     }

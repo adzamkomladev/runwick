@@ -337,6 +337,77 @@ public sealed class RedisSoakTests
             $"REDIS-06: {logical} commands, {injected} injected failures, {unknown} interrupted calls, {readerSamples} reads ({recovering} Recovering), {snapshot.Model.Jobs.Count} jobs, {fireWins} fires, {cancelsApplied} audit rows, {firstDeliveries} deliveries, {clock.Elapsed.TotalSeconds:F1} s"));
     }
 
+    // ------------------------------------------------------------------ REDIS-16
+
+    [Fact]
+    [Trait("Case", "REDIS-16")]
+    public async Task Eight_concurrent_DispatchMany_callers_on_a_healthy_server_never_see_store_recovering()
+    {
+        // The queue shoot-out's bulk check: 8 callers side by side, 100 jobs a call, on one producer that admits 8 calls (22 §4.2).
+        const int Callers = 8;
+        const int Calls = 80;
+        var f = await DriverFixture.StartAsync("redis16_" + Guid.NewGuid().ToString("N")[..8], StoreKind.Redis);
+        await using var _ = f;
+        var producer = await f.OpenClient(configure: r =>
+        {
+            Jobs(r);
+            r.Producer(o => o.MaxConcurrentCalls = Callers);
+        });
+        var store = Store(producer);
+
+        // Script replies by kind, as the client saw them: a pending intent shows as RECOVERING on a write or read, MORE/PUBLISHED on recovery.
+        var replies = new System.Collections.Concurrent.ConcurrentDictionary<string, int>();
+        var waits = new System.Collections.Concurrent.ConcurrentDictionary<string, int>(); // RECOVERING answers per dispatch command
+        store.Runner.Client.Traced = (script, args, r) =>
+        {
+            replies.AddOrUpdate(script.Name + ":" + (string?)r[0], 1, (_, v) => v + 1);
+            if (script.Name == "dispatch" && (string?)r[0] == "RECOVERING")
+            {
+                waits.AddOrUpdate((string)args[3]!, 1, (_, v) => v + 1);
+            }
+        };
+
+        var failures = new System.Collections.Concurrent.ConcurrentBag<string>();
+        var stored = new System.Collections.Concurrent.ConcurrentBag<JobId>();
+        var next = -1;
+        var clock = Stopwatch.StartNew();
+        await Task.WhenAll(Enumerable.Range(0, Callers).Select(_ => Task.Run(async () =>
+        {
+            for (var call = Interlocked.Increment(ref next); call < Calls; call = Interlocked.Increment(ref next))
+            {
+                var items = Enumerable.Range(0, 100).Select(i => new BatchDispatchItem(new PingJob($"bulk{call}-{i}"))).ToList();
+                try
+                {
+                    var receipt = await producer.Dispatcher.DispatchManyAsync(items, cancellationToken: Ct);
+                    Assert.All(receipt.Items, i => Assert.Equal(DispatchDisposition.Created, i.Receipt!.Disposition));
+                    foreach (var i in receipt.Items)
+                    {
+                        stored.Add(i.Receipt!.JobId);
+                    }
+
+                    // The receipt read (22 §4.5) runs while the other callers keep writing.
+                    var resolved = await producer.Prepared.ResolveAsync(receipt.OperationId, Ct);
+                    Assert.Equal(DispatchResolutionStatus.Confirmed, resolved.Status);
+                }
+                catch (Exception ex) when (ex is DispatchOutcomeUnknownException or StoreOutcomeUnknownException or StoreNotAppliedException)
+                {
+                    failures.Add($"call {call}: {ex.GetType().Name} {ex.Message} ({ex.InnerException?.GetType().Name}: {ex.InnerException?.Message})");
+                }
+            }
+        }, Ct)));
+        clock.Stop();
+
+        var snapshot = await f.ReadCommittedSnapshot();
+        Report("redis-16", string.Create(CultureInfo.InvariantCulture,
+            $"REDIS-16: {Calls} DispatchMany(100) calls from {Callers} callers in {clock.Elapsed.TotalSeconds:F1} s; {failures.Count} failed; {snapshot.Model.Jobs.Count} jobs stored; RECOVERING answers per dispatch command: max {(waits.IsEmpty ? 0 : waits.Values.Max())}, {waits.Count(p => p.Value >= 8)} commands with 8 or more; replies {string.Join(", ", replies.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Key + "=" + p.Value))}"));
+
+        Assert.Empty(failures);
+        Assert.Equal(Calls * 100, stored.Count);
+        Assert.Equal(Calls * 100, stored.Distinct().Count());
+        Assert.Equal(Calls * 100, snapshot.Model.Jobs.Count);
+        Assert.Empty(SnapshotInvariants.Violations(snapshot.Model));
+    }
+
     // ------------------------------------------------------------------ REDIS-07
 
     [Fact]

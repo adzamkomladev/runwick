@@ -184,6 +184,7 @@ REDIS-12,REDIS,driver,spec 22,yes,n/a: Redis-only case (spec 22 §12),n/a: Redis
 REDIS-13,REDIS,driver,spec 22,yes,n/a: Redis-only case (spec 22 §12),n/a: Redis-only case (spec 22 §12),applicable,Case=REDIS-13,
 REDIS-14,REDIS,driver,spec 22,yes,n/a: Redis-only case (spec 22 §12),n/a: Redis-only case (spec 22 §12),applicable,Case=REDIS-14,
 REDIS-15,REDIS,driver,spec 22,yes,n/a: Redis-only case (spec 22 §12),n/a: Redis-only case (spec 22 §12),applicable,Case=REDIS-15,"a lossy replica promotion is detected only where the revision went back; reported as a limitation (22 s12), not counted as no-history-loss conformance"
+REDIS-16,REDIS,driver,spec 22,yes,n/a: Redis-only case (spec 22 §12),n/a: Redis-only case (spec 22 §12),applicable,Case=REDIS-16,"8 concurrent DispatchMany(100) callers; found by the queue shoot-out bulk check"
 RENEWMANY-01,RENEWMANY,driver,tests only,yes,applicable,applicable,applicable,Case=RENEWMANY-01,
 RENEWMANY-02,RENEWMANY,driver,tests only,yes,applicable,applicable,applicable,Case=RENEWMANY-02,
 RET-01,RET,driver,contract-suite; spec 17,yes,applicable,applicable,applicable,Case=RET-01,"20 s12 lists SQLite as N/A pending SP-021; SP-021 delivered cleanup for SQLite and Redis (17), so the case is applicable"
