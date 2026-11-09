@@ -17,7 +17,7 @@ services.AddOpenTelemetry()
     .WithMetrics(m => m.AddRunwickInstrumentation().AddOtlpExporter());
 ```
 
-`Runwick.OpenTelemetry` has no exporter; add the one you use. It sets cardinality limits and keeps only Runwick's attributes.
+`Runwick.OpenTelemetry` has no exporter; add the one you use. The lines above also need the `OpenTelemetry.Extensions.Hosting` and `OpenTelemetry.Exporter.OpenTelemetryProtocol` packages and `using OpenTelemetry.Trace;` and `using OpenTelemetry.Metrics;`. It sets cardinality limits and keeps only Runwick's attributes.
 
 ## Reading the numbers honestly
 
