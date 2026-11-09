@@ -25,8 +25,7 @@ function PolicySheet({ open, onOpenChange, retention, url, command }) {
     e.preventDefault()
     const body = { expectedRevision: retention.revision, reason: reason || null }
     for (const [name] of NAMES) body[name] = values[name] === '' ? null : Number(values[name])
-    command.run('Change the retention policy', url, body)
-    onOpenChange(false)
+    command.run('Change the retention policy', url, body, 'done', (ok) => { if (ok) setTimeout(() => onOpenChange(false), 500) })
   }
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -45,7 +44,7 @@ function PolicySheet({ open, onOpenChange, retention, url, command }) {
           </div>
           <SheetFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" data-testid="save-policy"><IconDeviceFloppy />Save policy</Button>
+            <CommandButton command={command} url={url} type="submit" variant="default" size="default" data-testid="save-policy" icon={IconDeviceFloppy}>Save policy</CommandButton>
           </SheetFooter>
         </form>
       </SheetContent>

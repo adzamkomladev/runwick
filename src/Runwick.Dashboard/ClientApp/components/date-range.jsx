@@ -59,8 +59,8 @@ export function DateRangePicker({ query, fallback, className }) {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" data-testid="range" className={cn('justify-between font-normal', className)}>
-          <IconCalendarEvent className="text-muted-foreground" /><span className="truncate">{label(query, fallback)}</span><IconChevronDown className="opacity-50" />
+        <Button variant="outline" size="sm" data-testid="range" className={cn('group/range justify-between font-normal', className)}>
+          <IconCalendarEvent className="text-muted-foreground" /><span className="truncate">{label(query, fallback)}</span><IconChevronDown className="opacity-50 transition-transform duration-200 group-data-[state=open]/range:rotate-180" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-auto max-w-[calc(100vw-2rem)] p-0" data-testid="range-popover">
@@ -69,12 +69,12 @@ export function DateRangePicker({ query, fallback, className }) {
             {PRESETS.map(([key, text]) => (
               <li key={key}>
                 <button type="button" aria-pressed={active === key} onClick={() => choose(key)} data-testid={`range-${key}`}
-                  className={cn('w-full rounded-md px-2.5 py-1.5 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                  className={cn('w-full rounded-md px-2.5 py-1.5 text-left text-sm press outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50',
                     active === key && 'bg-primary text-primary-foreground hover:bg-primary')}>{text}</button>
               </li>
             ))}
             {!fallback && <li className="col-span-2 sm:col-span-1"><button type="button" aria-pressed={!active && !query.from} onClick={() => choose(null)}
-              className="w-full rounded-md px-2.5 py-1.5 text-left text-sm text-muted-foreground outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50">Any time</button></li>}
+              className="w-full rounded-md px-2.5 py-1.5 text-left text-sm text-muted-foreground press outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50">Any time</button></li>}
           </ul>
           <div className="grid gap-3 p-3">
             <Calendar mode="range" selected={days} onSelect={setDays} numberOfMonths={1} disabled={{ after: new Date() }} defaultMonth={days?.from} />

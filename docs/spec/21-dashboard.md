@@ -16,6 +16,7 @@ Not in SP-024: server-side rendering, a live push channel (SSE or WebSocket), qu
 
 ## Changes
 
+- (2026-11-09, micro-interactions) One press feedback on every pressable control, command buttons show their result, counts tween, pills crossfade, the sidebar labels fade instead of reflowing, and reduced motion is checked in e2e (§4.6).
 - (2026-11-09, skeletons) Every page and late panel loads behind a skeleton drawn from the page's own components (§4.5), replacing the generic navigation skeleton and the fixed-height blocks; content fades in without moving; an e2e step checks layout shift.
 - (2026-11-09, Overview range fix) The Overview's key figures and charts cover the range in the picker (default the last 24 hours, as the picker shows), replacing the fitted 15 min to 24 h span of entry 4 below. Figures are tallies over the range from the 200-row samples; when a sample hit the limit, the caption says "newest 200 jobs in <range> (back to <time>)", the count shows "200+" and no half-vs-half delta is shown (the delta compares the range's second half with its first only when the sample covers the whole range). "In flight now" and "Pending by queue" are live snapshots and are labelled as such. The shared textarea has no resize grip (`resize-none`).
 - (2026-11-09, round 3) Dashboard updates and cleanups:
@@ -300,6 +301,19 @@ A skeleton is the real page drawn with stand-in props, never a separate outline,
 - **Where.** A page visit slower than 150 ms draws the destination page's skeleton inside the shell (the sidebar highlights the destination), not a generic one. Overview draws its body as a skeleton until its deferred groups arrive, and the Workers and Scaling panels until theirs; the notifications sheet draws its list as a skeleton until the prop arrives.
 - **Loading in.** Content replacing a skeleton fades in over 150 ms (opacity only, no movement). Charts reserve their height before they are measured.
 - **Test.** The Chromium flow opens each page with page visits and deferred props slowed by 1.2 s and checks that the heading and every card keep their box within 2 px from skeleton to loaded page, and that the summed `layout-shift` entries stay below 0.02.
+
+### 4.6 Micro-interactions
+
+Each one is quick (120 to 200 ms) and quiet, and needs no library beyond Tailwind and tw-animate-css:
+
+- **Press.** Every pressable control (buttons, nav items, menu items, pills, preset rows, copy buttons, checkboxes, switches, tabs) uses the `press` utility in `app.css`: its colours ease over 150 ms and it scales to 0.97 while pressed. The Overview cards, which are large links, lift on hover and scale to 0.99.
+- **Copy.** The copy icon morphs into a check for 1.2 s, then back, next to the "Copied" toast.
+- **Counts.** KPI numbers and counts (`AnimatedNumber`) tween to each polled value over 200 ms in tabular figures, so their width holds.
+- **State pills.** A pill crossfades its colour over 200 ms when a job's state changes live. Changed rows keep their key and flash by switching between two keyframe names, so the row is not remounted.
+- **Sidebar.** The width animates; labels stay in place, never wrap and fade out, so nothing reflows. The range picker's and selects' chevrons turn when they open.
+- **Commands.** A command button shows a spinner while its control is sent, then a check or a cross for 1.2 s; on Pause/Resume it shows on whichever twin is now on screen. The Save buttons in sheets are command buttons: the sheet closes half a second after the change is applied and stays open when it is not.
+- **Focus.** Table rows tint on hover and while something in them has keyboard focus; focus rings use the `ring` token (pine blue).
+- **Reduced motion.** With `prefers-reduced-motion: reduce`, every animation and transition is cut to nothing, presses do not scale, the Overview cards do not lift, and numbers change at once. The Chromium flow checks this: a held press scales to 0.97 normally and not at all under reduced motion, and no element has a running transition or animation.
 
 ## 5. Controls
 

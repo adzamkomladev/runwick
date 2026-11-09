@@ -1,5 +1,5 @@
 import { router } from '@inertiajs/react'
-import { IconPencil } from '@tabler/icons-react'
+import { IconDeviceFloppy, IconPencil } from '@tabler/icons-react'
 import { useState } from 'react'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
@@ -10,8 +10,7 @@ import { Switch } from '../components/ui/switch'
 import { Textarea } from '../components/ui/textarea'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
-import { cn } from '../components/ui/utils'
-import { AnimatedNumber, CommandButton, Copyable, Layout, Pager, StateBadge, TableCard, time, useChanged, useCommand, usePoll, useSort } from '../lib'
+import { AnimatedNumber, CommandButton, Copyable, flash, Layout, Pager, StateBadge, TableCard, time, useChanged, useCommand, usePoll, useSort } from '../lib'
 
 /** Edit a scope's capacity in a side sheet: the new value and an optional reason, checked against the policy revision shown. */
 function CapacitySheet({ scope, url, command, onClose }) {
@@ -19,8 +18,7 @@ function CapacitySheet({ scope, url, command, onClose }) {
   const [reason, setReason] = useState('')
   const submit = (e) => {
     e.preventDefault()
-    command.run(`Set ${scope.kind}/${scope.key} capacity to ${capacity}`, url, { capacity: Number(capacity), expectedPolicyRevision: scope.policyRevision, reason: reason || null })
-    onClose()
+    command.run(`Set ${scope.kind}/${scope.key} capacity to ${capacity}`, url, { capacity: Number(capacity), expectedPolicyRevision: scope.policyRevision, reason: reason || null }, 'done', (ok) => { if (ok) setTimeout(onClose, 500) })
   }
   return (
     <Sheet open={!!scope} onOpenChange={(o) => { if (!o) onClose() }}>
@@ -37,7 +35,7 @@ function CapacitySheet({ scope, url, command, onClose }) {
             </div>
             <SheetFooter>
               <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-              <Button type="submit" data-testid="set-capacity" disabled={capacity === '' || Number(capacity) === scope.capacity}>Save</Button>
+              <CommandButton command={command} url={url} type="submit" variant="default" size="default" data-testid="set-capacity" icon={IconDeviceFloppy} disabled={capacity === '' || Number(capacity) === scope.capacity}>Save</CommandButton>
             </SheetFooter>
           </form>
         </>}
@@ -93,7 +91,7 @@ export default function Workers({ base, can, workers, scopes, query }) {
               <TableBody>{scopeRows.map((s) => {
                 const id = `${s.kind}/${s.key}`
                 return (
-                  <TableRow key={`${id}:${changed[id] ?? 0}`} data-testid="scope-row" className={cn(changed[id] && 'animate-flash')}>
+                  <TableRow key={id} data-testid="scope-row" className={flash(changed[id])}>
                     <TableCell className="text-muted-foreground">{s.kind}</TableCell><TableCell className="font-medium">{s.key}</TableCell>
                     <TableCell data-testid="scope-capacity" className="tabular-nums">{s.capacity}</TableCell>
                     <TableCell><AnimatedNumber value={s.livePermits} /></TableCell><TableCell className="tabular-nums">{s.policyRevision}</TableCell>

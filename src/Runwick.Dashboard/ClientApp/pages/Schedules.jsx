@@ -3,8 +3,7 @@ import { useState } from 'react'
 import { Label } from '../components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
-import { cn } from '../components/ui/utils'
-import { CommandBar, CommandButton, Copyable, Layout, Pager, StateBadge, TableCard, time, useChanged, useCommand, usePoll, useSort } from '../lib'
+import { CommandBar, CommandButton, Copyable, flash, Layout, Pager, StateBadge, TableCard, time, useChanged, useCommand, usePoll, useSort } from '../lib'
 
 export default function Schedules({ base, can, schedules }) {
   const live = usePoll(['schedules'], 10)
@@ -34,7 +33,7 @@ export default function Schedules({ base, can, schedules }) {
             {head('last', 'Last run', (s) => Date.parse(s.lastMaterializedAt))}<TableHead>Revisions</TableHead><TableHead />
           </TableRow></TableHeader>
           <TableBody>{rows.map((s) => (
-            <TableRow key={`${s.key}:${changed[s.key] ?? 0}`} data-testid="schedule-row" className={cn(changed[s.key] && 'animate-flash')}>
+            <TableRow key={s.key} data-testid="schedule-row" className={flash(changed[s.key])}>
               <TableCell className="font-medium"><Copyable value={s.key} label="Copy schedule key" /></TableCell>
               <TableCell data-testid="schedule-state"><StateBadge state={s.paused ? 'paused' : 'active'} />{s.needsReview && <span className="ml-1.5 text-xs text-warning">needs review</span>}</TableCell>
               <TableCell className="whitespace-nowrap">{time(s.nextDueAt)}</TableCell><TableCell className="whitespace-nowrap text-muted-foreground">{time(s.lastMaterializedAt)}</TableCell>
@@ -42,9 +41,9 @@ export default function Schedules({ base, can, schedules }) {
               <TableCell>
                 <div className="flex justify-end gap-2">
                   {can.scheduleControl && (s.paused
-                    ? <CommandButton command={command} url={url(s, 'resume')} data-testid="schedule-resume" icon={IconPlayerPlay}
+                    ? <CommandButton command={command} url={url(s, 'resume')} pair={url(s, 'pause')} data-testid="schedule-resume" icon={IconPlayerPlay}
                       onClick={() => command.ask(`Resume ${s.key}`, url(s, 'resume'), { expectedRevision: s.controlRevision, policy })}>Resume</CommandButton>
-                    : <CommandButton command={command} url={url(s, 'pause')} data-testid="schedule-pause" icon={IconPlayerPause}
+                    : <CommandButton command={command} url={url(s, 'pause')} pair={url(s, 'resume')} data-testid="schedule-pause" icon={IconPlayerPause}
                       onClick={() => command.ask(`Pause ${s.key}`, url(s, 'pause'), { expectedRevision: s.controlRevision })}>Pause</CommandButton>)}
                   {can.scheduleTrigger && <CommandButton command={command} url={url(s, 'trigger')} data-testid="schedule-trigger" icon={IconBolt}
                     onClick={() => command.ask(`Trigger ${s.key}`, url(s, 'trigger'), { expectedRevision: s.definitionRevision })}>Trigger</CommandButton>}

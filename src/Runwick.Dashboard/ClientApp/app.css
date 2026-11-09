@@ -176,12 +176,18 @@
   --color-sidebar: var(--sidebar);
   --color-sidebar-border: var(--sidebar-border);
   --animate-flash: flash 1.6s ease-out;
+  --animate-flash-2: flash-2 1.6s ease-out;
   --animate-page-in: page-in 150ms ease-out;
   --animate-skeleton: skeleton 1.6s ease-in-out infinite;
   --animate-live: live 2s ease-out infinite;
 }
 
 @keyframes flash {
+  from { background-color: color-mix(in oklch, var(--primary) 22%, transparent); }
+  to { background-color: transparent; }
+}
+/* The same flash under a second name: switching names restarts it on a row that keeps its key (lib.jsx flash()). */
+@keyframes flash-2 {
   from { background-color: color-mix(in oklch, var(--primary) 22%, transparent); }
   to { background-color: transparent; }
 }
@@ -235,6 +241,19 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/*
+ * Press feedback (21 §4.6): every pressable control eases its colours and scales down slightly while pressed, the same amount
+ * everywhere. Under reduced motion there is no scale at all (and the rule above makes the colour change instant).
+ */
+@utility press {
+  transition-property: color, background-color, border-color, box-shadow, opacity, scale;
+  transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition-duration: 150ms;
+  @media (prefers-reduced-motion: no-preference) {
+    &:active:not(:disabled, [data-disabled]) { scale: 0.97; }
   }
 }
 

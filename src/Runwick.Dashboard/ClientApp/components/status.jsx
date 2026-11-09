@@ -27,7 +27,7 @@ export function StatusDot({ state, className }) {
   return (
     <span aria-hidden className={cn('relative flex size-1.5 shrink-0', className)}>
       {live && <span className={cn('absolute inline-flex size-full rounded-full opacity-75 motion-safe:animate-ping', dot)} />}
-      <span className={cn('relative inline-flex size-1.5 rounded-full', dot)} />
+      <span className={cn('relative inline-flex size-1.5 rounded-full transition-colors duration-200', dot)} />
     </span>
   )
 }
@@ -35,7 +35,7 @@ export function StatusDot({ state, className }) {
 /** A state as a dot and its name on a tinted chip. The text is the state itself, so it never relies on colour alone. */
 export function StatusBadge({ state, className, children }) {
   return (
-    <span data-slot="status" className={cn('inline-flex h-6 w-fit shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-medium whitespace-nowrap ring-1 ring-inset transition-colors duration-500',
+    <span data-slot="status" className={cn('inline-flex h-6 w-fit shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-medium whitespace-nowrap ring-1 ring-inset transition-[color,background-color,box-shadow] duration-200',
       toneOf(state).badge, className)}>
       <StatusDot state={state} />
       {children ?? state.replaceAll('_', ' ')}

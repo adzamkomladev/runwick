@@ -7,10 +7,10 @@ export const SelectValue = (props) => <SelectPrimitive.Value data-slot="select-v
 
 export const SelectTrigger = ({ className, children, ...props }) => (
   <SelectPrimitive.Trigger data-slot="select-trigger" className={cn(
-    'flex h-9 w-fit items-center justify-between gap-2 whitespace-nowrap rounded-md border border-input bg-card px-3 py-2 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 data-[placeholder]:text-muted-foreground [&_svg]:size-4 [&_svg]:shrink-0',
+    'group/select flex h-9 w-fit items-center justify-between gap-2 whitespace-nowrap rounded-md border border-input bg-card px-3 py-2 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 data-[placeholder]:text-muted-foreground [&_svg]:size-4 [&_svg]:shrink-0',
     className)} {...props}>
     {children}
-    <SelectPrimitive.Icon asChild><IconChevronDown className="opacity-50" /></SelectPrimitive.Icon>
+    <SelectPrimitive.Icon asChild><IconChevronDown className="opacity-50 transition-transform duration-200 group-data-[state=open]/select:rotate-180" /></SelectPrimitive.Icon>
   </SelectPrimitive.Trigger>
 )
 
@@ -26,7 +26,7 @@ export const SelectContent = ({ className, children, position = 'popper', ...pro
 
 export const SelectItem = ({ className, children, ...props }) => (
   <SelectPrimitive.Item data-slot="select-item" className={cn(
-    'relative flex w-full cursor-default select-none items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
+    'relative flex w-full cursor-default select-none items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-sm press outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
     className)} {...props}>
     <span className="absolute right-2 flex size-3.5 items-center justify-center">
       <SelectPrimitive.ItemIndicator><IconCheck className="size-4" /></SelectPrimitive.ItemIndicator>

@@ -101,7 +101,15 @@ const RESULT_TOAST = 'command-result'
  */
 export function useCommand() {
   const [state, setState] = useState(null)
+  const [result, setResult] = useState(null)
   const send = (s) => {
+    // The button that sent it shows a check or a cross for a moment; `after` lets a sheet close once it is applied.
+    const settle = (ok) => {
+      const mark = { url: s.url, ok }
+      setResult(mark)
+      setTimeout(() => setResult((r) => (r === mark ? null : r)), 1200)
+      s.after?.(ok)
+    }
     acting++
     dismissToast(RESULT_TOAST)
     setState({ ...s, status: 'sending' })
@@ -113,6 +121,7 @@ export function useCommand() {
       preserveScroll: true,
       onSuccess: (page) => {
         const o = page.props.outcome
+        settle(!o || (!!o.items && o.items.every((i) => !i.code)))
         if (!o) {
           toast({ id: RESULT_TOAST, variant: 'success', testId: 'done', title: s.label, description: s.done === 'done' ? 'Applied.' : s.done })
         } else if (o.items) {
@@ -130,8 +139,8 @@ export function useCommand() {
         }
         setState(null)
       },
-      onHttpException: (response) => { failed(response.data?.code ?? `http_${response.status}`); setState(null); return false },
-      onNetworkError: () => { failed('no_answer'); setState(null); return false },
+      onHttpException: (response) => { settle(false); failed(response.data?.code ?? `http_${response.status}`); setState(null); return false },
+      onNetworkError: () => { settle(false); failed('no_answer'); setState(null); return false },
       onFinish: () => { acting-- },
     })
   }
@@ -139,22 +148,31 @@ export function useCommand() {
     state,
     ask: (label, url, body, done = 'done') => setState({ label, url, body, done, status: 'confirm' }),
     /** Sends at once, without the confirm dialog (a form in a sheet is its own confirmation). */
-    run: (label, url, body, done = 'done') => send({ label, url, body, done, commandId: crypto.randomUUID() }),
+    run: (label, url, body, done = 'done', after) => send({ label, url, body, done, after, commandId: crypto.randomUUID() }),
     confirm: () => send({ ...state, commandId: crypto.randomUUID() }),
     close: () => setState(null),
     bulk: (label, url, items, reason) =>
       send({ label, url, body: { items: items.map((i) => ({ ...i, commandId: crypto.randomUUID() })), reason }, done: 'done', commandId: '' }),
     /** True while this URL's command is being sent: the button that started it shows a spinner. */
     busy: (url) => state?.status === 'sending' && state.url === url,
+    /** 'ok' or 'failed' for a moment after this URL's command is answered, else null. */
+    result: (url) => (result?.url === url ? (result.ok ? 'ok' : 'failed') : null),
   }
 }
 
-/** A button that asks for a control; it shows a spinner while that control is being sent. */
-export function CommandButton({ command, url, onClick, icon: Icon, children, ...props }) {
+/**
+ * A button that asks for a control: a spinner while it is being sent, then a check or a cross for a moment. `pair` is the URL of
+ * the twin this button replaces once applied (Pause and Resume), so the result shows on whichever of the two is on screen.
+ */
+export function CommandButton({ command, url, pair, onClick, icon: Icon, children, ...props }) {
   const busy = command.busy(url)
+  const result = !busy && (command.result(url) || (pair && command.result(pair)))
   return (
-    <Button size="sm" variant="outline" onClick={onClick} disabled={busy || props.disabled} aria-busy={busy || undefined} {...props}>
-      {busy ? <IconLoader2 className="animate-spin" /> : Icon && <Icon />}
+    <Button size="sm" variant="outline" onClick={onClick} aria-busy={busy || undefined} data-result={result || undefined} {...props} disabled={busy || props.disabled}>
+      {busy ? <IconLoader2 className="animate-spin" />
+        : result === 'ok' ? <IconCheck key="ok" className="text-success animate-in zoom-in-50 duration-200" />
+          : result === 'failed' ? <IconX key="failed" className="text-destructive animate-in zoom-in-50 duration-200" />
+            : Icon && <Icon />}
       {children}
     </Button>
   )
@@ -297,7 +315,7 @@ function NotificationList({ items, base, unread, onPick }) {
       const [Icon, tone] = KIND[i.kind]
       return (
         <li key={i.key}>
-          <Link href={base + i.href} onClick={onPick} className="flex items-start gap-3 rounded-md px-2.5 py-2.5 text-sm outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50">
+          <Link href={base + i.href} onClick={onPick} className="flex items-start gap-3 rounded-md px-2.5 py-2.5 text-sm press outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50">
             <Icon aria-hidden className={cn('mt-0.5 size-4 shrink-0', tone)} />
             <span className="grid min-w-0 flex-1"><span className="truncate font-medium">{i.title}</span><span className="text-xs text-muted-foreground">{i.text}{i.at && <> · {relativeTime(i.at)}</>}</span></span>
             {unread(i) && <span aria-label="new" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-highlight ring-2 ring-highlight/30" />}
@@ -360,7 +378,7 @@ function Brand() {
       <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-midnight-violet-950 text-highlight ring-1 ring-midnight-violet-800 dark:bg-highlight dark:text-midnight-violet-950 dark:ring-0">
         <IconBolt className="size-4.5" aria-hidden />
       </span>
-      <span className="truncate font-semibold tracking-tight transition-opacity duration-200 group-data-[sidebar=collapsed]/sidebar:sr-only" data-testid="title">{title}</span>
+      <span className="whitespace-nowrap font-semibold tracking-tight transition-opacity duration-150 group-data-[sidebar=collapsed]/sidebar:opacity-0" data-testid="title">{title}</span>
     </div>
   )
 }
@@ -386,7 +404,7 @@ function Footer() {
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button type="button" data-testid="account" aria-label={notes.count ? `Account, ${notes.count} new notifications` : 'Account'}
-            className={cn('flex w-full min-w-0 items-center gap-2.5 rounded-lg bg-sidebar-accent/60 p-1.5 text-left outline-none ring-1 ring-sidebar-border transition-colors hover:bg-sidebar-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[state=open]:bg-sidebar-accent', rail && 'justify-center bg-transparent p-1 ring-0')}>
+            className={cn('flex w-full min-w-0 items-center gap-2.5 rounded-lg bg-sidebar-accent/60 p-1.5 text-left outline-none ring-1 ring-sidebar-border press hover:bg-sidebar-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[state=open]:bg-sidebar-accent', rail && 'justify-center bg-transparent p-1 ring-0')}>
             <span className="relative">
               <Avatar name={user} />
               {notes.count > 0 && <span data-testid="unread" className="absolute -top-1 -right-1 size-2.5 rounded-full bg-highlight ring-2 ring-sidebar" />}
@@ -651,7 +669,7 @@ export function useSort(items, initial = null) {
     const Icon = !on ? IconArrowsSort : sort.desc ? IconArrowDown : IconArrowUp
     return (
       <TableHead className={className} aria-sort={on ? (sort.desc ? 'descending' : 'ascending') : undefined}>
-        <button type="button" className="group -mx-1 inline-flex items-center gap-1 rounded px-1 uppercase outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        <button type="button" className="group -mx-1 inline-flex items-center gap-1 rounded px-1 uppercase press outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
           onClick={() => setSort(on && sort.desc ? null : { key, get, desc: on })}>
           {label}<Icon className={cn('size-3.5 transition-opacity', on ? 'opacity-100' : 'opacity-0 group-hover:opacity-60 group-focus-visible:opacity-60')} />
         </button>
@@ -681,6 +699,9 @@ export function useChanged(items, key, value) {
   return hot
 }
 
+/** The flash class for a row that changed `n` times: alternating names restart it without remounting the row (so its pills crossfade). */
+export const flash = (n) => (n ? (n % 2 ? 'animate-flash' : 'animate-flash-2') : undefined)
+
 export { StatusBadge as StateBadge } from './components/status'
 
 async function copy(value) {
@@ -698,13 +719,13 @@ export function CopyButton({ value, label = 'Copy', className }) {
   const onClick = async (e) => {
     e.preventDefault()
     e.stopPropagation()
-    if (await copy(value)) { setCopied(true); setTimeout(() => setCopied(false), 1500) }
+    if (await copy(value)) { setCopied(true); setTimeout(() => setCopied(false), 1200) }
   }
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <button type="button" onClick={onClick} aria-label={label} data-testid="copy"
-          className={cn('inline-grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50', className)}>
+          className={cn('inline-grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground press outline-none hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50', className)}>
           <span className="relative size-3.5">
             <IconCopy className={cn('absolute inset-0 size-3.5 transition-all duration-200', copied ? 'scale-50 opacity-0' : 'scale-100 opacity-100')} />
             <IconCheck className={cn('absolute inset-0 size-3.5 text-success transition-all duration-200', copied ? 'scale-100 opacity-100' : 'scale-50 opacity-0')} />
@@ -729,7 +750,7 @@ export function Copyable({ value, children, label, className }) {
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 
 /** A number that counts to its new value when a poll changes it (instantly with reduced motion). Non-numbers show as they are. */
-export function AnimatedNumber({ value, className }) {
+export function AnimatedNumber({ value, more, className }) {
   const [shown, setShown] = useState(value)
   const from = useRef(value)
   useEffect(() => {
@@ -741,7 +762,7 @@ export function AnimatedNumber({ value, className }) {
     const start = performance.now(), a = from.current, b = value
     let frame = 0
     const step = (now) => {
-      const t = Math.min((now - start) / 600, 1)
+      const t = Math.min((now - start) / 200, 1)
       const v = a + (b - a) * (1 - (1 - t) ** 3)
       from.current = v
       setShown(t < 1 ? v : b)
@@ -750,7 +771,7 @@ export function AnimatedNumber({ value, className }) {
     frame = requestAnimationFrame(step)
     return () => cancelAnimationFrame(frame)
   }, [value])
-  return <span className={cn('tabular-nums', className)}>{typeof shown === 'number' ? Math.round(shown).toLocaleString() : shown}</span>
+  return <span className={cn('tabular-nums', className)}>{typeof shown === 'number' ? Math.round(shown).toLocaleString() : shown}{more && '+'}</span>
 }
 
 /**

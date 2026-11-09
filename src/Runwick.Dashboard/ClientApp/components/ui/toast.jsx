@@ -54,7 +54,7 @@ export function Toaster() {
             </div>
             {action && <ToastPrimitive.Action altText={action.label} asChild>
               <button type="button" data-testid={action.testId} onClick={action.onClick}
-                className="h-7 shrink-0 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/90 focus-visible:ring-[3px] focus-visible:ring-ring/50">{action.label}</button>
+                className="h-7 shrink-0 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground press outline-none hover:bg-primary/90 focus-visible:ring-[3px] focus-visible:ring-ring/50">{action.label}</button>
             </ToastPrimitive.Action>}
             {variant !== 'copied' && <ToastPrimitive.Close aria-label="Dismiss"
               className="absolute -top-1.5 -left-1.5 grid size-5 place-items-center rounded-full border bg-popover text-muted-foreground opacity-0 shadow-sm transition-opacity outline-none group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/50">

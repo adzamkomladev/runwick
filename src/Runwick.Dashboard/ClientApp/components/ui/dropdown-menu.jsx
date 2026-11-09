@@ -17,7 +17,7 @@ export const DropdownMenuSeparator = ({ className, ...props }) => <DropdownMenuP
 export const DropdownMenuRadioGroup = (props) => <DropdownMenuPrimitive.RadioGroup {...props} />
 export const DropdownMenuRadioItem = ({ className, children, ...props }) => (
   <DropdownMenuPrimitive.RadioItem className={cn(
-    'relative flex cursor-default select-none items-center gap-2 rounded-sm py-1.5 pr-2 pl-8 text-sm outline-none focus:bg-accent focus:text-accent-foreground [&_svg]:size-4',
+    'relative flex cursor-default select-none items-center gap-2 rounded-sm py-1.5 pr-2 pl-8 text-sm press outline-none focus:bg-accent focus:text-accent-foreground [&_svg]:size-4',
     className)} {...props}>
     <span className="pointer-events-none absolute left-2 flex size-3.5 items-center justify-center">
       <DropdownMenuPrimitive.ItemIndicator><IconCheck className="size-4" /></DropdownMenuPrimitive.ItemIndicator>
@@ -27,12 +27,12 @@ export const DropdownMenuRadioItem = ({ className, children, ...props }) => (
 )
 export const DropdownMenuItem = ({ className, ...props }) => (
   <DropdownMenuPrimitive.Item className={cn(
-    'relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground',
+    'relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm press outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground',
     className)} {...props} />
 )
 /** A radio item drawn as one segment of a compact icon toggle (the theme switch in the account menu). */
 export const DropdownMenuSegment = ({ className, ...props }) => (
   <DropdownMenuPrimitive.RadioItem className={cn(
-    'grid size-7 cursor-default place-items-center rounded-full text-muted-foreground outline-none transition-colors hover:text-foreground focus:ring-2 focus:ring-ring/50 data-[state=checked]:bg-background data-[state=checked]:text-foreground data-[state=checked]:shadow-sm data-[state=checked]:ring-1 data-[state=checked]:ring-border [&_svg]:size-4',
+    'grid size-7 cursor-default place-items-center rounded-full text-muted-foreground press outline-none hover:text-foreground focus:ring-2 focus:ring-ring/50 data-[state=checked]:bg-background data-[state=checked]:text-foreground data-[state=checked]:shadow-sm data-[state=checked]:ring-1 data-[state=checked]:ring-border [&_svg]:size-4',
     className)} {...props} />
 )
