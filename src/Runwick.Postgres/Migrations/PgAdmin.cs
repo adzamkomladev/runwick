@@ -72,13 +72,14 @@ public static partial class RunwickPostgresMigrations
 
     /// <summary>
     /// Raises one capability (<c>scheduler</c> or <c>rate_admission</c>) for one application, or every registered application when
-    /// <paramref name="application"/> is null (10 §6.1, 23 §3.6). Never lowers one; a repeat reports <c>Changed = false</c>. Unlike the
-    /// store operation this writes no audit row or event, like <see cref="SetAdmissionModeAsync"/>; it records <paramref name="actor"/>.
+    /// <paramref name="application"/> is null (10 §6.1, 23 §3.6). Never lowers one; a repeat reports <c>Changed = false</c> and writes
+    /// nothing. A raise also writes the store operation's <c>capabilities_activated</c> event and <c>ActivateCapabilities</c> audit row,
+    /// with <paramref name="actor"/> as the subject and scheme <c>operator</c>.
     /// </summary>
     public static async Task<IReadOnlyList<CapabilityChange>> ActivateCapabilityAsync(
         string connectionString, string? application, string capability, string actor, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+        StoreAdminRules.CheckActor(actor);
         if (StoreAdminRules.CheckCapability(capability) is { } bad)
         {
             throw new PostgresMigrationException(bad, "The capability must be scheduler or rate_admission.");
@@ -119,15 +120,32 @@ public static partial class RunwickPostgresMigrations
                     continue;
                 }
 
+                // The same capabilities_activated event and ActivateCapabilities audit row as the store operation (10 §6.1), in this transaction.
                 using var update = new NpgsqlCommand("""
-                    UPDATE runwick.application_controls
-                    SET required_capabilities = @caps::jsonb, revision = revision + 1, updated_at = runwick.ms_floor(clock_timestamp()), actor_subject = @actor
-                    WHERE application = @app
-                    RETURNING revision
+                    WITH u AS (
+                        UPDATE runwick.application_controls
+                        SET required_capabilities = @caps::jsonb, revision = revision + 1, updated_at = runwick.ms_floor(clock_timestamp()), actor_subject = @actor
+                        WHERE application = @app
+                        RETURNING application, revision, updated_at, required_capabilities),
+                    e AS (
+                        INSERT INTO runwick.queue_events (application, command_id, event_kind, occurred_at, actor_id, details)
+                        SELECT application, @command, 'capabilities_activated', updated_at, @actor,
+                               jsonb_build_object('requiredCapabilities', required_capabilities, 'revision', revision)
+                        FROM u),
+                    a AS (
+                        INSERT INTO runwick.management_audit (
+                            application, command_id, operation, target_kind, target_id, actor_subject, actor_display, actor_scheme, reason,
+                            expected_revision, resulting_revision, details, occurred_at)
+                        SELECT application, @command, 'ActivateCapabilities', 'application', application, @actor, NULL, @scheme, NULL,
+                               revision - 1, revision, jsonb_build_object('requiredCapabilities', required_capabilities), updated_at
+                        FROM u)
+                    SELECT revision FROM u
                     """, conn, tx);
                 update.Parameters.AddWithValue("caps", raised);
                 update.Parameters.AddWithValue("actor", actor);
                 update.Parameters.AddWithValue("app", app);
+                update.Parameters.AddWithValue("command", Guid.NewGuid());
+                update.Parameters.AddWithValue("scheme", StoreAdminRules.OperatorScheme);
                 changes.Add(new CapabilityChange(app, capability, version, (long)(await update.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!, true));
             }
 
