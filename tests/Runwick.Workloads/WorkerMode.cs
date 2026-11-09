@@ -22,6 +22,7 @@ internal static class WorkerMode
     {
         var metrics = new Metrics();
         using var phases = PhaseListener.Attach(metrics);
+        using var telemetry = a.Has("telemetry") ? Sp029Workloads.ListenToTelemetry() : null;
         var invocations = new ConcurrentDictionary<Guid, int>();
         var concurrency = a.Int("concurrency", 16);
         var g2 = a.Has("g2");
@@ -60,7 +61,8 @@ internal static class WorkerMode
             {
                 metrics.Observe("pipelineToFinish", (engine.Clock.Now - published).TotalMilliseconds);
             }
-            else if (name == "handlerInvoked" && entry is not null
+            // SP-029 P-10 (--soak): no per-job map, which would grow with completed jobs and spoil the heap check.
+            else if (name == "handlerInvoked" && entry is not null && !a.Has("soak")
                 && invocations.AddOrUpdate(entry.Reserved.Position.JobId, 1, (_, n) => n + 1) > 1)
             {
                 metrics.Count("jobsInvokedAgain");
@@ -84,6 +86,11 @@ internal static class WorkerMode
             {
                 metrics.ResetLatencies();
                 Console.WriteLine("reset");
+            }
+            else if (line == "gc")
+            {
+                // SP-029 P-10: post-GC managed heap and live cache sizes, one line per request.
+                await File.AppendAllTextAsync(outPrefix + ".gc.jsonl", Sp029Workloads.GcSample(engine) + "\n").ConfigureAwait(false);
             }
             else if (line == "stop")
             {

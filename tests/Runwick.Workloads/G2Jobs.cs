@@ -108,6 +108,7 @@ internal static class G2Jobs
 
         r.AddJob<G2Tick>().Named("g2.tick").ToQueue("ps").WithMaxExecutions(3);
         r.AddJob<G2Out>().Named("g2.out").ToQueue("po").WithMaxExecutions(3);
+        r.AddJob<G2Big>().Named("g2.big").ToQueue("pu").WithMaxExecutions(3);
     }
 
     /// <summary>Handlers for the comma list <c>--handlers</c> (work, a, b, c, rated1, rated8, tick, out); default <c>work</c>.</summary>
@@ -126,6 +127,8 @@ internal static class G2Jobs
                 case "rated8": r.AddHandler<G2Rated8, G2Handler<G2Rated8>>(); break;
                 case "tick": r.AddHandler<G2Tick, G2Handler<G2Tick>>(); break;
                 case "out": r.AddHandler<G2Out, G2Handler<G2Out>>(); break;
+                case "big": r.AddHandler<G2Big, G2Handler<G2Big>>(); break;
+                case "soakwork": Sp029Workloads.AddSoakHandler(r, a); break;
                 default: throw new ArgumentException($"unknown handler '{h}'");
             }
         }
@@ -162,6 +165,7 @@ internal static class G2Jobs
             "rated1" => n => new G2Rated1(Id(n), pad),
             "rated8" => n => new G2Rated8(Id(n), pad),
             "out" => n => new G2Out(Id(n), pad),
+            "big" => n => new G2Big(Id(n), [.. pad.Chunk(G2Big.MaxString).Select(c => new string(c))]),
             "mix" => n =>
             {
                 lock (random)
