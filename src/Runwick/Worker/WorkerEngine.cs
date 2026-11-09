@@ -355,8 +355,13 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
             {
                 await body().ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (_loops.IsCancellationRequested || _controlStop.IsCancellationRequested)
+            catch (Exception ex) when (_loops.IsCancellationRequested || _controlStop.IsCancellationRequested)
             {
+                // Stopping: a store call cut by the stop surfaces as store_unavailable, not as a fault of the task.
+                if (ex is not OperationCanceledException)
+                {
+                    Logger.LogDebug(ex, "Runwick worker task {Task} ended during stop.", name);
+                }
             }
             catch (Exception ex)
             {
