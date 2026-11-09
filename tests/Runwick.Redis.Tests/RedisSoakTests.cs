@@ -404,7 +404,8 @@ public sealed class RedisSoakTests
         var manyLatency = new List<double>();
         var oneLatency = new List<double>();
         var clock = Stopwatch.StartNew();
-        while (clock.Elapsed < TimeSpan.FromSeconds(20) && manyLatency.Count < 2000)
+        // At least 20 s and at least 100 samples (a p99 needs them), capped at 120 s on a slow host.
+        while ((clock.Elapsed < TimeSpan.FromSeconds(20) || manyLatency.Count < 100) && clock.Elapsed < TimeSpan.FromSeconds(120) && manyLatency.Count < 2000)
         {
             var t = Stopwatch.StartNew();
             var reply = await control.RenewManyAsync(leases, TimeSpan.FromMinutes(10));
