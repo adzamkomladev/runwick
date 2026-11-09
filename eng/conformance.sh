@@ -25,10 +25,10 @@ KINDS=(postgres:Postgres sqlite:Sqlite redis:Redis)
 
 run_project() { # dir-under-OUT project [stores] [filter]
   local dir="$1" proj="$2" stores="${3:-}" filter="${4:-}"
-  # A test that runs longer than CONFORMANCE_HANG_TIMEOUT (default 30m; the slowest REDIS-01 row takes about 10 min) is
+  # A test that runs longer than CONFORMANCE_HANG_TIMEOUT (default 60m; the REDIS-01 kill -9 theory takes about 11 min alone and passed 30 min under full-run load) is
   # killed with a mini dump; the TRX keeps the finished results and Sequence_*.xml under the results directory names the hung test.
   local args=(test "tests/$proj" --no-build --logger trx --results-directory "$OUT/$dir/$proj"
-    --blame-hang-timeout "${CONFORMANCE_HANG_TIMEOUT:-30m}" --blame-hang-dump-type mini)
+    --blame-hang-timeout "${CONFORMANCE_HANG_TIMEOUT:-60m}" --blame-hang-dump-type mini)
   [ -n "$filter" ] && args+=(--filter "$filter")
   echo "== $dir: $proj ${stores:+(stores=$stores)}"
   if [ -n "$stores" ]; then RUNWICK_TEST_STORES="$stores" dotnet "${args[@]}"; else env -u RUNWICK_TEST_STORES dotnet "${args[@]}"; fi

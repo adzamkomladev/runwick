@@ -78,8 +78,9 @@ public sealed class CapabilityActivationContractTests
             c.Command(new ActivateCapabilitiesRequest(new Dictionary<string, int> { ["scheduler"] = 1 }, new ControlActor("user:ops", null, "host", "t"))), Ct);
         Assert.Equal((StoreStatus.InvalidState, "no_change"), (repeat.Status, repeat.Error!.Code));
 
-        // A second capability merges with the first; every application when none is named.
-        var rate = (await Activate(f, null, "rate_admission")).Single();
+        // A second capability merges with the first; every application when none is named. Redis tests share one server, where
+        // "every application" also raises the capability of other tests' applications running alongside, so Redis names its own.
+        var rate = (await Activate(f, f.Kind == StoreKind.Redis ? f.Application : null, "rate_admission")).Single();
         Assert.True(rate.Changed);
         Assert.Equal(first.Revision + 1, rate.Revision);
         (audit, events) = await Records(c);
