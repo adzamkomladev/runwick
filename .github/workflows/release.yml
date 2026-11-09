@@ -1,8 +1,8 @@
 # Publishes a release when a tag v<version> is pushed, e.g. `git tag v0.1.0 && git push origin v0.1.0`.
 # The tag must equal <Version> in Directory.Build.props. Steps: build and test, pack and inspect every package
 # (eng/check-release.sh), check licences, create the GitHub release with the packages attached, then push to
-# nuget.org. The NuGet push needs the repository secret NUGET_API_KEY (an API key scoped to Runwick*); without it
-# the job stops after the GitHub release, and you can rerun it once the secret is set.
+# nuget.org through NuGet trusted publishing (policy on nuget.org: owner adzamkomladev, repository runwick,
+# workflow release.yml, environment nuget), so no API key is stored in GitHub.
 name: release
 on:
   push:
@@ -14,6 +14,7 @@ on:
         required: true
 permissions:
   contents: write
+  id-token: write # trusted publishing: NuGet/login trades the job's OIDC token for a short-lived API key
 concurrency:
   group: release
   cancel-in-progress: false
@@ -59,10 +60,13 @@ jobs:
           else
             gh release create "$tag" artifacts/packages/* --title "Runwick $tag" "${flags[@]}"
           fi
+      - name: NuGet login (trusted publishing)
+        id: nuget
+        uses: NuGet/login@v1
+        with:
+          user: adzamkomladev
       - name: Push to nuget.org
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        run: |
-          [ -n "$NUGET_API_KEY" ] || { echo "::error::NUGET_API_KEY is not set; add it under Settings > Secrets and variables > Actions, then rerun this job."; exit 1; }
-          # .snupkg symbols go up with their .nupkg; --skip-duplicate makes a rerun safe.
-          dotnet nuget push "artifacts/packages/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          NUGET_API_KEY: ${{ steps.nuget.outputs.NUGET_API_KEY }}
+        # .snupkg symbols go up with their .nupkg; --skip-duplicate makes a rerun safe.
+        run: dotnet nuget push "artifacts/packages/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
