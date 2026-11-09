@@ -2,7 +2,7 @@ import { Link, router, usePage } from '@inertiajs/react'
 import {
   IconAlertTriangle, IconArrowDown, IconArrowRight, IconArrowUp, IconArrowsSort, IconBell, IconBolt, IconCalendarTime, IconCheck,
   IconCopy, IconDeviceDesktop, IconFilter, IconGauge, IconHistory, IconLayoutDashboard, IconListDetails, IconLoader2, IconLogout,
-  IconMoon, IconPlayerPause, IconServer2, IconSettings, IconStack2, IconSun, IconTrash, IconX,
+  IconMoon, IconPlayerPause, IconSelector, IconServer2, IconSettings, IconStack2, IconSun, IconTrash, IconX,
 } from '@tabler/icons-react'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
@@ -12,15 +12,14 @@ import { Badge } from './components/ui/badge'
 import { Button } from './components/ui/button'
 import { Card } from './components/ui/card'
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuSegment, DropdownMenuSeparator, DropdownMenuTrigger,
 } from './components/ui/dropdown-menu'
 import { useQueryNav } from './components/date-range'
 import { Combobox } from './components/ui/combobox'
 import { Input } from './components/ui/input'
 import { Label } from './components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select'
-import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenuButton, SidebarProvider, SidebarTrigger } from './components/ui/sidebar'
-import { Popover, PopoverContent, PopoverTrigger } from './components/ui/popover'
+import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenuButton, SidebarProvider, SidebarTrigger, useSidebar } from './components/ui/sidebar'
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from './components/ui/sheet'
 import { Skeleton } from './components/ui/skeleton'
 import { TableHead } from './components/ui/table'
@@ -242,40 +241,7 @@ function setTheme(theme) {
   themeListeners.forEach((l) => l())
 }
 
-const THEMES = [['light', 'Light', IconSun], ['dark', 'Dark', IconMoon], ['system', 'System', IconDeviceDesktop]]
-
-/** Footer button: a small round icon button with a tooltip naming it (the rail shows only these). */
-const FooterButton = ({ label, children, ...props }) => (
-  <Tooltip>
-    <TooltipTrigger asChild>
-      <Button variant="ghost" size="icon-sm" aria-label={label} className="relative size-8 shrink-0 text-muted-foreground hover:text-foreground" {...props}>{children}</Button>
-    </TooltipTrigger>
-    <TooltipContent side="top">{label}</TooltipContent>
-  </Tooltip>
-)
-
-function ThemeMenu() {
-  const theme = useSyncExternalStore((l) => { themeListeners.add(l); return () => themeListeners.delete(l) }, readTheme)
-  const Icon = THEMES.find(([v]) => v === theme)?.[2] ?? IconDeviceDesktop
-  return (
-    <DropdownMenu>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label="Theme" data-testid="theme" className="size-8 text-muted-foreground hover:text-foreground"><Icon /></Button>
-          </DropdownMenuTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="top">Theme</TooltipContent>
-      </Tooltip>
-      <DropdownMenuContent side="top" align="start">
-        <DropdownMenuLabel>Theme</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={theme} onValueChange={setTheme}>
-          {THEMES.map(([v, label, I]) => <DropdownMenuRadioItem key={v} value={v} data-testid={`theme-${v}`}><I />{label}</DropdownMenuRadioItem>)}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
+const THEMES = [['light', 'Light', IconSun], ['system', 'System', IconDeviceDesktop], ['dark', 'Dark', IconMoon]]
 
 // ---- Notifications: recent failures, scaling changes and paused queues since the last look (unread state in this browser). ----
 
@@ -306,33 +272,21 @@ function useNotifications() {
 
 const KIND = { failed: [IconAlertTriangle, 'text-destructive'], scaling: [IconGauge, 'text-primary'], paused: [IconPlayerPause, 'text-warning'] }
 
-function NotificationsButton() {
+/** The notifications list, in a sheet opened from the account menu; closing it marks everything seen. */
+function NotificationsSheet({ open, onOpenChange, notes }) {
   const { base } = usePage().props
-  const { loaded, items, unread, count, markSeen } = useNotifications()
+  const { loaded, items, unread, markSeen } = notes
   return (
-    <Popover onOpenChange={(open) => { if (!open) markSeen() }}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <PopoverTrigger asChild>
-            <Button variant="ghost" size="icon-sm" data-testid="notifications" aria-label={count ? `Notifications, ${count} new` : 'Notifications'}
-              className="relative size-8 text-muted-foreground hover:text-foreground">
-              <IconBell />
-              {count > 0 && <span data-testid="unread" className="absolute -top-0.5 -right-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-highlight px-1 text-[0.625rem] font-semibold text-highlight-foreground tabular-nums">{count > 9 ? '9+' : count}</span>}
-            </Button>
-          </PopoverTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="top">Notifications</TooltipContent>
-      </Tooltip>
-      <PopoverContent side="right" align="end" className="w-80 p-0" data-testid="notifications-panel">
-        <div className="flex items-center justify-between border-b px-3 py-2.5"><span className="text-sm font-medium">Notifications</span>
-          <span className="text-xs text-muted-foreground">last 24 h</span></div>
-        {!loaded ? <div className="grid gap-2 p-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-9" />)}</div>
-          : items.length === 0 ? <p className="px-3 py-8 text-center text-sm text-muted-foreground">Nothing new.</p>
-            : <ul className="max-h-96 overflow-y-auto p-1">{items.map((i) => {
+    <Sheet open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) markSeen() }}>
+      <SheetContent side="right" className="gap-0 p-0" data-testid="notifications-panel">
+        <SheetHeader className="border-b"><SheetTitle>Notifications</SheetTitle><SheetDescription>The last 24 hours</SheetDescription></SheetHeader>
+        {!loaded ? <div className="grid gap-2 p-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12" />)}</div>
+          : items.length === 0 ? <p className="px-3 py-12 text-center text-sm text-muted-foreground">Nothing new.</p>
+            : <ul className="min-h-0 flex-1 overflow-y-auto p-2">{items.map((i) => {
               const [Icon, tone] = KIND[i.kind]
               return (
                 <li key={i.key}>
-                  <Link href={base + i.href} className="flex items-start gap-2.5 rounded-md px-2 py-2 text-sm outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50">
+                  <Link href={base + i.href} onClick={() => onOpenChange(false)} className="flex items-start gap-3 rounded-md px-2.5 py-2.5 text-sm outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50">
                     <Icon aria-hidden className={cn('mt-0.5 size-4 shrink-0', tone)} />
                     <span className="grid min-w-0 flex-1"><span className="truncate font-medium">{i.title}</span><span className="text-xs text-muted-foreground">{i.text}{i.at && <> · {relativeTime(i.at)}</>}</span></span>
                     {unread(i) && <span aria-label="new" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-highlight ring-2 ring-highlight/30" />}
@@ -340,25 +294,14 @@ function NotificationsButton() {
                 </li>
               )
             })}</ul>}
-      </PopoverContent>
-    </Popover>
+      </SheetContent>
+    </Sheet>
   )
 }
 
 const relativeTime = (iso) => {
   const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000)
   return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`
-}
-
-/** Sign out: an empty form posted to the host's route (DashboardOptions.SignOutPath); hidden when the host set none. */
-function SignOut() {
-  const { signOut } = usePage().props
-  if (!signOut) return null
-  return (
-    <form method="post" action={signOut} className="contents">
-      <FooterButton label="Sign out" type="submit" data-testid="sign-out"><IconLogout /></FooterButton>
-    </form>
-  )
 }
 
 // ---- Layout -----------------------------------------------------------------------------------------------------------------
@@ -412,26 +355,69 @@ function Brand() {
   )
 }
 
-/** The footer: who is signed in, then notifications, theme and sign out. In the icon rail the buttons stack. */
+const Avatar = ({ name, className }) => (
+  <span aria-hidden className={cn('grid size-8 shrink-0 place-items-center rounded-lg bg-primary/15 text-xs font-semibold text-primary dark:bg-primary/20', className)}>{initials(name)}</span>
+)
+
+/**
+ * The footer: one account button (who is signed in) that opens a menu with notifications, settings, the theme switch and
+ * sign out. In the icon rail only the avatar shows; a dot on it says there are unread notifications.
+ */
 function Footer() {
-  const { user } = usePage().props
+  const { user, userDetail, signOut, can, base } = usePage().props
+  const { open, mobile } = useSidebar()
+  const theme = useSyncExternalStore((l) => { themeListeners.add(l); return () => themeListeners.delete(l) }, readTheme)
+  const notes = useNotifications()
+  const [sheet, setSheet] = useState(false)
+  const rail = !open && !mobile
   return (
-    <div className="grid gap-1.5">
-      <div className="flex min-w-0 items-center gap-2.5 px-0.5 group-data-[sidebar=collapsed]/sidebar:justify-center">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span aria-hidden className="grid size-8 shrink-0 place-items-center rounded-full bg-accent text-xs font-semibold text-accent-foreground ring-1 ring-border">{initials(user)}</span>
-          </TooltipTrigger>
-          <TooltipContent side="right">{user}</TooltipContent>
-        </Tooltip>
-        <span className="min-w-0 flex-1 truncate text-sm font-medium group-data-[sidebar=collapsed]/sidebar:sr-only" data-testid="user">{user}</span>
-      </div>
-      <div className="flex items-center gap-0.5 group-data-[sidebar=collapsed]/sidebar:flex-col">
-        <NotificationsButton />
-        <ThemeMenu />
-        <SignOut />
-      </div>
-    </div>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button type="button" data-testid="account" aria-label={notes.count ? `Account, ${notes.count} new notifications` : 'Account'}
+            className={cn('flex w-full min-w-0 items-center gap-2.5 rounded-lg bg-sidebar-accent/60 p-1.5 text-left outline-none ring-1 ring-sidebar-border transition-colors hover:bg-sidebar-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[state=open]:bg-sidebar-accent', rail && 'justify-center bg-transparent p-1 ring-0')}>
+            <span className="relative">
+              <Avatar name={user} />
+              {notes.count > 0 && <span data-testid="unread" className="absolute -top-1 -right-1 size-2.5 rounded-full bg-highlight ring-2 ring-sidebar" />}
+            </span>
+            <span className={cn('grid min-w-0 flex-1 leading-tight', rail && 'sr-only')}>
+              <span className="truncate text-sm font-medium" data-testid="user">{user}</span>
+              {userDetail && <span className="truncate text-xs text-muted-foreground">{userDetail}</span>}
+            </span>
+            {!rail && <IconSelector aria-hidden className="size-4 shrink-0 text-muted-foreground" />}
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side={mobile ? 'top' : 'right'} align="end" sideOffset={mobile ? 6 : 10} className="w-64 rounded-xl p-0 shadow-lg" data-testid="account-menu">
+          <div className="flex items-center gap-2.5 p-2.5">
+            <Avatar name={user} />
+            <span className="grid min-w-0 leading-tight"><span className="truncate text-sm font-semibold">{user}</span>
+              {userDetail && <span className="truncate text-xs text-muted-foreground">{userDetail}</span>}</span>
+          </div>
+          <DropdownMenuSeparator className="mx-0 my-0" />
+          <div className="p-1">
+            <DropdownMenuItem data-testid="notifications" onSelect={() => setSheet(true)}>
+              <IconBell />Notifications
+              {notes.count > 0 && <span className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-highlight px-1.5 text-[0.6875rem] font-semibold text-highlight-foreground tabular-nums">{notes.count > 9 ? '9+' : notes.count}</span>}
+            </DropdownMenuItem>
+            {can.settings && <DropdownMenuItem asChild><Link href={`${base}/settings`} data-testid="account-settings"><IconSettings />Settings</Link></DropdownMenuItem>}
+          </div>
+          <DropdownMenuSeparator className="mx-0 my-0" />
+          <div className="flex items-center justify-between gap-2 py-1.5 pr-1.5 pl-3">
+            <span className="text-sm">Theme</span>
+            <DropdownMenuRadioGroup value={theme} onValueChange={setTheme} aria-label="Theme" className="flex items-center gap-0.5 rounded-full bg-muted p-0.5" data-testid="theme">
+              {THEMES.map(([v, label, I]) => <DropdownMenuSegment key={v} value={v} aria-label={label} title={label} data-testid={`theme-${v}`} onSelect={(e) => e.preventDefault()}><I /></DropdownMenuSegment>)}
+            </DropdownMenuRadioGroup>
+          </div>
+          {signOut && <>
+            <DropdownMenuSeparator className="mx-0 my-0" />
+            <form method="post" action={signOut} className="p-1">
+              <DropdownMenuItem asChild><button type="submit" className="w-full" data-testid="sign-out"><IconLogout />Log out</button></DropdownMenuItem>
+            </form>
+          </>}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <NotificationsSheet open={sheet} onOpenChange={setSheet} notes={notes} />
+    </>
   )
 }
 

@@ -11,7 +11,7 @@ namespace Runwick.Dashboard.Pages;
 /// </summary>
 internal abstract class DashboardPage
 {
-    static readonly HashSet<string> Shared = new(StringComparer.Ordinal) { "base", "title", "user", "can", "signOut", "notifications", "notice", "outcome", "errors" };
+    static readonly HashSet<string> Shared = new(StringComparer.Ordinal) { "base", "title", "user", "userDetail", "can", "signOut", "notifications", "notice", "outcome", "errors" };
 
     /// <summary>Page and action names to the permission each needs: the <c>can</c> map and the navigation (a display hint only).</summary>
     public static readonly IReadOnlyDictionary<string, string> Abilities = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -63,6 +63,8 @@ internal abstract class DashboardPage
             ["base"] = r.Base,
             ["title"] = r.Mount.Title,
             ["user"] = r.Caller.Actor.Display ?? r.Caller.Actor.Subject,
+            // The account menu's second line: the subject under a display name, else how the caller signed in.
+            ["userDetail"] = r.Caller.Actor.Display is { } shown && shown != r.Caller.Actor.Subject ? r.Caller.Actor.Subject : r.Caller.Actor.Scheme,
             ["can"] = DashboardRequest.Element(Abilities.ToDictionary(a => a.Key, a => r.Has(a.Value))),
             ["signOut"] = r.Mount.SignOutPath,
             // The sidebar's notifications: loaded after the page, then kept by the client for a minute (21 §4.4).

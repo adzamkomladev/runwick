@@ -155,14 +155,16 @@ async page => {
     await page.getByTestId('clear-filters').click()
     await page.waitForURL((u) => !u.searchParams.has('jobName') && u.searchParams.get('range') === '15m')
   })
-  await step('theme menu switches to dark and back to the system setting', async () => {
-    await page.getByTestId('theme').click()
+  await step('account menu theme switch goes to dark and back to the system setting, keeping the menu open', async () => {
+    await page.getByTestId('account').click()
     await page.getByTestId('theme-dark').click()
     check(await page.evaluate(() => document.documentElement.classList.contains('dark')), 'dark not applied')
-    await page.getByTestId('theme').click()
     await page.getByTestId('theme-system').click()
+    check(await page.getByTestId('account-menu').isVisible(), 'menu closed on theme change')
+    await page.keyboard.press('Escape')
   })
-  await step('notifications open from the sidebar footer and clear the unread count', async () => {
+  await step('notifications open from the account menu and clear the unread count', async () => {
+    await page.getByTestId('account').click()
     await page.getByTestId('notifications').click()
     await page.getByTestId('notifications-panel').waitFor()
     await page.keyboard.press('Escape')

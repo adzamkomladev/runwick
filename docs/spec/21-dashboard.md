@@ -17,7 +17,7 @@ Not in SP-024: server-side rendering, a live push channel (SSE or WebSocket), qu
 ## Changes
 
 - (2026-11-09, round 3) Dashboard updates and cleanups:
-  1. **Sidebar footer.** It shows who is signed in, then three buttons that also work in the icon rail: notifications (§4.4), a theme menu (light, dark, system) and Sign out. Sign out posts an empty form to the host's route, set with the new `DashboardOptions.SignOutPath` (§2); without one the button is hidden. The theme toggle leaves the header.
+  1. **Sidebar footer.** One account button (initials, name and a second line: the subject under a display name, else the sign-in scheme; only the initials in the icon rail, with a dot when notifications are unread). It opens a menu: the same header, Notifications (with the unread count; opens a side sheet, §4.4), Settings, a three-way theme switch (light, system, dark; the menu stays open) and Log out. Log out posts an empty form to the host's route, set with the new `DashboardOptions.SignOutPath` (§2); without one the button is hidden. The theme toggle leaves the header.
   2. **Palette.** Every colour token, light and dark, comes from five Runwick scales: midnight violet, dry sage, pine blue, lime yellow and chocolate (§7.1). Every text pair meets WCAG AA.
   3. **Date range.** Overview, Jobs, Scaling and Audit take a `range` preset (5, 15 and 30 minutes; 1, 3 and 6 hours; 1, 3, 7 and 30 days) or a custom `from`/`to`, kept in the URL query (§4.2). Overview's default stays the last 24 hours.
   4. **No native widgets.** Selects, a searchable combobox, popovers, the calendar, checkboxes, a switch, number fields and text areas are Radix or our own components, with keyboard and screen-reader support (§7.1).
@@ -27,7 +27,7 @@ Not in SP-024: server-side rendering, a live push channel (SSE or WebSocket), qu
   8. **Less clutter.** Page sub-text is removed. IDs, error codes, queue and job names, schedule keys and build IDs copy on hover or focus.
   9. **Settings** shows GetSettings with readable limit names.
 
-  New test ids: `range`, `range-<preset>`, `range-apply`, `range-popover`, `filters`, `filter-sheet`, `filter-<name>`, `apply-filters`, `clear-filters`, `load-more`, `theme`, `theme-<value>`, `notifications`, `notifications-panel`, `unread`, `sign-out`, `edit-capacity`, `capacity-sheet`, `edit-policy`, `policy-sheet`, `copy`, `copied`, `unknown`, `failed`, `bulk`, `bulk-summary`. Removed: `command`, the inline `bulk` list.
+  New test ids: `range`, `range-<preset>`, `range-apply`, `range-popover`, `filters`, `filter-sheet`, `filter-<name>`, `apply-filters`, `clear-filters`, `load-more`, `account`, `account-menu`, `account-settings`, `theme`, `theme-<value>`, `notifications`, `notifications-panel`, `unread`, `sign-out`, `edit-capacity`, `capacity-sheet`, `edit-policy`, `policy-sheet`, `copy`, `copied`, `unknown`, `failed`, `bulk`, `bulk-summary`. Removed: `command`, the inline `bulk` list.
 
 - (2026-11-09, attempt usage) The job page's "CPU and memory: not recorded" card becomes **Resources used**. It shows the latest measured attempt's figures:
   - process CPU time, with its share of one core while the attempt ran;
@@ -120,7 +120,7 @@ public static IApplicationBuilder MapRunwickDashboard(this IApplicationBuilder a
     string mountId = "default");
 ```
 
-`SignOutPath` is an absolute path on the same origin, PathBase included (it must start with one `/`; anything else throws). The sidebar's Sign out button posts an empty form to it, with no dashboard antiforgery token since it is the host's route; the CSP's `form-action 'self'` allows it. The host's route must accept that POST, or the host leaves `SignOutPath` unset and the button is hidden.
+`SignOutPath` is an absolute path on the same origin, PathBase included (it must start with one `/`; anything else throws). The account menu's Log out item posts an empty form to it, with no dashboard antiforgery token since it is the host's route; the CSP's `form-action 'self'` allows it. The host's route must accept that POST, or the host leaves `SignOutPath` unset and the button is hidden.
 
 **[choice]** Two steps, as in the spike: Inertia.Net needs a named mount's options at service registration, and the path is only known when the pipeline is built. The second step is called `Map…` to match `MapRunwickManagement` and `app.Map(path, …)`, which it uses.
 
@@ -218,7 +218,7 @@ Runwick reads `PathBase`, `IsHttps` and the principal only. Trusting `X-Forwarde
 ### 3.6 Props
 
 - Props are serialized with Runwick's own JSON options (web defaults, camelCase) and handed to Inertia.Net as `JsonElement`s, so the host's `HttpJsonOptions` cannot rename them (sp-023 gap 2).
-- Every page has the shared props `base` (mount URL), `title`, `user` (actor display name), `can` (a map of page and action names to booleans, derived from the grants; a display hint only), `signOut` (the `SignOutPath`, or null) and `notifications` (§4.4).
+- Every page has the shared props `base` (mount URL), `title`, `user` (actor display name), `userDetail` (the actor subject when a display name is shown, else the scheme), `can` (a map of page and action names to booleans, derived from the grants; a display hint only), `signOut` (the `SignOutPath`, or null) and `notifications` (§4.4).
 - Props carry the safe DTOs of 16 §2 as they are. No payload, error text, lease token, uniqueness key, resource key, connection string or antiforgery token is ever a prop. `EncryptHistory` stays on as an extra layer, not as the protection.
 - **Partial reloads (sp-023 gap 5).** Each page lists its props. A partial reload (`X-Inertia-Partial-Data`) naming a prop the page does not have, or one the caller may not read, is 403 before anything is read.
 
@@ -287,7 +287,7 @@ The rest load with the page. Overview shows a skeleton until its first two group
 
 ### 4.4 Notifications
 
-The bell in the sidebar footer lists, from the `notifications` prop: failed jobs and scaling changes of the last 24 hours (the newest 20 of each, `Jobs.Read` and `Capacity.Read`) and the queues paused now (`Queues.Read`); a part the caller may not read is null. Each item links to its page. The unread count is what arrived since the panel was last closed in this browser (a time and the paused queues seen, in `localStorage`); nothing about it is stored on the server.
+The Notifications item in the account menu opens a side sheet that lists, from the `notifications` prop: failed jobs and scaling changes of the last 24 hours (the newest 20 of each, `Jobs.Read` and `Capacity.Read`) and the queues paused now (`Queues.Read`); a part the caller may not read is null. Each item links to its page. The unread count is what arrived since the sheet was last closed in this browser (a time and the paused queues seen, in `localStorage`); nothing about it is stored on the server.
 
 ## 5. Controls
 
