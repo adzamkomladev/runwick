@@ -143,6 +143,54 @@ async page => {
       await page.getByTestId(id).waitFor()
     }
   })
+  await step('skeletons: each page draws its own skeleton, and the loaded page replaces it within 2 px and under 0.02 layout shift', async () => {
+    // Every page has loaded once above, so each skeleton is the page's own layout with its last props (21 §4.5).
+    let slow = false
+    await page.route('**/*', async (route) => {
+      if (slow && route.request().headers()['x-inertia']) await new Promise((r) => setTimeout(r, 1200)) // page visits and deferred props
+      await route.continue()
+    })
+    await page.evaluate(() => {
+      window.__cls = 0
+      new PerformanceObserver((list) => { for (const e of list.getEntries()) window.__cls += e.value }).observe({ type: 'layout-shift' })
+    })
+    const boxes = () => page.evaluate(() => [...document.querySelectorAll('main h1, main [data-slot=card]')]
+      .map((e) => { const r = e.getBoundingClientRect(); return [r.x, r.y, r.width, r.height].map((v) => Math.round(v)) }))
+    const problems = []
+    const pages = [['overview', 'kpi-created'], ['jobs', 'job-row'], ['job', 'job-name'], ['queues', 'queues'], ['workers', 'workers'], ['schedules', 'schedules'],
+      ['scaling', 'events'], ['audit', 'audit'], ['retention', 'policy'], ['settings', 'settings']]
+    try {
+      for (const [name, ready] of pages) {
+        const [from, fromReady] = name === 'job' ? ['jobs', 'job-row'] : name === 'settings' ? ['audit', 'audit'] : ['settings', 'settings']
+        const go = () => (name === 'job' ? page.getByTestId('job-link').filter({ hasText: 'sample.flaky' }).first().click() : page.getByTestId(`nav-${name}`).click())
+        if (name === 'job') { await page.getByTestId('nav-jobs').click(); await page.getByTestId('job-row').first().waitFor() }
+        await go() // a fresh visit first, so the skeleton compares layout rather than data that changed since the page was last seen
+        await page.getByTestId(ready).first().waitFor()
+        await page.waitForFunction(() => !document.querySelector('main [data-skeleton]'), null, { timeout: 15_000 })
+        await page.getByTestId(`nav-${from}`).click()
+        await page.getByTestId(fromReady).first().waitFor()
+        await page.waitForTimeout(300)
+        slow = true
+        await go()
+        await page.locator('main [data-skeleton]').first().waitFor()
+        const before = await boxes()
+        await page.evaluate(() => { window.__cls = 0 })
+        await page.waitForFunction(() => !document.querySelector('main [data-skeleton]'), null, { timeout: 15_000 })
+        await page.getByTestId(ready).first().waitFor()
+        await page.waitForTimeout(400) // past the 150 ms fade
+        const after = await boxes()
+        const cls = await page.evaluate(() => window.__cls)
+        slow = false
+        if (cls >= 0.02) problems.push(`${name}: layout shift ${cls.toFixed(3)}`)
+        if (before.length !== after.length) problems.push(`${name}: ${before.length} sections in the skeleton, ${after.length} loaded`)
+        else before.forEach((b, i) => { if (b.some((v, k) => Math.abs(v - after[i][k]) > 2)) problems.push(`${name}: section ${i} ${b} -> ${after[i]}`) })
+      }
+    } finally {
+      slow = false
+      await page.unroute('**/*')
+    }
+    check(problems.length === 0, problems.join('; '))
+  })
   await step('date range preset and the filter sheet keep each other in the URL query', async () => {
     await page.getByTestId('nav-jobs').click()
     await page.getByTestId('range').click()

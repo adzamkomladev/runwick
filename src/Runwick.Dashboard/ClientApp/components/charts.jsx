@@ -64,6 +64,7 @@ const PAD = { top: 12, right: 8, bottom: 22, left: 30 }
 export function Chart({ data, series, type = 'area', stacked = false, height = 220, label, className }) {
   const [ref, width] = useWidth()
   const [hover, setHover] = useState(null)
+  const box = useCallback((el) => { if (el) el.style.minHeight = `${height}px`; return ref(el) }, [ref, height])
   const id = 'g' + useId().replace(/[^a-zA-Z0-9]/g, '')
   const w = Math.max(width - PAD.left - PAD.right, 1), h = height - PAD.top - PAD.bottom
   const totals = data.map((d) => (stacked ? series.reduce((t, s) => t + (d[s.key] ?? 0), 0) : Math.max(...series.map((s) => d[s.key] ?? 0))))
@@ -80,7 +81,8 @@ export function Chart({ data, series, type = 'area', stacked = false, height = 2
     setHover(i >= 0 && i < data.length ? i : null)
   }
   return (
-    <div ref={ref} className={cn('relative w-full', className)}>
+    // The box keeps its height before it is measured, so the chart never grows into place (no layout shift).
+    <div ref={box} data-slot="chart" className={cn('relative w-full', className)}>
       {width > 0 && (
         <svg width={width} height={height} role="img" aria-label={label} className="block overflow-visible"
           onPointerMove={move} onPointerLeave={() => setHover(null)}>
@@ -144,7 +146,7 @@ export function BarList({ items, color = 'text-chart-1', empty }) {
       {items.map((i) => (
         <li key={i.label} className="group/bar grid grid-cols-[1fr_auto] items-center gap-3 text-sm">
           <span className="relative h-8 min-w-0 overflow-hidden rounded-md">
-            <span className={cn('absolute inset-y-0 left-0 rounded-md bg-current opacity-15 transition-[width,opacity] duration-500 ease-out group-hover/bar:opacity-25', color)}
+            <span data-slot="bar" className={cn('absolute inset-y-0 left-0 rounded-md bg-current opacity-15 transition-[width,opacity] duration-500 ease-out group-hover/bar:opacity-25', color)}
               ref={(el) => { if (el) el.style.width = `${Math.max((i.value / max) * 100, 2)}%` }} />
             <span className="relative flex h-full items-center truncate px-2.5">{i.label}</span>
           </span>
@@ -165,7 +167,7 @@ export function Spark({ data, color, label }) {
   const xy = pts.map((v, i) => [(i / Math.max(pts.length - 1, 1)) * width, 4 + (height - 8) * (1 - (v - min) / (max - min || 1))])
   const line = smooth(xy)
   return (
-    <div ref={ref} className={cn('h-11 w-full', color)}>
+    <div ref={ref} data-slot="chart" className={cn('h-11 w-full', color)}>
       {width > 0 && pts.length > 0 && (
         <svg width={width} height={height} role="img" aria-label={label} className="block overflow-visible">
           <defs><linearGradient id={id} x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="currentColor" stopOpacity="0.28" /><stop offset="100%" stopColor="currentColor" stopOpacity="0" /></linearGradient></defs>
