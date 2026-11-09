@@ -70,7 +70,7 @@ internal static class RxProfile
             }
         }
 
-        foreach (var key in new[] { "redis_version", "run_id", "os", "arch_bits", "connected_slaves", "maxmemory" })
+        foreach (var key in new[] { "redis_version", "run_id", "os", "arch_bits", "connected_slaves", "maxmemory", "loading" })
         {
             facts[key] = info.GetValueOrDefault(key, "");
         }

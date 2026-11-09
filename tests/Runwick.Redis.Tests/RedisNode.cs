@@ -32,10 +32,10 @@ internal sealed class RedisNode : IAsyncDisposable
     public string Configuration => "127.0.0.1:" + Port;
 
     /// <summary>Starts a container; <paramref name="args"/> replaces the profile (pass [] for the image defaults).</summary>
-    public static async Task<RedisNode> StartAsync(string[]? args = null, string? dataDir = null, string? volumesFrom = null, int? port = null)
+    public static async Task<RedisNode> StartAsync(string[]? args = null, string? dataDir = null, string? volumesFrom = null, int? port = null, string namePrefix = "runwick-g4c-")
     {
         port ??= FreePort();
-        var node = new RedisNode("runwick-g4c-" + Guid.NewGuid().ToString("N")[..8], port.Value);
+        var node = new RedisNode(namePrefix + Guid.NewGuid().ToString("N")[..8], port.Value);
         List<string> run = ["run", "-d", "--name", node.Name, "-p", $"127.0.0.1:{port}:6379"];
         if (dataDir is not null)
         {

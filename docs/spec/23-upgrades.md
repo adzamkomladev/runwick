@@ -42,7 +42,7 @@ Four things are new in code:
 | UPG-05 interrupted DDL, index and backfill phases resume from the real catalog | Applies | N/A: the whole migration is one transaction; a crash leaves nothing (SQL-10) | N/A: install is one `HSET`; a crash leaves nothing or a complete `rw:store` |
 | UPG-06 rollback after semantic activation is refused | Applies | Applies (revision gate and capability gate) | Applies (layout gate and capability gate) |
 | UPG-07 old receipt resolves without reapplication; unknown codec is explicit | Applies | Applies (§8) | Applies (§8) |
-| UPG-08 expired presence or lease is not proof of a stopped writer | Applies | Applies | Partly: Redis reports no lease or presence counts; the quiescence notice is still returned, the counts are `null` |
+| UPG-08 expired presence or lease is not proof of a stopped writer | Applies | Applies | Applies (counts from the `leases`, `workers` and `workers:exp` keys) |
 | UPG-09 restore and clone identity binding, history limits | Applies (database copy) | Applies (file copy) | Applies for identity (§7.2); restore detection is REDIS-15 |
 | UPG-10 bounded locks and renewal margins; failed migration stays in a safe mode | Applies | Applies for the admission change under writer load; failed-migration is N/A (one transaction) | Applies for the admission change under load; failed-migration is N/A |
 
