@@ -146,7 +146,7 @@ internal sealed class RxRunner(RxClient client, TimeProvider time, IFaultInjecto
         var storeId = StoreId ?? throw new InvalidOperationException("Describe has not run yet.");
         var meta = RxClient.Meta(op.Application);
         var deadline = op.NotAfter == DateTimeOffset.MaxValue ? time.GetUtcNow() + DefaultBudget : op.NotAfter;
-        for (var attempt = 0; ; attempt++)
+        while (true)
         {
             var a = await client.EvalAsync(op.Lane, script, meta, client.Frame(op, storeId, args), op, ct).ConfigureAwait(false);
             switch ((string)a[0]!)
@@ -159,10 +159,8 @@ internal sealed class RxRunner(RxClient client, TimeProvider time, IFaultInjecto
                     // A Lua error before the intent: nothing was written.
                     return new RxReply { Status = nameof(StoreStatus.InvariantFault), HasValue = false, Code = "script_error", Detail = (string?)a[1] };
                 case "RECOVERING":
-                    Interlocked.Increment(ref RecoveringReplies);
-                    if (attempt >= 8 || time.GetUtcNow() >= deadline || !await RecoverAsync(op.Application, "", op.Lane, ct).ConfigureAwait(false))
+                    if (!await RecoveredAsync(op.Application, op.Lane, deadline, ct).ConfigureAwait(false))
                     {
-                        StartBackgroundRecovery(op.Application);
                         throw new StoreOutcomeUnknownException("store_recovering", op.CommandId, op.Operation);
                     }
 
@@ -238,6 +236,26 @@ internal sealed class RxRunner(RxClient client, TimeProvider time, IFaultInjecto
         return false;
     }
 
+    /// <summary>
+    /// After a Recovering answer (22 §4.2): true when the pending intent was finished and the budget lasts, so the call is resent.
+    /// Another writer's intent that publishes is progress, not a failure, however often it happens; only a recovery that cannot
+    /// finish the intent, or the end of the budget, ends the call with <c>store_recovering</c>.
+    /// </summary>
+    public async Task<bool> RecoveredAsync(string application, RxLane lane, DateTimeOffset deadline, CancellationToken ct)
+    {
+        Interlocked.Increment(ref RecoveringReplies);
+        if (time.GetUtcNow() < deadline && await RecoverAsync(application, "", lane, ct).ConfigureAwait(false))
+        {
+            return true;
+        }
+
+        StartBackgroundRecovery(application);
+        return false;
+    }
+
+    /// <summary>The deadline of a call without a NotAfter of its own (reads, resolution).</summary>
+    public DateTimeOffset Budget() => time.GetUtcNow() + DefaultBudget;
+
     /// <summary>The background class retries recovery every second (06 F-7 backoff after failures) while anything saw Recovering.</summary>
     void StartBackgroundRecovery(string application)
     {
@@ -273,19 +291,18 @@ internal sealed class RxRunner(RxClient client, TimeProvider time, IFaultInjecto
         }
 
         var meta = RxClient.Meta(application);
-        for (var attempt = 0; ; attempt++)
+        var deadline = Budget();
+        while (true)
         {
             var a = await client.EvalAsync(lane, script, meta, RxClient.ReadFrame(StoreId, args), null, ct).ConfigureAwait(false);
             var kind = (string)a[0]!;
             if (kind == "RECOVERING")
             {
-                Interlocked.Increment(ref RecoveringReplies);
-                if (attempt < 4 && await RecoverAsync(application, "", lane, ct).ConfigureAwait(false))
+                if (await RecoveredAsync(application, lane, deadline, ct).ConfigureAwait(false))
                 {
                     continue;
                 }
 
-                StartBackgroundRecovery(application);
                 throw new StoreNotAppliedException("store_recovering");
             }
 
