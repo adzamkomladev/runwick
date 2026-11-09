@@ -4,7 +4,7 @@ Normative rules: [spec 23](../spec/23-upgrades.md). This page is the procedure. 
 
 Read this first: **a Runwick binary works with exactly one store revision.** The moment the new revision is published, the previous binary cannot run at all (creation or settlement), and there is no downgrade. The way back is the backup from step 1 (see [restore](restore.md)). Plan for downtime of new work, not for a rolling upgrade.
 
-The commands use the CLI of the **new** release for `migrate` and of the **currently deployed** release for `store …` while the old schema is still in place (the `store` commands only touch the application gate rows, which have not changed shape). Replace `RUNWICK_STORE` with the name of an environment variable holding the migration-role connection string. `--provider sqlite` works the same way on a SQLite file. Redis has no CLI yet: use `RunwickRedisMigrations.SetAdmissionModeAsync`, `GetStatusAsync` and `MigrateAsync` from code ([spec 23 §3.5](../spec/23-upgrades.md)).
+The commands use the CLI of the **new** release for `migrate` and of the **currently deployed** release for `store …` while the old schema is still in place (the `store` commands only touch the application gate rows, which have not changed shape). Replace `RUNWICK_STORE` with the name of an environment variable holding the migration-role connection string. `--provider sqlite` works the same way on a SQLite file, and `--provider redis` on a Redis server (the variable then holds the Redis configuration string).
 
 ## Before you start
 
