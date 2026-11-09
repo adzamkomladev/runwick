@@ -17,6 +17,7 @@ All packages target `net10.0` only. You never need Node or npm; the dashboard's 
 ## A job and its handler
 
 ```csharp
+[JobName("email.welcome")]   // required: the stored name; CLR type names are never used
 public sealed record SendWelcomeEmail(Guid UserId) : IQueueJob;
 
 public sealed class SendWelcomeEmailHandler : IJobHandler<SendWelcomeEmail>
@@ -55,7 +56,7 @@ await dispatcher.DispatchAsync(new SendWelcomeEmail(userId));   // IJobDispatche
 ## PostgreSQL (reference store)
 
 - PostgreSQL 16, 17 or 18, connected directly to the primary (no read replicas, no proxy profile certified).
-- Create the schema once, with a role that may create schemas: `await RunwickPostgresMigrations.MigrateAsync(connectionString);` or `runwick migrate --provider postgres --connection-env MY_CONN`. The running application can then use a role with data access only.
+- Create the schema once, with a role that may create schemas: `await RunwickPostgresMigrations.MigrateAsync(connectionString);` (namespace `Runwick.Postgres.Migrations`) or `runwick migrate --provider postgres --connection-env MY_CONN`. The running application can then use a role with data access only.
 - `UsePostgres("Host=...;Database=...;...")`.
 - Producers and workers can run on many hosts.
 
