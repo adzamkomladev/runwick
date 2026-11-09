@@ -56,8 +56,9 @@ export function Sidebar({ label, children }) {
     )
   }
   return (
-    <aside aria-label={label} className="sticky top-0 flex h-svh w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 ease-out group-data-[sidebar=collapsed]/sidebar:w-14">
-      {children}
+    // The outer column stretches to the full page height (background and border); the inner panel sticks to the viewport.
+    <aside aria-label={label} className="w-60 shrink-0 border-r border-sidebar-border bg-sidebar transition-[width] duration-200 ease-out group-data-[sidebar=collapsed]/sidebar:w-14">
+      <div className="sticky top-0 flex h-svh flex-col">{children}</div>
     </aside>
   )
 }
