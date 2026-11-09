@@ -150,8 +150,12 @@ function OverviewBody({ base, can, recent, failed, pending, running, queues, wor
   const ok = bucketize(recent.items, 'terminalAt', span, (j) => j.state === 'succeeded')
   const bad = bucketize(recent.items, 'terminalAt', span, (j) => j.state === 'failed')
   const series = created.map((c, i) => {
-    const at = labelAt(i), short = span.to - span.from < 30 * 60 * 1000 // under 30 min, minutes alone repeat across labels
-    return { label: at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...(short && { second: '2-digit' }) }),
+    const at = labelAt(i), width = span.to - span.from, short = width < 30 * 60 * 1000 // under 30 min, minutes alone repeat across labels
+    // Past a day the clock repeats, so labels carry the date (and drop the time from 3 days up).
+    const label = width >= 72 * HOUR ? at.toLocaleDateString([], { month: 'short', day: 'numeric' })
+      : width > 24 * HOUR ? at.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...(short && { second: '2-digit' }) })
+    return { label,
       title: at.toLocaleString([], { dateStyle: 'medium', timeStyle: short ? 'medium' : 'short' }),
       created: c, finished: finished[i], succeeded: ok[i], failed: bad[i] }
   })
