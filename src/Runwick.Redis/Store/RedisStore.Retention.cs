@@ -15,7 +15,7 @@ internal sealed partial class RedisStore : IRetentionStore
     /// <summary>The seven hours (null = forever) as the JSON the scripts keep; the same text for the same policy.</summary>
     static string RetHours(RetentionPolicy p) => new JsonArray([.. p.Hours().Select(h => (JsonNode?)(h is { } v ? JsonValue.Create(v) : null))]).ToJsonString();
 
-    static readonly string RetDefaultHours = RetHours(RetentionPolicy.Default);
+    internal static readonly string RetDefaultHours = RetHours(RetentionPolicy.Default);
 
     public async Task<CleanupBatchResult> RunCleanupBatchAsync(string application, string recordClass, CleanupLimits limits, CancellationToken ct)
     {
