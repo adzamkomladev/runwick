@@ -71,7 +71,7 @@ public sealed class RedisFaultTests
 
     static async Task<(LeaseHandle Lease, Guid JobId)> ReserveBegin(TestClient c, string id, TimeSpan? lease = null)
     {
-        await c.Dispatcher.DispatchAsync(new PingJob(id), cancellationToken: Ct);
+        await Retry(() => c.Dispatcher.DispatchAsync(new PingJob(id), cancellationToken: Ct)); // the client may still be reconnecting after a restart
         var reserved = await Retry(() => c.ReserveAsync(lease: lease));
         Assert.Equal(StoreStatus.Applied, reserved.Status);
         var handle = reserved.Value!.Lease.Handle;

@@ -209,6 +209,23 @@ public sealed class RedisCrashTests(R01Server server) : IClassFixture<R01Server>
     }
 
     /// <summary>Retries while the client reconnects after the crash (calls fail fast meanwhile, nothing is queued).</summary>
+    /// <summary>Resends only while the client is still reconnecting after a restart: the command was never sent (store_unavailable).</summary>
+    static async Task<T> NotYetSent<T>(Func<Task<T>> call)
+    {
+        var until = DateTime.UtcNow.AddSeconds(30);
+        while (true)
+        {
+            try
+            {
+                return await call();
+            }
+            catch (Exception ex) when (DateTime.UtcNow < until && ex is StoreNotAppliedException or StoreUnavailableException)
+            {
+                await Task.Delay(200, Ct);
+            }
+        }
+    }
+
     static async Task<T> Retry<T>(Func<Task<T>> call)
     {
         var until = DateTime.UtcNow.AddSeconds(30);
@@ -361,7 +378,7 @@ public sealed class RedisCrashTests(R01Server server) : IClassFixture<R01Server>
             var thrown = false;
             try
             {
-                await call();
+                await NotYetSent(call); // FailAfter rides in the script's arguments, so a call the reconnecting client never sent is resent as is
             }
             catch (Exception ex) when (ex is StoreOutcomeUnknownException or DispatchOutcomeUnknownException)
             {
