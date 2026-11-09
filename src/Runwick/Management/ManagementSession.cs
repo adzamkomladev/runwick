@@ -133,7 +133,7 @@ internal sealed class ManagementSession(
     async Task<string> AuthorizeJobAsync(ManagementCaller caller, Guid? jobId, Guid? attemptId, string permission, CancellationToken ct)
     {
         await runtime.EnsureReadyAsync(ct).ConfigureAwait(false);
-        var queue = await Read(() => Store.QueueOfAsync(App, jobId, attemptId, ct)).ConfigureAwait(false);
+        var queue = await Read(() => Store.QueueOfAsync(App, jobId, attemptId, ct), ct).ConfigureAwait(false);
         if (queue is null || !Covers(caller, ManagementPermissions.JobsRead, queue))
         {
             throw new ManagementNotFoundException();
@@ -149,12 +149,19 @@ internal sealed class ManagementSession(
         _ => Math.Min(limit.Value, MaxPageSize),
     };
 
-    /// <summary>Runs a read; a statement timeout is <c>query_budget_exceeded</c>, other store failures stay unavailable.</summary>
-    static async Task<T> Read<T>(Func<Task<T>> read)
+    /// <summary>
+    /// Runs a read; a statement timeout is <c>query_budget_exceeded</c>, other store failures stay unavailable. A read the
+    /// caller cancelled is a cancellation: the stores report it as not applied, which is not the store being unavailable.
+    /// </summary>
+    static async Task<T> Read<T>(Func<Task<T>> read, CancellationToken ct)
     {
         try
         {
             return await read().ConfigureAwait(false);
+        }
+        catch (StoreNotAppliedException ex) when (ct.IsCancellationRequested)
+        {
+            throw new OperationCanceledException("The caller cancelled the management read.", ex, ct);
         }
         catch (StoreNotAppliedException ex) when (ex.Code is "statement_timeout" or "command_expired")
         {
@@ -209,7 +216,7 @@ internal sealed class ManagementSession(
         }
 
         var read = await Read(() => Store.ListJobsAsync(App, queues, new JobListFilter(query.Queue, query.State, query.JobName, from, to), after, limit + 1,
-            cancellationToken)).ConfigureAwait(false);
+            cancellationToken), cancellationToken).ConfigureAwait(false);
         return Page(read, limit, "jobs", filters, hash, j => [Ms(from), Ms(to), Ms(j.CreatedAt), j.JobId.ToString("D")]);
     }
 
@@ -217,7 +224,7 @@ internal sealed class ManagementSession(
     {
         Require(caller, ManagementPermissions.JobsRead);
         await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
-        var read = await Read(() => Store.GetJobAsync(App, jobId, cancellationToken)).ConfigureAwait(false);
+        var read = await Read(() => Store.GetJobAsync(App, jobId, cancellationToken), cancellationToken).ConfigureAwait(false);
         return read.Value is { } detail && Covers(caller, ManagementPermissions.JobsRead, detail.Job.Queue) ? detail : throw new ManagementNotFoundException();
     }
 
@@ -229,7 +236,7 @@ internal sealed class ManagementSession(
         var hash = ManagementCursors.QueueHash(queues);
         var after = cursor is null ? null : cursors.Open(cursor, "queues", App, "", hash)[0];
         await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
-        var read = await Read(() => Store.ListQueuesAsync(App, queues, after, size + 1, cancellationToken)).ConfigureAwait(false);
+        var read = await Read(() => Store.ListQueuesAsync(App, queues, after, size + 1, cancellationToken), cancellationToken).ConfigureAwait(false);
         return Page(read, size, "queues", "", hash, x => [x.Name]);
     }
 
@@ -241,7 +248,7 @@ internal sealed class ManagementSession(
         var filters = includeExpired ? "expired" : "";
         (DateTimeOffset, Guid)? after = cursor is null ? null : cursors.Open(cursor, "workers", App, filters, "*") is var k ? (FromMs(k[0]), Guid.Parse(k[1])) : null;
         await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
-        var read = await Read(() => Store.ListWorkersAsync(App, includeExpired, after, size + 1, cancellationToken)).ConfigureAwait(false);
+        var read = await Read(() => Store.ListWorkersAsync(App, includeExpired, after, size + 1, cancellationToken), cancellationToken).ConfigureAwait(false);
         return Page(read, size, "workers", filters, "*", w => [Ms(w.HeartbeatAt), w.InstanceId.ToString("D")]);
     }
 
@@ -252,7 +259,7 @@ internal sealed class ManagementSession(
         var size = PageSize(limit);
         (string, string)? after = cursor is null ? null : cursors.Open(cursor, "scopes", App, kind ?? "", "*") is var k ? (k[0], k[1]) : null;
         await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
-        var read = await Read(() => Store.ListScopesAsync(App, kind, after, size + 1, cancellationToken)).ConfigureAwait(false);
+        var read = await Read(() => Store.ListScopesAsync(App, kind, after, size + 1, cancellationToken), cancellationToken).ConfigureAwait(false);
         return Page(read, size, "scopes", kind ?? "", "*", s => [s.Kind, s.Key]);
     }
 
@@ -263,7 +270,7 @@ internal sealed class ManagementSession(
         var size = PageSize(limit);
         var after = cursor is null ? null : cursors.Open(cursor, "schedules", App, "", "*")[0];
         await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
-        var read = await Read(() => Store.ListSchedulesAsync(App, after, size + 1, cancellationToken)).ConfigureAwait(false);
+        var read = await Read(() => Store.ListSchedulesAsync(App, after, size + 1, cancellationToken), cancellationToken).ConfigureAwait(false);
         return Page(read, size, "schedules", "", "*", s => [s.Key]);
     }
 
@@ -276,7 +283,7 @@ internal sealed class ManagementSession(
         long? after = query.Cursor is null ? null : long.Parse(cursors.Open(query.Cursor, "audit", App, filters, "*")[0], CultureInfo.InvariantCulture);
         await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
         var read = await Read(() => Store.ListAuditAsync(App, new AuditFilter(query.TargetKind, query.TargetId, query.From, query.To), after, size + 1,
-            cancellationToken)).ConfigureAwait(false);
+            cancellationToken), cancellationToken).ConfigureAwait(false);
         var items = read.Value.Select(a => a with
         {
             // Only allowlisted detail keys leave the store.
@@ -307,7 +314,7 @@ internal sealed class ManagementSession(
 
         await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
         var read = await Read(() => Store.ListScalingEventsAsync(App, new ScalingEventFilter(query.InstanceId, query.Pool, from, to), after, limit + 1,
-            cancellationToken)).ConfigureAwait(false);
+            cancellationToken), cancellationToken).ConfigureAwait(false);
         return Page(read, limit, "scaling-events", filters, "*", e => [Ms(from), Ms(to), Ms(e.CreatedAt), e.EventId.ToString("D")]);
     }
 
@@ -336,7 +343,7 @@ internal sealed class ManagementSession(
             roles.Add("scheduler");
         }
 
-        var retention = Store is IRetentionStore r ? (await Read(() => r.GetRetentionAsync(App, cancellationToken)).ConfigureAwait(false)).Value.Policy.Revision : 0;
+        var retention = Store is IRetentionStore r ? (await Read(() => r.GetRetentionAsync(App, cancellationToken), cancellationToken).ConfigureAwait(false)).Value.Policy.Revision : 0;
         return new ManagementSettings(App, builder.StoreProviders.FirstOrDefault()?.Name ?? "unknown", descriptor.SchemaRevision,
             runtime.Store.AcknowledgementProfile, roles, new Dictionary<string, long>
             {
@@ -355,7 +362,7 @@ internal sealed class ManagementSession(
     {
         Require(caller, ManagementPermissions.SettingsRead);
         await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
-        var read = await Read(() => Retention.GetRetentionAsync(App, cancellationToken)).ConfigureAwait(false);
+        var read = await Read(() => Retention.GetRetentionAsync(App, cancellationToken), cancellationToken).ConfigureAwait(false);
         return new RetentionView(read.Value.Policy.Policy, read.Value.Policy.Revision, read.Value.Classes, read.ObservedAt);
     }
 
@@ -580,7 +587,7 @@ internal sealed class ManagementSession(
         }
 
         await runtime.EnsureReadyAsync(ct).ConfigureAwait(false);
-        var existing = await Read(() => Store.CommandNotAfterAsync(App, commandId, ct)).ConfigureAwait(false);
+        var existing = await Read(() => Store.CommandNotAfterAsync(App, commandId, ct), ct).ConfigureAwait(false);
         return new CommandSeed(commandId, existing ?? CommandSeed.Ms(time.GetUtcNow() + lifetime));
     }
 
@@ -604,7 +611,7 @@ internal sealed class ManagementSession(
         };
         var cursor = after is null ? (EventCursor?)null : ParseEventCursor(after);
         await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
-        var page = await Read(() => controls.Store.EventsSinceAsync(App, cursor, size, cancellationToken)).ConfigureAwait(false);
+        var page = await Read(() => controls.Store.EventsSinceAsync(App, cursor, size, cancellationToken), cancellationToken).ConfigureAwait(false);
         var actors = TryScope(caller, ManagementPermissions.AuditRead, out _);
         return new EventsPage(
             [.. page.Events.Select(e => new ManagementEvent(e.EventId, e.Kind, e.JobId, e.AttemptId, e.CommandId, e.OccurredAt, actors ? e.ActorId : null, e.Details))],
