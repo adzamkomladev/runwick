@@ -211,7 +211,7 @@ with open(os.path.join(out, "summary.md"), "w") as f:
     f.write(f"# SP-029 qualification summary\n\nProfile: {profile}. Host: {'reference' if reference else 'NON-REFERENCE (every verdict informational)'}.\n\n")
     if env:
         f.write(f"Commit {env.get('commit', env.get('sourceCommit', '?'))}; CPU {env.get('cpuModel', env.get('cpu', '?'))}; "
-                f"load at start {env.get('loadAverage', env.get('loadavg', '?'))}.\n\n")
+                f"load at start {env.get('loadAverageAtStart', '?')}.\n\n")
     f.write("| Threshold | Measured | Rule | Verdict | Note |\n|---|---|---|---|---|\n")
     for name, measured, rule, ok, note in rows:
         f.write(f"| {name} | {measured} | {rule} | {verdict(ok)} | {note} |\n")

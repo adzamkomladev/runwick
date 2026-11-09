@@ -12,6 +12,9 @@
 #   SP029_SOAK_RATE P-10 offered rate; default 70 % of the P-02 sustainable rate from this run, else 35/s.
 #   SP029_REFERENCE 1 only on a dedicated, quiet reference host: verdicts become PASS/FAIL instead of INFORMATIONAL.
 #   SP029_SKIP_BUILD 1 to reuse the current Release build.
+#   SP029_PG        connection string of a separate PostgreSQL server (the plan's 8 vCPU / 16 GiB database host, superuser,
+#                   databases are created and dropped per run). Unset: a local Testcontainers server per case. P-08c always
+#                   uses a local container, because it kills and restarts the server.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="${DOTNET_ROOT:-$HOME/.dotnet}" DOTNET_NOLOGO=1
@@ -72,6 +75,7 @@ for name in ${SP029_CASES:-P-01 P-01t P-02 P-03 P-04 P-05 P-06r P-06s P-07 P-08a
     args+=(--rate "$rate" --duration-min "$soak" --gc-interval-s "$gc")
     [[ "$profile" == short ]] && args+=(--warmup-min 1 --drain-min 30)
   fi
+  if [[ -n "${SP029_PG:-}" && "$name" != P-08c ]]; then export RUNWICK_TEST_PG="$SP029_PG"; else unset RUNWICK_TEST_PG; fi
   start=$(date +%s)
   "$wl" run "$name" --out "$out/perf/$(date -u +%Y%m%d-%H%M%S)-$name" "${args[@]}" > "$out/perf/$name.log" 2>&1
   echo "$name: exit $? in $(( $(date +%s) - start )) s; $(tail -1 "$out/perf/$name.log")"
