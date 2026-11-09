@@ -11,4 +11,4 @@ export const TableRow = ({ className, ...props }) =>
   <tr data-slot="table-row" className={cn('border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted', className)} {...props} />
 export const TableHead = ({ className, ...props }) =>
   <th data-slot="table-head" className={cn('h-10 whitespace-nowrap px-3 text-left align-middle text-xs font-medium uppercase tracking-wide text-muted-foreground', className)} {...props} />
-export const TableCell = ({ className, ...props }) => <td data-slot="table-cell" className={cn('px-3 py-2.5 align-middle', className)} {...props} />
+export const TableCell = ({ className, ...props }) => <td data-slot="table-cell" className={cn('h-11 px-3 py-1.5 align-middle', className)} {...props} />

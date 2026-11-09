@@ -2,7 +2,7 @@ import { Link, router, usePage } from '@inertiajs/react'
 import {
   IconActivity, IconAlertTriangle, IconArrowDown, IconArrowRight, IconArrowUp, IconArrowsSort, IconBolt, IconCalendarTime, IconCheck,
   IconCircleDashed, IconCopy, IconDeviceDesktop, IconFilter, IconGauge, IconHistory, IconLayoutDashboard, IconListDetails, IconLoader2,
-  IconMenu2, IconMoon, IconServer2, IconSettings, IconStack2, IconSun, IconTrash, IconX,
+  IconMoon, IconServer2, IconSettings, IconStack2, IconSun, IconTrash, IconX,
 } from '@tabler/icons-react'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
@@ -17,7 +17,7 @@ import {
 import { Input } from './components/ui/input'
 import { Label } from './components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select'
-import { Sheet, SheetContent, SheetTitle, SheetTrigger } from './components/ui/sheet'
+import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenuButton, SidebarProvider, SidebarTrigger } from './components/ui/sidebar'
 import { Skeleton } from './components/ui/skeleton'
 import { TableHead } from './components/ui/table'
 import { dismissToast, toast } from './components/ui/toast'
@@ -293,31 +293,36 @@ function ThemeToggle() {
 // ---- Layout -----------------------------------------------------------------------------------------------------------------
 
 const NAV = [
-  ['overview', 'Overview', '/overview', IconLayoutDashboard, ['Overview']],
-  ['jobs', 'Jobs', '', IconListDetails, ['Jobs', 'Job']],
-  ['queues', 'Queues', '/queues', IconStack2, ['Queues']],
-  ['workers', 'Workers', '/workers', IconServer2, ['Workers']],
-  ['schedules', 'Schedules', '/schedules', IconCalendarTime, ['Schedules']],
-  ['scaling', 'Scaling', '/scaling', IconGauge, ['Scaling']],
-  ['settings', 'Settings', '/settings', IconSettings, ['Settings']],
-  ['retention', 'Retention', '/retention', IconTrash, ['Retention']],
-  ['audit', 'Audit', '/audit', IconHistory, ['Audit']],
+  ['Monitor', [
+    ['overview', 'Overview', '/overview', IconLayoutDashboard, ['Overview']],
+    ['jobs', 'Jobs', '', IconListDetails, ['Jobs', 'Job']],
+    ['queues', 'Queues', '/queues', IconStack2, ['Queues']],
+    ['workers', 'Workers', '/workers', IconServer2, ['Workers']],
+    ['schedules', 'Schedules', '/schedules', IconCalendarTime, ['Schedules']],
+    ['scaling', 'Scaling', '/scaling', IconGauge, ['Scaling']],
+  ]],
+  ['Govern', [
+    ['audit', 'Audit', '/audit', IconHistory, ['Audit']],
+    ['retention', 'Retention', '/retention', IconTrash, ['Retention']],
+    ['settings', 'Settings', '/settings', IconSettings, ['Settings']],
+  ]],
 ]
+const TITLES = Object.fromEntries(NAV.flatMap(([, items]) => items.flatMap(([, label, , , components]) => components.map((c) => [c, label]))))
 
-function Nav({ onNavigate }) {
+function Nav() {
   const { component, props: { base, can } } = usePage()
   return (
-    <nav data-testid="nav" aria-label="Dashboard" className="grid gap-0.5">
-      {NAV.filter(([page]) => can[page]).map(([page, label, path, Icon, components]) => {
-        const active = components.includes(component)
-        return (
-          <Link key={page} href={base + path} data-testid={`nav-${page}`} onClick={onNavigate} aria-current={active ? 'page' : undefined}
-            className={cn('group relative flex h-9 items-center gap-2.5 rounded-md px-2.5 text-sm font-medium text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50',
-              active && 'bg-accent text-accent-foreground')}>
-            <span aria-hidden className={cn('absolute top-2 bottom-2 left-0 w-0.5 rounded-full bg-primary transition-transform duration-200', active ? 'scale-y-100' : 'scale-y-0')} />
-            <Icon className="size-4 shrink-0 transition-transform duration-200 group-hover:scale-110" />
-            {label}
-          </Link>
+    <nav data-testid="nav" aria-label="Dashboard" className="grid gap-4">
+      {NAV.map(([group, items]) => {
+        const shown = items.filter(([page]) => can[page])
+        return shown.length > 0 && (
+          <SidebarGroup key={group} label={group}>
+            {shown.map(([page, label, path, Icon, components]) => (
+              <SidebarMenuButton key={page} asChild active={components.includes(component)} tooltip={label}>
+                <Link href={base + path} data-testid={`nav-${page}`}><Icon aria-hidden /><span>{label}</span></Link>
+              </SidebarMenuButton>
+            ))}
+          </SidebarGroup>
         )
       })}
     </nav>
@@ -327,9 +332,27 @@ function Nav({ onNavigate }) {
 function Brand() {
   const { title } = usePage().props
   return (
-    <div className="flex items-center gap-2.5 px-2.5">
-      <span className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground shadow-sm"><IconBolt className="size-4.5" /></span>
-      <span className="truncate font-semibold tracking-tight" data-testid="title">{title}</span>
+    <div className="flex h-9 items-center gap-2.5 px-0.5">
+      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-primary to-primary/70 text-primary-foreground shadow-sm ring-1 ring-primary/20">
+        <IconBolt className="size-4.5" aria-hidden />
+      </span>
+      <span className="grid min-w-0 leading-tight transition-opacity duration-200 group-data-[sidebar=collapsed]/sidebar:sr-only">
+        <span className="truncate font-semibold tracking-tight" data-testid="title">{title}</span>
+        <span className="truncate text-xs text-muted-foreground">Jobs dashboard</span>
+      </span>
+    </div>
+  )
+}
+
+function UserRow() {
+  const { user } = usePage().props
+  return (
+    <div className="flex h-10 min-w-0 items-center gap-2.5 px-0.5">
+      <span aria-hidden className="grid size-8 shrink-0 place-items-center rounded-full bg-accent text-xs font-semibold text-accent-foreground ring-1 ring-border">{initials(user)}</span>
+      <span className="grid min-w-0 text-sm leading-tight group-data-[sidebar=collapsed]/sidebar:sr-only">
+        <span className="text-xs text-muted-foreground">Signed in as</span>
+        <span className="truncate font-medium" data-testid="user">{user}</span>
+      </span>
     </div>
   )
 }
@@ -371,40 +394,25 @@ function useNavigating() {
 }
 
 export function Layout({ heading, description, actions, live, children }) {
-  const { component, props: { user, notice } } = usePage()
-  const [open, setOpen] = useState(false)
+  const { component, props: { notice } } = usePage()
   const navigating = useNavigating()
   return (
-    <div className="flex min-h-svh">
-      <aside className="sticky top-0 hidden h-svh w-60 shrink-0 flex-col gap-6 border-r border-sidebar-border bg-sidebar px-3 py-4 md:flex">
-        <Brand />
-        <Nav />
-      </aside>
+    <SidebarProvider>
+      <Sidebar label="Dashboard">
+        <SidebarHeader><Brand /></SidebarHeader>
+        <SidebarContent><Nav /></SidebarContent>
+        <SidebarFooter><UserRow /></SidebarFooter>
+      </Sidebar>
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b bg-background/85 px-4 backdrop-blur md:px-6">
-          <Sheet open={open} onOpenChange={setOpen}>
-            <SheetTrigger asChild>
-              <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label="Open navigation"><IconMenu2 /></Button>
-            </SheetTrigger>
-            <SheetContent side="left" className="gap-6 bg-sidebar px-3 py-4">
-              <SheetTitle className="sr-only">Navigation</SheetTitle>
-              <Brand />
-              <Nav onNavigate={() => setOpen(false)} />
-            </SheetContent>
-          </Sheet>
-          <div className="min-w-0 flex-1" />
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/80 px-3 backdrop-blur-md md:px-5">
+          <SidebarTrigger />
+          <span aria-hidden className="h-5 w-px bg-border" />
+          <p className="min-w-0 truncate text-sm text-muted-foreground"><span className="hidden sm:inline">Runwick / </span><span className="font-medium text-foreground">{TITLES[component] ?? component}</span></p>
+          <div className="flex-1" />
           <LiveIndicator seconds={live} />
           <ThemeToggle />
-          <div className="flex min-w-0 items-center gap-2 border-l pl-3">
-            <span aria-hidden className="grid size-8 shrink-0 place-items-center rounded-full bg-accent text-xs font-semibold text-accent-foreground">{initials(user)}</span>
-            <span className="hidden min-w-0 text-sm leading-tight sm:block">
-              <span className="block text-xs text-muted-foreground">Signed in as</span>
-              <span className="block max-w-56 truncate font-medium" data-testid="user">{user}</span>
-            </span>
-            <span className="sr-only sm:hidden">Signed in as {user}</span>
-          </div>
         </header>
-        <main className="mx-auto grid w-full max-w-7xl min-w-0 flex-1 content-start gap-6 p-4 md:p-6">
+        <main className="mx-auto grid w-full max-w-[96rem] min-w-0 flex-1 content-start gap-6 p-4 md:p-6">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div className="grid min-w-0 gap-1">
               <h1 className="truncate text-2xl font-semibold tracking-tight">{heading}</h1>
@@ -412,14 +420,14 @@ export function Layout({ heading, description, actions, live, children }) {
             </div>
             {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
           </div>
-          {notice && <p className="flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm" data-testid="notice">
-            <IconAlertTriangle className="size-4 shrink-0 text-warning" />
+          {notice && <p className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm" data-testid="notice">
+            <IconAlertTriangle className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
             {notice === 'invalid_cursor' ? 'That page link expired or is not valid; showing the first page.' : <span>The filter was not accepted: <code>{notice}</code></span>}
           </p>}
           {navigating ? <PageSkeleton /> : <div key={component} className="grid min-w-0 animate-page-in gap-6">{children}</div>}
         </main>
       </div>
-    </div>
+    </SidebarProvider>
   )
 }
 
@@ -481,7 +489,7 @@ export function Filters({ fields, values }) {
               </SelectContent>
             </Select>
             : <Input id={`filter-${name}`} name={name} defaultValue={values?.[name] ?? ''} className="h-8 w-40"
-              placeholder={name === 'from' || name === 'to' ? '2026-01-31T09:00Z' : undefined} />}
+              placeholder={name === 'from' || name === 'to' ? 'YYYY-MM-DDThh:mmZ' : 'Any'} />}
         </div>
       ))}
       <Button type="submit" size="sm"><IconFilter />Filter</Button>
@@ -533,23 +541,7 @@ export function useChanged(items, key, value) {
   return hot
 }
 
-const STATES = {
-  pending: ['secondary', IconCircleDashed], reserved: ['info'], running: ['info'], retrying: ['warning'], succeeded: ['success', IconCheck],
-  failed: ['destructive', IconAlertTriangle], cancelled: ['outline', IconX], paused: ['warning'], active: ['success'], live: ['success'],
-}
-
-/** A job, queue or schedule state as a badge. The text is the state name itself (tests and screen readers read it). */
-export function StateBadge({ state, className }) {
-  const [variant, Icon] = STATES[state] ?? ['outline']
-  return (
-    <Badge variant={variant} className={cn('transition-colors duration-500', className)}>
-      {state === 'running' || state === 'reserved'
-        ? <span aria-hidden className="relative flex size-1.5"><span className="absolute inline-flex size-full animate-ping rounded-full bg-current opacity-60" /><span className="relative inline-flex size-1.5 rounded-full bg-current" /></span>
-        : Icon && <Icon aria-hidden />}
-      {state}
-    </Badge>
-  )
-}
+export { StatusBadge as StateBadge } from './components/status'
 
 /** Copies a value; the icon turns into a check for a moment, and screen readers hear "Copied". */
 export function CopyButton({ value, label = 'Copy' }) {

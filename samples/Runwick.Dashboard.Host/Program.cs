@@ -1,6 +1,8 @@
 // Usage: Runwick.Dashboard.Host [--build v2]
 //   RUNWICK_DASH_PG    PostgreSQL connection string (required); the schema is migrated at start
 //   RUNWICK_DASH_PORT  port on 127.0.0.1 (default 5791)
+//   RUNWICK_DASH_DEMO  "1" adds a steady stream of mixed jobs (imports, emails, thumbnails; some slow, some failing) so the
+//                      Overview charts have data to show. Off by default: the browser flows never set it.
 // A host with its own Inertia.Net page at /ops/ and the Runwick dashboard at /ops/runwick, mounted before the host's UseInertia().
 // Users sign in with a cookie at /ops/login (admin, operator, viewer). "--build v2" serves a rebuilt client, standing in for a deploy.
 // The data is seeded on every start into a fresh application name, including a job whose payload and error code are hostile text.
@@ -16,6 +18,7 @@ using Runwick.Postgres.Migrations;
 const string Hostile = "</script><script>alert(1)</script>\"'&<img src=x onerror=alert(2)>\u2028end";
 var conn = Environment.GetEnvironmentVariable("RUNWICK_DASH_PG") ?? throw new InvalidOperationException("Set RUNWICK_DASH_PG.");
 var port = Environment.GetEnvironmentVariable("RUNWICK_DASH_PORT") ?? "5791";
+var demo = Environment.GetEnvironmentVariable("RUNWICK_DASH_DEMO") == "1";
 await RunwickPostgresMigrations.MigrateAsync(conn);
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ContentRootPath = AppContext.BaseDirectory });
@@ -32,7 +35,23 @@ builder.Services.AddRunwick(r =>
     r.AddJob<Flaky>().Named("sample.flaky").ToQueue("default");
     r.AddHandler<Report, ReportHandler>();
     r.AddHandler<Flaky, FlakyHandler>();
-    r.AddWorker(w => w.Pool("main", p => p.Queue("default", 1).FixedConcurrency(2))); // "reports" has no worker: its jobs stay pending
+    r.AddWorker(w =>
+    {
+        w.Pool("main", p => p.Queue("default", 1).FixedConcurrency(2)); // "reports" has no worker: its jobs stay pending
+        if (demo)
+        {
+            w.Pool("demo", p => p.Queue("imports", 1).Queue("emails", 1).Queue("media", 1).FixedConcurrency(3));
+        }
+    });
+    if (demo)
+    {
+        r.AddJob<Import>().Named("demo.import").ToQueue("imports");
+        r.AddJob<Email>().Named("demo.email").ToQueue("emails");
+        r.AddJob<Thumbnail>().Named("demo.thumbnail").ToQueue("media");
+        r.AddHandler<Import, DemoHandler>();
+        r.AddHandler<Email, DemoHandler>();
+        r.AddHandler<Thumbnail, DemoHandler>();
+    }
 });
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(o => o.LoginPath = "/login");
@@ -90,6 +109,20 @@ for (var i = 0; i < 3; i++)
 
 await dispatcher.DispatchAsync(new Report(Hostile), later); // newest, so first in the list: the reveal rate limit allows few tries
 await dispatcher.DispatchAsync(new Flaky("fails with a hostile error code"));
+if (demo)
+{
+    _ = Task.Run(async () =>
+    {
+        // Bursty arrivals, a little faster than the three demo slots drain, so pending work builds and clears.
+        for (var n = 0; !app.Lifetime.ApplicationStopping.IsCancellationRequested; n++)
+        {
+            IQueueJob job = (n % 5) switch { 0 or 1 => new Email(n), 2 or 3 => new Thumbnail(n), _ => new Import(n) };
+            try { await dispatcher.DispatchAsync(job); } catch (Exception ex) { Console.WriteLine($"demo dispatch: {ex.Message}"); }
+            await Task.Delay(Random.Shared.Next(n % 40 < 20 ? 150 : 600, n % 40 < 20 ? 500 : 1500));
+        }
+    });
+}
+
 Console.WriteLine($"ready http://127.0.0.1:{port}/ops/runwick");
 await app.WaitForShutdownAsync();
 
@@ -106,6 +139,31 @@ sealed class FlakyHandler : IJobHandler<Flaky>
 {
     public Task HandleAsync(Flaky job, CancellationToken cancellationToken) =>
         throw new PermanentJobFailureException("</script><img src=x onerror=alert(4)>\u2028", "error-text-secret");
+}
+
+sealed record Import(int N) : IQueueJob;
+
+sealed record Email(int N) : IQueueJob;
+
+sealed record Thumbnail(int N) : IQueueJob;
+
+/// <summary>Demo work: 50 ms to 1.5 s, and about one in twelve fails (imports more often).</summary>
+sealed class DemoHandler : IJobHandler<Import>, IJobHandler<Email>, IJobHandler<Thumbnail>
+{
+    public Task HandleAsync(Import job, CancellationToken ct) => RunAsync(job.N, 5, ct);
+
+    public Task HandleAsync(Email job, CancellationToken ct) => RunAsync(job.N, 14, ct);
+
+    public Task HandleAsync(Thumbnail job, CancellationToken ct) => RunAsync(job.N, 20, ct);
+
+    static async Task RunAsync(int n, int failEvery, CancellationToken ct)
+    {
+        await Task.Delay(Random.Shared.Next(50, 1500), ct);
+        if (n % failEvery == 3)
+        {
+            throw new PermanentJobFailureException("demo.upstream_unavailable", "The demo upstream refused the call.");
+        }
+    }
 }
 
 static class SampleBuild

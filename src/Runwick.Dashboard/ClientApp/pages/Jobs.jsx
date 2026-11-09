@@ -1,13 +1,41 @@
-import { Link } from '@inertiajs/react'
+import { Link, usePage } from '@inertiajs/react'
 import { IconBan } from '@tabler/icons-react'
 import { useState } from 'react'
+import { StatusDot } from '../components/status'
+import { relative } from '../components/timeline'
 import { Checkbox } from '../components/ui/checkbox'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { cn } from '../components/ui/utils'
 import { CommandBar, CommandButton, Filters, Layout, Pager, StateBadge, TableCard, time, useChanged, useCommand, usePoll, useSort } from '../lib'
 
 const STATES = ['pending', 'reserved', 'running', 'retrying', 'succeeded', 'failed', 'cancelled']
 const FIELDS = [['queue', 'Queue'], ['state', 'State', STATES], ['jobName', 'Job name'], ['from', 'Created from'], ['to', 'Created to']]
+
+/** Quick state filters: links that keep the other filters. */
+function StateChips({ query }) {
+  const { url } = usePage()
+  const href = (state) => {
+    const u = new URL(url, window.location.href)
+    u.searchParams.delete('cursor')
+    if (state) u.searchParams.set('state', state); else u.searchParams.delete('state')
+    return u.pathname + u.search
+  }
+  return (
+    <nav aria-label="Filter by state" className="flex flex-wrap gap-1.5">
+      {[null, ...STATES].map((st) => {
+        const on = (query.state ?? null) === st
+        return (
+          <Link key={st ?? 'all'} href={href(st)} aria-current={on ? 'true' : undefined}
+            className={cn('inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-[color,background-color,border-color,transform] duration-150 outline-none active:scale-95 focus-visible:ring-[3px] focus-visible:ring-ring/50',
+              on ? 'border-primary bg-primary text-primary-foreground shadow-sm' : 'bg-card text-muted-foreground hover:border-foreground/20 hover:text-foreground')}>
+            {st && <StatusDot state={st} />}{st ?? 'All'}
+          </Link>
+        )
+      })}
+    </nav>
+  )
+}
 
 export default function Jobs({ base, can, jobs, query }) {
   const live = usePoll(['jobs'], 5)
@@ -29,6 +57,7 @@ export default function Jobs({ base, can, jobs, query }) {
         Cancel selected ({chosen.length})
       </CommandButton>}>
       <CommandBar command={command} />
+      <StateChips query={query} />
       <TableCard toolbar={<Filters fields={FIELDS} values={query} />} pager={<Pager page={jobs} />}
         empty={jobs.items.length === 0 && 'No jobs in this range.'}>
         <Table data-testid="jobs">
@@ -52,7 +81,9 @@ export default function Jobs({ base, can, jobs, query }) {
                 </TableCell>
                 <TableCell data-testid="job-queue" className="text-muted-foreground">{j.queue}</TableCell>
                 <TableCell data-testid="job-state"><StateBadge state={j.state} />{j.cancelRequested && <span className="ml-1.5 text-xs text-warning"> (cancel requested)</span>}</TableCell>
-                <TableCell className="whitespace-nowrap text-muted-foreground">{time(j.createdAt)}</TableCell>
+                <TableCell className="whitespace-nowrap text-muted-foreground">
+                  <Tooltip><TooltipTrigger asChild><time dateTime={j.createdAt} className="cursor-default">{relative(j.createdAt)}</time></TooltipTrigger><TooltipContent>{time(j.createdAt)}</TooltipContent></Tooltip>
+                </TableCell>
                 <TableCell className="text-right tabular-nums">{j.revision}</TableCell>
               </TableRow>
             ))}

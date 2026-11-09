@@ -36,6 +36,13 @@ Not in SP-024: server-side rendering, a live push channel (SSE or WebSocket), qu
   3. Two local shims replace `react-remove-scroll` and `aria-hidden` through npm `overrides` (§7.1). The real packages inject a `<style>` element at run time, which the CSP blocks, and depend on `tslib` (0BSD, outside the licence allow-list).
   4. Icons are Tabler (MIT), not lucide (ISC). Trend lines are small hand-drawn SVGs, not Recharts: Recharts depends on d3 packages under ISC. Both licences need an owner decision before they can be bundled.
   5. `npm:Apache-2.0` is on the licence allow-list (for `class-variance-authority`); `eng/check-licenses.sh` skips npm `link` entries, whose target is checked under its own path.
+- (2026-11-09, second pass) Collapsible sidebar, job status timeline, Overview charts, new status badges. The list:
+  1. The sidebar collapses to an icon rail (button or Ctrl/Cmd+B), with tooltips on the icons. The choice is kept in `localStorage` in that browser. Below `md` it is a sheet.
+  2. The Job page shows the job's history as a vertical timeline, built from what `GetJob` already returns: created, each generation after the first (retry or rerun, with its actor), and each attempt reserved, started and finished (with outcome and error code). The job's audit rows add cancels with their actor once the audit is loaded. Each step shows its exact time, its relative time in a tooltip, and the time since the previous step. There is no per-job event read; `EventsSince` is application-wide.
+  3. CPU and memory per attempt are **not recorded** by Runwick. The Job page says so in a "not recorded" panel and shows no numbers. Recording them is a product change outside this item.
+  4. The Overview reads first pages at the largest page size (200), and adds `running`. Its charts (throughput, succeeded and failed, state mix, pending by queue, failures by job, scaling target) and its key figures with deltas are computed from those samples. Each one says the span it covers. When a read returned every row of its window, the span is the smallest of 15 min, 1 h, 3 h, 6 h, 12 h and 24 h that holds the oldest row. When the page was full, it starts at the oldest row read. Nothing is a total.
+  5. Status badges: a dot and the state name on a tinted chip. Each state has one colour in both themes, and only live states pulse.
+  6. The sample host has an opt-in demo load (`RUNWICK_DASH_DEMO=1`) so the charts can be seen with data. The browser flows never set it.
 
 ## 1. Package
 
@@ -198,7 +205,7 @@ Routes are relative to the mount. All pages are `GET`. "Poll" is the interval wh
 
 | Page (component) | Route | Session reads (permission) | Actions (permission) | Poll |
 |---|---|---|---|---|
-| Overview (`Overview`) | `/overview` | first pages of `ListJobsAsync` (created in the last hour; failed, created in the last 24 h; pending), `ListQueuesAsync`, `ListWorkersAsync`, `ListScalingEventsAsync` (page: `Jobs.Read`; each prop its own read permission, `null` without it) | none | 10 s |
+| Overview (`Overview`) | `/overview` | first pages (200 rows) of `ListJobsAsync` (created in the last 24 h; failed, created in the last 24 h; pending; running), `ListQueuesAsync`, `ListWorkersAsync`, `ListScalingEventsAsync` (page: `Jobs.Read`; each prop its own read permission, `null` without it) | none | 10 s |
 | Jobs (`Jobs`) | `/`, `/jobs?queue&state&jobName&from&to&cursor` | `ListJobsAsync` (`Jobs.Read`) | bulk cancel of selected rows, ≤ 100 (`Jobs.Cancel` per item) | 5 s |
 | Job (`Job`) | `/jobs/{id}` | `GetJobAsync` (`Jobs.Read` on its queue) | cancel, retry, rerun (`Jobs.Cancel`/`Retry`/`Rerun`); reveal payload (`Jobs.ReadPayload`); reveal an attempt's error (`Jobs.ReadError`) | 5 s |
 | Queues (`Queues`) | `/queues?cursor` | `ListQueuesAsync` (`Queues.Read`) | pause, resume (`Queues.Control` on that queue) | 10 s |
