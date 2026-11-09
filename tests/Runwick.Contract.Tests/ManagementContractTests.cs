@@ -142,6 +142,26 @@ public sealed class ManagementContractTests
 
     [Theory]
     [MemberData(nameof(Kinds))]
+    [Trait("Category", "Fault")]
+    public async Task A_read_the_caller_cancels_is_a_cancellation_not_an_unavailable_store(StoreKind kind)
+    {
+        if (kind != StoreKind.Postgres)
+        {
+            return; // The read is held at the PostgreSQL runner's BeforeGateLock point; the session mapping is shared.
+        }
+
+        // SP-029 P-07: a dashboard viewer stopped mid-read got StoreUnavailableException instead of a cancellation.
+        var (f, c) = await OpenAsync(kind, "mgmtcancel");
+        await using var _ = f;
+        var hold = f.ArmFault(FaultPoint.BeforeGateLock, FaultSpec.Sleep(TimeSpan.FromSeconds(30)), new FaultTarget { Operation = "ManagementRead" }, times: 1);
+        using var viewer = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        viewer.CancelAfter(TimeSpan.FromMilliseconds(200));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Session(c).ListJobsAsync(Admin, new JobListQuery(), viewer.Token));
+        Assert.Equal(1, hold.Fired);
+    }
+
+    [Theory]
+    [MemberData(nameof(Kinds))]
     [Trait("Case", "MGMT-13")]
     public async Task Dispatch_by_name_creates_one_job_with_one_audit_row_and_replays(StoreKind kind)
     {
