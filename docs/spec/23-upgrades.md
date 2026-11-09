@@ -15,6 +15,8 @@ Four things are new in code:
 
 ## Changes
 
+- (2026-11-09, user decision on sp-030 item 7) §3.6: activating a capability through the operator path now writes the store operation's `ActivateCapabilities` audit row and `capabilities_activated` event, with the operator as actor (scheme `operator`). Before, it wrote neither. No schema revision.
+
 - (2026-11-08, SP-028) §3.6: the public path to activate `scheduler` and `rate_admission` (library calls on the three migration classes and `runwick store activate-capability`); closes the SP-027 gap.
 - (2026-11-08, SP-027) A process started while its application is drained now fails with `AdmissionClosedException` and a message that names the fix, instead of `StoreIncompatibleException "Store handshake failed"`; the order migrate, reopen, start is documented in the runbook (§4 step 5). Scenarios SCN-25 to SCN-27 run it on all three stores.
 - (2026-11-08) Written for SP-026. Decisions where the sources were silent, each marked [choice] below: one revision per binary and an empty `expandCompatibleBinaries` list are stated as the v1 rule (§1); `open` to `maintenance` directly is refused (§3.2); admission and identity commands run as the migration role and record only `actor_subject`, no management-audit row (§3.4); an identity change is refused unless every application is in maintenance and no live lease or presence is recorded (§7.2); CLI support covers PostgreSQL and SQLite only, because `Runwick.Cli` does not reference `Runwick.Redis` (§3.5).
@@ -92,7 +94,14 @@ Redis is not offered: `Runwick.Cli` references only the PostgreSQL and SQLite pa
 
 Specs 10 §6.1 and 13 §5 name `ActivateCapabilities/1` but no caller. The operator path is `RunwickPostgresMigrations.ActivateCapabilityAsync`, `RunwickSqliteMigrations.ActivateCapabilityAsync` and `RunwickRedisMigrations.ActivateCapabilityAsync` (`connection, application?, capability, actor`) and the CLI command above. Only `scheduler` and `rate_admission` are accepted (`invalid_capability` otherwise); the version is the binary's own. Like `store admission` it runs as the migration role, merges into `required_capabilities`, never lowers one, bumps the application's gate revision and returns one `CapabilityChange` per application (`changed: false` when already active). Without `--application` every registered application is raised. An unregistered application is `application_not_registered`: a fresh application is registered by its first start, so start it once (the scheduler's startup error then names this command), activate, restart. Redis refuses an application with a pending intent (`intent_pending`).
 
-Difference from the store operation: this path writes no `capabilities_activated` event and no audit row (the actor is kept in the row's actor field), the same as `store admission`. Proof: `CapabilityActivationContractTests` (all three drivers) and `CliUpgradeTests.Activate_capability_*`.
+What it records: each application it actually raises gets the same two records the store operation writes, in the same transaction (PostgreSQL, SQLite) or the same script (Redis):
+
+- one `capabilities_activated` event, with the new required capabilities and the new revision in its details;
+- one management audit row with operation `ActivateCapabilities`, target `application` / the application name, the revision before and after, and the new required capabilities in its details.
+
+The actor is the operator: the `actor` argument (the CLI passes `cli`) is the audit row's subject and the event's actor, the scheme is `operator`, and display name and reason are empty. Each raise gets a fresh command ID, shared by its event and audit row. An application that already had the capability is left alone and gets neither record. No schema change was needed: the operation, target and event kinds were already allowed. The actor must be 1 to 256 UTF-8 bytes without control characters, the audit table's limit; otherwise the call throws `ArgumentException` before touching the store.
+
+This differs from `store admission` and `store reidentify`, which still write no audit row (§3.4). Proof: `CapabilityActivationContractTests` (all three drivers: one row and one event per raise, none for a repeat) and `CliUpgradeTests.Activate_capability_*`.
 
 ## 4. The upgrade, in order
 
