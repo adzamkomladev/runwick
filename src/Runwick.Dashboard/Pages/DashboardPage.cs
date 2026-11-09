@@ -76,7 +76,8 @@ internal abstract class DashboardPage
             props[prop] = Wrap(prop, async _ => DashboardRequest.Element(await LoadAsync(r, prop)));
         }
 
-        props["notice"] = r.Notice;
+        // Lazy and after the page props: Inertia.Net resolves props in order, and a list load sets the notice (a rejected cursor).
+        props["notice"] = Inertia.Net.Inertia.Prop(_ => Task.FromResult(DashboardRequest.Element(r.Notice)));
         props["outcome"] = r.Outcome is null ? null : DashboardRequest.Element(r.Outcome);
         await Inertia.Net.Inertia.Render(Component, props).ExecuteAsync(r.Http);
     }

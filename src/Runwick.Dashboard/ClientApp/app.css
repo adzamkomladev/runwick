@@ -1,14 +1,18 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "@fontsource-variable/space-grotesk";
+@import "@fontsource-variable/geist-mono";
 
-/* Theme: shadcn/ui token names, built only from the five Runwick scales below. System fonts only (the CSP allows no
-   outside font). Roles: violet for dark surfaces and text, sage for light surfaces, pine as primary, lime as the sparing
+/* Theme: shadcn/ui token names, built only from the five Runwick scales below. Fonts: Space Grotesk for text and Geist Mono
+   for IDs and code, self-hosted (OFL-1.1; the CSP allows only font-src 'self'). Roles: violet for dark surfaces and text, sage for light surfaces, pine as primary, lime as the sparing
    live/success highlight, chocolate for warnings and failures. Every text pair meets WCAG AA (4.5:1) in both themes; lime
    text on light surfaces uses the 800 shade. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* Base hex: midnight-violet #241623, dry-sage #d0cd94, pine-blue #3c787e, lime-yellow #c7ef00, chocolate #d56f3e */
 @theme static {
+  --font-sans: "Space Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
   --color-midnight-violet-50: oklch(95.85% 0.010 325.66);
   --color-midnight-violet-100: oklch(91.75% 0.021 328.10);
   --color-midnight-violet-200: oklch(83.49% 0.041 327.22);

@@ -93,7 +93,7 @@ export default function Jobs({ base, can, jobs, query, queueNames }) {
             <TableRow className="hover:bg-transparent">
               {can.cancel && <TableHead className="w-10"><Checkbox aria-label="select all" checked={all} onCheckedChange={toggleAll} /></TableHead>}
               {head('job', 'Job', (j) => j.jobName)}
-              {head('queue', 'Queue', (j) => j.queue)}
+              {head('queue', 'Queue', (j) => j.queue, 'hidden sm:table-cell')}
               {head('state', 'State', (j) => j.state)}
               {head('created', 'Created', (j) => Date.parse(j.createdAt), 'hidden md:table-cell')}
               {head('revision', 'Revision', (j) => j.revision, 'hidden text-right md:table-cell')}
@@ -109,7 +109,7 @@ export default function Jobs({ base, can, jobs, query, queueNames }) {
                     <Link href={`${base}/jobs/${j.jobId}`} data-testid="job-link" className="rounded-sm underline-offset-4 outline-none hover:text-primary hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50">{j.jobName}</Link>
                   </Copyable>
                 </TableCell>
-                <TableCell data-testid="job-queue" className="text-muted-foreground"><Copyable value={j.queue} label="Copy queue name" /></TableCell>
+                <TableCell data-testid="job-queue" className="hidden text-muted-foreground sm:table-cell"><Copyable value={j.queue} label="Copy queue name" /></TableCell>
                 <TableCell data-testid="job-state"><StateBadge state={j.state} />{j.cancelRequested && <span className="ml-1.5 text-xs text-warning">cancel requested</span>}</TableCell>
                 <TableCell className="hidden whitespace-nowrap text-muted-foreground md:table-cell">
                   <Tooltip><TooltipTrigger asChild><time dateTime={j.createdAt} className="cursor-default">{relative(j.createdAt)}</time></TooltipTrigger><TooltipContent>{time(j.createdAt)}</TooltipContent></Tooltip>

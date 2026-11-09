@@ -13,7 +13,8 @@ async page => {
   const polls = []
   page.on('dialog', (d) => { dialogs.push(d.message()); d.dismiss() })
   page.on('pageerror', (e) => errors.push(e.message))
-  page.on('request', (r) => { if (r.headers()['x-inertia-partial-data']) polls.push({ at: Date.now(), only: r.headers()['x-inertia-partial-data'] }) })
+  // Inertia adds a reload's reset props to the partial data ("jobs,jobs" for a poll that resets jobs); count each name once.
+  page.on('request', (r) => { const d = r.headers()['x-inertia-partial-data']; if (d) polls.push({ at: Date.now(), only: [...new Set(d.split(','))].join(',') }) })
   await page.context().addInitScript(() => {
     window.__csp = []
     document.addEventListener('securitypolicyviolation', (e) => window.__csp.push(`${e.violatedDirective} ${e.blockedURI}`))

@@ -369,6 +369,7 @@ function Footer() {
   const theme = useSyncExternalStore((l) => { themeListeners.add(l); return () => themeListeners.delete(l) }, readTheme)
   const notes = useNotifications()
   const [sheet, setSheet] = useState(false)
+  const sheetNext = useRef(false) // open the sheet only once the menu has closed, so the two modal layers never overlap
   const rail = !open && !mobile
   return (
     <>
@@ -387,7 +388,8 @@ function Footer() {
             {!rail && <IconSelector aria-hidden className="size-4 shrink-0 text-muted-foreground" />}
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent side={mobile ? 'top' : 'right'} align="end" sideOffset={mobile ? 6 : 10} className="w-64 rounded-xl p-0 shadow-lg" data-testid="account-menu">
+        <DropdownMenuContent side={mobile ? 'top' : 'right'} align="end" sideOffset={mobile ? 6 : 10} className="w-64 rounded-xl p-0 shadow-lg" data-testid="account-menu"
+          onCloseAutoFocus={(e) => { if (sheetNext.current) { sheetNext.current = false; e.preventDefault(); setSheet(true) } }}>
           <div className="flex items-center gap-2.5 p-2.5">
             <Avatar name={user} />
             <span className="grid min-w-0 leading-tight"><span className="truncate text-sm font-semibold">{user}</span>
@@ -395,7 +397,7 @@ function Footer() {
           </div>
           <DropdownMenuSeparator className="mx-0 my-0" />
           <div className="p-1">
-            <DropdownMenuItem data-testid="notifications" onSelect={() => setSheet(true)}>
+            <DropdownMenuItem data-testid="notifications" onSelect={() => { sheetNext.current = true }}>
               <IconBell />Notifications
               {notes.count > 0 && <span className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-highlight px-1.5 text-[0.6875rem] font-semibold text-highlight-foreground tabular-nums">{notes.count > 9 ? '9+' : notes.count}</span>}
             </DropdownMenuItem>

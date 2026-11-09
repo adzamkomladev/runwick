@@ -81,8 +81,8 @@ export function UsageCard({ attempts }) {
                   foot={share(last) != null ? `≈ ${share(last)}% of one core while it ran` : null} />
                 <Stat testId="usage-alloc" label="Process allocations" value={bytes(last.usage.processAllocatedBytes)} foot="managed heap, during the attempt" />
                 <Stat testId="usage-peak" label="Working set peak" value={bytes(last.usage.workingSetPeakBytes)} foot="highest sample" />
-                <Stat label="Working set start → end" value={<span className="text-base">{bytes(last.usage.workingSetStartBytes)} → {bytes(last.usage.workingSetEndBytes)}</span>}
-                  foot={(() => { const d = last.usage.workingSetEndBytes - last.usage.workingSetStartBytes; return `${d >= 0 ? '+' : '−'}${bytes(Math.abs(d))}` })()} />
+                <Stat label="Working set at end" value={bytes(last.usage.workingSetEndBytes)}
+                  foot={(() => { const d = last.usage.workingSetEndBytes - last.usage.workingSetStartBytes; return `${d >= 0 ? '+' : '−'}${bytes(Math.abs(d))} from ${bytes(last.usage.workingSetStartBytes)} at start` })()} />
               </div>
               {measured.length > 1 && (
                 <div className="grid gap-4 md:grid-cols-2">
