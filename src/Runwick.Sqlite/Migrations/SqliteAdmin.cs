@@ -63,13 +63,14 @@ public static partial class RunwickSqliteMigrations
 
     /// <summary>
     /// Raises one capability (<c>scheduler</c> or <c>rate_admission</c>) for one application, or every registered application when
-    /// <paramref name="application"/> is null (10 §6.1, 23 §3.6). Never lowers one; a repeat reports <c>Changed = false</c>. Unlike the
-    /// store operation this writes no audit row or event, like <see cref="SetAdmissionModeAsync"/>; it records <paramref name="actor"/>.
+    /// <paramref name="application"/> is null (10 §6.1, 23 §3.6). Never lowers one; a repeat reports <c>Changed = false</c> and writes
+    /// nothing. A raise also writes the store operation's <c>capabilities_activated</c> event and <c>ActivateCapabilities</c> audit row,
+    /// with <paramref name="actor"/> as the subject and scheme <c>operator</c>.
     /// </summary>
     public static Task<IReadOnlyList<CapabilityChange>> ActivateCapabilityAsync(
         string connectionString, string? application, string capability, string actor, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+        StoreAdminRules.CheckActor(actor);
         if (StoreAdminRules.CheckCapability(capability) is { } bad)
         {
             throw new SqliteMigrationException(bad, "The capability must be scheduler or rate_admission.");
@@ -107,7 +108,23 @@ public static partial class RunwickSqliteMigrations
                 using var update = conn.CreateCommand();
                 update.CommandText = "UPDATE runwick_application_controls SET required_capabilities = @caps, revision = revision + 1, updated_at = @now, actor_subject = @actor WHERE application = @app RETURNING revision";
                 update.P("caps", raised).P("now", now).P("actor", actor).P("app", app);
-                changes.Add(new CapabilityChange(app, capability, version, (long)update.ExecuteScalar()!, true));
+                var resulting = (long)update.ExecuteScalar()!;
+
+                // The store operation's capabilities_activated event and ActivateCapabilities audit row (10 §6.1), in this transaction.
+                using var record = conn.CreateCommand();
+                record.CommandText = """
+                    INSERT INTO runwick_queue_events (application, command_id, event_kind, occurred_at, actor_id, details)
+                    VALUES (@app, @command, 'capabilities_activated', @now, @actor, json_object('requiredCapabilities', json(@caps), 'revision', @rev));
+                    INSERT INTO runwick_management_audit (
+                        application, command_id, operation, target_kind, target_id, actor_subject, actor_display, actor_scheme, reason,
+                        expected_revision, resulting_revision, details, occurred_at)
+                    VALUES (@app, @command, 'ActivateCapabilities', 'application', @app, @actor, NULL, @scheme, NULL,
+                            @rev - 1, @rev, json_object('requiredCapabilities', json(@caps)), @now);
+                    """;
+                record.P("app", app).P("command", Guid.NewGuid()).P("now", now).P("actor", actor).P("caps", raised).P("rev", resulting)
+                    .P("scheme", StoreAdminRules.OperatorScheme);
+                record.ExecuteNonQuery();
+                changes.Add(new CapabilityChange(app, capability, version, resulting, true));
             }
 
             return changes;
