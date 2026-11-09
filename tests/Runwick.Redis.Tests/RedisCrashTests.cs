@@ -43,7 +43,11 @@ public sealed class RedisCrashTests(R01Server server) : IClassFixture<R01Server>
     RedisNode Node => server.Node;
 
     /// <summary>One operation: builds fresh state and returns the call to interrupt and resend.</summary>
-    sealed record Operation(bool Receipt, Func<TestClient, RedisCrashTests, Task<Func<Task<object?>>>> Prepare);
+    /// <summary>
+    /// <paramref name="Envelope"/>: the batch has no receipt of its own (FinishMany, PF-06), so a resend is a new batch call whose
+    /// envelope time is its own; each item replays its stored receipt, and the items are what is compared.
+    /// </summary>
+    sealed record Operation(bool Receipt, Func<TestClient, RedisCrashTests, Task<Func<Task<object?>>>> Prepare, bool Envelope = false);
 
     static readonly Dictionary<string, Operation> Operations = new()
     {
@@ -91,7 +95,7 @@ public sealed class RedisCrashTests(R01Server server) : IClassFixture<R01Server>
             var items = claimed.Select(l => c.FinishCommand(l, AttemptOutcome.Succeeded)).ToList();
             var id = Guid.CreateVersion7();
             return async () => await c.FinishManyAsync(items, id);
-        }),
+        }, Envelope: true),
         ["Recover"] = new(true, async (c, _) =>
         {
             await c.Dispatcher.DispatchAsync(new PingJob("rc" + Guid.NewGuid().ToString("N")[..6]), cancellationToken: Ct);
@@ -177,7 +181,11 @@ public sealed class RedisCrashTests(R01Server server) : IClassFixture<R01Server>
         }),
     };
 
-    public static TheoryData<string> Names => [.. Operations.Keys];
+    /// <summary>All operations; <c>RUNWICK_R01_ONLY=a,b</c> narrows a rerun to some of them (the full class is the evidence).</summary>
+    public static TheoryData<string> Names =>
+    [
+        .. Operations.Keys.Where(k => Environment.GetEnvironmentVariable("RUNWICK_R01_ONLY") is not { Length: > 0 } only || only.Split(',').Contains(k)),
+    ];
 
     long _presenceSeq;
     ConnectionMultiplexer? _admin;
@@ -373,6 +381,7 @@ public sealed class RedisCrashTests(R01Server server) : IClassFixture<R01Server>
             var guard = (string?)held[0] ?? "";
             await Node.CrashAndRestartAsync();
             await Retry(() => db.PingAsync());
+            var firstRead = await Retry(() => RawRead(c)); // also waits until the client has reconnected
             if (guard.Length == 0)
             {
                 // Published, only the reply was lost: the resend replays and changes nothing but the confirmation marker.
@@ -387,7 +396,7 @@ public sealed class RedisCrashTests(R01Server server) : IClassFixture<R01Server>
             }
 
             pending++;
-            Assert.Equal("RECOVERING", await Retry(() => RawRead(c))); // reads hide the partial state after the restart too
+            Assert.Equal("RECOVERING", firstRead); // reads hide the partial state after the restart too
 
             RedisResult[]? recoveredReply = null;
             RedisValue[]? resendArgs = null;
@@ -437,17 +446,22 @@ public sealed class RedisCrashTests(R01Server server) : IClassFixture<R01Server>
             {
                 var replay = await store.Runner.Client.EvalAsync(RxLane.Background, script!, refMeta, resendArgs!, null, Ct);
                 var got = recoveredReply!;
-                Assert.Equal(replay.Select(B), got.Select(B));
-                // Against the reply the uninterrupted call returns: every field equal, except that a resend is marked replayed (03 §8.2).
+                // Field 6 is the decision time; for a receiptless batch envelope it is the resend's own call time.
+                bool Compared(int i) => !(op.Envelope && i == 6);
+                Assert.Equal(replay.Select(B).Where((_, i) => Compared(i)), got.Select(B).Where((_, i) => Compared(i)));
+                // Against the reply the uninterrupted call returns: every field equal, except that a resend is marked replayed (03 §8.2);
+                // in a batch envelope the items carry that mark.
+                static byte[] Unmarked(byte[] json) => Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(json).Replace("\"replayed\":true", "\"replayed\":false", StringComparison.Ordinal));
                 for (var i = 0; i < cleanReply.Length; i++)
                 {
-                    if (i != 3)
+                    if (i != 3 && Compared(i))
                     {
-                        Assert.True(B(cleanReply[i]).AsSpan().SequenceEqual(B(got[i])), $"{name} n={n}: reply field {i} differs");
+                        var actual = op.Envelope && i == 7 ? Unmarked(B(got[i])) : B(got[i]);
+                        Assert.True(B(cleanReply[i]).AsSpan().SequenceEqual(actual), $"{name} n={n}: reply field {i} differs");
                     }
                 }
 
-                Assert.Equal("1", (string?)got[3]);
+                Assert.Equal(op.Envelope ? "0" : "1", (string?)got[3]);
             }
 
             var clean = await StateAsync(reference, guard);
