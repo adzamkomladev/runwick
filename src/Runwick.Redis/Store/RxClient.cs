@@ -103,6 +103,9 @@ internal sealed class RxClient : IAsyncDisposable
     /// <summary>Test seam (22 §12): writes the scripts fail after; production always sends 0.</summary>
     internal int FailAfter { get; set; }
 
+    /// <summary>Test seam (REDIS-01): sees each answered script call's arguments and raw reply; production leaves it null.</summary>
+    internal Action<RxScript, RedisValue[], RedisResult[]>? Traced { get; set; }
+
     /// <summary>Raised after a reconnect so the profile and history checks run again (22 §2.3, §2.4).</summary>
     public event Action? Reconnected;
 
@@ -178,8 +181,9 @@ internal sealed class RxClient : IAsyncDisposable
             {
                 try
                 {
-                    var r = await db.ScriptEvaluateAsync(script.Sha, [meta], args).ConfigureAwait(false);
-                    return (RedisResult[])r!;
+                    var r = (RedisResult[])(await db.ScriptEvaluateAsync(script.Sha, [meta], args).ConfigureAwait(false))!;
+                    Traced?.Invoke(script, args, r);
+                    return r;
                 }
                 catch (RedisServerException ex) when (attempt == 0 && ex.Message.StartsWith("NOSCRIPT", StringComparison.Ordinal))
                 {

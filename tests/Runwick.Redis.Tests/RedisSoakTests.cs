@@ -41,6 +41,42 @@ public sealed class RedisSoakTests
         File.WriteAllText(Path.Combine(dir, name + ".txt"), text + Environment.NewLine);
     }
 
+    /// <summary>
+    /// Stops <paramref name="send"/> right after it stores its intent and measures that intent: after-images (as the 1,024 limit counts
+    /// them), distinct keys written other than <c>meta</c> (as the 256 limit counts them), serialized bytes. Null when nothing was stored
+    /// (the call was refused before any write). The caller resends the same command, which publishes it.
+    /// </summary>
+    static async Task<(int Ops, int Keys, int Bytes)?> IntentShapeAsync(TestClient c, Func<Task> send)
+    {
+        var store = Store(c);
+        store.Runner.Client.FailAfter = 1;
+        try
+        {
+            await send();
+            return null;
+        }
+        catch (Exception ex) when (ex is StoreOutcomeUnknownException or DispatchOutcomeUnknownException)
+        {
+            // interrupted after the intent write
+        }
+        finally
+        {
+            store.Runner.Client.FailAfter = 0;
+        }
+
+        var db = (await RedisServer.AdminAsync()).GetDatabase();
+        var r = (RedisResult[])(await db.ScriptEvaluateAsync("""
+            local b = redis.call('HGET', KEYS[1], 'intent')
+            local it = cmsgpack.unpack(b)
+            local seen, n = {}, 0
+            for _, op in ipairs(it.ops) do
+              if op[2] ~= 'meta' and not seen[op[2]] then seen[op[2]] = true; n = n + 1 end
+            end
+            return { #it.ops, n, #b }
+            """, [RxClient.Meta(c.Application)]))!;
+        return ((int)r[0], (int)r[1], (int)r[2]);
+    }
+
     // ------------------------------------------------------------------ REDIS-06
 
     [Fact]
@@ -312,10 +348,18 @@ public sealed class RedisSoakTests
         var producer = await f.OpenClient(configure: Jobs);
         var control = await f.OpenClient(configure: Jobs);
 
-        // A maximal public DispatchMany: 100 items with active keys, window keys and several scopes.
-        var maximal = await producer.Dispatcher.DispatchManyAsync(
-            [.. Enumerable.Range(0, 100).Select(i => new BatchDispatchItem(new KeyedJob("m" + i, "k" + i)))], cancellationToken: Ct);
+        // A maximal public DispatchMany: 100 items mixing active keys, window keys and 33 concurrency scopes, measured, then accepted.
+        var maximalPrepared = producer.Prepared.PrepareMany([.. Enumerable.Range(0, 100).Select(i => (i % 3) switch
+        {
+            0 => new BatchDispatchItem(new KeyedJob("m" + i, "k" + i)),
+            1 => new BatchDispatchItem(new PingJob("m" + i), new DispatchOptions { Uniqueness = new DispatchUniqueness(null, "w" + i, TimeSpan.FromHours(1)) }),
+            _ => new BatchDispatchItem(new ResourceJob("m" + i, "r" + i)),
+        })]);
+        var maximalShape = await IntentShapeAsync(producer, () => producer.Prepared.DispatchAsync(maximalPrepared, Ct));
+        var maximal = await producer.Prepared.DispatchAsync(maximalPrepared, Ct);
+        Assert.NotNull(maximalShape);
         Assert.Equal(100, maximal.Items.Count);
+        Assert.All(maximal.Items, i => Assert.Equal(DispatchDisposition.Created, i.Receipt!.Disposition));
 
         // 64 leases held by the control connection.
         await producer.Dispatcher.DispatchManyAsync([.. Enumerable.Range(0, 64).Select(i => new BatchDispatchItem(new PingJob("lease" + i)))], cancellationToken: Ct);
@@ -327,18 +371,31 @@ public sealed class RedisSoakTests
             leases.Add(reserved.Value!.Lease.Handle);
         }
 
-        // The largest intents the operation set can build (about 240 keys: two per job) run back to back.
+        // The largest intents a real operation builds run back to back: a driver-level DispatchMany of 120 jobs (two keys each, close
+        // to the 256-key limit). 1,024 after-images cannot be reached by any operation: an intent writes at most two after-images per
+        // hash or sorted-set key (field deletions, then field sets) and one per string, so 256 keys bound it near 512 (22 §4.3).
+        var preparer = producer.Services.GetRequiredService<DispatchPreparer>();
+        StoreCommand<DispatchBatchRequest> Batch(string tag)
+        {
+            var batches = Enumerable.Range(0, 2).Select(b => preparer.PrepareMany(producer.Runtime.StoreId,
+                [.. Enumerable.Range(0, 60).Select(i => new BatchDispatchItem(new PingJob($"w{tag}-{b}-{i}")))], null)).ToList();
+            var items = batches.SelectMany(p => p.Items.Select((intent, i) => new DispatchItem(intent, p.Scopes[i], p.ItemDigests[i]) { Rates = preparer.RatesFor(intent) })).ToList();
+            return producer.Command(new DispatchBatchRequest(items, false, producer.Runtime.StoreId, batches[0].CommandDigest));
+        }
+
+        var probe = Batch("probe");
+        var writerShape = await IntentShapeAsync(producer, () => producer.Driver.DispatchManyAsync(probe, CancellationToken.None));
+        Assert.Equal(StoreStatus.Applied, (await producer.Driver.DispatchManyAsync(probe, CancellationToken.None)).Status);
+        Assert.NotNull(writerShape);
+        Assert.True(writerShape.Value.Keys <= 256, $"background intent writes {writerShape.Value.Keys} keys");
+
         using var stop = new CancellationTokenSource();
         var intents = 0;
         var writer = Task.Run(async () =>
         {
-            var preparer = producer.Services.GetRequiredService<DispatchPreparer>();
             for (var round = 0; !stop.IsCancellationRequested; round++)
             {
-                var batches = Enumerable.Range(0, 2).Select(b => preparer.PrepareMany(producer.Runtime.StoreId,
-                    [.. Enumerable.Range(0, 60).Select(i => new BatchDispatchItem(new PingJob($"w{round}-{b}-{i}")))], null)).ToList();
-                var items = batches.SelectMany(p => p.Items.Select((intent, i) => new DispatchItem(intent, p.Scopes[i], p.ItemDigests[i]) { Rates = preparer.RatesFor(intent) })).ToList();
-                var reply = await producer.Driver.DispatchManyAsync(producer.Command(new DispatchBatchRequest(items, false, producer.Runtime.StoreId, batches[0].CommandDigest)), CancellationToken.None);
+                var reply = await producer.Driver.DispatchManyAsync(Batch(round.ToString(CultureInfo.InvariantCulture)), CancellationToken.None);
                 Assert.Equal(StoreStatus.Applied, reply.Status);
                 Interlocked.Increment(ref intents);
             }
@@ -347,7 +404,8 @@ public sealed class RedisSoakTests
         var manyLatency = new List<double>();
         var oneLatency = new List<double>();
         var clock = Stopwatch.StartNew();
-        while (clock.Elapsed < TimeSpan.FromSeconds(20) && manyLatency.Count < 2000)
+        // At least 20 s and at least 100 samples (a p99 needs them), capped at 120 s on a slow host.
+        while ((clock.Elapsed < TimeSpan.FromSeconds(20) || manyLatency.Count < 100) && clock.Elapsed < TimeSpan.FromSeconds(120) && manyLatency.Count < 2000)
         {
             var t = Stopwatch.StartNew();
             var reply = await control.RenewManyAsync(leases, TimeSpan.FromMinutes(10));
@@ -362,7 +420,7 @@ public sealed class RedisSoakTests
         await writer;
         static double P(List<double> l, double q) => l.Order().ElementAt(Math.Min(l.Count - 1, (int)(l.Count * q)));
         var report = string.Create(CultureInfo.InvariantCulture,
-            $"REDIS-07 (shared development host, informational): {intents} intents of ~240 keys during {clock.Elapsed.TotalSeconds:F0} s; RenewMany(64) n={manyLatency.Count} p50={P(manyLatency, 0.5):F1} ms p99={P(manyLatency, 0.99):F1} ms max={manyLatency.Max():F1} ms; Renew n={oneLatency.Count} p50={P(oneLatency, 0.5):F1} ms p99={P(oneLatency, 0.99):F1} ms max={oneLatency.Max():F1} ms");
+            $"REDIS-07 (non-reference host, shared and loaded; informational): background intent {writerShape.Value.Ops} after-images, {writerShape.Value.Keys} keys, {writerShape.Value.Bytes} bytes; maximal public DispatchMany {maximalShape.Value.Ops} after-images, {maximalShape.Value.Keys} keys, {maximalShape.Value.Bytes} bytes (accepted); {intents} background intents during {clock.Elapsed.TotalSeconds:F0} s; RenewMany(64) n={manyLatency.Count} p50={P(manyLatency, 0.5):F1} ms p99={P(manyLatency, 0.99):F1} ms max={manyLatency.Max():F1} ms; Renew n={oneLatency.Count} p50={P(oneLatency, 0.5):F1} ms p99={P(oneLatency, 0.99):F1} ms max={oneLatency.Max():F1} ms");
         Report("redis-07", report);
 
         Assert.True(intents >= 5, $"only {intents} large intents ran");

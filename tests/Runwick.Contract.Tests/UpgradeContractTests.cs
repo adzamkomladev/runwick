@@ -116,7 +116,7 @@ public sealed class UpgradeContractTests
             : await RunwickRedisMigrations.GetStatusAsync(Conn(f), Ct);
         Assert.Equal("open", status.Applications.Single(x => x.Application == f.Application).AdmissionMode);
         Assert.StartsWith("unverified", status.Quiescence, StringComparison.Ordinal);
-        Assert.Equal(f.Kind == StoreKind.Redis, status.OwnedLeases is null);
+        Assert.NotNull(status.OwnedLeases); // every store reports lease counts (Redis since SP-025)
     }
 
     static Task<StoreAdminStatus> StatusOf(DriverFixture f) => f.Kind switch
