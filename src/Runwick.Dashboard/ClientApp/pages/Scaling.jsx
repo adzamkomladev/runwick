@@ -1,15 +1,15 @@
 import { IconArrowRight, IconTrendingDown, IconTrendingUp } from '@tabler/icons-react'
 import { Table, TableBody, TableCell, TableHeader, TableRow } from '../components/ui/table'
-import { Filters, Layout, Pager, TableCard, time, usePoll, useSort } from '../lib'
+import { DateRangePicker } from '../components/date-range'
+import { Copyable, FilterSheet, Layout, Pager, TableCard, time, usePoll, useSort } from '../lib'
 
-const FIELDS = [['instance', 'Instance'], ['pool', 'Pool'], ['from', 'From'], ['to', 'To']]
 
 export default function Scaling({ events, query }) {
   const live = usePoll(['events'], 15)
   const [rows, head] = useSort(events.items)
   return (
-    <Layout heading="Scaling history" description="Each change of a pool's worker target, newest first." live={live}>
-      <TableCard toolbar={<Filters fields={FIELDS} values={query} />} pager={<Pager page={events} />}
+    <Layout heading="Scaling history" live={live}>
+      <TableCard toolbar={<div className="ml-auto flex items-center gap-2"><DateRangePicker query={query} /><FilterSheet values={query} fields={[{ name: 'instance', label: 'Instance' }, { name: 'pool', label: 'Pool' }]} /></div>} pager={<Pager page={events} />}
         empty={events.items.length === 0 && 'No scaling events in this range.'}>
         <Table data-testid="events">
           <TableHeader><TableRow className="hover:bg-transparent">
@@ -21,7 +21,7 @@ export default function Scaling({ events, query }) {
             const Trend = e.newTarget > e.oldTarget ? IconTrendingUp : e.newTarget < e.oldTarget ? IconTrendingDown : IconArrowRight
             return (
               <TableRow key={e.eventId} data-testid="event-row">
-                <TableCell className="whitespace-nowrap text-muted-foreground">{time(e.createdAt)}</TableCell><TableCell><code className="text-xs">{e.instanceId}</code></TableCell>
+                <TableCell className="whitespace-nowrap text-muted-foreground">{time(e.createdAt)}</TableCell><TableCell className="max-w-40"><Copyable value={e.instanceId} label="Copy instance ID"><code className="text-xs">{e.instanceId}</code></Copyable></TableCell>
                 <TableCell data-testid="event-pool" className="font-medium">{e.pool}</TableCell>
                 <TableCell className="whitespace-nowrap tabular-nums"><span className="inline-flex items-center gap-1.5">{e.oldTarget}
                   <Trend aria-hidden className={`size-4 ${e.newTarget > e.oldTarget ? 'text-success' : e.newTarget < e.oldTarget ? 'text-warning' : 'text-muted-foreground'}`} />

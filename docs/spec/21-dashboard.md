@@ -16,6 +16,19 @@ Not in SP-024: server-side rendering, a live push channel (SSE or WebSocket), qu
 
 ## Changes
 
+- (2026-11-09, round 3) Dashboard updates and cleanups:
+  1. **Sidebar footer.** It shows who is signed in, then three buttons that also work in the icon rail: notifications (§4.4), a theme menu (light, dark, system) and Sign out. Sign out posts an empty form to the host's route, set with the new `DashboardOptions.SignOutPath` (§2); without one the button is hidden. The theme toggle leaves the header.
+  2. **Palette.** Every colour token, light and dark, comes from five Runwick scales: midnight violet, dry sage, pine blue, lime yellow and chocolate (§7.1). Every text pair meets WCAG AA.
+  3. **Date range.** Overview, Jobs, Scaling and Audit take a `range` preset (5, 15 and 30 minutes; 1, 3 and 6 hours; 1, 3, 7 and 30 days) or a custom `from`/`to`, kept in the URL query (§4.2). Overview's default stays the last 24 hours.
+  4. **No native widgets.** Selects, a searchable combobox, popovers, the calendar, checkboxes, a switch, number fields and text areas are Radix or our own components, with keyboard and screen-reader support (§7.1).
+  5. **Side sheets.** The Jobs, Scaling and Audit filters, the capacity edit and the retention policy edit open in a side sheet. A sheet's Save sends the control at once: the sheet is its confirmation (§5).
+  6. **Toasts.** Every control result is a toast (§5): applied, rejected, unknown (with Resend, the same command ID), no answer (with Try again), bulk, and "Copied". The inline result panel is gone.
+  7. **Inertia props by kind** (§4.3): Overview's props are deferred in three groups with a skeleton; Settings and the Jobs queue names are once props; Jobs is a merge prop with Load more; notifications are deferred and once.
+  8. **Less clutter.** Page sub-text is removed. IDs, error codes, queue and job names, schedule keys and build IDs copy on hover or focus.
+  9. **Settings** shows GetSettings with readable limit names.
+
+  New test ids: `range`, `range-<preset>`, `range-apply`, `range-popover`, `filters`, `filter-sheet`, `filter-<name>`, `apply-filters`, `clear-filters`, `load-more`, `theme`, `theme-<value>`, `notifications`, `notifications-panel`, `unread`, `sign-out`, `edit-capacity`, `capacity-sheet`, `edit-policy`, `policy-sheet`, `copy`, `copied`, `unknown`, `failed`, `bulk`, `bulk-summary`. Removed: `command`, the inline `bulk` list.
+
 - (2026-11-09, attempt usage) The job page's "CPU and memory: not recorded" card becomes **Resources used**. It shows the latest measured attempt's figures:
   - process CPU time, with its share of one core while the attempt ran;
   - process allocations;
@@ -93,6 +106,7 @@ services.AddRunwickDashboard("default", d =>       // mount id
     d.AuthenticationSchemes("Cookies");             // optional; default: the management schemes
     d.MapGrants(p => ManagementRoles.Viewer);       // optional; default: the management grant map
     d.Actor(p => new ManagementActor(...));         // optional; default: the management actor map
+    d.SignOutPath = "/account/logout";              // optional; the host's sign-out route, see below
 });
 
 // Pipeline. Before the host's own app.UseInertia(), if it has one.
@@ -105,6 +119,8 @@ public static IServiceCollection AddRunwickDashboard(this IServiceCollection ser
 public static IApplicationBuilder MapRunwickDashboard(this IApplicationBuilder app, PathString path,
     string mountId = "default");
 ```
+
+`SignOutPath` is an absolute path on the same origin, PathBase included (it must start with one `/`; anything else throws). The sidebar's Sign out button posts an empty form to it, with no dashboard antiforgery token since it is the host's route; the CSP's `form-action 'self'` allows it. The host's route must accept that POST, or the host leaves `SignOutPath` unset and the button is hidden.
 
 **[choice]** Two steps, as in the spike: Inertia.Net needs a named mount's options at service registration, and the path is only known when the pipeline is built. The second step is called `Map…` to match `MapRunwickManagement` and `app.Map(path, …)`, which it uses.
 
@@ -202,7 +218,7 @@ Runwick reads `PathBase`, `IsHttps` and the principal only. Trusting `X-Forwarde
 ### 3.6 Props
 
 - Props are serialized with Runwick's own JSON options (web defaults, camelCase) and handed to Inertia.Net as `JsonElement`s, so the host's `HttpJsonOptions` cannot rename them (sp-023 gap 2).
-- Every page has the shared props `base` (mount URL), `title`, `user` (actor display name) and `can` (a map of page and action names to booleans, derived from the grants). `can` is a display hint only.
+- Every page has the shared props `base` (mount URL), `title`, `user` (actor display name), `can` (a map of page and action names to booleans, derived from the grants; a display hint only), `signOut` (the `SignOutPath`, or null) and `notifications` (§4.4).
 - Props carry the safe DTOs of 16 §2 as they are. No payload, error text, lease token, uniqueness key, resource key, connection string or antiforgery token is ever a prop. `EncryptHistory` stays on as an extra layer, not as the protection.
 - **Partial reloads (sp-023 gap 5).** Each page lists its props. A partial reload (`X-Inertia-Partial-Data`) naming a prop the page does not have, or one the caller may not read, is 403 before anything is read.
 
@@ -212,29 +228,32 @@ Routes are relative to the mount. All pages are `GET`. "Poll" is the interval wh
 
 | Page (component) | Route | Session reads (permission) | Actions (permission) | Poll |
 |---|---|---|---|---|
-| Overview (`Overview`) | `/overview` | first pages (200 rows) of `ListJobsAsync` (created in the last 24 h; failed, created in the last 24 h; pending; running), `ListQueuesAsync`, `ListWorkersAsync`, `ListScalingEventsAsync` (page: `Jobs.Read`; each prop its own read permission, `null` without it) | none | 10 s |
-| Jobs (`Jobs`) | `/`, `/jobs?queue&state&jobName&from&to&cursor` | `ListJobsAsync` (`Jobs.Read`) | bulk cancel of selected rows, ≤ 100 (`Jobs.Cancel` per item) | 5 s |
+| Overview (`Overview`) | `/overview?range\|from&to` | first pages (200 rows) of `ListJobsAsync` (created in the range, default the last 24 h; failed, created in the range; pending; running), `ListQueuesAsync`, `ListWorkersAsync`, `ListScalingEventsAsync` (page: `Jobs.Read`; each prop its own read permission, `null` without it) | none | 10 s |
+| Jobs (`Jobs`) | `/`, `/jobs?queue&state&jobName&range\|from&to&cursor` | `ListJobsAsync` (`Jobs.Read`) | bulk cancel of selected rows, ≤ 100 (`Jobs.Cancel` per item) | 5 s |
 | Job (`Job`) | `/jobs/{id}` | `GetJobAsync` (`Jobs.Read` on its queue) | cancel, retry, rerun (`Jobs.Cancel`/`Retry`/`Rerun`); reveal payload (`Jobs.ReadPayload`); reveal an attempt's error (`Jobs.ReadError`) | 5 s |
 | Queues (`Queues`) | `/queues?cursor` | `ListQueuesAsync` (`Queues.Read`) | pause, resume (`Queues.Control` on that queue) | 10 s |
 | Workers and capacity (`Workers`) | `/workers?expired&cursor` | `ListWorkersAsync`, `ListScopesAsync` (`Capacity.Read`) | set scope capacity (`Capacity.Edit`) | 10 s |
 | Schedules (`Schedules`) | `/schedules?cursor` | `ListSchedulesAsync` (`Schedules.Read`) | pause, resume with policy (`Schedules.Control`); trigger (`Schedules.Trigger`); revalidate (`Schedules.Edit`) | 10 s |
-| Scaling (`Scaling`) | `/scaling?instance&pool&from&to&cursor` | `ListScalingEventsAsync` (`Capacity.Read`, §6) | none | 15 s |
+| Scaling (`Scaling`) | `/scaling?instance&pool&range\|from&to&cursor` | `ListScalingEventsAsync` (`Capacity.Read`, §6) | none | 15 s |
 | Settings (`Settings`) | `/settings` | `GetSettingsAsync` (`Settings.Read`) | none | none |
 | Retention (`Retention`) | `/retention` | `GetRetentionAsync` (`Settings.Read`) | edit policy (`Retention.Manage`) | 30 s |
-| Audit (`Audit`) | `/audit?targetKind&targetId&from&to&cursor` | `ListAuditAsync` (`Audit.Read`) | none | 15 s |
+| Audit (`Audit`) | `/audit?targetKind&targetId&range\|from&to&cursor` | `ListAuditAsync` (`Audit.Read`) | none | 15 s |
 
 Rules for every page:
 
 - **[choice]** The mount root (`/`) shows the Jobs page. The navigation lists only the pages the caller's grants allow. A page the caller may not read is 403.
-- Filters and limits are those of 16 §2: page size 50, keyset cursors, no totals, time range 7 days by default and 31 at most. A list page shows "Next" when the page has a `next` cursor; there is no page count.
+- Filters and limits are those of 16 §2: page size 50, keyset cursors, no totals, time range 7 days by default and 31 at most. A list page shows "Next" when the page has a `next` cursor (Jobs shows "Load more", §4.3); there is no page count.
 - A cursor that is rejected (`invalid_cursor`, for example expired after 15 minutes) renders the first page with a notice. It is not an error screen.
-- Each list shows its `observedAt` ("as of 12:04:31").
+- Each list with a pager shows its `observedAt` ("as of 12:04:31").
 - A job whose detail expired shows `detailExpiredAt`; its reveal button answers "detail expired" (410 from the session).
 - Queues show paused state and revision, no depth (16 has no count read). **[choice]** The page links to the telemetry dashboard (18 §9) for depth and age.
 - Job, attempt and error data are shown as text nodes. Error detail is shown as error **code** only until revealed.
 
 ### 4.1 Polling
 
+- A poll sends `reset` for the props it reloads, so a merge prop is replaced by its first page rather than appended to (§4.3).
+- Jobs stops polling after "Load more", as it did for a cursor in the URL; a new visit (filter, range, navigation) resumes it.
+- The notifications prop is reloaded every 60 s while the tab is visible and no control is in flight.
 - A poll is an Inertia partial reload of the page's list props (`router.reload({ only: [...] })`): one request per page, even on the Workers page with two lists.
 - **[choice]** Only the first page of a list is polled (no `cursor` in the URL). Later pages are history and do not move.
 - At most one poll in flight per page. A new poll is not started while one runs.
@@ -242,6 +261,33 @@ Rules for every page:
 - On failure (network error, 429, 5xx) the interval doubles up to 60 s; the first success resets it. A 409 asset-version answer is handled by the Inertia client (full reload).
 - Polls stop while a control or reveal request is in flight on the page, so a refreshed revision cannot change under a submitted command.
 - No interval is below 5 s (management-retention-defaults, "Browser poll").
+
+### 4.2 Date range and filters
+
+- **Range.** `range` is one of `5m`, `15m`, `30m`, `1h`, `3h`, `6h`, `1d`, `3d`, `7d` and `30d`: the span before each read, so polls move it forward. Otherwise `from` and `to` (ISO 8601) fix it; the picker sends them in UTC from the local times chosen. Any other `range` is `invalid_request`. `range` wins over `from`/`to`. The 31-day cap of 16 §2 still applies.
+- The range control is a button showing the current range; its popover has the presets and a calendar with from and to times. Overview's default is the last 24 hours; the other pages default to no range (Jobs and Scaling then use the session default of 16 §2).
+- **Filters** open in a side sheet: queue (a searchable combobox of the queue names, which also takes typed text) and job name on Jobs; instance and pool on Scaling; target kind (combobox) and target ID on Audit. The button shows how many are set; an x next to it clears them. Jobs keeps its state chips on the page. Applying a filter keeps the range, and choosing a range keeps the filters; both drop the cursor.
+
+### 4.3 Prop kinds
+
+Props use Inertia.Net 1.7.0's factories; the permission check of §3.6 runs first on every request.
+
+| Page | Prop | Kind |
+|---|---|---|
+| Overview | `recent`, `failed` | deferred, group `charts` |
+| Overview | `pending`, `running` | deferred, group `flight` |
+| Overview | `queues`, `workers`, `events` | deferred, group `side` |
+| Jobs | `jobs` | merge, appending `items` matched on `jobId`: "Load more" is a partial reload with the next cursor and `preserveUrl` |
+| Jobs | `queueNames` | once, 5 minutes (null without `Queues.Read`) |
+| Job | `audit` | optional (unchanged) |
+| Settings | `settings` | once, 5 minutes |
+| every page | `notifications` | deferred, group `notifications`, once for 1 minute |
+
+The rest load with the page. Overview shows a skeleton until its first two groups arrive; each side panel shows one until `side` does. **[choice]** Live props are not used: they need a broadcaster (`IInertiaLiveBroadcaster`) and a push channel the dashboard does not have, so polling stays (§4.1).
+
+### 4.4 Notifications
+
+The bell in the sidebar footer lists, from the `notifications` prop: failed jobs and scaling changes of the last 24 hours (the newest 20 of each, `Jobs.Read` and `Capacity.Read`) and the queues paused now (`Queues.Read`); a part the caller may not read is null. Each item links to its page. The unread count is what arrived since the panel was last closed in this browser (a time and the paused queues seen, in `localStorage`); nothing about it is stored on the server.
 
 ## 5. Controls
 
@@ -269,6 +315,8 @@ Answers:
 | Bulk | `200` Jobs page with `outcome = { items: [{ jobId, status, code? }] }` in request order (16 §4) |
 
 An `outcome_unknown` page says the result is not known yet and offers "Check again", which resends the same command ID. It never says the action failed or succeeded.
+
+Every result is shown as a toast: applied ("done", or "cancel requested"), rejected (with the code and the current revision), `outcome_unknown` (a warning that stays until dismissed, with **Resend**, the same command ID and body), no answer (`store_unavailable`, a network error, 429 or 5xx: stays, with **Try again**, the same command ID) and bulk (how many applied, and the codes of the others). Row actions (cancel, retry, rerun, pause, resume, trigger, revalidate, bulk cancel) ask in a confirm dialog first. **[choice]** A form in a side sheet (capacity, retention policy) sends on Save without a second dialog: the sheet shows what changes and against which revision, and takes an optional reason.
 
 An asset-version 409 on a POST never replays the POST: the client reloads the page and the person acts again (sp-023 DASH-06).
 
@@ -319,6 +367,9 @@ public sealed record ScalingEventSummary(Guid EventId, Guid InstanceId, string P
 - No `dangerouslySetInnerHTML`, `eval`, `new Function` or HTML parsing of job data in `ClientApp/` sources.
 - **[choice]** UI: shadcn/ui components (sources in `ClientApp/components/ui/`, adapted to plain JSX) on `radix-ui` 1.8.1, Tailwind CSS 4.3.3 (with `@tailwindcss/vite`, build-only), `tw-animate-css` 1.4.0, `class-variance-authority` 0.7.1, `clsx` 2.1.1, `tailwind-merge` 3.7.0 and `@tabler/icons-react` 3.49.0. System fonts only.
 - `react-remove-scroll` and `aria-hidden` are replaced by the local shims in `ClientApp/shims/` (npm `overrides`). The shim locks page scroll by setting `data-scroll-locked` on `<body>`, which `app.css` turns into `overflow: hidden`, so no `<style>` element is ever created.
+- Colours: only the five Runwick scales (`@theme` in `app.css`: midnight violet, dry sage, pine blue, lime yellow, chocolate). Violet is the dark background and text, sage the light surfaces, pine the primary, lime the sparing live and success highlight (text on light surfaces uses the 800 shade), chocolate warnings and failures. Every text pair meets WCAG AA (4.5:1) in both themes.
+- No native form widgets: selects, the combobox, popovers, the calendar (`react-day-picker` 10.0.2 with `date-fns` 4.4.0 and `@date-fns/tz` 1.5.0, all MIT, without their stylesheet), checkboxes, the switch, number fields and text areas are Radix or our own, with keyboard and screen-reader support. Text inputs are styled `<input>` elements.
+- Toasts are Radix Toast styled like Sonner. **[choice]** Sonner itself is MIT but creates a `<style>` element at runtime, which the CSP forbids.
 - Light and dark themes, plus the system setting; the choice is kept in `localStorage` in that browser only. Every animation and transition is cut to nothing under `prefers-reduced-motion: reduce`.
 - No new npm dependency beyond those above without a spec change.
 

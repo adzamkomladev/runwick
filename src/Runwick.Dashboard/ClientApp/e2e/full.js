@@ -142,6 +142,32 @@ async page => {
       await page.getByTestId(id).waitFor()
     }
   })
+  await step('date range preset and the filter sheet keep each other in the URL query', async () => {
+    await page.getByTestId('nav-jobs').click()
+    await page.getByTestId('range').click()
+    await page.getByTestId('range-15m').click()
+    await page.waitForURL(/range=15m/)
+    await page.getByTestId('filters').click()
+    await page.getByTestId('filter-sheet').waitFor()
+    await page.getByTestId('filter-jobName').fill('sample.flaky')
+    await page.getByTestId('apply-filters').click()
+    await page.waitForURL((u) => u.searchParams.get('jobName') === 'sample.flaky' && u.searchParams.get('range') === '15m')
+    await page.getByTestId('clear-filters').click()
+    await page.waitForURL((u) => !u.searchParams.has('jobName') && u.searchParams.get('range') === '15m')
+  })
+  await step('theme menu switches to dark and back to the system setting', async () => {
+    await page.getByTestId('theme').click()
+    await page.getByTestId('theme-dark').click()
+    check(await page.evaluate(() => document.documentElement.classList.contains('dark')), 'dark not applied')
+    await page.getByTestId('theme').click()
+    await page.getByTestId('theme-system').click()
+  })
+  await step('notifications open from the sidebar footer and clear the unread count', async () => {
+    await page.getByTestId('notifications').click()
+    await page.getByTestId('notifications-panel').waitFor()
+    await page.keyboard.press('Escape')
+    await page.waitForFunction(() => !document.querySelector('[data-testid="unread"]'))
+  })
   await step('queue pause and resume', async () => {
     await page.getByTestId('nav-queues').click()
     await page.getByTestId('queue-pause').first().click()
@@ -153,10 +179,11 @@ async page => {
     await page.getByTestId('done').waitFor()
     await page.getByTestId('queue-pause').first().waitFor()
   })
-  await step('retention page: save the same policy shows a rejection (no_change), not an error', async () => {
+  await step('retention page: saving the same policy from the sheet shows a rejection toast (no_change), not an error', async () => {
     await page.getByTestId('nav-retention').click()
+    await page.getByTestId('edit-policy').click()
+    await page.getByTestId('policy-sheet').waitFor()
     await page.getByTestId('save-policy').click()
-    await page.getByTestId('confirm').click()
     await page.getByTestId('rejected').waitFor()
   })
   await step('operator: hostile display name renders as text in the header and the audit page', async () => {

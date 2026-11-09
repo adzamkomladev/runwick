@@ -52,6 +52,8 @@ internal sealed class DashboardMount : IInertiaRootView
 
     public string Title => _options.Title;
 
+    public string? SignOutPath => _options.SignOutPath;
+
     public DashboardAssets Assets => _options.Assets;
 
     RunwickManagementBuilder? Management => _services.GetService<RunwickManagementBuilder>();

@@ -1,4 +1,6 @@
-import { Link } from '@inertiajs/react'
+import { Link, usePage } from '@inertiajs/react'
+import { DateRangePicker, presetMs } from '../components/date-range'
+import { Skeleton } from '../components/ui/skeleton'
 import {
   IconAlertTriangle, IconArrowDownRight, IconArrowRight, IconArrowUpRight, IconCircleCheck, IconListDetails, IconLoader, IconMinus,
 } from '@tabler/icons-react'
@@ -25,10 +27,29 @@ const SPANS = [15, 60, 180, 360, 720, 1440].map((m) => m * 60_000)
  * holds the oldest row: complete, and dense enough to read. When the page was full, from its oldest row, since older rows exist
  * but were not read.
  */
-function coverage(page, windowMs, now) {
+function coverage(page, windowMs, now, fixed) {
   const oldest = page.items.length ? Math.min(...page.items.map((j) => Date.parse(j.createdAt))) : now
-  if (page.next) return { from: oldest, to: now, truncated: true }
+  if (page.next) return { from: oldest, to: fixed?.to ?? now, truncated: true }
+  if (fixed) return { from: fixed.from, to: fixed.to, truncated: false } // the range the person chose, even where it is empty
   return { from: now - (SPANS.find((s) => s >= now - oldest) ?? windowMs), to: now, truncated: false }
+}
+
+/** The chosen range from the URL: a preset, a from/to pair, or null for the default (the last 24 hours, drawn at a fitting span). */
+function useRange(now) {
+  const q = Object.fromEntries(new URL(usePage().url, window.location.href).searchParams)
+  const fixed = q.range ? { from: now - presetMs(q.range), to: now }
+    : q.from || q.to ? { from: q.from ? Date.parse(q.from) : now - 24 * HOUR, to: q.to ? Date.parse(q.to) : now } : null
+  return { query: q, fixed, windowMs: fixed ? fixed.to - fixed.from : 24 * HOUR }
+}
+
+/** The page's outline while its deferred props load (three groups: charts, in-flight counts, side panels). */
+function OverviewSkeleton() {
+  return (
+    <div className="grid gap-6" aria-busy="true" aria-label="Loading">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-40 rounded-xl" />)}</div>
+      <div className="grid gap-6 xl:grid-cols-3"><Skeleton className="h-80 rounded-xl xl:col-span-2" /><Skeleton className="h-80 rounded-xl" /></div>
+    </div>
+  )
 }
 
 function bucketize(items, field, { from, to }, filter = () => true) {
@@ -66,8 +87,8 @@ function Delta({ now, before, invert, unit = '%' }) {
   return (
     <span className={cn('inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-xs font-medium tabular-nums ring-1 ring-inset',
       !up && !down ? 'bg-muted text-muted-foreground ring-border'
-        : good ? 'bg-emerald-50 text-emerald-800 ring-emerald-600/20 dark:bg-emerald-400/10 dark:text-emerald-300 dark:ring-emerald-400/25'
-          : 'bg-rose-50 text-rose-700 ring-rose-600/20 dark:bg-rose-400/10 dark:text-rose-300 dark:ring-rose-400/25')}>
+        : good ? 'bg-lime-yellow-50 text-lime-yellow-800 ring-lime-yellow-600/20 dark:bg-lime-yellow-400/10 dark:text-lime-yellow-400 dark:ring-lime-yellow-400/25'
+          : 'bg-chocolate-50 text-chocolate-700 ring-chocolate-600/20 dark:bg-chocolate-400/10 dark:text-chocolate-300 dark:ring-chocolate-400/25')}>
       <Icon className="size-3.5" aria-hidden />{Math.abs(diff).toFixed(unit === 'pt' ? 1 : 0)}{unit === 'pt' ? ' pt' : '%'}
     </span>
   )
@@ -109,10 +130,21 @@ const More = ({ href, children }) => (
 const top = (items, key, n = 6) => Object.entries(items.reduce((m, i) => ({ ...m, [key(i)]: (m[key(i)] ?? 0) + 1 }), {}))
   .sort((a, b) => b[1] - a[1]).slice(0, n).map(([label, value]) => ({ label, value }))
 
-export default function Overview({ base, can, recent, failed, pending, running, queues, workers, events }) {
+export default function Overview(props) {
+  const { can, recent, failed, pending, running } = props
   const live = usePoll(['recent', 'failed', 'pending', 'running', ...(can.queues ? ['queues'] : []), ...(can.workers ? ['workers', 'events'] : [])], 10)
   const now = Date.now()
-  const span = coverage(recent, 24 * HOUR, now)
+  const range = useRange(now)
+  const ready = [recent, failed, pending, running].every((p) => p !== undefined)
+  return (
+    <Layout heading="Overview" live={ready ? live : 0} actions={<DateRangePicker query={range.query} fallback="1d" />}>
+      {ready ? <OverviewBody {...props} now={now} range={range} /> : <OverviewSkeleton />}
+    </Layout>
+  )
+}
+
+function OverviewBody({ base, can, recent, failed, pending, running, queues, workers, events, now, range }) {
+  const span = coverage(recent, range.windowMs, now, range.fixed)
   const half = (span.to - span.from) / 2
   const labelAt = (i) => new Date(span.from + ((i + 0.5) * (span.to - span.from)) / BUCKETS)
   const created = bucketize(recent.items, 'createdAt', span)
@@ -128,27 +160,26 @@ export default function Overview({ base, can, recent, failed, pending, running, 
   const firstHalf = (a) => sum(a.slice(0, BUCKETS / 2)), secondHalf = (a) => sum(a.slice(BUCKETS / 2))
   const rate = (s, f) => (s + f ? (s / (s + f)) * 100 : null)
   const rateNow = rate(secondHalf(ok), secondHalf(bad)), rateBefore = rate(firstHalf(ok), firstHalf(bad))
-  const failedSpan = coverage(failed, 24 * HOUR, now)
+  const failedSpan = coverage(failed, range.windowMs, now, range.fixed)
   const failedBuckets = bucketize(failed.items, 'createdAt', failedSpan)
   const inFlight = pending.items.length + running.items.length
   const flightHistory = useHistory(inFlight)
   const states = top(recent.items, (j) => j.state, 8)
   const pendingByQueue = top(pending.items, (j) => j.queue)
   const failuresByJob = top(failed.items, (j) => j.jobName)
-  const sampleNote = recent.next ? `the newest 200 jobs, created over the last ${fmtSpan(span.to - span.from)}` : `all ${recent.items.length} jobs created in the last ${fmtSpan(span.to - span.from)}`
+  const sampleNote = recent.next ? `newest 200 jobs, over ${fmtSpan(span.to - span.from)}` : `${recent.items.length} jobs over ${fmtSpan(span.to - span.from)}`
   const pool = events?.items[0]?.pool
   const poolEvents = events ? events.items.filter((e) => e.pool === pool).slice(0, 24).reverse() : []
   return (
-    <Layout heading="Overview" live={live}
-      description="Charts and figures come from samples of up to 200 rows per read, never totals. Queue depth and age are in the telemetry dashboard.">
+    <>
       <section aria-label="Key figures" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Kpi testId="kpi-created" icon={IconListDetails} title="Jobs created" href={`${base}/jobs`} color="text-chart-1"
           value={secondHalf(created)} delta={<><Delta now={secondHalf(created)} before={firstHalf(created)} /><span>vs the {fmtSpan(half)} before</span></>}
-          foot={`In the last ${fmtSpan(half)}. Sample: ${sampleNote}`} spark={<Spark data={created} color="text-chart-1" label="Jobs created over the sampled span" />} />
+          foot={`Last ${fmtSpan(half)} · ${sampleNote}`} spark={<Spark data={created} color="text-chart-1" label="Jobs created over the sampled span" />} />
         <Kpi testId="kpi-success" icon={IconCircleCheck} title="Success rate" href={`${base}/jobs?state=succeeded`} color="text-chart-2"
           value={rateNow == null ? '—' : Math.round(rateNow)} suffix={rateNow == null ? null : '%'}
           delta={<><Delta now={rateNow ?? 0} before={rateNow == null ? null : rateBefore} unit="pt" /><span>vs the {fmtSpan(half)} before</span></>}
-          foot={`Of jobs that ended in the last ${fmtSpan(half)}`} spark={<Spark data={ok.map((s, i) => (s + bad[i] ? (s / (s + bad[i])) * 100 : 100))} color="text-chart-2" label="Success rate over the sampled span" />} />
+          foot={`Jobs that ended, last ${fmtSpan(half)}`} spark={<Spark data={ok.map((s, i) => (s + bad[i] ? (s / (s + bad[i])) * 100 : 100))} color="text-chart-2" label="Success rate over the sampled span" />} />
         <Kpi testId="kpi-failed" icon={IconAlertTriangle} title="Failed" href={`${base}/jobs?state=failed`} color="text-chart-3"
           value={failed.next ? `${failed.items.length}+` : failed.items.length}
           delta={<><Delta now={secondHalf(failedBuckets)} before={firstHalf(failedBuckets)} invert /><span>last {fmtSpan((failedSpan.to - failedSpan.from) / 2)} vs the one before</span></>}
@@ -156,21 +187,21 @@ export default function Overview({ base, can, recent, failed, pending, running, 
         <Kpi testId="kpi-inflight" icon={IconLoader} title="In flight now" href={`${base}/jobs?state=running`} color="text-chart-4"
           value={pending.next || running.next ? `${inFlight}+` : inFlight}
           delta={<><StatusBadge state="pending">{pending.next ? '200+' : pending.items.length} pending</StatusBadge><StatusBadge state="running">{running.next ? '200+' : running.items.length} running</StatusBadge></>}
-          foot="Pending plus running, at each poll since this page opened" spark={<Spark data={flightHistory} color="text-chart-4" label="Jobs in flight at each poll" />} />
+          foot="Pending plus running, per poll" spark={<Spark data={flightHistory} color="text-chart-4" label="Jobs in flight at each poll" />} />
       </section>
 
       <div className="grid gap-6 xl:grid-cols-3">
         <Panel className="xl:col-span-2" title="Throughput" testId="chart-throughput"
-          description={`Created and finished per ${fmtSpan((span.to - span.from) / BUCKETS)}: ${sampleNote}`}
+          description={`Per ${fmtSpan((span.to - span.from) / BUCKETS)} · ${sampleNote}`}
           action={<Legend series={[{ key: 'c', label: 'Created', color: 'text-chart-1' }, { key: 'f', label: 'Finished', color: 'text-chart-2' }]} />}>
           <Chart data={series} label="Jobs created and finished over time" height={260}
             series={[{ key: 'created', label: 'Created', color: 'text-chart-1' }, { key: 'finished', label: 'Finished', color: 'text-chart-2' }]} />
         </Panel>
-        <Panel title="State of sampled jobs" description="Where the jobs created in the span are now">
+        <Panel title="State of sampled jobs">
           <div className="grid gap-4">
             <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted" role="img" aria-label="Share of sampled jobs per state">
               {states.map((s) => <Tooltip key={s.label}><TooltipTrigger asChild>
-                <span className={cn('h-full transition-[width] duration-700 ease-out first:rounded-l-full last:rounded-r-full hover:brightness-110', STATE_BG[s.label] ?? 'bg-zinc-400')}
+                <span className={cn('h-full transition-[width] duration-700 ease-out first:rounded-l-full last:rounded-r-full hover:brightness-110', STATE_BG[s.label] ?? 'bg-midnight-violet-400')}
                   ref={(el) => { if (el) el.style.width = `${(s.value / Math.max(recent.items.length, 1)) * 100}%` }} />
               </TooltipTrigger><TooltipContent>{s.label}: {s.value}</TooltipContent></Tooltip>)}
             </div>
@@ -190,7 +221,7 @@ export default function Overview({ base, can, recent, failed, pending, running, 
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
-        <Panel title="Succeeded and failed" testId="chart-outcomes" description="By end time, same sample"
+        <Panel title="Succeeded and failed" testId="chart-outcomes" description="By end time"
           action={<Legend series={[{ key: 's', label: 'Succeeded', color: 'text-chart-2' }, { key: 'f', label: 'Failed', color: 'text-chart-3' }]} />}>
           <Chart type="bar" stacked data={series} height={200} label="Succeeded and failed jobs over time"
             series={[{ key: 'succeeded', label: 'Succeeded', color: 'text-chart-2' }, { key: 'failed', label: 'Failed', color: 'text-chart-3' }]} />
@@ -205,7 +236,7 @@ export default function Overview({ base, can, recent, failed, pending, running, 
 
       <div className="grid gap-6 xl:grid-cols-3">
         <Card className="gap-0 pb-0 xl:col-span-2">
-          <CardHeader className="pb-4"><CardTitle className="text-base">Recent failures</CardTitle><CardDescription>Newest first</CardDescription>
+          <CardHeader className="pb-4"><CardTitle className="text-base">Recent failures</CardTitle>
             <CardAction><More href={`${base}/jobs?state=failed`}>View all</More></CardAction></CardHeader>
           <Table data-testid="overview-failed">
             <TableHeader><TableRow className="hover:bg-transparent"><TableHead>Job</TableHead><TableHead>Queue</TableHead><TableHead>State</TableHead><TableHead>Ended</TableHead></TableRow></TableHeader>
@@ -217,17 +248,17 @@ export default function Overview({ base, can, recent, failed, pending, running, 
               </TableRow>
             ))}</TableBody>
           </Table>
-          {failed.items.length === 0 && <p className="px-5 py-10 text-center text-sm text-muted-foreground">No failures in the last 24 hours.</p>}
+          {failed.items.length === 0 && <p className="px-5 py-10 text-center text-sm text-muted-foreground">No failures in this range.</p>}
         </Card>
         <div className="grid content-start gap-6">
-          {workers ? <Panel title="Workers" testId="overview-workers" description={`${workers.next ? '200+' : workers.items.length} live`} action={<More href={`${base}/workers`}>Details</More>}>
+          {workers === undefined ? <Skeleton className="h-56 rounded-xl" /> : workers ? <Panel title="Workers" testId="overview-workers" description={`${workers.next ? '200+' : workers.items.length} live`} action={<More href={`${base}/workers`}>Details</More>}>
             <ul className="grid gap-2">{workers.items.slice(0, 5).map((w) => {
               const age = now - Date.parse(w.heartbeatAt), ttl = Math.max(Date.parse(w.expiresAt) - Date.parse(w.heartbeatAt), 1)
               return (
                 <li key={w.instanceId} className="grid gap-1.5 rounded-lg border p-2.5 text-sm transition-colors hover:bg-muted/50">
                   <span className="flex items-center justify-between gap-2"><span className="truncate font-medium">{w.hostName} <span className="font-normal text-muted-foreground">pid {w.processId}</span></span><StatusBadge state={w.status} /></span>
                   <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span className="h-1 flex-1 overflow-hidden rounded-full bg-muted"><span className="block h-full rounded-full bg-emerald-500 transition-[width] duration-700" ref={(el) => { if (el) el.style.width = `${Math.max(0, 100 - (age / ttl) * 100)}%` }} /></span>
+                    <span className="h-1 flex-1 overflow-hidden rounded-full bg-muted"><span className="block h-full rounded-full bg-lime-yellow-600 transition-[width] duration-700" ref={(el) => { if (el) el.style.width = `${Math.max(0, 100 - (age / ttl) * 100)}%` }} /></span>
                     heartbeat {relative(w.heartbeatAt, now)}
                   </span>
                 </li>
@@ -235,7 +266,7 @@ export default function Overview({ base, can, recent, failed, pending, running, 
             })}</ul>
             {workers.items.length === 0 && <p className="text-sm text-muted-foreground">No live workers.</p>}
           </Panel> : null}
-          {events ? <Panel title={pool ? `Scaling target, ${pool}` : 'Scaling target'} description={events.items[0] ? `Last change ${relative(events.items[0].createdAt, now)}` : 'No scaling events in 7 days'}
+          {events === undefined ? <Skeleton className="h-48 rounded-xl" /> : events ? <Panel title={pool ? `Scaling target, ${pool}` : 'Scaling target'} description={events.items[0] ? `Last change ${relative(events.items[0].createdAt, now)}` : 'No scaling events in this range'}
             action={<More href={`${base}/scaling`}>History</More>}>
             {poolEvents.length > 0 ? <Chart type="bar" height={140} label={`Worker target of pool ${pool} at each change`}
               data={poolEvents.map((e) => ({ label: new Date(e.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), title: `${e.reason} (${time(e.createdAt)})`, target: e.newTarget }))}
@@ -244,8 +275,8 @@ export default function Overview({ base, can, recent, failed, pending, running, 
           </Panel> : null}
         </div>
       </div>
-    </Layout>
+    </>
   )
 }
 
-const STATE_BG = { pending: 'bg-zinc-400', reserved: 'bg-sky-500', running: 'bg-indigo-500', retrying: 'bg-amber-500', succeeded: 'bg-emerald-500', failed: 'bg-rose-500', cancelled: 'bg-zinc-300 dark:bg-zinc-600' }
+const STATE_BG = { pending: 'bg-midnight-violet-400', reserved: 'bg-pine-blue-400', running: 'bg-pine-blue-600', retrying: 'bg-chocolate-300', succeeded: 'bg-lime-yellow-600', failed: 'bg-chocolate-600', cancelled: 'bg-midnight-violet-300 dark:bg-midnight-violet-600' }

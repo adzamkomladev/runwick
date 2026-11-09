@@ -32,8 +32,8 @@ function share(a) {
 
 function Shared({ n }) {
   return n === 0
-    ? <span className="inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 text-xs text-emerald-700 ring-1 ring-emerald-600/20 ring-inset dark:bg-emerald-400/10 dark:text-emerald-300 dark:ring-emerald-400/25">alone</span>
-    : <span className="inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-xs text-amber-800 ring-1 ring-amber-600/20 ring-inset dark:bg-amber-400/10 dark:text-amber-300 dark:ring-amber-400/25">with {n} other{n === 1 ? '' : 's'}</span>
+    ? <span className="inline-flex items-center rounded-md bg-lime-yellow-50 px-1.5 py-0.5 text-xs text-lime-yellow-800 ring-1 ring-lime-yellow-600/20 ring-inset dark:bg-lime-yellow-400/10 dark:text-lime-yellow-400 dark:ring-lime-yellow-400/25">alone</span>
+    : <span className="inline-flex items-center rounded-md bg-chocolate-50 px-1.5 py-0.5 text-xs text-chocolate-700 ring-1 ring-chocolate-600/20 ring-inset dark:bg-chocolate-400/10 dark:text-chocolate-300 dark:ring-chocolate-400/25">with {n} other{n === 1 ? '' : 's'}</span>
 }
 
 function Stat({ label, value, foot, testId }) {
@@ -54,9 +54,9 @@ export function UsageCard({ attempts }) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><IconCpu className="size-4 text-muted-foreground" />Resources used</CardTitle>
         <CardDescription className="flex items-start gap-1.5">
-          <span>The worker process during each attempt, not this job alone. CPU and allocations are exact; working set is sampled about every 250 ms.</span>
+          <span>Whole worker process, per attempt</span>
           <Tooltip><TooltipTrigger asChild><button type="button" aria-label="How these are measured" className="mt-0.5 shrink-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"><IconInfoCircle className="size-3.5" /></button></TooltipTrigger>
-            <TooltipContent className="max-w-72">.NET cannot attribute CPU or memory to one async job, so these are the whole worker process&apos;s figures between the start and end of the attempt. &quot;Alone&quot; means no other attempt ran in that process meanwhile.</TooltipContent></Tooltip>
+            <TooltipContent className="max-w-72">.NET cannot attribute CPU or memory to one async job, so these are the whole worker process&apos;s figures between the start and end of the attempt. CPU and allocations are exact; working set is sampled about every 250 ms. &quot;Alone&quot; means no other attempt ran in that process meanwhile.</TooltipContent></Tooltip>
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">

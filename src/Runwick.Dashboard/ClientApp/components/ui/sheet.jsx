@@ -7,7 +7,7 @@ export const SheetTrigger = (props) => <SheetPrimitive.Trigger data-slot="sheet-
 export const SheetClose = (props) => <SheetPrimitive.Close data-slot="sheet-close" {...props} />
 
 const sides = {
-  right: 'inset-y-0 right-0 h-full w-full border-l data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right sm:max-w-xl',
+  right: 'inset-y-0 right-0 h-full w-full border-l data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right sm:max-w-md',
   left: 'inset-y-0 left-0 h-full w-72 border-r data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left',
 }
 
@@ -27,3 +27,4 @@ export const SheetContent = ({ className, children, side = 'right', ...props }) 
 export const SheetHeader = ({ className, ...props }) => <div className={cn('flex flex-col gap-1.5 p-5 pr-12', className)} {...props} />
 export const SheetTitle = ({ className, ...props }) => <SheetPrimitive.Title className={cn('font-semibold', className)} {...props} />
 export const SheetDescription = ({ className, ...props }) => <SheetPrimitive.Description className={cn('text-sm text-muted-foreground', className)} {...props} />
+export const SheetFooter = ({ className, ...props }) => <div className={cn('mt-auto flex justify-end gap-2 border-t p-4', className)} {...props} />

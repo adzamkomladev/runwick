@@ -67,6 +67,7 @@ builder.Services.AddRunwickManagement(m => m
     .MapGrants(p => grants.GetValueOrDefault(p.FindFirstValue(ClaimTypes.NameIdentifier) ?? "", [])));
 builder.Services.AddRunwickDashboard("default", d =>
 {
+    d.SignOutPath = "/ops/logout"; // the sidebar's Sign out posts here (21 §2)
     if (args.Contains("v2"))
     {
         d.Assets = SampleBuild.Rebuilt(DashboardAssets.Embedded); // internal hook, visible to this sample only
@@ -93,10 +94,10 @@ app.MapGet("/login/{user}", async (HttpContext ctx, string user, string? returnU
         [new Claim(ClaimTypes.NameIdentifier, user), new Claim(ClaimTypes.Name, display)], CookieAuthenticationDefaults.AuthenticationScheme)));
     return Results.LocalRedirect(string.IsNullOrEmpty(returnUrl) || !returnUrl.StartsWith("/ops/", StringComparison.Ordinal) ? "/ops/runwick" : returnUrl);
 });
-app.MapGet("/logout", async (HttpContext ctx) =>
+app.MapMethods("/logout", ["GET", "POST"], async (HttpContext ctx) =>
 {
     await ctx.SignOutAsync();
-    return Results.LocalRedirect("/ops/");
+    return Results.LocalRedirect("/ops/login");
 });
 
 await app.StartAsync();
