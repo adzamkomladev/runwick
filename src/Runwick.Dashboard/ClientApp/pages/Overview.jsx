@@ -14,32 +14,31 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/toolti
 import { cn } from '../components/ui/utils'
 import { AnimatedNumber, Layout, time, usePoll } from '../lib'
 
-// Every figure is computed from one page (up to 200 rows) of a read that already exists; there is no count read (16). Each
-// card says which span its sample covers. A delta is shown only when the sample covers both halves it compares.
+// Every figure is computed from one page (up to 200 rows) of a read that already exists; there is no count read (16). The
+// cards and charts cover the range in the picker (default the last 24 hours). When the read hit the 200-row limit, the captions
+// say so and how far back the sample reaches; a delta (second half of the range vs the first) is shown only when the sample
+// covers the whole range. "In flight now" is a live snapshot and says so.
 
 const HOUR = 3_600_000
 const BUCKETS = 24
 
-const SPANS = [15, 60, 180, 360, 720, 1440].map((m) => m * 60_000)
-
 /**
- * The span a chart covers. When the read returned every row of its window, the smallest round span (15 min to 24 h) that
- * holds the oldest row: complete, and dense enough to read. When the page was full, from its oldest row, since older rows exist
- * but were not read.
+ * What a read covers within the chosen range: the whole range, or (when the 200-row page was full) only back to its oldest row,
+ * since older rows exist but were not read. `sampleFrom` is null when the sample is complete.
  */
-function coverage(page, windowMs, now, fixed) {
-  const oldest = page.items.length ? Math.min(...page.items.map((j) => Date.parse(j.createdAt))) : now
-  if (page.next) return { from: oldest, to: fixed?.to ?? now, truncated: true }
-  if (fixed) return { from: fixed.from, to: fixed.to, truncated: false } // the range the person chose, even where it is empty
-  return { from: now - (SPANS.find((s) => s >= now - oldest) ?? windowMs), to: now, truncated: false }
+function coverage(page, range) {
+  if (!page.next || page.items.length === 0) return { ...range, sampleFrom: null }
+  return { ...range, sampleFrom: Math.min(...page.items.map((j) => Date.parse(j.createdAt))) }
 }
 
-/** The chosen range from the URL: a preset, a from/to pair, or null for the default (the last 24 hours, drawn at a fitting span). */
+/** The chosen range from the URL: a preset, a from/to pair, or the default of the last 24 hours (what the picker shows). */
 function useRange(now) {
   const q = Object.fromEntries(new URL(usePage().url, window.location.href).searchParams)
-  const fixed = q.range ? { from: now - presetMs(q.range), to: now }
-    : q.from || q.to ? { from: q.from ? Date.parse(q.from) : now - 24 * HOUR, to: q.to ? Date.parse(q.to) : now } : null
-  return { query: q, fixed, windowMs: fixed ? fixed.to - fixed.from : 24 * HOUR }
+  const custom = !q.range && (q.from || q.to)
+  const from = q.range ? now - presetMs(q.range) : custom && q.from ? Date.parse(q.from) : now - 24 * HOUR
+  const to = custom && q.to ? Date.parse(q.to) : now
+  const fmt = (t) => new Date(t).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+  return { query: q, from, to, label: custom ? `${fmt(from)} to ${q.to ? fmt(to) : 'now'}` : `the last ${fmtSpan(to - from)}` }
 }
 
 /** The page's outline while its deferred props load (three groups: charts, in-flight counts, side panels). */
@@ -62,7 +61,7 @@ function bucketize(items, field, { from, to }, filter = () => true) {
   return out
 }
 
-const fmtSpan = (ms) => (ms >= HOUR ? `${+(ms / HOUR).toFixed(ms < 3 * HOUR ? 1 : 0)} h` : ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : `${Math.max(1, Math.round(ms / 1000))} s`)
+const fmtSpan = (ms) => (ms >= 48 * HOUR ? `${Math.round(ms / (24 * HOUR))} d` : ms >= HOUR ? `${+(ms / HOUR).toFixed(ms < 3 * HOUR ? 1 : 0)} h` : ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : `${Math.max(1, Math.round(ms / 1000))} s`)
 const sum = (a) => a.reduce((t, v) => t + v, 0)
 
 /** The last 30 polled values of a number, for figures with no time field. Lives as long as the page. */
@@ -144,8 +143,7 @@ export default function Overview(props) {
 }
 
 function OverviewBody({ base, can, recent, failed, pending, running, queues, workers, events, now, range }) {
-  const span = coverage(recent, range.windowMs, now, range.fixed)
-  const half = (span.to - span.from) / 2
+  const span = coverage(recent, range)
   const labelAt = (i) => new Date(span.from + ((i + 0.5) * (span.to - span.from)) / BUCKETS)
   const created = bucketize(recent.items, 'createdAt', span)
   const finished = bucketize(recent.items, 'terminalAt', span)
@@ -160,34 +158,40 @@ function OverviewBody({ base, can, recent, failed, pending, running, queues, wor
   const firstHalf = (a) => sum(a.slice(0, BUCKETS / 2)), secondHalf = (a) => sum(a.slice(BUCKETS / 2))
   const rate = (s, f) => (s + f ? (s / (s + f)) * 100 : null)
   const rateNow = rate(secondHalf(ok), secondHalf(bad)), rateBefore = rate(firstHalf(ok), firstHalf(bad))
-  const failedSpan = coverage(failed, range.windowMs, now, range.fixed)
+  const failedSpan = coverage(failed, range)
   const failedBuckets = bucketize(failed.items, 'createdAt', failedSpan)
   const inFlight = pending.items.length + running.items.length
   const flightHistory = useHistory(inFlight)
   const states = top(recent.items, (j) => j.state, 8)
   const pendingByQueue = top(pending.items, (j) => j.queue)
   const failuresByJob = top(failed.items, (j) => j.jobName)
-  const sampleNote = recent.next ? `newest 200 jobs, over ${fmtSpan(span.to - span.from)}` : `${recent.items.length} jobs over ${fmtSpan(span.to - span.from)}`
+  // The halves compare only when the sample covers the whole range; a truncated sample would make the first half look empty.
+  const whole = span.sampleFrom == null, failedWhole = failedSpan.sampleFrom == null
+  const since = (t) => new Date(t).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })
+  const sampleNote = whole ? `${recent.items.length} jobs in ${range.label}` : `newest 200 jobs in ${range.label} (back to ${since(span.sampleFrom)})`
+  const ended = sum(ok) + sum(bad), rateAll = rate(sum(ok), sum(bad))
+  const noDelta = <span className="text-muted-foreground">sample too short to compare halves</span>
   const pool = events?.items[0]?.pool
   const poolEvents = events ? events.items.filter((e) => e.pool === pool).slice(0, 24).reverse() : []
   return (
     <>
       <section aria-label="Key figures" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Kpi testId="kpi-created" icon={IconListDetails} title="Jobs created" href={`${base}/jobs`} color="text-chart-1"
-          value={secondHalf(created)} delta={<><Delta now={secondHalf(created)} before={firstHalf(created)} /><span>vs the {fmtSpan(half)} before</span></>}
-          foot={`Last ${fmtSpan(half)} · ${sampleNote}`} spark={<Spark data={created} color="text-chart-1" label="Jobs created over the sampled span" />} />
+          value={whole ? sum(created) : `${sum(created)}+`}
+          delta={whole ? <><Delta now={secondHalf(created)} before={firstHalf(created)} /><span>second half vs first</span></> : noDelta}
+          foot={sampleNote} spark={<Spark data={created} color="text-chart-1" label={`Jobs created in ${range.label}`} />} />
         <Kpi testId="kpi-success" icon={IconCircleCheck} title="Success rate" href={`${base}/jobs?state=succeeded`} color="text-chart-2"
-          value={rateNow == null ? '—' : Math.round(rateNow)} suffix={rateNow == null ? null : '%'}
-          delta={<><Delta now={rateNow ?? 0} before={rateNow == null ? null : rateBefore} unit="pt" /><span>vs the {fmtSpan(half)} before</span></>}
-          foot={`Jobs that ended, last ${fmtSpan(half)}`} spark={<Spark data={ok.map((s, i) => (s + bad[i] ? (s / (s + bad[i])) * 100 : 100))} color="text-chart-2" label="Success rate over the sampled span" />} />
+          value={rateAll == null ? '—' : Math.round(rateAll)} suffix={rateAll == null ? null : '%'}
+          delta={whole ? <><Delta now={rateNow ?? 0} before={rateNow == null ? null : rateBefore} unit="pt" /><span>second half vs first</span></> : noDelta}
+          foot={`Of ${ended} ${whole ? '' : 'sampled '}jobs that ended in ${range.label}`} spark={<Spark data={ok.map((s, i) => (s + bad[i] ? (s / (s + bad[i])) * 100 : 100))} color="text-chart-2" label={`Success rate in ${range.label}`} />} />
         <Kpi testId="kpi-failed" icon={IconAlertTriangle} title="Failed" href={`${base}/jobs?state=failed`} color="text-chart-3"
           value={failed.next ? `${failed.items.length}+` : failed.items.length}
-          delta={<><Delta now={secondHalf(failedBuckets)} before={firstHalf(failedBuckets)} invert /><span>last {fmtSpan((failedSpan.to - failedSpan.from) / 2)} vs the one before</span></>}
-          foot={`Failed jobs created in the last ${fmtSpan(failedSpan.to - failedSpan.from)}${failed.next ? ' (newest 200)' : ''}`} spark={<Spark data={failedBuckets} color="text-chart-3" label="Failed jobs by creation time" />} />
+          delta={failedWhole ? <><Delta now={secondHalf(failedBuckets)} before={firstHalf(failedBuckets)} invert /><span>second half vs first</span></> : noDelta}
+          foot={`Failed jobs created in ${range.label}${failedWhole ? '' : ` (newest 200, back to ${since(failedSpan.sampleFrom)})`}`} spark={<Spark data={failedBuckets} color="text-chart-3" label={`Failed jobs created in ${range.label}`} />} />
         <Kpi testId="kpi-inflight" icon={IconLoader} title="In flight now" href={`${base}/jobs?state=running`} color="text-chart-4"
           value={pending.next || running.next ? `${inFlight}+` : inFlight}
           delta={<><StatusBadge state="pending">{pending.next ? '200+' : pending.items.length} pending</StatusBadge><StatusBadge state="running">{running.next ? '200+' : running.items.length} running</StatusBadge></>}
-          foot="Pending plus running, per poll" spark={<Spark data={flightHistory} color="text-chart-4" label="Jobs in flight at each poll" />} />
+          foot="Live snapshot, not limited to the range" spark={<Spark data={flightHistory} color="text-chart-4" label="Jobs in flight at each poll" />} />
       </section>
 
       <div className="grid gap-6 xl:grid-cols-3">
@@ -197,7 +201,7 @@ function OverviewBody({ base, can, recent, failed, pending, running, queues, wor
           <Chart data={series} label="Jobs created and finished over time" height={260}
             series={[{ key: 'created', label: 'Created', color: 'text-chart-1' }, { key: 'finished', label: 'Finished', color: 'text-chart-2' }]} />
         </Panel>
-        <Panel title="State of sampled jobs">
+        <Panel title="State of sampled jobs" description={whole ? `Created in ${range.label}` : `Newest 200 created in ${range.label}`}>
           <div className="grid gap-4">
             <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted" role="img" aria-label="Share of sampled jobs per state">
               {states.map((s) => <Tooltip key={s.label}><TooltipTrigger asChild>
@@ -211,7 +215,7 @@ function OverviewBody({ base, can, recent, failed, pending, running, queues, wor
                 <span className="font-medium tabular-nums">{s.value} <span className="text-xs font-normal text-muted-foreground">({Math.round((s.value / Math.max(recent.items.length, 1)) * 100)}%)</span></span>
               </li>
             ))}</ul>
-            {states.length === 0 && <p className="text-sm text-muted-foreground">No jobs created in the span.</p>}
+            {states.length === 0 && <p className="text-sm text-muted-foreground">No jobs created in {range.label}.</p>}
             {queues && <div className="grid gap-2 border-t pt-4">
               <div className="flex items-center justify-between text-sm"><span className="font-medium">Queues</span><More href={`${base}/queues`}>Manage</More></div>
               <ul className="flex flex-wrap gap-1.5">{queues.items.slice(0, 12).map((q) => <li key={q.name}><StatusBadge state={q.paused ? 'paused' : 'active'}>{q.name}</StatusBadge></li>)}</ul>
@@ -221,15 +225,15 @@ function OverviewBody({ base, can, recent, failed, pending, running, queues, wor
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
-        <Panel title="Succeeded and failed" testId="chart-outcomes" description="By end time"
+        <Panel title="Succeeded and failed" testId="chart-outcomes" description={`By end time · ${sampleNote}`}
           action={<Legend series={[{ key: 's', label: 'Succeeded', color: 'text-chart-2' }, { key: 'f', label: 'Failed', color: 'text-chart-3' }]} />}>
           <Chart type="bar" stacked data={series} height={200} label="Succeeded and failed jobs over time"
             series={[{ key: 'succeeded', label: 'Succeeded', color: 'text-chart-2' }, { key: 'failed', label: 'Failed', color: 'text-chart-3' }]} />
         </Panel>
-        <Panel title="Pending by queue" description={pending.next ? 'The 200 oldest pending jobs' : 'Every pending job'} action={can.queues && <More href={`${base}/queues`}>Queues</More>}>
+        <Panel title="Pending by queue" description={pending.next ? 'Live: the 200 oldest pending jobs' : 'Live: every pending job'} action={can.queues && <More href={`${base}/queues`}>Queues</More>}>
           <BarList items={pendingByQueue} color="text-chart-4" empty="Nothing pending." />
         </Panel>
-        <Panel title="Failures by job" description={`Failed jobs created in the last ${fmtSpan(failedSpan.to - failedSpan.from)}`} action={<More href={`${base}/jobs?state=failed`}>All failed</More>}>
+        <Panel title="Failures by job" description={`Failed jobs created in ${range.label}${failedWhole ? '' : ' (newest 200)'}`} action={<More href={`${base}/jobs?state=failed`}>All failed</More>}>
           <BarList items={failuresByJob} color="text-chart-3" empty="No failures." />
         </Panel>
       </div>
