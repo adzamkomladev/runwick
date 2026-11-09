@@ -12,7 +12,7 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
     <PackageId>$(MSBuildProjectName)</PackageId>
-    <Version>0.1.0-m1</Version>
+    <Version>0.1.0</Version>
     <Authors>Komla Adzam</Authors>
     <Product>Runwick</Product>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

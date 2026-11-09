@@ -7,7 +7,7 @@
         "dependencies": {
           "Cronos": "[0.13.0, )",
           "NodaTime": "[3.3.7, )",
-          "Runwick.Contracts": "[0.1.0-m1, )"
+          "Runwick.Contracts": "[0.1.0, )"
         }
       },
       "runwick.contracts": {

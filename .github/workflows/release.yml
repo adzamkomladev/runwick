@@ -1,0 +1,68 @@
+# Publishes a release when a tag v<version> is pushed, e.g. `git tag v0.1.0 && git push origin v0.1.0`.
+# The tag must equal <Version> in Directory.Build.props. Steps: build and test, pack and inspect every package
+# (eng/check-release.sh), check licences, create the GitHub release with the packages attached, then push to
+# nuget.org. The NuGet push needs the repository secret NUGET_API_KEY (an API key scoped to Runwick*); without it
+# the job stops after the GitHub release, and you can rerun it once the secret is set.
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)publish, e.g. v0.1.0"
+        required: true
+permissions:
+  contents: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+env:
+  CI: "true"
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    environment: nuget
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Tag matches the version
+        id: version
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          version=$(sed -n 's|.*<Version>\(.*\)</Version>.*|\1|p' Directory.Build.props)
+          [ "$tag" = "v$version" ] || { echo "tag $tag does not match Version $version in Directory.Build.props"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          case "$version" in *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT";; *) echo "prerelease=false" >> "$GITHUB_OUTPUT";; esac
+      - run: dotnet restore Runwick.slnx --locked-mode
+      - run: dotnet build Runwick.slnx -c Release --no-restore
+      - run: dotnet test tests/Runwick.Core.Tests -c Release --no-build
+      - run: bash eng/check-package-graph.sh
+      - run: bash eng/check-licenses.sh
+      - name: Pack and inspect every package
+        run: bash eng/check-release.sh
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          flags=(--generate-notes --verify-tag)
+          [ "${{ steps.version.outputs.prerelease }}" = "true" ] && flags+=(--prerelease)
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" artifacts/packages/* --clobber
+          else
+            gh release create "$tag" artifacts/packages/* --title "Runwick $tag" "${flags[@]}"
+          fi
+      - name: Push to nuget.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          [ -n "$NUGET_API_KEY" ] || { echo "::error::NUGET_API_KEY is not set; add it under Settings > Secrets and variables > Actions, then rerun this job."; exit 1; }
+          # .snupkg symbols go up with their .nupkg; --skip-duplicate makes a rerun safe.
+          dotnet nuget push "artifacts/packages/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate

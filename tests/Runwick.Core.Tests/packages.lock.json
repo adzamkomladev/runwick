@@ -513,7 +513,7 @@
           "Microsoft.Extensions.Logging.Abstractions": "[10.0.14, )",
           "Microsoft.Extensions.Options": "[10.0.14, )",
           "NodaTime": "[3.3.7, )",
-          "Runwick.Contracts": "[0.1.0-m1, )"
+          "Runwick.Contracts": "[0.1.0, )"
         }
       },
       "runwick.contracts": {
@@ -525,10 +525,10 @@
           "Microsoft.Extensions.DependencyInjection": "[10.0.14, )",
           "Microsoft.Extensions.Hosting": "[10.0.14, )",
           "Microsoft.Extensions.TimeProvider.Testing": "[10.11.0, )",
-          "Runwick.Postgres": "[0.1.0-m1, )",
-          "Runwick.Redis": "[0.1.0-m1, )",
-          "Runwick.ReferenceModel": "[0.1.0-m1, )",
-          "Runwick.Sqlite": "[0.1.0-m1, )",
+          "Runwick.Postgres": "[0.1.0, )",
+          "Runwick.Redis": "[0.1.0, )",
+          "Runwick.ReferenceModel": "[0.1.0, )",
+          "Runwick.Sqlite": "[0.1.0, )",
           "Testcontainers.PostgreSql": "[4.16.0, )",
           "xunit.v3.extensibility.core": "[4.0.2, )"
         }
@@ -537,26 +537,26 @@
         "type": "Project",
         "dependencies": {
           "OpenTelemetry": "[1.20.1, )",
-          "Runwick": "[0.1.0-m1, )"
+          "Runwick": "[0.1.0, )"
         }
       },
       "runwick.outbox": {
         "type": "Project",
         "dependencies": {
-          "Runwick": "[0.1.0-m1, )"
+          "Runwick": "[0.1.0, )"
         }
       },
       "runwick.postgres": {
         "type": "Project",
         "dependencies": {
           "Npgsql": "[10.0.3, )",
-          "Runwick": "[0.1.0-m1, )"
+          "Runwick": "[0.1.0, )"
         }
       },
       "runwick.redis": {
         "type": "Project",
         "dependencies": {
-          "Runwick": "[0.1.0-m1, )",
+          "Runwick": "[0.1.0, )",
           "StackExchange.Redis": "[3.4.20, )"
         }
       },
@@ -566,14 +566,14 @@
       "runwick.samples.contracts": {
         "type": "Project",
         "dependencies": {
-          "Runwick.Contracts": "[0.1.0-m1, )"
+          "Runwick.Contracts": "[0.1.0, )"
         }
       },
       "runwick.sqlite": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Data.Sqlite": "[10.0.14, )",
-          "Runwick": "[0.1.0-m1, )"
+          "Runwick": "[0.1.0, )"
         }
       },
       "Cronos": {
