@@ -20,6 +20,9 @@ public sealed class ManagementContractTests
 {
     public static TheoryData<StoreKind> Kinds => CoreContractTests.Kinds;
 
+    /// <summary>PostgreSQL only, when the run covers it: the fault point that holds a read exists on the PostgreSQL runner.</summary>
+    public static TheoryData<StoreKind> PostgresKind => [.. CoreContractTests.Kinds.Select(row => row.Data).Where(k => k == StoreKind.Postgres)];
+
     static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     static readonly ManagementCaller Admin = new(new ManagementActor("admin", null, "test"), [.. ManagementPermissions.All.Select(p => new ManagementGrant(p))]);
@@ -141,15 +144,11 @@ public sealed class ManagementContractTests
     }
 
     [Theory]
-    [MemberData(nameof(Kinds))]
+    [MemberData(nameof(PostgresKind))]
     [Trait("Category", "Fault")]
     public async Task A_read_the_caller_cancels_is_a_cancellation_not_an_unavailable_store(StoreKind kind)
     {
-        if (kind != StoreKind.Postgres)
-        {
-            return; // The read is held at the PostgreSQL runner's BeforeGateLock point; the session mapping is shared.
-        }
-
+        // The read is held at the PostgreSQL runner's BeforeGateLock point; the session mapping it checks is shared by every store.
         // SP-029 P-07: a dashboard viewer stopped mid-read got StoreUnavailableException instead of a cancellation.
         var (f, c) = await OpenAsync(kind, "mgmtcancel");
         await using var _ = f;
