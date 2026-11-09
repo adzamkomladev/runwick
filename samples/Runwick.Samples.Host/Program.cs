@@ -46,7 +46,17 @@ builder.Services.AddRunwick(runwick =>
 });
 
 using var host = builder.Build();
-await host.StartAsync().ConfigureAwait(false);
+try
+{
+    await host.StartAsync().ConfigureAwait(false);
+}
+catch (AdmissionClosedException ex)
+{
+    // A drained application refuses a new process's startup (spec 23 §4): reopen it, then start. 75 = retryable (EX_TEMPFAIL).
+    await Console.Error.WriteLineAsync(ex.Message).ConfigureAwait(false);
+    return 75;
+}
+
 var exitCode = 0;
 if (dispatch > 0)
 {
