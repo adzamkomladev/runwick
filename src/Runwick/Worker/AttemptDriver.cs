@@ -240,7 +240,7 @@ internal sealed partial class WorkerEngine
             return;
         }
 
-        var finish = OutcomeClassifier.Classify(entry.Lease, observation, entry.Causes, timeout);
+        var finish = OutcomeClassifier.Classify(entry.Lease, observation, entry.Causes, timeout) with { Usage = entry.Meter?.Stop() };
         RecordExecution(entry, observation, finish);
         if (!entry.IsLost)
         {
@@ -592,6 +592,7 @@ internal sealed partial class WorkerEngine
         AsyncServiceScope? scope = null;
         try
         {
+            entry.Meter = Options.RecordResourceUsage ? ResourceMeter.Start() : null;
             if (Hooks.BeforeRunnerStart is { } hook)
             {
                 await hook(entry).ConfigureAwait(false);
@@ -676,6 +677,7 @@ internal sealed partial class WorkerEngine
         }
         finally
         {
+            entry.Meter?.Stop(); // the window ends with the handler; scope disposal is not counted
             if (scope is { } s)
             {
                 entry.CleanupLive = true;

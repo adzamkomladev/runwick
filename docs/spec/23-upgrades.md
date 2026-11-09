@@ -15,6 +15,8 @@ Four things are new in code:
 
 ## Changes
 
+- (2026-11-09, attempt usage) PostgreSQL revision 18 (`0018_attempt_usage`) and SQLite revision 2 (`0002_attempt_usage`) add a nullable attempt column; Redis stays at layout revision 1. The one-revision-per-binary rule is unchanged: drain, stop old binaries, migrate, start new. Rows written before the migration read as "not recorded" (16 §2.2).
+
 - (2026-11-09, user decision on sp-030 item 7) §3.6: activating a capability through the operator path now writes the store operation's `ActivateCapabilities` audit row and `capabilities_activated` event, with the operator as actor (scheme `operator`). Before, it wrote neither. No schema revision.
 
 - (2026-11-08, SP-028) §3.6: the public path to activate `scheduler` and `rate_admission` (library calls on the three migration classes and `runwick store activate-capability`); closes the SP-027 gap.
@@ -25,7 +27,7 @@ Four things are new in code:
 
 ## 1. Targets and boundaries
 
-- A binary declares exactly one store revision (`PgMigrator.CurrentRevision`, SQLite and Redis revision 1) and protocol epoch 1. Every operation checks it inside its transaction (03 §10.1). A store at another revision gives `UnsupportedVersion schema_incompatible` for every operation, creation or settlement, in both directions: old binary on newer store, new binary on older store.
+- A binary declares exactly one store revision (`PgMigrator.CurrentRevision`, `SqliteMigrator.CurrentRevision`, Redis revision 1) and protocol epoch 1. Every operation checks it inside its transaction (03 §10.1). A store at another revision gives `UnsupportedVersion schema_incompatible` for every operation, creation or settlement, in both directions: old binary on newer store, new binary on older store.
 - The manifest field `expandCompatibleBinaries` is empty in every manifest v1 writes. A store whose `migration_mode` is `expand` therefore admits no binary (`store_maintenance`) [choice]. The migrator never writes `expand`; the mode exists for a future migration that declares compatible binaries, and until one does, "additive and invisible to old clients" is **not** a v1 promise.
 - Migrations only go forward. There are no down migrations. Each migration advances the **rollback floor** (§5).
 - A migration's three phases (expand, validate, activate) run in separate short transactions, each with `lock_timeout` 5 s and `statement_timeout` 60 s (04 §8.1). None of migrations 0001 to 0017 has a backfill or a concurrent index build; the checkpoint column and the `CREATE INDEX CONCURRENTLY` ledger phase of 04 §8.4 are specified but have no user yet. A migration that adds one must come with its own interrupted-phase test (UPG-05).
@@ -124,7 +126,7 @@ The rollback floor is the lowest store revision a deployed binary accepts: **the
 - The way back is restoring the backup taken in step 1 and running the previous binary and CLI. Everything written after the backup is lost (§7.3).
 - A binary also refuses to migrate a store that is ahead of it: a ledger row for a migration it does not know is `migration_unknown`, and the CLI `doctor` reports "CLI older than store".
 - Raising a required capability (`ActivateCapabilities`) is a second, separate floor: the capability cannot be lowered, and a binary without it fails every creation path with `capability_unsupported` while its Renew, Finish, Recover and ReleaseReservation still work (10 §6.1; the UPG-02 and UPG-06 subset).
-- The documented floor for this release is revision 17 for PostgreSQL, 1 for SQLite and Redis.
+- The documented floor for this release is revision 18 for PostgreSQL, 2 for SQLite and 1 for Redis.
 
 ## 6. Status and quiescence
 

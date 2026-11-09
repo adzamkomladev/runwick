@@ -113,6 +113,9 @@ internal sealed class AttemptEntry : IDisposable
 
     public TimeSpan? ExecutionStartedAt { get; set; }
 
+    /// <summary>Measures the attempt's window when <see cref="WorkerOptions.RecordResourceUsage"/> is on; stopped once.</summary>
+    public ResourceMeter? Meter { get; set; }
+
     /// <summary>True while user work (pipeline or its joined tasks) is alive.</summary>
     public bool PipelineLive { get; set; }
 

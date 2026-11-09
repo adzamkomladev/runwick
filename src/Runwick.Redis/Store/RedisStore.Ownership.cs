@@ -335,6 +335,7 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
         ["error"] = request.Error is { } e
             ? new JsonObject { ["code"] = e.Code, ["exceptionType"] = e.ExceptionType, ["message"] = e.Message, ["stackTrace"] = e.StackTrace }.ToJsonString()
             : null,
+        ["usage"] = request.Usage is { } u ? Runwick.Worker.ResourceUsageJson.Write(u) : null,
     };
 
     byte[] FinishFingerprint(Guid storeId, StoreCommand<FinishRequest> command) =>

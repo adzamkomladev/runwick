@@ -23,7 +23,7 @@ namespace Runwick.Workloads;
 /// like the River and pg-boss benches, or open loop with <c>--calls n</c>), and measure dispatch call start to confirmed
 /// finish per job; then wait up to 60 s for the rest to finish.</item>
 /// </list>
-/// Usage: <c>bench --mode drain|steady [--n 20000] [--rate 100] [--seconds 120] [--workers 16] [--payload 1024]
+/// Usage: <c>bench --mode drain|steady [--no-usage] [--n 20000] [--rate 100] [--seconds 120] [--workers 16] [--payload 1024]
 /// [--calls 1] [--conn admin-cs] [--db bench_runwick] [--out file.json] [--trace]</c> (--trace adds per-job stage gaps, held-job and settlement-queue samples, and store call phases). Writes the same JSON shape as the River and pg-boss
 /// benches: <c>system</c>, <c>mode</c>, <c>completionsPerSec</c>, <c>latencyMs {p50, p95, p99, max}</c> (steady).
 /// </summary>
@@ -74,7 +74,8 @@ internal static class BenchMode
             LoadRegistration.Register(r, typeCeiling: null);
             r.AddHandler<LoadJob, LoadHandler>();
             r.Producer(o => o.MaxConcurrentCalls = Math.Max(2, calls));
-            r.AddWorker(w => w.MaxOutstandingAttempts(workers).Pool("main", p => p.Queues(LoadRegistration.Queue).FixedConcurrency(workers)));
+            r.AddWorker(w => w.MaxOutstandingAttempts(workers).Pool("main", p => p.Queues(LoadRegistration.Queue).FixedConcurrency(workers))
+                .Configure(o => o.RecordResourceUsage = !a.Has("no-usage"))); // --no-usage: the attempt-usage overhead baseline
         });
         await using var provider = sc.BuildServiceProvider();
         var engine = provider.GetRequiredService<WorkerEngine>();

@@ -30,7 +30,10 @@ namespace Sqlite.Migrations
 {
     internal static class SqliteMigrator
     {
-        public const long CurrentRevision = 1;
+        /// <summary>Migrations in apply order with the schema revision each installs; the last one's is this binary's revision.</summary>
+        static readonly (string Id, long Revision)[] Migrations = [("0001_initial", 1), ("0002_attempt_usage", 2)];
+
+        public const long CurrentRevision = 2;
         const string MigrationId = "0001_initial";
         const string ManifestDomain = "runwick.manifest.v1";
         static readonly string RunnerBuild = "runwick/" + (typeof(SqliteMigrator).Assembly.GetName().Version?.ToString() ?? "0");
@@ -38,16 +41,16 @@ namespace Sqlite.Migrations
         /// <summary>Test seam (SQL-10): replaces the migration text, so a changed checksum can be shown.</summary>
         internal static Func<string, string>? SqlOverride { get; set; }
 
-        internal static string Sql
+        /// <summary>The text of <c>0001_initial</c> (the test seam applies to it).</summary>
+        internal static string Sql => SqlOf(MigrationId);
+
+        static string SqlOf(string id)
         {
-            get
-            {
-                using var stream = typeof(SqliteMigrator).Assembly.GetManifestResourceStream("Runwick.Sqlite.Sql.0001_initial.sql")
-                    ?? throw new InvalidOperationException("Embedded SQLite migration missing.");
-                using var reader = new StreamReader(stream, Encoding.UTF8);
-                var sql = reader.ReadToEnd().Replace("\r\n", "\n", StringComparison.Ordinal);
-                return SqlOverride?.Invoke(sql) ?? sql;
-            }
+            using var stream = typeof(SqliteMigrator).Assembly.GetManifestResourceStream($"Runwick.Sqlite.Sql.{id}.sql")
+                ?? throw new InvalidOperationException("Embedded SQLite migration missing.");
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            var sql = reader.ReadToEnd().Replace("\r\n", "\n", StringComparison.Ordinal);
+            return id == MigrationId ? SqlOverride?.Invoke(sql) ?? sql : sql;
         }
 
         internal static byte[] Checksum(string sql) => SHA256.HashData(Encoding.UTF8.GetBytes(sql));
@@ -124,73 +127,101 @@ namespace Sqlite.Migrations
 
         static SqliteMigrationResult Apply(SqliteConnection conn)
         {
-            var sql = Sql;
-            var checksum = Checksum(sql);
             var tables = List(conn, "SELECT name FROM sqlite_schema WHERE type = 'table' AND name LIKE 'runwick\\_%' ESCAPE '\\'");
+            var applied = new List<string>();
+            var now = SqTime.Ms(DateTimeOffset.UtcNow);
+            Guid storeId;
             if (tables.Contains("runwick_schema_migrations"))
             {
                 // A ledger row this binary does not know means the store is ahead of it (23 §5, UPG-06).
-                var unknown = Scalar(conn, $"SELECT migration_id FROM runwick_schema_migrations WHERE migration_id <> '{MigrationId}' ORDER BY migration_id LIMIT 1");
+                var known = string.Join(", ", Migrations.Select(m => $"'{m.Id}'"));
+                var unknown = Scalar(conn, $"SELECT migration_id FROM runwick_schema_migrations WHERE migration_id NOT IN ({known}) ORDER BY migration_id LIMIT 1");
                 if (unknown is string newer)
                 {
                     throw new SqliteMigrationException("migration_unknown", $"Applied migration {newer} is not known to this binary (newer store).");
                 }
 
-                using var read = conn.CreateCommand();
-                read.CommandText = "SELECT DISTINCT checksum FROM runwick_schema_migrations WHERE migration_id = @id";
-                read.Parameters.AddWithValue("@id", MigrationId);
-                using (var r = read.ExecuteReader())
+                foreach (var (id, _) in Migrations)
                 {
+                    var checksum = Checksum(SqlOf(id));
+                    using var read = conn.CreateCommand();
+                    read.CommandText = "SELECT DISTINCT checksum FROM runwick_schema_migrations WHERE migration_id = @id";
+                    read.Parameters.AddWithValue("@id", id);
+                    using var r = read.ExecuteReader();
                     while (r.Read())
                     {
                         if (!((byte[])r.GetValue(0)).AsSpan().SequenceEqual(checksum))
                         {
-                            throw new SqliteMigrationException("migration_checksum_mismatch", $"Migration {MigrationId} was applied with a different checksum.");
+                            throw new SqliteMigrationException("migration_checksum_mismatch", $"Migration {id} was applied with a different checksum.");
                         }
                     }
                 }
 
-                var id = SqUuid.Read((byte[])Scalar(conn, "SELECT store_id FROM runwick_store_metadata WHERE singleton_id = 1")!);
-                return new SqliteMigrationResult(id, CurrentRevision, []);
+                storeId = SqUuid.Read((byte[])Scalar(conn, "SELECT store_id FROM runwick_store_metadata WHERE singleton_id = 1")!);
             }
-
-            // The outbox source tables (14 §3.3) may share the file; anything else named runwick_ is a foreign schema.
-            if (tables.Any(t => t is not ("runwick_outbox_metadata" or "runwick_outbox_messages")))
+            else
             {
-                throw new SqliteMigrationException("schema_not_empty", "The database has runwick_ tables but no Runwick migration ledger.");
+                // The outbox source tables (14 §3.3) may share the file; anything else named runwick_ is a foreign schema.
+                if (tables.Any(t => t is not ("runwick_outbox_metadata" or "runwick_outbox_messages")))
+                {
+                    throw new SqliteMigrationException("schema_not_empty", "The database has runwick_ tables but no Runwick migration ledger.");
+                }
+
+                storeId = Guid.NewGuid();
             }
 
-            var now = SqTime.Ms(DateTimeOffset.UtcNow);
+            var done = tables.Contains("runwick_schema_migrations")
+                ? List(conn, "SELECT DISTINCT migration_id FROM runwick_schema_migrations")
+                : [];
             try
             {
-                SqFile.Exec(conn, sql);
-                var storeId = Guid.NewGuid();
-                var (manifest, digest) = Manifest();
-                using (var meta = conn.CreateCommand())
+                foreach (var (id, revision) in Migrations)
                 {
-                    meta.CommandText = """
-                        INSERT INTO runwick_store_metadata (singleton_id, store_id, driver, schema_revision, protocol_epoch, migration_mode,
-                            compatibility_manifest_version, compatibility_manifest, manifest_digest, revision, updated_at)
-                        VALUES (1, @id, 'sqlite', 1, 1, 'normal', 1, @manifest, @digest, 1, @now)
-                        """;
-                    meta.P("id", storeId).P("manifest", manifest.ToJsonString()).P("digest", digest).P("now", now);
-                    meta.ExecuteNonQuery();
+                    if (done.Contains(id))
+                    {
+                        continue;
+                    }
+
+                    var sql = SqlOf(id);
+                    SqFile.Exec(conn, sql);
+                    var (manifest, digest) = Manifest(revision);
+                    using (var meta = conn.CreateCommand())
+                    {
+                        meta.CommandText = revision == 1
+                            ? """
+                              INSERT INTO runwick_store_metadata (singleton_id, store_id, driver, schema_revision, protocol_epoch, migration_mode,
+                                  compatibility_manifest_version, compatibility_manifest, manifest_digest, revision, updated_at)
+                              VALUES (1, @id, 'sqlite', 1, 1, 'normal', 1, @manifest, @digest, 1, @now)
+                              """
+                            : """
+                              UPDATE runwick_store_metadata SET schema_revision = @rev, compatibility_manifest = @manifest, manifest_digest = @digest,
+                                  revision = revision + 1, updated_at = @now
+                              WHERE singleton_id = 1
+                              """;
+                        meta.P("id", storeId).P("rev", revision).P("manifest", manifest.ToJsonString()).P("digest", digest).P("now", now);
+                        meta.ExecuteNonQuery();
+                    }
+
+                    foreach (var phase in new[] { "expand", "validate", "activate" })
+                    {
+                        using var ledger = conn.CreateCommand();
+                        ledger.CommandText = """
+                            INSERT INTO runwick_schema_migrations (migration_id, phase, checksum, target_schema_revision, state, runner_build,
+                                started_at, completed_at)
+                            VALUES (@id, @phase, @checksum, @rev, 'applied', @build, @now, @now)
+                            """;
+                        ledger.P("id", id).P("phase", phase).P("checksum", Checksum(sql)).P("rev", revision).P("build", RunnerBuild).P("now", now);
+                        ledger.ExecuteNonQuery();
+                        applied.Add(id + ":" + phase);
+                    }
                 }
 
-                Validate(conn);
-                foreach (var phase in new[] { "expand", "validate", "activate" })
+                if (applied.Count > 0)
                 {
-                    using var ledger = conn.CreateCommand();
-                    ledger.CommandText = """
-                        INSERT INTO runwick_schema_migrations (migration_id, phase, checksum, target_schema_revision, state, runner_build,
-                            started_at, completed_at)
-                        VALUES (@id, @phase, @checksum, 1, 'applied', @build, @now, @now)
-                        """;
-                    ledger.P("id", MigrationId).P("phase", phase).P("checksum", checksum).P("build", RunnerBuild).P("now", now);
-                    ledger.ExecuteNonQuery();
+                    Validate(conn);
                 }
 
-                return new SqliteMigrationResult(storeId, CurrentRevision, [MigrationId + ":expand", MigrationId + ":validate", MigrationId + ":activate"]);
+                return new SqliteMigrationResult(storeId, CurrentRevision, applied);
             }
             catch (SqliteException ex)
             {
@@ -225,7 +256,11 @@ namespace Sqlite.Migrations
         {
             var mem = new SqliteConnection("Data Source=:memory:");
             mem.Open();
-            SqFile.Exec(mem, Sql);
+            foreach (var (id, _) in Migrations)
+            {
+                SqFile.Exec(mem, SqlOf(id));
+            }
+
             return mem;
         });
 
@@ -304,7 +339,7 @@ namespace Sqlite.Migrations
             return map;
         }
 
-        internal static (JsonObject Json, byte[] Digest) Manifest()
+        internal static (JsonObject Json, byte[] Digest) Manifest(long revision = CurrentRevision)
         {
             var operations = new JsonObject();
             var canonicalOps = CanonicalValue.Object();
@@ -317,7 +352,7 @@ namespace Sqlite.Migrations
             var json = new JsonObject
             {
                 ["manifestVersion"] = 1,
-                ["schemaRevision"] = CurrentRevision,
+                ["schemaRevision"] = revision,
                 ["protocolEpochs"] = new JsonArray(1),
                 ["receiptCodecs"] = new JsonArray(1),
                 ["commandFingerprintVersions"] = new JsonArray(1),
@@ -329,7 +364,7 @@ namespace Sqlite.Migrations
             var one = CanonicalValue.Array(CanonicalValue.Int(1));
             var canonical = CanonicalValue.Object()
                 .Add("manifestVersion", 1)
-                .Add("schemaRevision", CurrentRevision)
+                .Add("schemaRevision", revision)
                 .Add("protocolEpochs", one)
                 .Add("receiptCodecs", one)
                 .Add("commandFingerprintVersions", one)

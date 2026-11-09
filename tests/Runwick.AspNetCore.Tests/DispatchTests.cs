@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Text.Json.Nodes;
 using Runwick.Harness.Faults;
@@ -121,7 +122,16 @@ public sealed class DispatchTests
         Assert.Equal(HttpStatusCode.OK, (await h.PostAsync("jobs:dispatch", Users.Admin, Ping(id, "e"))).Status);
 
         Assert.Equal(HttpStatusCode.Forbidden, (await h.GetAsync("events", Users.Scoped)).Status);
+        bool Has(JsonNode page) => page["items"]!.AsArray().Any(e => e!["commandId"]?.GetValue<Guid>() == id);
+        // Events show only below the server-wide snapshot horizon (08 §7.2), so a transaction elsewhere on the shared
+        // test server can hold the new event back briefly: wait until it is visible.
         var admin = await h.GetAsync("events?limit=1000", Users.Admin);
+        for (var wait = Stopwatch.StartNew(); !Has(admin.Body!) && wait.Elapsed < TimeSpan.FromSeconds(15);)
+        {
+            await Task.Delay(100, TestContext.Current.CancellationToken);
+            admin = await h.GetAsync("events?limit=1000", Users.Admin);
+        }
+
         var viewer = await h.GetAsync("events?limit=1000", Users.Viewer);
         JsonNode Dispatched(JsonNode page) => page["items"]!.AsArray().Single(e => e!["commandId"]?.GetValue<Guid>() == id)!;
         Assert.Equal("admin", Dispatched(admin.Body!)["actorId"]!.GetValue<string>());

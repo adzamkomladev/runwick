@@ -957,6 +957,13 @@ internal sealed partial class SqliteStore : ILeaseBatchStore, IReserveAndBeginSt
         var revision = Close(tx, commandId, lease.JobId, lease.AttemptId, lease.OwnershipToken, job.Generation, job.Revision, job.JobName, job.ActiveKey,
             outcome, state, reason, "attempt_finished", (long)Math.Max(0, request.ExecutionElapsed.TotalMilliseconds), delay, eligible,
             ErrorJson(request.Error), null);
+        if (request.Usage is { } usage)
+        {
+            // 16 §3 AttemptResourceUsage: stored with the attempt in the Finish's own transaction; not part of the receipt.
+            tx.Exec(tx.Sql("UPDATE runwick_job_attempts SET usage = @usage WHERE application = @application AND attempt_id = @attempt_id")
+                .P("usage", Runwick.Worker.ResourceUsageJson.Write(usage)).P("attempt_id", lease.AttemptId));
+        }
+
         return SqRow.Applied("Applied", null, now, new JsonObject
         {
             ["jobId"] = lease.JobId, ["generation"] = job.Generation, ["revision"] = revision, ["state"] = state, ["attemptId"] = lease.AttemptId,

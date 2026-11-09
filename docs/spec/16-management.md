@@ -15,6 +15,7 @@ Not in SP-020: retention cleanup and the detail-expired projection (SP-021), the
 
 ## Changes
 
+- (2026-11-09, attempt usage) `GetJob`'s attempts gain `usage` (`AttemptResourceUsage`, §3.1): what the worker process used while the attempt ran (CPU time, managed allocations, working set at start, end and peak, and how many other attempts overlapped it). Null means not recorded. The worker records it unless `WorkerOptions.RecordResourceUsage` is off (06), and it is stored with the attempt when the Finish applies. It is on the HTTP API (`GET jobs/{id}`), in the CLI JSON of `jobs get`, and on the dashboard job page. Schema: PostgreSQL revision 18 (04), SQLite revision 2 (20), Redis unchanged (22).
 - (2026-11-08) New document.
 - (2026-11-08, implementation of SP-020) What the build settled where this document was silent or could not be met as written:
   - **Resending a client command ID.** NotAfter is part of the command fingerprint (03 §8), so a resend with a fresh NotAfter would be `command_conflict`. Before each mutation the session reads the NotAfter of an existing receipt for that command ID and reuses it; a first send gets now + the lifetime. One extra read per mutation. Two concurrent *first* sends of one ID can still race: one gets `command_conflict`, and its resend replays. For a schedule trigger the proposed job ID is derived from the command ID (SHA-256), so a resent trigger has the same body.
@@ -71,7 +72,7 @@ All lists use **keyset pagination only**: page size 50 by default, at most 200. 
 | Read | Permission | Filters | Order | Fields (no payload, error text, lease token, uniqueness key or resource key) |
 |---|---|---|---|---|
 | `ListJobs` | `Jobs.Read` | queue, state, job name, created-from/to (default last 7 days, at most 31 days) | `created_at DESC, job_id DESC` | id, job name, payload version, queue, priority, state, generation, revision, created/updated/eligible/terminal times, terminal reason, cancel requested, execution count |
-| `GetJob` | `Jobs.Read` on its queue | — | — | summary + generations (number, created reason, created by, started count, max executions) + attempts (id, generation, reservation/execution numbers, worker instance, times, outcome, disposition, applied reason, error **code** only) |
+| `GetJob` | `Jobs.Read` on its queue | — | — | summary + generations (number, created reason, created by, started count, max executions) + attempts (id, generation, reservation/execution numbers, worker instance, times, outcome, disposition, applied reason, error **code** only, `usage` or null, §3.1) |
 | `ListQueues` | `Queues.Read` | — | queue name | name, paused, revision, ready count per state is **not** included (needs a count; SP-022 metrics) |
 | `ListWorkers` | `Capacity.Read` | include expired (default no) | `heartbeat_at DESC` | instance id, host, process id, build, status, subscriptions, pool targets, started/heartbeat/expires |
 | `ListScopes` | `Capacity.Read` | kind | kind, key | kind, key, capacity, policy revision, live permits |
@@ -87,6 +88,19 @@ A cursor is `base64url(payload ‖ tag)`, at most 2 KiB. The payload holds: form
 
 - The key comes from `ManagementOptions.CursorKey` (32+ bytes). `Runwick.AspNetCore` derives it from ASP.NET Core Data Protection (purpose `Runwick.Management.Cursor.v1`) when none is set, so replicas sharing a Data Protection key ring accept each other's cursors.
 - A cursor with a bad tag, another read's name, other filters, another queue-set hash, or a passed expiry is **400 `invalid_cursor`**. Permissions are checked again on every page; a valid cursor grants nothing.
+
+### 2.2 Attempt usage
+
+`usage` on a `GetJob` attempt is `AttemptResourceUsage`, or null when not recorded: an attempt that never ran, one finished by a binary before this change, or one run by a worker with `RecordResourceUsage` off. Every figure is the **worker process's**, between the runner's start and the handler's end, not the job's alone. .NET cannot attribute CPU or allocations to one async job, so the API does not pretend to.
+
+| Field | Meaning |
+|---|---|
+| `processCpuMicroseconds` | Process CPU time (user + kernel, all threads) during the window: `Environment.CpuUsage.TotalTime` at the end minus at the start. Exact. |
+| `processAllocatedBytes` | Managed bytes the process allocated during the window: `GC.GetTotalAllocatedBytes(false)` at the end minus at the start. Exact; native memory is not counted. |
+| `workingSetStartBytes`, `workingSetEndBytes`, `workingSetPeakBytes` | Process working set. Reading it costs about 0.1 ms, so one shared timer samples it every 250 ms while any attempt runs. Start and end are the latest samples (fresh at the start when the process was idle); peak is the highest sample in the window. A short attempt may show one sample for all three. |
+| `overlappingAttempts` | How many other attempts ran in the same process during part of the window. At 0 the figures are this attempt's, plus the worker's own background work (renewals, polling, GC). |
+
+The figures are stored with the attempt in the transaction that applies its Finish. They are not part of any receipt and the fingerprint includes them only when present, so a Finish without them has the fingerprint older releases computed. A replayed Finish never changes stored figures. A transactional (staged) completion records them up to the moment of staging.
 
 ## 3. Reveal
 

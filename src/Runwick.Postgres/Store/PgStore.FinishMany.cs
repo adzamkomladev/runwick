@@ -1,5 +1,6 @@
 using NpgsqlTypes;
 using Runwick.Protocol;
+using Runwick.Worker;
 
 namespace Runwick.Postgres.Store;
 
@@ -33,7 +34,7 @@ internal sealed partial class PgStore : IFinishManyStore
         System.Security.Cryptography.RandomNumberGenerator.Fill(System.Runtime.InteropServices.MemoryMarshal.AsBytes(entropy.AsSpan()));
         return runner.CallAsync(
             Op(command.Application, command.CommandId, Operations.FinishMany, command.NotAfter, null, PgLane.Settlement),
-            new PgCall("finish_many_v2")
+            new PgCall("finish_many_v3")
                 .Arr("p_command_ids", [.. items.Select(i => i.CommandId)], NpgsqlDbType.Uuid)
                 .Arr("p_not_afters", [.. items.Select(i => PgTime.Floor(i.NotAfter).UtcDateTime)], NpgsqlDbType.TimestampTz)
                 .Arr("p_fingerprints", fingerprints, NpgsqlDbType.Bytea)
@@ -46,7 +47,8 @@ internal sealed partial class PgStore : IFinishManyStore
                 .Arr("p_elapsed_ms", [.. items.Select(i => (long)Math.Max(0, i.Body.ExecutionElapsed.TotalMilliseconds))], NpgsqlDbType.Bigint)
                 .Arr("p_requested_delays_ms", [.. items.Select(i => i.Body.RequestedRetryDelay is { } d ? (long?)Math.Max(1, CeilMs(d)) : null)], NpgsqlDbType.Bigint)
                 .Arr("p_errors", [.. items.Select(i => ErrorJson(i.Body.Error)?.ToJsonString())], NpgsqlDbType.Jsonb)
-                .Arr("p_entropies", entropy, NpgsqlDbType.Bigint),
+                .Arr("p_entropies", entropy, NpgsqlDbType.Bigint)
+                .Arr("p_usages", [.. items.Select(i => i.Body.Usage is { } u ? ResourceUsageJson.Write(u) : null)], NpgsqlDbType.Jsonb),
             row => row.HasValue ? new StoreReply<FinishedMany>(StoreStatus.Applied, StoreEffect.Applied, false, ReadFinishedMany(row), null, row.Decided)
                 : row.Reject<FinishedMany>(),
             ct);

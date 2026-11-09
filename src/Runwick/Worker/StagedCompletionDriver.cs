@@ -40,7 +40,7 @@ internal sealed partial class WorkerEngine
         }
 
         var elapsed = Clock.Now - (entry.ExecutionStartedAt ?? Clock.Now);
-        return Command(new FinishRequest(entry.Lease, AttemptOutcome.Succeeded, elapsed < TimeSpan.Zero ? TimeSpan.Zero : elapsed, null, null));
+        return Command(new FinishRequest(entry.Lease, AttemptOutcome.Succeeded, elapsed < TimeSpan.Zero ? TimeSpan.Zero : elapsed, null, null) { Usage = entry.Meter?.Stop() });
     }
 
     /// <summary>The staged Finish was applied inside the caller's transaction (its commit is still the caller's).</summary>
@@ -114,7 +114,7 @@ internal sealed partial class WorkerEngine
         entry.SettlementInFlight = false;
         if (!entry.IsLost)
         {
-            await Completion.SettleAsync(entry, finish).ConfigureAwait(false);
+            await Completion.SettleAsync(entry, finish with { Usage = finish.Usage ?? entry.Meter?.Stop() }).ConfigureAwait(false);
         }
     }
 

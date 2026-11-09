@@ -1,7 +1,8 @@
 import { router } from '@inertiajs/react'
-import { IconBan, IconCpu, IconEye, IconLoader2, IconPlayerPlay, IconRefresh } from '@tabler/icons-react'
+import { IconBan, IconEye, IconLoader2, IconPlayerPlay, IconRefresh } from '@tabler/icons-react'
 import { Fragment } from 'react'
 import { buildSteps, duration, Timeline } from '../components/timeline'
+import { UsageCard } from '../components/usage'
 import { Button } from '../components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
@@ -77,19 +78,7 @@ export default function Job({ base, can, job: detail, audit }) {
               ))}</TableBody>
             </Table>
           </TableCard>
-          <Card className="gap-3">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2"><IconCpu className="size-4 text-muted-foreground" />CPU and memory</CardTitle>
-              <CardDescription>Not recorded. Runwick does not yet measure CPU time or memory per attempt, so there is nothing true to show here.</CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-3 sm:grid-cols-3">
-              {['CPU time', 'Allocated', 'Working set'].map((m) => (
-                <div key={m} className="grid gap-1 rounded-lg border border-dashed p-3">
-                  <span className="text-xs text-muted-foreground">{m}</span><span className="text-sm font-medium text-muted-foreground">not recorded</span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+          <UsageCard attempts={detail.attempts} />
           <TableCard title="Generations">
             <Table>
               <TableHeader><TableRow className="hover:bg-transparent"><TableHead>#</TableHead><TableHead>Reason</TableHead><TableHead>By</TableHead><TableHead>Created</TableHead><TableHead>Started</TableHead></TableRow></TableHeader>

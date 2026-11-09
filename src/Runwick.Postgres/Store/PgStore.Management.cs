@@ -89,11 +89,12 @@ internal sealed partial class PgStore : IManagementQueryStore
                 r.GetInt32(4), r.GetInt32(5))).ConfigureAwait(false);
             using var a = tx.Sql("""
                 SELECT attempt_id, generation, reservation_number, execution_number, worker_instance_id, reserved_at, authorized_at, finished_at,
-                       outcome, disposition, applied_reason, error ->> 'code'
+                       outcome, disposition, applied_reason, error ->> 'code', usage::text
                 FROM runwick.job_attempts WHERE application = @application AND job_id = @job_id ORDER BY reservation_number
                 """).P("job_id", jobId);
             var attempts = await tx.QueryAsync(a, r => new JobAttemptInfo(r.GetGuid(0), r.GetInt32(1), r.GetInt64(2), r.IsDBNull(3) ? null : r.GetInt32(3),
-                r.GetGuid(4), PgTime.Read(r, 5), PgTime.ReadNullable(r, 6), PgTime.ReadNullable(r, 7), Str(r, 8), Str(r, 9), Str(r, 10), Str(r, 11)))
+                r.GetGuid(4), PgTime.Read(r, 5), PgTime.ReadNullable(r, 6), PgTime.ReadNullable(r, 7), Str(r, 8), Str(r, 9), Str(r, 10), Str(r, 11),
+                Runwick.Worker.ResourceUsageJson.Read(Str(r, 12))))
                 .ConfigureAwait(false);
             return [new JobDetail(jobs[0], generations, attempts)];
         }, ct).ConfigureAwait(false);

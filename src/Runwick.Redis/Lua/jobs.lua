@@ -299,7 +299,7 @@ local function finish_plan(outcome, cancel, started, max)
   return 'failed', 'execution_budget_exhausted'
 end
 
--- body: { lease = {...}, outcome, elapsed, requested (ms or nil), error (JSON text or nil) }
+-- body: { lease = {...}, outcome, elapsed, requested (ms or nil), error (JSON text or nil), usage (JSON text or nil, 16 §3) }
 function U.finish_job(body, draw)
   local lease = U.lease_of(body.lease)
   local j = U.job(lease.job)
@@ -320,6 +320,7 @@ function U.finish_job(body, draw)
   end
   local rev = U.close(j, lease.attempt, lease.token, body.outcome, state, reason, 'attempt_finished', body.elapsed, delay, eligible,
     U.nn(body.error))
+  if U.nn(body.usage) then U.attw(j, lease.attempt, 'usage', body.usage) end
   return U.applied({ jobId = j.id, generation = U.raw(j.gen), revision = U.raw(rev), state = state, attemptId = lease.attempt,
     attemptOutcome = body.outcome, disposition = state, terminalReason = reason or NULL, eligibleAt = eligible or NULL,
     retryDelay = delay or NULL })

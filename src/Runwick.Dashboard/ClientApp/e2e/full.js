@@ -64,6 +64,13 @@ async page => {
     const t = await text('timeline')
     check(t.includes('Created') && t.includes('Attempt 1') && t.includes('admin'), `timeline: ${t.slice(0, 200)}`)
   })
+  await step('job page: resources used shows recorded process figures per attempt', async () => {
+    await page.getByTestId('usage-cpu').waitFor()
+    const cpu = await text('usage-cpu')
+    check(/\d+(\.\d+)? (µs|ms|s)$/.test(cpu), `cpu: ${cpu}`)
+    check(/\d+(\.\d+)? (B|KiB|MiB|GiB)$/.test(await text('usage-peak')), 'peak working set missing')
+    check(await page.locator('[data-testid="usage-rows"] tbody tr').count() >= 1, 'no usage rows')
+  })
   await step('sidebar collapses with Ctrl+B, stays collapsed after reload, and expands again', async () => {
     const width = () => page.locator('aside').first().evaluate((el) => el.getBoundingClientRect().width)
     await page.keyboard.press('Control+b')

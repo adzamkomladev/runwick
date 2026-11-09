@@ -12,7 +12,7 @@ namespace Runwick.Postgres.Tests;
 public sealed class MigrationTests
 {
     const string SpecManifest = """
-        {"manifestVersion":1,"schemaRevision":17,"protocolEpochs":[1],"receiptCodecs":[1],"commandFingerprintVersions":[1],
+        {"manifestVersion":1,"schemaRevision":18,"protocolEpochs":[1],"receiptCodecs":[1],"commandFingerprintVersions":[1],
          "windowFingerprintVersions":[1],"retryEvaluators":["exponential-v1"],
          "operations":{"Describe":[1],"RegisterApplication":[1],"RegisterQueue":[1],"RegisterScope":[1],"Dispatch":[1],
            "DispatchMany":[1],"ResolveCommand":[1],"ReadinessProbe":[1,2],"PublishPresence":[1],"ListExpiredLeases":[1],
@@ -29,7 +29,7 @@ public sealed class MigrationTests
 
     static string Ns(string prefix) => prefix + "_" + Guid.NewGuid().ToString("N")[..8];
 
-    /// <summary>Every phase of every migration, in apply order (0001_initial, 0002_controls, 0003_outbox, 0004_rates, 0005_readiness, 0006_scheduler, 0007_scaling, 0008_renew_many, 0009_functions, 0010_reserve_and_begin, 0011_finish_many, 0012_set_claim, 0013_set_finish, 0014_set_dispatch, 0015_management, 0016_retention, 0017_management_dispatch).</summary>
+    /// <summary>Every phase of every migration, in apply order (0001_initial, 0002_controls, 0003_outbox, 0004_rates, 0005_readiness, 0006_scheduler, 0007_scaling, 0008_renew_many, 0009_functions, 0010_reserve_and_begin, 0011_finish_many, 0012_set_claim, 0013_set_finish, 0014_set_dispatch, 0015_management, 0016_retention, 0017_management_dispatch, 0018_attempt_usage).</summary>
     static readonly string[] AllPhases = [.. PgMigrator.Migrations.SelectMany(m => new[] { "expand", "validate", "activate" }.Select(p => m.Id + ":" + p))];
 
     static async Task<(long Revision, int Epoch, string Mode, string Manifest, byte[] Digest)> ReadMetadataAsync(string cs)
@@ -125,6 +125,9 @@ public sealed class MigrationTests
     [InlineData("0017_management_dispatch:expand", 16L)]
     [InlineData("0017_management_dispatch:validate", 17L)]
     [InlineData("0017_management_dispatch:activate", 17L)]
+    [InlineData("0018_attempt_usage:expand", 17L)]
+    [InlineData("0018_attempt_usage:validate", 18L)]
+    [InlineData("0018_attempt_usage:activate", 18L)]
     public async Task Session_killed_after_a_phase_resumes_from_catalog_state(string killAfter, long revisionAfterKill)
     {
         var server = await StoreServer.SharedAsync();

@@ -354,7 +354,11 @@ internal sealed record FinishRequest(
     AttemptOutcome Outcome,
     TimeSpan ExecutionElapsed,
     TimeSpan? RequestedRetryDelay,
-    AttemptError? Error);
+    AttemptError? Error)
+{
+    /// <summary>What the worker process used during the attempt; null = not recorded. Stored with the attempt when the Finish applies.</summary>
+    public Management.AttemptResourceUsage? Usage { get; init; }
+}
 
 internal sealed record FinishedAttempt(
     JobPosition Position,

@@ -452,4 +452,10 @@ public sealed class WorkerOptions
     public TimeSpan ShutdownDrain { get; set; } = TimeSpan.FromSeconds(15);
     public TimeSpan ShutdownCancellation { get; set; } = TimeSpan.FromSeconds(5);
     public TimeSpan ShutdownFinalization { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Record the worker process's CPU time, allocations and working set during each attempt and store them with the attempt
+    /// (16 §3 <c>AttemptResourceUsage</c>). On by default; the cost is a few counter reads per attempt plus one 250 ms sampler.
+    /// </summary>
+    public bool RecordResourceUsage { get; set; } = true;
 }

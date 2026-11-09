@@ -237,6 +237,43 @@ public sealed class SqliteStoreTests
         Assert.Equal("pending", after.Model.Job(job).State);
     }
 
+    // ------------------------------------------------------------------ USG-05 upgrade 1 -> 2 (attempt usage)
+
+    [Fact]
+    [Trait("Case", "USG-05")]
+    public async Task A_revision_1_store_migrates_to_2_and_its_old_attempts_read_as_not_recorded()
+    {
+        var (f, c) = await OpenAsync("usg05");
+        await using var _ = f;
+        var job = (await c.Dispatcher.DispatchAsync(new PingJob("a"), cancellationToken: Ct)).JobId.Value;
+        var lease = Assert.Single((await c.ReserveAndBeginAsync(1)).Value!.Outcomes).Begun!.Lease.Handle;
+        Assert.Equal(StoreStatus.Applied, (await c.FinishAsync(lease, AttemptOutcome.Succeeded)).Status);
+
+        // Put the file back to revision 1 exactly as 0001_initial left it: no usage column, no 0002 ledger rows, manifest 1.
+        using (var conn = Raw(f))
+        {
+            var (manifest, digest) = SqliteMigrator.Manifest(1);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                ALTER TABLE runwick_job_attempts DROP COLUMN usage;
+                DELETE FROM runwick_schema_migrations WHERE migration_id = '0002_attempt_usage';
+                UPDATE runwick_store_metadata SET schema_revision = 1, compatibility_manifest = @m, manifest_digest = @d WHERE singleton_id = 1;
+                """;
+            cmd.Parameters.AddWithValue("@m", manifest.ToJsonString());
+            cmd.Parameters.AddWithValue("@d", digest);
+            cmd.ExecuteNonQuery();
+        }
+
+        var up = await RunwickSqliteMigrations.MigrateAsync(f.AdminConnectionString, Ct);
+        Assert.Equal(2, up.SchemaRevision);
+        Assert.Equal(["0002_attempt_usage:expand", "0002_attempt_usage:validate", "0002_attempt_usage:activate"], up.AppliedPhases);
+
+        var admin = new Runwick.Management.ManagementCaller(new Runwick.Management.ManagementActor("admin", null, "test"),
+            [.. Runwick.Management.ManagementPermissions.All.Select(p => new Runwick.Management.ManagementGrant(p))]);
+        var detail = await c.Services.GetRequiredService<Runwick.Management.IManagementSession>().GetJobAsync(admin, job, Ct);
+        Assert.Null(Assert.Single(detail!.Attempts).Usage);
+    }
+
     // ------------------------------------------------------------------ SQL-10 migrations
 
     [Fact]
@@ -248,7 +285,7 @@ public sealed class SqliteStoreTests
         {
             var cs = $"Data Source={Path.Combine(dir, "a.db")}";
             var first = await RunwickSqliteMigrations.MigrateAsync(cs, Ct);
-            Assert.Equal(1, first.SchemaRevision);
+            Assert.Equal(2, first.SchemaRevision);
             Assert.NotEmpty(first.AppliedPhases);
             var again = await RunwickSqliteMigrations.MigrateAsync(cs, Ct);
             Assert.Equal(first.StoreId, again.StoreId);

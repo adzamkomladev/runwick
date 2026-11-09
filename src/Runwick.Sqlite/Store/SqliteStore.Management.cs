@@ -71,10 +71,11 @@ internal sealed partial class SqliteStore : IManagementQueryStore
                 """).P("job_id", jobId), r => new JobGenerationInfo(r.GetInt32(0), r.GetString(1), r.StrN(2), r.Time(3), r.GetInt32(4), r.GetInt32(5)));
             var attempts = tx.Query(tx.Sql("""
                 SELECT attempt_id, generation, reservation_number, execution_number, worker_instance_id, reserved_at, authorized_at, finished_at,
-                       outcome, disposition, applied_reason, json_extract(error, '$.code')
+                       outcome, disposition, applied_reason, json_extract(error, '$.code'), usage
                 FROM runwick_job_attempts WHERE application = @application AND job_id = @job_id ORDER BY reservation_number
                 """).P("job_id", jobId), r => new JobAttemptInfo(r.Uuid(0), r.GetInt32(1), r.GetInt64(2), r.IntN(3), r.Uuid(4), r.Time(5), r.TimeN(6),
-                    r.TimeN(7), r.StrN(8), r.StrN(9), r.StrN(10), r.IsDBNull(11) ? null : Convert.ToString(r.GetValue(11), System.Globalization.CultureInfo.InvariantCulture)));
+                    r.TimeN(7), r.StrN(8), r.StrN(9), r.StrN(10), r.IsDBNull(11) ? null : Convert.ToString(r.GetValue(11), System.Globalization.CultureInfo.InvariantCulture),
+                    Runwick.Worker.ResourceUsageJson.Read(r.StrN(12))));
             return new JobDetail(job, generations, attempts);
         }, ct).ConfigureAwait(false);
         return read;
