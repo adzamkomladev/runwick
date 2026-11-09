@@ -38,7 +38,7 @@ public sealed class SqliteUpgradeTests
         // Revision 0 is an unvalidated install: maintenance.
         await f.ExecAsync("UPDATE runwick_store_metadata SET schema_revision = 0, migration_mode = 'maintenance'");
         Assert.Equal("AdmissionClosed/store_maintenance", Reply(await c.ReserveAsync()));
-        await f.ExecAsync("UPDATE runwick_store_metadata SET schema_revision = 1, migration_mode = 'expand'");
+        await f.ExecAsync("UPDATE runwick_store_metadata SET schema_revision = 2, migration_mode = 'expand'");
         Assert.Equal("AdmissionClosed/store_maintenance", Reply(await c.ReserveAsync()));
         await f.ExecAsync("UPDATE runwick_store_metadata SET migration_mode = 'normal'");
         Assert.Equal(StoreStatus.Applied, (await c.ReserveAsync()).Status);
