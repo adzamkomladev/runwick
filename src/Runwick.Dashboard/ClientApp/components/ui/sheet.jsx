@@ -18,7 +18,7 @@ export const SheetContent = ({ className, children, side = 'right', ...props }) 
       'fixed z-50 flex flex-col gap-4 bg-popover text-popover-foreground shadow-lg transition ease-in-out data-[state=open]:animate-in data-[state=open]:duration-300 data-[state=closed]:animate-out data-[state=closed]:duration-200',
       sides[side], className)} {...props}>
       {children}
-      <SheetPrimitive.Close className="absolute top-4 right-4 rounded-sm opacity-70 transition-opacity outline-none hover:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/50 [&_svg]:size-4">
+      <SheetPrimitive.Close className="absolute top-4 right-4 rounded-sm opacity-70 press outline-none hover:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/50 [&_svg]:size-4">
         <IconX /><span className="sr-only">Close</span>
       </SheetPrimitive.Close>
     </SheetPrimitive.Content>

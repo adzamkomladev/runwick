@@ -82,14 +82,14 @@ function Delta({ now, before, invert, unit = '%' }) {
   )
 }
 
-function Kpi({ title, value, suffix, delta, foot, spark, color, href, testId, icon: Icon }) {
+function Kpi({ title, value, more, suffix, delta, foot, spark, color, href, testId, icon: Icon }) {
   return (
     <Link href={href} data-testid={testId} className="group rounded-xl outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
-      <Card className="relative h-full gap-2 overflow-hidden pb-0 transition-[box-shadow,transform,border-color] duration-200 group-hover:-translate-y-0.5 group-hover:border-primary/30 group-hover:shadow-lg group-active:translate-y-0 group-active:scale-[0.99]">
+      <Card className="relative h-full gap-2 overflow-hidden pb-0 transition-[box-shadow,transform,border-color] duration-200 group-hover:border-primary/30 group-hover:shadow-lg motion-safe:group-hover:-translate-y-0.5 motion-safe:group-active:translate-y-0 motion-safe:group-active:scale-[0.99]">
         <CardHeader>
           <CardDescription className="flex items-center gap-1.5"><Icon className="size-4" aria-hidden />{title}</CardDescription>
           <CardAction><IconArrowRight className="size-4 -translate-x-1 text-muted-foreground opacity-0 transition-all duration-200 group-hover:translate-x-0 group-hover:opacity-100" aria-hidden /></CardAction>
-          <CardTitle className="flex items-baseline gap-1 text-3xl font-semibold tracking-tight"><AnimatedNumber value={value} />{suffix && <span className="text-lg text-muted-foreground">{suffix}</span>}</CardTitle>
+          <CardTitle className="flex items-baseline gap-1 text-3xl font-semibold tracking-tight"><AnimatedNumber value={value} more={more} />{suffix && <span className="text-lg text-muted-foreground">{suffix}</span>}</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-1 px-5 text-xs text-muted-foreground">
           <div className="flex flex-wrap items-center gap-2">{delta}</div>
@@ -177,7 +177,7 @@ function OverviewBody({ base, can, recent, failed, pending, running, queues, wor
     <>
       <section aria-label="Key figures" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Kpi testId="kpi-created" icon={IconListDetails} title="Jobs created" href={`${base}/jobs`} color="text-chart-1"
-          value={whole ? sum(created) : `${sum(created)}+`}
+          value={sum(created)} more={!whole}
           delta={whole ? <><Delta now={secondHalf(created)} before={firstHalf(created)} /><span>second half vs first</span></> : noDelta}
           foot={sampleNote} spark={<Spark data={created} color="text-chart-1" label={`Jobs created in ${range.label}`} />} />
         <Kpi testId="kpi-success" icon={IconCircleCheck} title="Success rate" href={`${base}/jobs?state=succeeded`} color="text-chart-2"
@@ -185,12 +185,12 @@ function OverviewBody({ base, can, recent, failed, pending, running, queues, wor
           delta={whole ? <><Delta now={rateNow ?? 0} before={rateNow == null ? null : rateBefore} unit="pt" /><span>second half vs first</span></> : noDelta}
           foot={`Of ${ended} ${whole ? '' : 'sampled '}jobs that ended in ${range.label}`} spark={<Spark data={ok.map((s, i) => (s + bad[i] ? (s / (s + bad[i])) * 100 : 100))} color="text-chart-2" label={`Success rate in ${range.label}`} />} />
         <Kpi testId="kpi-failed" icon={IconAlertTriangle} title="Failed" href={`${base}/jobs?state=failed`} color="text-chart-3"
-          value={failed.next ? `${failed.items.length}+` : failed.items.length}
+          value={failed.items.length} more={!!failed.next}
           delta={failedWhole ? <><Delta now={secondHalf(failedBuckets)} before={firstHalf(failedBuckets)} invert /><span>second half vs first</span></> : noDelta}
           foot={`Failed jobs created in ${range.label}${failedWhole ? '' : ` (newest 200, back to ${since(failedSpan.sampleFrom)})`}`} spark={<Spark data={failedBuckets} color="text-chart-3" label={`Failed jobs created in ${range.label}`} />} />
         <Kpi testId="kpi-inflight" icon={IconLoader} title="In flight now" href={`${base}/jobs?state=running`} color="text-chart-4"
-          value={pending.next || running.next ? `${inFlight}+` : inFlight}
-          delta={<><StatusBadge state="pending">{pending.next ? '200+' : pending.items.length} pending</StatusBadge><StatusBadge state="running">{running.next ? '200+' : running.items.length} running</StatusBadge></>}
+          value={inFlight} more={!!(pending.next || running.next)}
+          delta={<><StatusBadge state="pending"><AnimatedNumber value={pending.items.length} more={!!pending.next} /> pending</StatusBadge><StatusBadge state="running"><AnimatedNumber value={running.items.length} more={!!running.next} /> running</StatusBadge></>}
           foot="Live snapshot, not limited to the range" spark={<Spark data={flightHistory} color="text-chart-4" label="Jobs in flight at each poll" />} />
       </section>
 
@@ -212,7 +212,7 @@ function OverviewBody({ base, can, recent, failed, pending, running, queues, wor
             <ul className="grid gap-2">{states.map((s) => (
               <li key={s.label} className="flex items-center justify-between gap-3 rounded-md px-1 py-1 text-sm transition-colors hover:bg-muted/60">
                 <span className="inline-flex items-center gap-2"><StatusDot state={s.label} />{s.label}</span>
-                <span className="font-medium tabular-nums">{s.value} <span className="text-xs font-normal text-muted-foreground">({Math.round((s.value / Math.max(recent.items.length, 1)) * 100)}%)</span></span>
+                <span className="font-medium tabular-nums"><AnimatedNumber value={s.value} /> <span className="text-xs font-normal text-muted-foreground">({Math.round((s.value / Math.max(recent.items.length, 1)) * 100)}%)</span></span>
               </li>
             ))}</ul>
             {states.length === 0 && <p className="text-sm text-muted-foreground">No jobs created in {range.label}.</p>}

@@ -1,5 +1,6 @@
 import { useCallback, useId, useState } from 'react'
 import { cn } from './ui/utils'
+import { AnimatedNumber } from '../lib'
 
 // Charts in the shadcn/ui chart style (grid, axis labels, legend, hover cursor and tooltip), drawn as SVG in pixel space.
 // Colours come from the --chart-n tokens through currentColor. Sizes are measured with a ResizeObserver; geometry set through
@@ -150,7 +151,7 @@ export function BarList({ items, color = 'text-chart-1', empty }) {
               ref={(el) => { if (el) el.style.width = `${Math.max((i.value / max) * 100, 2)}%` }} />
             <span className="relative flex h-full items-center truncate px-2.5">{i.label}</span>
           </span>
-          <span className="font-medium tabular-nums">{i.display ?? i.value}</span>
+          <span className="font-medium tabular-nums">{i.display ?? <AnimatedNumber value={i.value} />}</span>
         </li>
       ))}
     </ul>

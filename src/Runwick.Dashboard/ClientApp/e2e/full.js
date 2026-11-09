@@ -244,6 +244,34 @@ async page => {
     check(await page.getByTestId('nav-retention').count() === 1, 'operator retention nav')
     check(await page.locator('header img, main img').count() === 0 && dialogs.length === 0, 'display name executed')
   })
+  await step('reduced motion: presses do not scale and nothing animates or transitions', async () => {
+    const press = async () => { // hold the press, read the scale, then slide off so it never clicks
+      const box = await page.getByTestId('nav-jobs').boundingBox()
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+      await page.mouse.down()
+      await page.waitForTimeout(250)
+      const scale = await page.getByTestId('nav-jobs').evaluate((el) => getComputedStyle(el).scale)
+      await page.mouse.move(box.x + box.width / 2, box.y + 400)
+      await page.mouse.up()
+      return scale
+    }
+    await page.goto(`${base}/ops/runwick/queues`)
+    await page.getByTestId('queue-row').first().waitFor()
+    const normal = await press()
+    check(normal === '0.97', `press scale with motion: ${normal}`)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    try {
+      await page.goto(`${base}/ops/runwick/queues`)
+      await page.getByTestId('queue-row').first().waitFor()
+      const reduced = await press()
+      check(reduced === 'none', `press scale under reduced motion: ${reduced}`)
+      const moving = await page.evaluate(() => [...document.querySelectorAll('body *')].filter((el) => {
+        const cs = getComputedStyle(el), most = (v) => Math.max(...v.split(',').map(parseFloat))
+        return most(cs.transitionDuration) > 0.001 || (cs.animationName !== 'none' && most(cs.animationDuration) > 0.001)
+      }).map((el) => el.dataset.testid ?? el.tagName).slice(0, 5))
+      check(moving.length === 0, `still moving: ${moving}`)
+    } finally { await page.emulateMedia({ reducedMotion: null }) }
+  })
   await step('no CSP violations or page errors', async () => {
     const csp = await page.evaluate(() => window.__csp)
     check(csp.length === 0, `CSP: ${csp}`)

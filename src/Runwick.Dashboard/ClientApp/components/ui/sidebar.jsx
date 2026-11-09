@@ -71,19 +71,19 @@ export const SidebarContent = ({ className, ...props }) =>
 export function SidebarGroup({ label, children }) {
   return (
     <div className="grid gap-0.5">
-      {label && <p className="flex h-7 items-center px-2 text-[0.7rem] font-medium tracking-wider text-muted-foreground uppercase transition-opacity duration-200 group-data-[sidebar=collapsed]/sidebar:h-0 group-data-[sidebar=collapsed]/sidebar:opacity-0">{label}</p>}
+      {label && <p className="flex h-7 items-center px-2 text-[0.7rem] font-medium tracking-wider text-muted-foreground uppercase overflow-hidden whitespace-nowrap transition-[opacity,height] duration-200 group-data-[sidebar=collapsed]/sidebar:h-0 group-data-[sidebar=collapsed]/sidebar:opacity-0">{label}</p>}
       <ul className="grid gap-0.5">{children}</ul>
     </div>
   )
 }
 
 const itemClass = cn(
-  'group/item relative flex h-9 w-full min-w-0 items-center gap-2.5 overflow-hidden rounded-md px-2.5 text-sm text-muted-foreground outline-none transition-[color,background-color] duration-150',
+  'group/item relative flex h-9 w-full min-w-0 items-center gap-2.5 overflow-hidden rounded-md px-2.5 text-sm text-muted-foreground press outline-none',
   'hover:bg-accent hover:text-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50',
   'data-[active=true]:bg-accent data-[active=true]:font-medium data-[active=true]:text-foreground',
   'before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:scale-y-0 before:rounded-full before:bg-primary before:transition-transform before:duration-200 data-[active=true]:before:scale-y-100',
   '[&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:transition-transform [&>svg]:duration-200 hover:[&>svg]:scale-110',
-  '[&>span]:truncate [&>span]:transition-opacity [&>span]:duration-200 group-data-[sidebar=collapsed]/sidebar:[&>span]:sr-only',
+  '[&>span]:whitespace-nowrap [&>span]:transition-opacity [&>span]:duration-150 group-data-[sidebar=collapsed]/sidebar:[&>span]:opacity-0',
 )
 
 /** One row. In the icon rail the label is visually hidden (still read out) and a tooltip names it. */

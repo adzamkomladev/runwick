@@ -19,7 +19,7 @@ export function Calendar({ className, ...props }) {
         weekday: 'w-9 text-[0.75rem] font-normal text-muted-foreground',
         week: 'mt-1 flex',
         day: 'relative size-9 p-0 text-center text-sm',
-        day_button: 'size-9 rounded-md tabular-nums outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50',
+        day_button: 'size-9 rounded-md tabular-nums outline-none press hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50',
         selected: '[&>button]:bg-primary [&>button]:text-primary-foreground [&>button]:hover:bg-primary',
         range_start: 'rounded-l-md bg-accent',
         range_end: 'rounded-r-md bg-accent',

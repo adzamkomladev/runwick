@@ -1,7 +1,6 @@
 import { IconPlayerPause, IconPlayerPlay } from '@tabler/icons-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
-import { cn } from '../components/ui/utils'
-import { CommandBar, CommandButton, Copyable, Layout, Pager, StateBadge, TableCard, useChanged, useCommand, usePoll, useSort } from '../lib'
+import { CommandBar, CommandButton, Copyable, flash, Layout, Pager, StateBadge, TableCard, useChanged, useCommand, usePoll, useSort } from '../lib'
 
 export default function Queues({ base, can, queues }) {
   const live = usePoll(['queues'], 10)
@@ -19,14 +18,14 @@ export default function Queues({ base, can, queues }) {
           </TableRow></TableHeader>
           <TableBody>{rows.map((q) => {
             const op = q.paused ? 'resume' : 'pause'
-            const url = `${base}/queues/${encodeURIComponent(q.name)}/${op}`
+            const at = `${base}/queues/${encodeURIComponent(q.name)}/`, url = at + op
             return (
-              <TableRow key={`${q.name}:${changed[q.name] ?? 0}`} data-testid="queue-row" className={cn(changed[q.name] && 'animate-flash')}>
+              <TableRow key={q.name} data-testid="queue-row" className={flash(changed[q.name])}>
                 <TableCell className="font-medium"><Copyable value={q.name} label="Copy queue name" /></TableCell>
                 <TableCell data-testid="queue-state"><StateBadge state={q.paused ? 'paused' : 'running'} /></TableCell>
                 <TableCell className="tabular-nums">{q.revision}</TableCell>
                 {can.queueControl && <TableCell className="text-right">
-                  <CommandButton command={command} url={url} data-testid={`queue-${op}`} icon={q.paused ? IconPlayerPlay : IconPlayerPause}
+                  <CommandButton command={command} url={url} pair={at + (q.paused ? 'pause' : 'resume')} data-testid={`queue-${op}`} icon={q.paused ? IconPlayerPlay : IconPlayerPause}
                     onClick={() => command.ask(`${q.paused ? 'Resume' : 'Pause'} ${q.name}`, url, { expectedRevision: q.revision })}>
                     {q.paused ? 'Resume' : 'Pause'}
                   </CommandButton>

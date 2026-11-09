@@ -35,10 +35,10 @@ export function Combobox({ value, onChange, options, placeholder = 'Any', free =
           role="combobox" aria-expanded="true" aria-controls={list} aria-activedescendant={items.length ? `${list}-${active}` : undefined} aria-autocomplete="list"
           className="mb-1 h-8 w-full rounded-md border-b bg-transparent px-2 text-sm outline-none placeholder:text-muted-foreground/70" />
         <ul id={list} role="listbox" className="max-h-60 overflow-y-auto">
-          {value && <li role="option" aria-selected={false} onClick={() => pick('')} className="cursor-default rounded-sm px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent">Clear</li>}
+          {value && <li role="option" aria-selected={false} onClick={() => pick('')} className="cursor-default rounded-sm px-2 py-1.5 text-sm text-muted-foreground press hover:bg-accent">Clear</li>}
           {items.map((o, i) => (
             <li key={o} id={`${list}-${i}`} role="option" aria-selected={o === value} onMouseEnter={() => setActive(i)} onClick={() => pick(o)}
-              className={cn('flex cursor-default items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-sm', i === active && 'bg-accent text-accent-foreground')}>
+              className={cn('flex cursor-default items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-sm press', i === active && 'bg-accent text-accent-foreground')}>
               <span className="truncate">{i === shown.length ? <>Use “{o}”</> : o}</span>{o === value && <IconCheck className="size-4" />}
             </li>
           ))}

@@ -9,7 +9,7 @@ import { Checkbox } from '../components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { cn } from '../components/ui/utils'
-import { CommandBar, CommandButton, Copyable, FilterSheet, Layout, StateBadge, TableCard, time, useChanged, useCommand, usePoll, useSort } from '../lib'
+import { CommandBar, CommandButton, Copyable, FilterSheet, flash, Layout, StateBadge, TableCard, time, useChanged, useCommand, usePoll, useSort } from '../lib'
 
 const STATES = ['pending', 'reserved', 'running', 'retrying', 'succeeded', 'failed', 'cancelled']
 
@@ -28,7 +28,7 @@ function StateChips({ query }) {
         const on = (query.state ?? null) === st
         return (
           <Link key={st ?? 'all'} href={href(st)} aria-current={on ? 'true' : undefined}
-            className={cn('inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-[color,background-color,border-color,transform] duration-150 outline-none active:scale-95 focus-visible:ring-[3px] focus-visible:ring-ring/50',
+            className={cn('inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium press outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
               on ? 'border-primary bg-primary text-primary-foreground shadow-sm' : 'bg-card text-muted-foreground hover:border-foreground/20 hover:text-foreground')}>
             {st && <StatusDot state={st} />}{st ?? 'All'}
           </Link>
@@ -101,8 +101,8 @@ export default function Jobs({ base, can, jobs, query, queueNames }) {
           </TableHeader>
           <TableBody>
             {rows.map((j) => (
-              <TableRow key={`${j.jobId}:${changed[j.jobId] ?? 0}`} data-testid="job-row" data-state={selected[j.jobId] ? 'selected' : undefined}
-                className={cn(changed[j.jobId] && 'animate-flash')}>
+              <TableRow key={j.jobId} data-testid="job-row" data-state={selected[j.jobId] ? 'selected' : undefined}
+                className={flash(changed[j.jobId])}>
                 {can.cancel && <TableCell><Checkbox aria-label="select" checked={!!selected[j.jobId]} onCheckedChange={() => toggle(j.jobId)} /></TableCell>}
                 <TableCell className="max-w-80 font-medium">
                   <Copyable value={j.jobName} label="Copy job name">
