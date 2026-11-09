@@ -59,6 +59,23 @@ async page => {
     await page.getByTestId('done').waitFor()
     await page.waitForFunction(() => document.querySelector('[data-testid="generation"]')?.textContent === '2')
   })
+  await step('job page: status timeline shows each step, the retry and its actor', async () => {
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid="timeline"] > li').length >= 5)
+    const t = await text('timeline')
+    check(t.includes('Created') && t.includes('Attempt 1') && t.includes('admin'), `timeline: ${t.slice(0, 200)}`)
+  })
+  await step('sidebar collapses with Ctrl+B, stays collapsed after reload, and expands again', async () => {
+    const width = () => page.locator('aside').first().evaluate((el) => el.getBoundingClientRect().width)
+    await page.keyboard.press('Control+b')
+    await page.waitForFunction(() => document.querySelector('aside').getBoundingClientRect().width < 80)
+    await page.reload()
+    await page.getByTestId('job-name').waitFor()
+    check(await width() < 80, 'not remembered')
+    check(await page.getByTestId('nav-jobs').count() === 1, 'nav lost when collapsed')
+    await page.keyboard.press('Control+b')
+    await page.waitForFunction(() => document.querySelector('aside').getBoundingClientRect().width > 200)
+    await page.evaluate(() => { window.__sameDocument = true })
+  })
   await step('partial reload: audit loads on demand', async () => {
     await page.getByTestId('load-audit').click()
     await page.getByTestId('audit').waitFor()
