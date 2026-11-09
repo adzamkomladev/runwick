@@ -420,7 +420,8 @@ public sealed class RedisCrashTests(R01Server server) : IClassFixture<R01Server>
             }
 
             Assert.Equal("", (string?)await db.HashGetAsync(meta, "guard") ?? "");
-            var recovered = await StateAsync(c.Application, guard);
+            var markers = op.Envelope ? "*" : guard; // a batch's items each write their own receipt's marker
+            var recovered = await StateAsync(c.Application, markers);
 
             // The clean run: the start state under a second prefix, the same intent stored (write 1 exactly), projected uninterrupted.
             var reference = "r01ref_" + Guid.NewGuid().ToString("N")[..8];
@@ -464,7 +465,7 @@ public sealed class RedisCrashTests(R01Server server) : IClassFixture<R01Server>
                 Assert.Equal(op.Envelope ? "0" : "1", (string?)got[3]);
             }
 
-            var clean = await StateAsync(reference, guard);
+            var clean = await StateAsync(reference, markers);
             Assert.True(clean.SequenceEqual(recovered), $"{name} n={n}: {FirstDifference(recovered, clean)}");
             compared++;
             foreach (var k in await KeysAsync(reference))
