@@ -84,7 +84,7 @@ public sealed class BuildAndPermissionTests
         var can = page.Props().GetProperty("can");
         var expected = new Dictionary<string, string>
         {
-            ["jobs"] = ManagementPermissions.JobsRead, ["queues"] = ManagementPermissions.QueuesRead, ["workers"] = ManagementPermissions.CapacityRead,
+            ["overview"] = ManagementPermissions.JobsRead, ["jobs"] = ManagementPermissions.JobsRead, ["queues"] = ManagementPermissions.QueuesRead, ["workers"] = ManagementPermissions.CapacityRead,
             ["schedules"] = ManagementPermissions.SchedulesRead, ["scaling"] = ManagementPermissions.CapacityRead,
             ["settings"] = ManagementPermissions.SettingsRead, ["retention"] = ManagementPermissions.SettingsRead, ["audit"] = ManagementPermissions.AuditRead,
             ["cancel"] = ManagementPermissions.JobsCancel, ["retry"] = ManagementPermissions.JobsRetry, ["rerun"] = ManagementPermissions.JobsRerun,
@@ -100,7 +100,7 @@ public sealed class BuildAndPermissionTests
         }
 
         // Each page the nav would list is 200; each it would hide is 403. The server checks; the map is a hint.
-        foreach (var (name, route) in new[] { ("jobs", "/runwick/jobs"), ("queues", "/runwick/queues"), ("workers", "/runwick/workers"),
+        foreach (var (name, route) in new[] { ("overview", "/runwick/overview"), ("jobs", "/runwick/jobs"), ("queues", "/runwick/queues"), ("workers", "/runwick/workers"),
                      ("schedules", "/runwick/schedules"), ("scaling", "/runwick/scaling"), ("settings", "/runwick/settings"),
                      ("retention", "/runwick/retention"), ("audit", "/runwick/audit") })
         {

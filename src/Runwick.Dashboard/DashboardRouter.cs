@@ -14,6 +14,7 @@ internal static class DashboardRouter
             await (DashboardRequest.Segments(r.Http) switch
             {
                 [] or ["jobs"] => Get(r, JobsPage.Instance),
+                ["overview"] => Get(r, OverviewPage.Instance),
                 ["jobs", var id] when Guid.TryParse(id, out var job) => Get(r, new JobPage(job)),
                 ["queues"] => Get(r, QueuesPage.Instance),
                 ["workers"] => Get(r, WorkersPage.Instance),

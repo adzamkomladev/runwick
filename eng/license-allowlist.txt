@@ -7,3 +7,4 @@ BSD-3-Clause
 BSD-2-Clause
 PostgreSQL
 npm:MIT
+npm:Apache-2.0

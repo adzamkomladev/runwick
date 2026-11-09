@@ -4,7 +4,7 @@
 
 ## In short
 
-SP-024 ships `Runwick.Dashboard`: a web UI for people who run Runwick. It shows jobs and their attempts, queues, workers and capacity, schedules, scaling history, settings, retention and audit. It lets people with the right permission run the existing controls (cancel, retry, pause, and so on).
+SP-024 ships `Runwick.Dashboard`: a web UI for people who run Runwick. It shows an overview, jobs and their attempts, queues, workers and capacity, schedules, scaling history, settings, retention and audit. It lets people with the right permission run the existing controls (cancel, retry, pause, and so on).
 
 - **No second backend.** Every page reads through `IManagementSession` (16), in the same process. The dashboard adds one read (scaling history, §6). Everything else already exists.
 - **Same login, same permissions.** The dashboard uses the authentication schemes, grant mapping and actor mapping of `AddRunwickManagement` (16 §5). A page or button is shown only when the caller's grants allow it, and the server checks again on every request.
@@ -30,6 +30,12 @@ Not in SP-024: server-side rendering, a live push channel (SSE or WebSocket), qu
   11. Standalone is a host configuration, not a shipped program (§2.3).
   12. The spike project, its tests and its sample host are removed once their tests are ported (§9).
   13. The mount root shows the Jobs page.
+- (2026-11-09) Client rebuilt on shadcn/ui components, with an Overview page. The list:
+  1. New page Overview (`/overview`, §4): key-figure cards with small trend lines, recent failures, queues and the latest scaling events. It uses only reads that already exist. Each figure is a tally of one read's first page (at most 50 rows, shown as "50+" when the read has a next page), never a total. A prop the caller may not read is `null`, and the page polls only the props the caller may read. The `can` map gains `overview` (`Jobs.Read`). The mount root still shows the Jobs page.
+  2. New client dependencies (§7.1): Tailwind CSS (compiled to the one static stylesheet), the shadcn/ui component sources written into `ClientApp/components/ui/`, `radix-ui`, `@tabler/icons-react`, `class-variance-authority`, `clsx`, `tailwind-merge`, `tw-animate-css`. `@tailwindcss/vite` is build-only.
+  3. Two local shims replace `react-remove-scroll` and `aria-hidden` through npm `overrides` (§7.1). The real packages inject a `<style>` element at run time, which the CSP blocks, and depend on `tslib` (0BSD, outside the licence allow-list).
+  4. Icons are Tabler (MIT), not lucide (ISC). Trend lines are small hand-drawn SVGs, not Recharts: Recharts depends on d3 packages under ISC. Both licences need an owner decision before they can be bundled.
+  5. `npm:Apache-2.0` is on the licence allow-list (for `class-variance-authority`); `eng/check-licenses.sh` skips npm `link` entries, whose target is checked under its own path.
 
 ## 1. Package
 
@@ -192,6 +198,7 @@ Routes are relative to the mount. All pages are `GET`. "Poll" is the interval wh
 
 | Page (component) | Route | Session reads (permission) | Actions (permission) | Poll |
 |---|---|---|---|---|
+| Overview (`Overview`) | `/overview` | first pages of `ListJobsAsync` (created in the last hour; failed, created in the last 24 h; pending), `ListQueuesAsync`, `ListWorkersAsync`, `ListScalingEventsAsync` (page: `Jobs.Read`; each prop its own read permission, `null` without it) | none | 10 s |
 | Jobs (`Jobs`) | `/`, `/jobs?queue&state&jobName&from&to&cursor` | `ListJobsAsync` (`Jobs.Read`) | bulk cancel of selected rows, ≤ 100 (`Jobs.Cancel` per item) | 5 s |
 | Job (`Job`) | `/jobs/{id}` | `GetJobAsync` (`Jobs.Read` on its queue) | cancel, retry, rerun (`Jobs.Cancel`/`Retry`/`Rerun`); reveal payload (`Jobs.ReadPayload`); reveal an attempt's error (`Jobs.ReadError`) | 5 s |
 | Queues (`Queues`) | `/queues?cursor` | `ListQueuesAsync` (`Queues.Read`) | pause, resume (`Queues.Control` on that queue) | 10 s |
@@ -296,7 +303,10 @@ public sealed record ScalingEventSummary(Guid EventId, Guid InstanceId, string P
 - React 19.3.1, `@inertiajs/react` and `@inertiajs/core` 3.9.1, Vite 8.3.4, `@vitejs/plugin-react` 6.1.2 (exact versions in `package.json`; hashes in `package-lock.json`, as in the spike).
 - SPA only: no SSR, no Vite dev-server discovery, no runtime TypeScript generation, no external fetch (no CDN, no web fonts).
 - No `dangerouslySetInnerHTML`, `eval`, `new Function` or HTML parsing of job data in `ClientApp/` sources.
-- No new npm dependency beyond the five above without a spec change.
+- **[choice]** UI: shadcn/ui components (sources in `ClientApp/components/ui/`, adapted to plain JSX) on `radix-ui` 1.8.1, Tailwind CSS 4.3.3 (with `@tailwindcss/vite`, build-only), `tw-animate-css` 1.4.0, `class-variance-authority` 0.7.1, `clsx` 2.1.1, `tailwind-merge` 3.7.0 and `@tabler/icons-react` 3.49.0. System fonts only.
+- `react-remove-scroll` and `aria-hidden` are replaced by the local shims in `ClientApp/shims/` (npm `overrides`). The shim locks page scroll by setting `data-scroll-locked` on `<body>`, which `app.css` turns into `overflow: hidden`, so no `<style>` element is ever created.
+- Light and dark themes, plus the system setting; the choice is kept in `localStorage` in that browser only. Every animation and transition is cut to nothing under `prefers-reduced-motion: reduce`.
+- No new npm dependency beyond those above without a spec change.
 
 ### 7.2 Build and embedding
 
@@ -382,7 +392,7 @@ DSH-01 … 04 are new IDs for checks the source cases do not name.
 
 - that hiding a page or button is authorization; the server checks every request;
 - live updates: the dashboard polls; a list can be up to one interval (or 60 s after failures) old, and every list says when it was read;
-- queue depth, job totals or any count; the dashboard has none;
+- queue depth, job totals or any count beyond one page; the Overview tallies at most one page of a read ("50+" beyond it);
 - that a cancel stopped a handler (00 §9 rule 5); "cancel requested" is shown as requested;
 - that an `outcome_unknown` action failed or succeeded;
 - that a revealed payload can be taken back from the browser, a screenshot or memory;

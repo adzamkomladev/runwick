@@ -1,0 +1,8 @@
+{
+  "name": "aria-hidden",
+  "version": "0.0.0-runwick",
+  "description": "Runwick shim of hideOthers: the real package pulls tslib (0BSD), outside the licence allow-list.",
+  "license": "MIT",
+  "type": "module",
+  "main": "index.js"
+}
