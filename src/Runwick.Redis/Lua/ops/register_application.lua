@@ -4,12 +4,12 @@ local created = false
 function M.seed()
   created = true
   return { store = STORE, layout = ARGS(1), epoch = ARGS(2), mode = ARGS(3), digest = ARGS(4), admission = 'open', reqepoch = '1',
-    caps = '{}', gaterev = '1' }
+    caps = '{}', gaterev = '1', bf = 'done' }
 end
 function M.decide()
   local m = U.meta
   if created then
-    for _, f in ipairs({ 'store', 'layout', 'epoch', 'mode', 'digest', 'admission', 'reqepoch', 'caps', 'gaterev' }) do U.hset('meta', f, m[f]) end
+    for _, f in ipairs({ 'store', 'layout', 'epoch', 'mode', 'digest', 'admission', 'reqepoch', 'caps', 'gaterev', 'bf' }) do U.hset('meta', f, m[f]) end
     U.hset('meta', 'created', NOWS)
   end
   return U.applied({ created = created, revision = U.raw(m.gaterev), admissionMode = m.admission })

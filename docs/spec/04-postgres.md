@@ -6,6 +6,18 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-10, exact stats)
+
+- Migration `0020_stats_indexes`, schema revision 20: two plain indexes, no function and no data change (`lock_timeout` 5 s, as the other index migrations).
+  - `jobs_name_list (application, queue, job_name)`: `ListJobTypes` (16 §2.6) reads the distinct `(queue, job_name)` pairs by a recursive skip scan (one `min()` probe per pair). On a 1M-job table the plan went from a full scan to 1.5 ms.
+  - `job_attempts_errors (application, finished_at) WHERE error IS NOT NULL`: the error codes of `GetJobStats` (16 §2.4). Without it the plan scanned all of `job_attempts` (1.0–1.6 s on the test table); with it, about 370 ms for 12,900 errors in a day.
+- `GetJobStats`, `GetScheduleStats` and `GetAuditStats` are plain SQL in the management read transaction with a 5 s `statement_timeout` and `jit = off` (JIT compilation added about a quarter to the job stats read). Job stats group in SQL (`GROUPING SETS` with `percentile_cont`); created jobs use `jobs_queue_list`, ended jobs `jobs_terminal_retention` with one probe of `job_attempts_job_attempt_uq` per job for the duration, live counts `jobs_ready` and `jobs_expired_lease`. Measured on 1M jobs (about 43,000 created and 39,000 ended per day): created about 0.1 s, ended about 1 s, live 0.4–0.7 s. `GetQueueStats` is removed.
+
+## Changes (2026-11-10, worker detail)
+
+- Migration `0019_worker_detail`, schema revision 19: `worker_instances.detail jsonb NULL` (no default, no rewrite; a check allows only an object of at most 32 KiB of text, a backstop above the 16 KiB of compact JSON the driver sends) and `publish_presence_v2`, which runs `publish_presence_v1` unchanged and, when it applied, sets `detail` on the row it wrote (same instance and presence sequence; v1 already holds the row). A publication without detail clears it. `publish_presence_v1` stays. The manifest changes only `schemaRevision`; `PublishPresence/1` keeps version 1 (16 §2.3).
+- `GetQueueStats` and `GetSchedule` (16 §2.4, §2.5) are plain SQL in the management read transaction: jobs from `jobs_queue_list` read backwards, the oldest waiting eligible time as `LEAST` of one `jobs_ready` probe per priority, occurrences joined to `jobs` for their state. No new function or index.
+
 ## Changes (2026-11-09, attempt usage)
 
 - Migration `0018_attempt_usage`, schema revision 18: `job_attempts.usage jsonb NULL` (no default, so no rewrite and no backfill) and two new functions. `finish_v3` and `finish_many_v3` run `finish_v2` and `finish_many_v2` unchanged, then, when the Finish (or each batch item) applied, set `usage` on that attempt if it is still null. The attempt row is already locked by the close, so the lock order of §5 is unchanged. Released functions are not edited; `finish_v2` and `finish_many_v2` stay. The manifest changes only `schemaRevision`; `Finish/1` and `FinishMany/1` keep version 1 (16 §2.2: `usage` is an optional body field).

@@ -175,9 +175,97 @@ public sealed record JobDetail(JobSummary Job, IReadOnlyList<JobGenerationInfo> 
 
 public sealed record QueueSummary(string Name, bool Paused, long Revision);
 
+/// <summary>
+/// One worker instance. <see cref="Detail"/> is what the worker reported with its last presence (host, pools, settings, running
+/// and recent attempts; 05 §14); null for an older worker. Running and recent attempts are listed only for queues the caller
+/// may read jobs in.
+/// </summary>
 public sealed record WorkerSummary(
     Guid InstanceId, string HostName, int ProcessId, string BuildId, string Status, JsonNode? Subscriptions, JsonNode? PoolTargets,
-    DateTimeOffset StartedAt, DateTimeOffset HeartbeatAt, DateTimeOffset ExpiresAt);
+    DateTimeOffset StartedAt, DateTimeOffset HeartbeatAt, DateTimeOffset ExpiresAt, JsonNode? Detail = null);
+
+/// <summary>
+/// A job stats read (16 §2.4). The range defaults to the last 24 hours and is at most 31 days; <see cref="Buckets"/> (1-96) equal
+/// slices of [From, To). <see cref="WorkerInstanceId"/> keeps jobs with an attempt run by that worker (no groups then).
+/// </summary>
+public sealed record JobStatsQuery(
+    DateTimeOffset? From = null, DateTimeOffset? To = null, int Buckets = 24, string? Queue = null, string? JobName = null,
+    Guid? WorkerInstanceId = null, bool ByQueue = false, bool ByJobName = false);
+
+/// <summary>
+/// One slice [From, next From): jobs created in it, jobs that ended in it by final state, and the median and 95th percentile
+/// duration of the jobs that ended in it (null when none ran).
+/// </summary>
+public sealed record JobStatsBucket(DateTimeOffset From, long Created, long Succeeded, long Failed, long Cancelled, double? MedianMs = null,
+    double? P95Ms = null);
+
+/// <summary>Durations of the jobs that ended in the range and ran: first start (or reservation) of the current generation to the end.</summary>
+public sealed record JobDurationStats(long Count, double? MedianMs, double? P95Ms, double? MaxMs);
+
+public sealed record JobErrorCount(string Code, long Count);
+
+/// <summary>
+/// One queue or job name. <see cref="LastAt"/>, <see cref="LastState"/> and <see cref="LastJobId"/> are its newest job created in
+/// the range; <see cref="Now"/> and <see cref="OldestPendingEligibleAt"/> are live, like <see cref="JobStats"/>'s.
+/// </summary>
+public sealed record JobStatsGroup(
+    string Key, IReadOnlyDictionary<string, long> States, long Retries, JobDurationStats Duration, DateTimeOffset? LastAt, string? LastState,
+    Guid? LastJobId, IReadOnlyList<JobStatsBucket> Buckets, IReadOnlyDictionary<string, long> Now, DateTimeOffset? OldestPendingEligibleAt);
+
+/// <summary>
+/// Exact job figures (16 §2.4). <see cref="States"/> and <see cref="Retries"/> (executions beyond the first) count the jobs created
+/// in [From, To) by their current state; bucket <c>Created</c> likewise. Ended counts, durations and bucket percentiles cover the
+/// jobs that ended in [From, To), whenever created. <see cref="Now"/> is live, whatever the range: <c>pending</c> (eligible now),
+/// <c>scheduled</c> (eligible later), <c>reserved</c> and <c>running</c>. <see cref="ErrorCodes"/> are the 10 most frequent error
+/// codes of attempts that finished in the range.
+/// </summary>
+public sealed record JobStats(
+    DateTimeOffset From, DateTimeOffset To, DateTimeOffset ObservedAt, IReadOnlyDictionary<string, long> States, long Retries,
+    JobDurationStats Duration, IReadOnlyList<JobStatsBucket> Buckets, IReadOnlyDictionary<string, long> Now, DateTimeOffset? OldestPendingEligibleAt,
+    IReadOnlyList<JobStatsGroup>? Queues, IReadOnlyList<JobStatsGroup>? JobNames, IReadOnlyList<JobErrorCount> ErrorCodes);
+
+/// <summary>
+/// One job name the system knows (16 §2.6): from this host's registry (<see cref="Registered"/>, with its queue, priority, payload
+/// version and <see cref="Definition"/>), from stored jobs (<see cref="SeenInStore"/>) and from schedule definitions
+/// (<see cref="Schedules"/>, their keys). Live handlers are in each worker's detail.
+/// </summary>
+public sealed record JobTypeSummary(
+    string Name, bool Registered, string? Queue, string? Priority, int? PayloadVersion, JsonNode? Definition, IReadOnlyList<string> Schedules,
+    bool SeenInStore);
+
+/// <summary>Schedules now (total, paused, needing review, the next due time of an unpaused one) and occurrences materialized in the range.</summary>
+public sealed record ScheduleStats(
+    DateTimeOffset From, DateTimeOffset To, long Total, long Paused, long NeedsReview, DateTimeOffset? NextDueAt,
+    IReadOnlyDictionary<string, long> Occurrences, long Misfires);
+
+public sealed record AuditOperationCount(string Operation, long Count);
+
+public sealed record AuditActorCount(string Actor, long Count);
+
+/// <summary>
+/// Audit rows in the range by operation (most first) and the five most active actors. <see cref="Denied"/> is null: refused
+/// calls are not audited (16 §5).
+/// </summary>
+public sealed record AuditStats(
+    DateTimeOffset From, DateTimeOffset To, long Total, IReadOnlyList<AuditOperationCount> Operations, IReadOnlyList<AuditActorCount> Actors,
+    long? Denied);
+
+/// <summary>A schedule's current definition revision without its payload template.</summary>
+public sealed record ScheduleDefinitionInfo(
+    long Revision, string Kind, string? CronText, string? CronDialect, string? ZoneId, DateTimeOffset? DueAt, string JobName, string Queue,
+    string MisfirePolicy, long MisfireGraceMs, string OverlapPolicy, string GapPolicy, string FoldPolicy, int MaxBatch, int MaxEpisodeJobs,
+    long MaxCatchUpAgeMs);
+
+/// <summary>
+/// One materialized occurrence. <see cref="JobState"/> is the job's current state, null when the job is gone or the caller may
+/// not read jobs in the definition's queue.
+/// </summary>
+public sealed record ScheduleOccurrenceInfo(
+    string Kind, string Key, DateTimeOffset? ScheduledAt, DateTimeOffset MaterializedAt, string Disposition, bool Coalesced, Guid? JobId,
+    string? JobState);
+
+/// <summary>A schedule, its current definition and its newest occurrences first.</summary>
+public sealed record ScheduleDetail(ScheduleSummary Schedule, ScheduleDefinitionInfo Definition, IReadOnlyList<ScheduleOccurrenceInfo> Occurrences);
 
 public sealed record ScopeSummary(string Kind, string Key, int Capacity, long PolicyRevision, int LivePermits);
 
@@ -209,6 +297,11 @@ public sealed record BulkCancelItem(Guid JobId, Guid CommandId, int ExpectedGene
 /// <c>not_found</c>, <c>forbidden</c> or <c>unavailable</c>.
 /// </summary>
 public sealed record BulkCancelResult(Guid JobId, string Status, string? Code, JobControlResult? Result);
+
+public sealed record BulkRetryItem(Guid JobId, Guid CommandId, int ExpectedGeneration, long ExpectedRevision);
+
+/// <summary>One bulk retry item: <c>applied</c>, <c>rejected</c> (with <see cref="Code"/>), <c>not_found</c>, <c>forbidden</c> or <c>unavailable</c>.</summary>
+public sealed record BulkRetryResult(Guid JobId, string Status, string? Code, JobControlResult? Result);
 
 /// <summary>
 /// An audited dispatch by job name (19 §6.2). <see cref="CommandId"/> is the dispatch operation ID; resend it unchanged

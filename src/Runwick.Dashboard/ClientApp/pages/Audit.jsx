@@ -1,14 +1,22 @@
 import { Badge } from '../components/ui/badge'
 import { Table, TableBody, TableCell, TableHeader, TableRow } from '../components/ui/table'
+import { IconHistory, IconUser, IconBolt, IconListDetails } from '@tabler/icons-react'
 import { DateRangePicker } from '../components/date-range'
+import { Kpi, KpiStrip } from '../components/kpis'
 import { Copyable, FilterSheet, Layout, Pager, TableCard, time, usePoll, useSort } from '../lib'
 
 
-export default function Audit({ audit, query }) {
-  const live = usePoll(['audit'], 15)
+export default function Audit({ audit, stats, query }) {
+  const live = usePoll(['audit', 'stats'], 15)
   const [rows, head] = useSort(audit.items)
   return (
     <Layout heading="Audit" live={live}>
+      <KpiStrip label="Audit stats" className="xl:grid-cols-4">
+        <Kpi testId="kpi-actions" icon={IconHistory} label="Actions" value={stats.total} foot={query.range || query.from ? 'In the range' : 'In the last 24 h'} />
+        <Kpi testId="kpi-actor" icon={IconUser} label="Top actor" value={stats.actors[0]?.actor ?? '—'} foot={stats.actors[0] ? `${stats.actors[0].count.toLocaleString()} actions` : 'Nobody acted'} />
+        <Kpi testId="kpi-operation" icon={IconBolt} label="Top action" value={stats.operations[0]?.operation ?? '—'} foot={stats.operations[0] ? `${stats.operations[0].count.toLocaleString()} times` : 'None'} />
+        <Kpi testId="kpi-kinds" icon={IconListDetails} label="Kinds of action" value={stats.operations.length} foot={stats.operations.length ? stats.operations.slice(0, 3).map((o) => o.operation).join(', ') : 'None'} />
+      </KpiStrip>
       <TableCard toolbar={<div className="ml-auto flex items-center gap-2"><DateRangePicker query={query} /><FilterSheet values={query} fields={[{ name: 'targetKind', label: 'Target kind', options: ['job', 'queue', 'schedule', 'scope', 'rate_scope', 'application'], free: true }, { name: 'targetId', label: 'Target ID' }]} /></div>} pager={<Pager page={audit} />}
         empty={audit.items.length === 0 && 'No audit rows in this range.'}>
         <Table data-testid="audit">

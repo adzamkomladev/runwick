@@ -20,6 +20,9 @@ internal sealed record DisclosureRequest(string Kind, Guid TargetId, IReadOnlyLi
 /// <summary><see cref="Status"/>: <c>disclosed</c>, <c>not_found</c> or <c>detail_expired</c>; data only when disclosed.</summary>
 internal sealed record Disclosure(string Status, Guid? JobId, JsonNode? Payload, JsonNode? Headers, JsonNode? Error);
 
+/// <summary>Distinct (job name, queue) pairs of stored jobs, and each schedule's key with its current definition's job name and queue.</summary>
+internal sealed record JobNamesRead(IReadOnlyList<(string JobName, string Queue)> Stored, IReadOnlyList<(string Key, string JobName, string Queue)> Schedules);
+
 internal interface IManagementQueryStore
 {
     Task<StoreRead<IReadOnlyList<JobSummary>>> ListJobsAsync(string application, IReadOnlyList<string>? queues, JobListFilter filter,
@@ -47,6 +50,21 @@ internal interface IManagementQueryStore
     /// <summary>Scaling history, <c>created_at DESC, event_id DESC</c> (21 §6).</summary>
     Task<StoreRead<IReadOnlyList<ScalingEventSummary>>> ListScalingEventsAsync(string application, ScalingEventFilter filter,
         (DateTimeOffset CreatedAt, Guid EventId)? after, int limit, CancellationToken ct);
+
+    /// <summary>Exact job figures for the filter, grouped as <see cref="JobStatsCells"/> describes (16 §2.4).</summary>
+    Task<StoreRead<JobStatsCells>> GetJobStatsAsync(string application, JobStatsFilter filter, CancellationToken ct);
+
+    /// <summary>Every distinct (job name, queue) of stored jobs and the job name of every schedule (16 §2.6).</summary>
+    Task<StoreRead<JobNamesRead>> ListJobNamesAsync(string application, CancellationToken ct);
+
+    /// <summary>Schedules now, and occurrences and misfire ranges recorded in [from, to) (16 §2.7).</summary>
+    Task<StoreRead<ScheduleStats>> GetScheduleStatsAsync(string application, DateTimeOffset from, DateTimeOffset to, CancellationToken ct);
+
+    /// <summary>Audit rows that occurred in [from, to): total, every operation's count and every actor's (16 §2.7).</summary>
+    Task<StoreRead<AuditStats>> GetAuditStatsAsync(string application, DateTimeOffset from, DateTimeOffset to, CancellationToken ct);
+
+    /// <summary>Null for an unknown key. Occurrences newest materialized first, at most <paramref name="limit"/>, each with its job's state.</summary>
+    Task<StoreRead<ScheduleDetail?>> GetScheduleAsync(string application, string key, int limit, CancellationToken ct);
 
     /// <summary>One transaction: the audit row, then the read; data leaves only after the commit (16 §3).</summary>
     Task<StoreReply<Disclosure>> RecordDisclosureAsync(StoreCommand<DisclosureRequest> command, CancellationToken ct);

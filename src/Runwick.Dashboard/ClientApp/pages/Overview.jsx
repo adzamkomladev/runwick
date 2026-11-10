@@ -4,31 +4,20 @@ import {
   IconAlertTriangle, IconArrowDownRight, IconArrowRight, IconArrowUpRight, IconCircleCheck, IconListDetails, IconLoader, IconMinus,
 } from '@tabler/icons-react'
 import { useEffect, useRef, useState } from 'react'
-import { BarList, Chart, Legend, Spark } from '../components/charts'
+import { Bar, BarList, Chart, Legend, Spark } from '../components/charts'
 import { StatusBadge, StatusDot } from '../components/status'
 import { relative } from '../components/timeline'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { cn } from '../components/ui/utils'
-import { AnimatedNumber, Layout, SkeletonScope, standIn, time, usePoll } from '../lib'
+import { AnimatedNumber, Layout, NameLink, OpenButton, SkeletonScope, standIn, time, usePoll } from '../lib'
 
-// Every figure is computed from one page (up to 200 rows) of a read that already exists; there is no count read (16). The
-// cards and charts cover the range in the picker (default the last 24 hours). When the read hit the 200-row limit, the captions
-// say so and how far back the sample reaches; a delta (second half of the range vs the first) is shown only when the sample
-// covers the whole range. "In flight now" is a live snapshot and says so.
+// Every figure is exact (16 GetJobStats over the range in the picker, default the last 24 hours; by queue and by job name). The
+// delta compares the range's second half with its first. "In flight now" and "Pending by queue" are live and say so.
 
 const HOUR = 3_600_000
 const BUCKETS = 24
-
-/**
- * What a read covers within the chosen range: the whole range, or (when the 200-row page was full) only back to its oldest row,
- * since older rows exist but were not read. `sampleFrom` is null when the sample is complete.
- */
-function coverage(page, range) {
-  if (!page.next || page.items.length === 0) return { ...range, sampleFrom: null }
-  return { ...range, sampleFrom: Math.min(...page.items.map((j) => Date.parse(j.createdAt))) }
-}
 
 /** The chosen range from the URL: a preset, a from/to pair, or the default of the last 24 hours (what the picker shows). */
 function useRange(now) {
@@ -38,16 +27,6 @@ function useRange(now) {
   const to = custom && q.to ? Date.parse(q.to) : now
   const fmt = (t) => new Date(t).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
   return { query: q, from, to, label: custom ? `${fmt(from)} to ${q.to ? fmt(to) : 'now'}` : `the last ${fmtSpan(to - from)}` }
-}
-
-function bucketize(items, field, { from, to }, filter = () => true) {
-  const width = (to - from) / BUCKETS, out = Array(BUCKETS).fill(0)
-  for (const i of items) {
-    const at = i[field] && Date.parse(i[field])
-    if (!at || at < from || at > to || !filter(i)) continue
-    out[Math.min(BUCKETS - 1, Math.floor((at - from) / width))]++
-  }
-  return out
 }
 
 const fmtSpan = (ms) => (ms >= 48 * HOUR ? `${Math.round(ms / (24 * HOUR))} d` : ms >= HOUR ? `${+(ms / HOUR).toFixed(ms < 3 * HOUR ? 1 : 0)} h` : ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : `${Math.max(1, Math.round(ms / 1000))} s`)
@@ -84,11 +63,11 @@ function Delta({ now, before, invert, unit = '%' }) {
 
 function Kpi({ title, value, more, suffix, delta, foot, spark, color, href, testId, icon: Icon }) {
   return (
-    <Link href={href} data-testid={testId} className="group rounded-xl outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
-      <Card className="relative h-full gap-2 overflow-hidden pb-0 transition-[box-shadow,transform,border-color] duration-200 group-hover:border-primary/30 group-hover:shadow-lg motion-safe:group-hover:-translate-y-0.5 motion-safe:group-active:translate-y-0 motion-safe:group-active:scale-[0.99]">
+    <Link href={href} data-testid={testId} className="group lift rounded-xl outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+      <Card className="relative h-full gap-2 overflow-hidden pb-0">
         <CardHeader>
           <CardDescription className="flex items-center gap-1.5"><Icon className="size-4" aria-hidden />{title}</CardDescription>
-          <CardAction><IconArrowRight className="size-4 -translate-x-1 text-muted-foreground opacity-0 transition-all duration-200 group-hover:translate-x-0 group-hover:opacity-100" aria-hidden /></CardAction>
+          <CardAction><IconArrowRight className="size-4 -translate-x-1 text-muted-foreground opacity-0 transition-[translate,opacity] duration-200 ease-glide group-hover:translate-x-0 group-hover:opacity-100" aria-hidden /></CardAction>
           <CardTitle className="flex items-baseline gap-1 text-3xl font-semibold tracking-tight"><AnimatedNumber value={value} more={more} />{suffix && <span className="text-lg text-muted-foreground">{suffix}</span>}</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-1 px-5 text-xs text-muted-foreground">
@@ -96,7 +75,7 @@ function Kpi({ title, value, more, suffix, delta, foot, spark, color, href, test
           <span>{foot}</span>
         </CardContent>
         <div className="mt-auto -mb-px">{spark}</div>
-        <span aria-hidden className={cn('absolute inset-x-0 top-0 h-0.5 origin-left scale-x-0 bg-current transition-transform duration-300 group-hover:scale-x-100', color)} />
+        <span aria-hidden className={cn('absolute inset-x-0 top-0 h-0.5 origin-left scale-x-0 bg-current transition-transform duration-200 ease-glide group-hover:scale-x-100', color)} />
       </Card>
     </Link>
   )
@@ -115,19 +94,19 @@ const More = ({ href, children }) => (
   </Link>
 )
 
-const top = (items, key, n = 6) => Object.entries(items.reduce((m, i) => ({ ...m, [key(i)]: (m[key(i)] ?? 0) + 1 }), {}))
-  .sort((a, b) => b[1] - a[1]).slice(0, n).map(([label, value]) => ({ label, value }))
+/** The largest values of a map or of groups, as BarList items. */
+const top = (pairs, n = 6) => pairs.filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, n).map(([label, value]) => ({ label, value }))
 
 export default function Overview(props) {
-  const { can, recent, failed, pending, running } = props
-  const live = usePoll(['recent', 'failed', 'pending', 'running', ...(can.queues ? ['queues'] : []), ...(can.workers ? ['workers', 'events'] : [])], 10)
+  const { can, stats, failed } = props
+  const live = usePoll(['stats', 'failed', ...(can.queues ? ['queues'] : []), ...(can.workers ? ['workers', 'events'] : [])], 10)
   const now = Date.now()
   const range = useRange(now)
-  const ready = [recent, failed, pending, running].every((p) => p !== undefined)
+  const ready = [stats, failed].every((p) => p !== undefined)
   // Until the deferred props arrive, the same body is drawn as a skeleton from stand-in props (21 §4.3).
   const stand = useStandIn(props)
   return (
-    <Layout heading="Overview" live={ready ? live : 0} actions={<DateRangePicker query={range.query} fallback="1d" />}>
+    <Layout heading="Overview" live={ready ? live : null} actions={<DateRangePicker query={range.query} fallback="1d" />}>
       {ready ? <div className="grid min-w-0 animate-page-in gap-6"><OverviewBody {...props} now={now} range={range} /></div>
         : <SkeletonScope className="grid min-w-0 gap-6"><OverviewBody {...stand} now={now} range={range} /></SkeletonScope>}
     </Layout>
@@ -140,13 +119,13 @@ function useStandIn(props) {
   return Object.fromEntries(Object.entries({ ...stand, ...props }).map(([k, v]) => [k, v === undefined ? stand[k] : v]))
 }
 
-function OverviewBody({ base, can, recent, failed, pending, running, queues, workers, events, now, range }) {
-  const span = coverage(recent, range)
-  const labelAt = (i) => new Date(span.from + ((i + 0.5) * (span.to - span.from)) / BUCKETS)
-  const created = bucketize(recent.items, 'createdAt', span)
-  const finished = bucketize(recent.items, 'terminalAt', span)
-  const ok = bucketize(recent.items, 'terminalAt', span, (j) => j.state === 'succeeded')
-  const bad = bucketize(recent.items, 'terminalAt', span, (j) => j.state === 'failed')
+function OverviewBody({ base, can, stats, failed, queues, workers, events, now, range }) {
+  const span = { from: Date.parse(stats.from), to: Date.parse(stats.to) }
+  const n = stats.buckets.length || BUCKETS
+  const labelAt = (i) => new Date(span.from + ((i + 0.5) * (span.to - span.from)) / n)
+  const created = stats.buckets.map((b) => b.created)
+  const ok = stats.buckets.map((b) => b.succeeded), bad = stats.buckets.map((b) => b.failed)
+  const finished = stats.buckets.map((b) => b.succeeded + b.failed + (b.cancelled ?? 0))
   const series = created.map((c, i) => {
     const at = labelAt(i), width = span.to - span.from, short = width < 30 * 60 * 1000 // under 30 min, minutes alone repeat across labels
     // Past a day the clock repeats, so labels carry the date (and drop the time from 3 days up).
@@ -157,62 +136,63 @@ function OverviewBody({ base, can, recent, failed, pending, running, queues, wor
       title: at.toLocaleString([], { dateStyle: 'medium', timeStyle: short ? 'medium' : 'short' }),
       created: c, finished: finished[i], succeeded: ok[i], failed: bad[i] }
   })
-  const firstHalf = (a) => sum(a.slice(0, BUCKETS / 2)), secondHalf = (a) => sum(a.slice(BUCKETS / 2))
+  const firstHalf = (a) => sum(a.slice(0, n / 2)), secondHalf = (a) => sum(a.slice(n / 2))
   const rate = (s, f) => (s + f ? (s / (s + f)) * 100 : null)
   const rateNow = rate(secondHalf(ok), secondHalf(bad)), rateBefore = rate(firstHalf(ok), firstHalf(bad))
-  const failedSpan = coverage(failed, range)
-  const failedBuckets = bucketize(failed.items, 'createdAt', failedSpan)
-  const inFlight = pending.items.length + running.items.length
+  const pendingNow = stats.now?.pending ?? 0, runningNow = (stats.now?.running ?? 0) + (stats.now?.reserved ?? 0)
+  const inFlight = pendingNow + runningNow
   const flightHistory = useHistory(inFlight)
-  const states = top(recent.items, (j) => j.state, 8)
-  const pendingByQueue = top(pending.items, (j) => j.queue)
-  const failuresByJob = top(failed.items, (j) => j.jobName)
-  // The halves compare only when the sample covers the whole range; a truncated sample would make the first half look empty.
-  const whole = span.sampleFrom == null, failedWhole = failedSpan.sampleFrom == null
-  const since = (t) => new Date(t).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })
-  const sampleNote = whole ? `${recent.items.length} jobs in ${range.label}` : `newest 200 jobs in ${range.label} (back to ${since(span.sampleFrom)})`
+  const states = top(Object.entries(stats.states), 8)
+  const total = Object.values(stats.states).reduce((t, v) => t + v, 0)
+  const pendingByQueue = top((stats.queues ?? []).map((g) => [g.key, g.now?.pending ?? 0]))
+  const failuresByJob = top((stats.jobNames ?? []).map((g) => [g.key, g.states?.failed ?? 0]))
+  const failedTotal = stats.states.failed ?? 0
+  const note = `${total.toLocaleString()} jobs created in ${range.label}`
   const ended = sum(ok) + sum(bad), rateAll = rate(sum(ok), sum(bad))
-  const noDelta = <span className="text-muted-foreground">sample too short to compare halves</span>
   return (
     <>
-      <section aria-label="Key figures" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Kpi testId="kpi-created" icon={IconListDetails} title="Jobs created" href={`${base}/jobs`} color="text-chart-1"
-          value={sum(created)} more={!whole}
-          delta={whole ? <><Delta now={secondHalf(created)} before={firstHalf(created)} /><span>second half vs first</span></> : noDelta}
-          foot={sampleNote} spark={<Spark data={created} color="text-chart-1" label={`Jobs created in ${range.label}`} />} />
-        <Kpi testId="kpi-success" icon={IconCircleCheck} title="Success rate" href={`${base}/jobs?state=succeeded`} color="text-chart-2"
+      <section aria-label="Key figures" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Kpi testId="kpi-created" icon={IconListDetails} title="Jobs created" href={`${base}/runs`} color="text-chart-1"
+          value={total}
+          delta={<><Delta now={secondHalf(created)} before={firstHalf(created)} /><span>second half vs first</span></>}
+          foot={`Created in ${range.label}`} spark={<Spark data={created} color="text-chart-1" label={`Jobs created in ${range.label}`} />} />
+        <Kpi testId="kpi-success" icon={IconCircleCheck} title="Success rate" href={`${base}/runs?state=succeeded`} color="text-chart-2"
           value={rateAll == null ? '—' : Math.round(rateAll)} suffix={rateAll == null ? null : '%'}
-          delta={whole ? <><Delta now={rateNow ?? 0} before={rateNow == null ? null : rateBefore} unit="pt" /><span>second half vs first</span></> : noDelta}
-          foot={`Of ${ended} ${whole ? '' : 'sampled '}jobs that ended in ${range.label}`} spark={<Spark data={ok.map((s, i) => (s + bad[i] ? (s / (s + bad[i])) * 100 : 100))} color="text-chart-2" label={`Success rate in ${range.label}`} />} />
-        <Kpi testId="kpi-failed" icon={IconAlertTriangle} title="Failed" href={`${base}/jobs?state=failed`} color="text-chart-3"
-          value={failed.items.length} more={!!failed.next}
-          delta={failedWhole ? <><Delta now={secondHalf(failedBuckets)} before={firstHalf(failedBuckets)} invert /><span>second half vs first</span></> : noDelta}
-          foot={`Failed jobs created in ${range.label}${failedWhole ? '' : ` (newest 200, back to ${since(failedSpan.sampleFrom)})`}`} spark={<Spark data={failedBuckets} color="text-chart-3" label={`Failed jobs created in ${range.label}`} />} />
-        <Kpi testId="kpi-inflight" icon={IconLoader} title="In flight now" href={`${base}/jobs?state=running`} color="text-chart-4"
-          value={inFlight} more={!!(pending.next || running.next)}
-          delta={<><StatusBadge state="pending"><AnimatedNumber value={pending.items.length} more={!!pending.next} /> pending</StatusBadge><StatusBadge state="running"><AnimatedNumber value={running.items.length} more={!!running.next} /> running</StatusBadge></>}
+          delta={<><Delta now={rateNow ?? 0} before={rateNow == null ? null : rateBefore} unit="pt" /><span>second half vs first</span></>}
+          foot={`Of ${ended.toLocaleString()} jobs that ended in ${range.label}`} spark={<Spark data={ok.map((s, i) => (s + bad[i] ? (s / (s + bad[i])) * 100 : 100))} color="text-chart-2" label={`Success rate in ${range.label}`} />} />
+        <Kpi testId="kpi-failed" icon={IconAlertTriangle} title="Failed" href={`${base}/runs?state=failed`} color="text-chart-3"
+          value={failedTotal}
+          delta={<><Delta now={secondHalf(bad)} before={firstHalf(bad)} invert /><span>second half vs first</span></>}
+          foot={`Created in ${range.label}, failed now`} spark={<Spark data={bad} color="text-chart-3" label={`Failed jobs created in ${range.label}`} />} />
+        <Kpi testId="kpi-inflight" icon={IconLoader} title="In flight now" href={`${base}/runs?state=running`} color="text-chart-4"
+          value={inFlight}
+          delta={<><StatusBadge state="pending"><AnimatedNumber value={pendingNow} /> pending</StatusBadge><StatusBadge state="running"><AnimatedNumber value={runningNow} /> running</StatusBadge></>}
           foot="Live snapshot, not limited to the range" spark={<Spark data={flightHistory} color="text-chart-4" label="Jobs in flight at each poll" />} />
       </section>
 
-      <div className="grid gap-6 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <Panel className="xl:col-span-2" title="Throughput" testId="chart-throughput"
-          description={`Per ${fmtSpan((span.to - span.from) / BUCKETS)} · ${sampleNote}`}
+          description={`Per ${fmtSpan((span.to - span.from) / n)} · ${note}`}
           action={<Legend series={[{ key: 'c', label: 'Created', color: 'text-chart-1' }, { key: 'f', label: 'Finished', color: 'text-chart-2' }]} />}>
           <Chart data={series} label="Jobs created and finished over time" height={260}
             series={[{ key: 'created', label: 'Created', color: 'text-chart-1' }, { key: 'finished', label: 'Finished', color: 'text-chart-2' }]} />
         </Panel>
-        <Panel title="State of sampled jobs" description={whole ? `Created in ${range.label}` : `Newest 200 created in ${range.label}`}>
+        <Panel title="State of jobs" description={`Created in ${range.label}`}>
           <div className="grid gap-4">
-            <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted" role="img" aria-label="Share of sampled jobs per state">
-              {states.map((s) => <Tooltip key={s.label}><TooltipTrigger asChild>
-                <span className={cn('h-full transition-[width] duration-700 ease-out first:rounded-l-full last:rounded-r-full hover:brightness-110', STATE_BG[s.label] ?? 'bg-midnight-violet-400')}
-                  ref={(el) => { if (el) el.style.width = `${(s.value / Math.max(recent.items.length, 1)) * 100}%` }} />
-              </TooltipTrigger><TooltipContent>{s.label}: {s.value}</TooltipContent></Tooltip>)}
+            <div className="relative h-3 w-full overflow-hidden rounded-full bg-muted" role="img" aria-label="Share of jobs per state">
+              {/* Each segment is a full-width bar moved and scaled on x (transform only), so a poll glides it to its new share. */}
+              {states.map((s, i) => {
+                const all = Math.max(total, 1), from = states.slice(0, i).reduce((t, x) => t + x.value, 0) / all
+                return <Tooltip key={s.label}><TooltipTrigger asChild>
+                  <span className={cn('absolute inset-y-0 left-0 w-full origin-left animate-grow-x glide-slow hover:opacity-85', STATE_BG[s.label] ?? 'bg-midnight-violet-400')}
+                    ref={(el) => { if (el) el.style.transform = `translateX(${from * 100}%) scaleX(${s.value / all})` }} />
+                </TooltipTrigger><TooltipContent>{s.label}: {s.value}</TooltipContent></Tooltip>
+              })}
             </div>
             <ul className="grid gap-2">{states.map((s) => (
-              <li key={s.label} className="flex items-center justify-between gap-3 rounded-md px-1 py-1 text-sm transition-colors hover:bg-muted/60">
+              <li key={s.label} className="tint flex items-center justify-between gap-3 rounded-md px-1 py-1 text-sm">
                 <span className="inline-flex items-center gap-2"><StatusDot state={s.label} />{s.label}</span>
-                <span className="font-medium tabular-nums"><AnimatedNumber value={s.value} /> <span className="text-xs font-normal text-muted-foreground">({Math.round((s.value / Math.max(recent.items.length, 1)) * 100)}%)</span></span>
+                <span className="font-medium tabular-nums"><AnimatedNumber value={s.value} /> <span className="text-xs font-normal text-muted-foreground">({Math.round((s.value / Math.max(total, 1)) * 100)}%)</span></span>
               </li>
             ))}</ul>
             {states.length === 0 && <p className="text-sm text-muted-foreground">No jobs created in {range.label}.</p>}
@@ -224,31 +204,32 @@ function OverviewBody({ base, can, recent, failed, pending, running, queues, wor
         </Panel>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
-        <Panel title="Succeeded and failed" testId="chart-outcomes" description={`By end time · ${sampleNote}`}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-3">
+        <Panel title="Succeeded and failed" testId="chart-outcomes" description={`By end time · ${(stats?.buckets ?? []).reduce((n, b) => n + b.succeeded + b.failed, 0).toLocaleString()} jobs ended in ${range.label}`}
           action={<Legend series={[{ key: 's', label: 'Succeeded', color: 'text-chart-2' }, { key: 'f', label: 'Failed', color: 'text-chart-3' }]} />}>
           <Chart type="bar" stacked data={series} height={200} label="Succeeded and failed jobs over time"
             series={[{ key: 'succeeded', label: 'Succeeded', color: 'text-chart-2' }, { key: 'failed', label: 'Failed', color: 'text-chart-3' }]} />
         </Panel>
-        <Panel title="Pending by queue" description={pending.next ? 'Live: the 200 oldest pending jobs' : 'Live: every pending job'} action={can.queues && <More href={`${base}/queues`}>Queues</More>}>
+        <Panel title="Pending by queue" description="Live: every pending job" action={can.queues && <More href={`${base}/queues`}>Queues</More>}>
           <BarList items={pendingByQueue} color="text-chart-4" empty="Nothing pending." />
         </Panel>
-        <Panel title="Failures by job" description={`Failed jobs created in ${range.label}${failedWhole ? '' : ' (newest 200)'}`} action={<More href={`${base}/jobs?state=failed`}>All failed</More>}>
+        <Panel title="Failures by job" description={`Failed jobs created in ${range.label}`} action={<More href={`${base}/runs?state=failed`}>All failed</More>}>
           <BarList items={failuresByJob} color="text-chart-3" empty="No failures." />
         </Panel>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <Card className="gap-0 pb-0 xl:col-span-2">
           <CardHeader className="pb-4"><CardTitle className="text-base">Recent failures</CardTitle>
-            <CardAction><More href={`${base}/jobs?state=failed`}>View all</More></CardAction></CardHeader>
+            <CardAction><More href={`${base}/runs?state=failed`}>View all</More></CardAction></CardHeader>
           <Table data-testid="overview-failed">
-            <TableHeader><TableRow className="hover:bg-transparent"><TableHead>Job</TableHead><TableHead>Queue</TableHead><TableHead>State</TableHead><TableHead>Ended</TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow className="hover:bg-transparent"><TableHead>Job</TableHead><TableHead>Queue</TableHead><TableHead>State</TableHead><TableHead>Ended</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
             <TableBody>{failed.items.slice(0, 6).map((j) => (
-              <TableRow key={j.jobId} className="group/row">
-                <TableCell className="max-w-72 truncate font-medium"><Link href={`${base}/jobs/${j.jobId}`} className="underline-offset-4 group-hover/row:text-primary hover:underline">{j.jobName}</Link></TableCell>
+              <TableRow key={j.jobId}>
+                <TableCell className="max-w-72 truncate"><NameLink href={`${base}/runs/${j.jobId}`}>{j.jobName}</NameLink></TableCell>
                 <TableCell className="text-muted-foreground">{j.queue}</TableCell><TableCell><StatusBadge state={j.state} /></TableCell>
                 <TableCell className="whitespace-nowrap text-muted-foreground">{j.terminalAt ? relative(j.terminalAt) : '—'}</TableCell>
+                <TableCell className="text-right"><OpenButton href={`${base}/runs/${j.jobId}`} label={`Open run of ${j.jobName}`} /></TableCell>
               </TableRow>
             ))}</TableBody>
           </Table>
@@ -267,20 +248,20 @@ function OverviewBody({ base, can, recent, failed, pending, running, queues, wor
 
 function WorkersPanel({ base, now, workers }) {
   return (
-          <Panel title="Workers" testId="overview-workers" description={`${workers.next ? '200+' : workers.items.length} live`} action={<More href={`${base}/workers`}>Details</More>}>
-            <ul className="grid gap-2">{workers.items.slice(0, 5).map((w) => {
+          <Panel title="Workers" testId="overview-workers" description={`${workers.length} live`} action={<More href={`${base}/workers`}>Details</More>}>
+            <ul className="grid gap-2">{workers.slice(0, 5).map((w) => {
               const age = now - Date.parse(w.heartbeatAt), ttl = Math.max(Date.parse(w.expiresAt) - Date.parse(w.heartbeatAt), 1)
               return (
-                <li key={w.instanceId} className="grid gap-1.5 rounded-lg border p-2.5 text-sm transition-colors hover:bg-muted/50">
+                <li key={w.instanceId} className="tint grid gap-1.5 rounded-lg border p-2.5 text-sm">
                   <span className="flex items-center justify-between gap-2"><span className="truncate font-medium">{w.hostName} <span className="font-normal text-muted-foreground">pid {w.processId}</span></span><StatusBadge state={w.status} /></span>
                   <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span className="h-1 flex-1 overflow-hidden rounded-full bg-muted"><span className="block h-full rounded-full bg-lime-yellow-600 transition-[width] duration-700" ref={(el) => { if (el) el.style.width = `${Math.max(0, 100 - (age / ttl) * 100)}%` }} /></span>
+                    <span className="relative h-1 flex-1 overflow-hidden rounded-full bg-muted"><Bar fraction={Math.max(0, 1 - age / ttl)} className="rounded-full bg-lime-yellow-600" /></span>
                     heartbeat {relative(w.heartbeatAt, now)}
                   </span>
                 </li>
               )
             })}</ul>
-            {workers.items.length === 0 && <p className="text-sm text-muted-foreground">No live workers.</p>}
+            {workers.length === 0 && <p className="text-sm text-muted-foreground">No live workers.</p>}
           </Panel>
   )
 }

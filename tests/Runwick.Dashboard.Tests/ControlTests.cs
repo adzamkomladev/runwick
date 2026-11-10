@@ -29,7 +29,7 @@ public sealed class ControlTests
         var (client, lease) = await f.RunNextAsync();
         var owned = SecurityTests.Position(await SecurityTests.JobAsync(browser, racer));
         var cancelId = Guid.NewGuid();
-        var cancel = browser.PostAsync($"/runwick/jobs/{racer}/cancel", owned, cancelId);
+        var cancel = browser.PostAsync($"/runwick/runs/{racer}/cancel", owned, cancelId);
         var finish = client.FinishAsync(lease, AttemptOutcome.Succeeded);
         await Task.WhenAll(cancel, finish);
         var applied = (await cancel).StatusCode == HttpStatusCode.SeeOther ? 1 : 0;
@@ -45,17 +45,17 @@ public sealed class ControlTests
 
         var job = await h.DispatchAsync(new PingJob("x"));
         await f.FailNextAsync("boom", "m");
-        await browser.LoadAsync($"/runwick/jobs/{job}");
+        await browser.LoadAsync($"/runwick/runs/{job}");
         var old = await SecurityTests.JobAsync(browser, job);
 
         // Someone else retries first; this page's retry carries the old revision.
         var other = h.Browser(Users.Admin);
         await other.LoadAsync("/runwick");
-        Assert.Equal(HttpStatusCode.SeeOther, (await other.PostAsync($"/runwick/jobs/{job}/retry", SecurityTests.Position(old), Guid.NewGuid())).StatusCode);
+        Assert.Equal(HttpStatusCode.SeeOther, (await other.PostAsync($"/runwick/runs/{job}/retry", SecurityTests.Position(old), Guid.NewGuid())).StatusCode);
         var actual = (await SecurityTests.JobAsync(browser, job)).GetProperty("revision").GetInt64();
         var id = Guid.NewGuid();
-        var stale = await browser.PostAsync($"/runwick/jobs/{job}/retry", new { expectedGeneration = 2, expectedRevision = old.GetProperty("revision").GetInt64() }, id);
-        DeliveryTests.AssertOutcome(stale, "stale_revision", id, $"/runwick/jobs/{job}");
+        var stale = await browser.PostAsync($"/runwick/runs/{job}/retry", new { expectedGeneration = 2, expectedRevision = old.GetProperty("revision").GetInt64() }, id);
+        DeliveryTests.AssertOutcome(stale, "stale_revision", id, $"/runwick/runs/{job}");
         Assert.Equal(actual, (await Browser.JsonAsync(stale)).Props().GetProperty("outcome").GetProperty("actualRevision").GetInt64());
         Assert.Equal(0, await h.AuditsAsync(id));
     }
@@ -68,23 +68,23 @@ public sealed class ControlTests
         await using var h = await DashHost.StartAsync(f);
         var job = await h.DispatchAsync(new PingJob("x"));
         var browser = h.Browser(Users.Operator);
-        await browser.LoadAsync($"/runwick/jobs/{job}");
+        await browser.LoadAsync($"/runwick/runs/{job}");
         var position = SecurityTests.Position(await SecurityTests.JobAsync(browser, job));
         var revision = (await SecurityTests.JobAsync(browser, job)).GetProperty("revision").GetInt64();
 
         var id = Guid.NewGuid();
         var drop = f.ArmFault(FaultPoint.AfterCommitBeforeReply, FaultSpec.DropReply, FaultTarget.Command(id));
-        var first = await browser.PostAsync($"/runwick/jobs/{job}/cancel", position, id);
+        var first = await browser.PostAsync($"/runwick/runs/{job}/cancel", position, id);
         Assert.Equal(1, drop.Fired);
         Assert.Equal(HttpStatusCode.SeeOther, first.StatusCode); // the session resent the command and the receipt answered
-        var again = await browser.PostAsync($"/runwick/jobs/{job}/cancel", position, id); // the client's "Try again": same ID, same body
+        var again = await browser.PostAsync($"/runwick/runs/{job}/cancel", position, id); // the client's "Try again": same ID, same body
         Assert.Equal(HttpStatusCode.SeeOther, again.StatusCode);
         Assert.Equal((1L, 1L), (await h.AuditsAsync(id), await ReceiptsAsync(f, id)));
         Assert.Equal(revision + 1, (await SecurityTests.JobAsync(browser, job)).GetProperty("revision").GetInt64());
 
         // The grant is removed: the resend is refused before the store and discloses nothing of the receipt.
         h.Grants[Users.Operator] = ManagementRoles.Viewer;
-        var denied = await browser.PostAsync($"/runwick/jobs/{job}/cancel", position, id);
+        var denied = await browser.PostAsync($"/runwick/runs/{job}/cancel", position, id);
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
         var body = await Browser.JsonAsync(denied);
         Assert.Equal(["code", "message"], body.EnumerateObject().Select(p => p.Name).Order());
@@ -100,19 +100,19 @@ public sealed class ControlTests
         await using var h = await DashHost.StartAsync(f);
         var job = await h.DispatchAsync(new PingJob("payload-secret"));
         var browser = h.Browser(Users.Admin);
-        await browser.LoadAsync($"/runwick/jobs/{job}");
+        await browser.LoadAsync($"/runwick/runs/{job}");
         var before = (await SecurityTests.JobAsync(browser, job)).GetRawText();
 
         // Cancel of a waiting job writes the job (1), its event (2), then the audit row (3): the audit insert raises.
         var audit = f.ArmFault(FaultPoint.AfterMutation, FaultSpec.Throw(), new FaultTarget { Operation = Operations.Cancel, Step = 3 }, times: 100);
         var id = Guid.NewGuid();
-        var cancel = await browser.PostAsync($"/runwick/jobs/{job}/cancel", SecurityTests.Position(await SecurityTests.JobAsync(browser, job)), id);
+        var cancel = await browser.PostAsync($"/runwick/runs/{job}/cancel", SecurityTests.Position(await SecurityTests.JobAsync(browser, job)), id);
         Assert.True(audit.Fired >= 1);
-        DeliveryTests.AssertOutcome(cancel, "store_unavailable", id, $"/runwick/jobs/{job}");
+        DeliveryTests.AssertOutcome(cancel, "store_unavailable", id, $"/runwick/runs/{job}");
         Assert.Equal(before, (await SecurityTests.JobAsync(browser, job)).GetRawText());
 
         var reveal = f.ArmFault(FaultPoint.AfterMutation, FaultSpec.Throw(), new FaultTarget { Operation = "RecordDisclosure", Step = 1 }, times: 100);
-        var revealed = await browser.RevealAsync($"/runwick/jobs/{job}/payload:reveal");
+        var revealed = await browser.RevealAsync($"/runwick/runs/{job}/payload:reveal");
         Assert.True(reveal.Fired >= 1);
         Assert.Equal(HttpStatusCode.ServiceUnavailable, revealed.StatusCode);
         Assert.DoesNotContain("payload-secret", await revealed.Content.ReadAsStringAsync(), StringComparison.Ordinal);
@@ -154,7 +154,7 @@ public sealed class ControlTests
         var browser = h.Browser(Users.Admin);
         await browser.LoadAsync("/runwick");
         var items = Enumerable.Range(0, 101).Select(_ => new { jobId = Guid.NewGuid(), commandId = Guid.NewGuid(), expectedGeneration = 1, expectedRevision = 1 });
-        var bulk = await browser.PostAsync("/runwick/jobs:cancel", new { items });
+        var bulk = await browser.PostAsync("/runwick/runs:cancel", new { items });
         Assert.Equal(HttpStatusCode.BadRequest, bulk.StatusCode);
         Assert.Equal(0, await h.AuditsAsync());
 
@@ -164,13 +164,13 @@ public sealed class ControlTests
         }
 
         await f.ScalingEventAsync(DateTimeOffset.UtcNow.AddMinutes(-1));
-        var page = (await browser.VisitJsonAsync("/runwick/jobs?limit=500")).Props().GetProperty("jobs");
+        var page = (await browser.VisitJsonAsync("/runwick/runs?limit=500")).Props().GetProperty("jobs");
         Assert.Equal(200, page.GetProperty("items").GetArrayLength());
         Assert.NotNull(page.GetProperty("next").GetString());
 
         var from = Uri.EscapeDataString(DateTimeOffset.UtcNow.AddDays(-40).ToString("O"));
         var to = Uri.EscapeDataString(DateTimeOffset.UtcNow.ToString("O"));
-        foreach (var (path, component, prop) in new[] { ("/runwick/jobs", "Jobs", "jobs"), ("/runwick/audit", "Audit", "audit"), ("/runwick/scaling", "Scaling", "events") })
+        foreach (var (path, component, prop) in new[] { ("/runwick/runs", "Runs", "jobs"), ("/runwick/audit", "Audit", "audit"), ("/runwick/scaling", "Scaling", "events") })
         {
             var wide = await browser.VisitJsonAsync($"{path}?from={from}&to={to}");
             Assert.Equal(component, wide.GetProperty("component").GetString());
@@ -211,16 +211,16 @@ public sealed class ControlTests
         await PassAsync(c, RecordClasses.JobDetailFailed);
 
         var browser = h.Browser(Users.Admin);
-        var (response, _, page) = await browser.LoadAsync($"/runwick/jobs/{job}");
+        var (response, _, page) = await browser.LoadAsync($"/runwick/runs/{job}");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(JsonValueKind.String, page.Props().GetProperty("job").GetProperty("job").GetProperty("detailExpiredAt").ValueKind);
-        var reveal = await browser.RevealAsync($"/runwick/jobs/{job}/payload:reveal");
+        var reveal = await browser.RevealAsync($"/runwick/runs/{job}/payload:reveal");
         Assert.Equal(HttpStatusCode.Gone, reveal.StatusCode);
         Assert.Equal("detail_expired", (await Browser.JsonAsync(reveal)).GetProperty("code").GetString());
 
         await f.ExecAsync("UPDATE runwick.jobs SET terminal_at = terminal_at - interval '90 days' WHERE job_id = @j", ("j", job));
         await PassAsync(c, RecordClasses.JobHistory);
-        Assert.Equal(HttpStatusCode.NotFound, (await browser.VisitAsync($"/runwick/jobs/{job}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await browser.VisitAsync($"/runwick/runs/{job}")).StatusCode);
 
         var retention = (await browser.VisitJsonAsync("/runwick/retention")).Props().GetProperty("retention");
         Assert.Equal(720, retention.GetProperty("policy").GetProperty("failedDetailHours").GetInt32());

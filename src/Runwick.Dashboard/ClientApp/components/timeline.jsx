@@ -71,9 +71,10 @@ export function duration(ms) {
   const s = ms / 1000
   if (s < 60) return `${s < 10 ? s.toFixed(1) : Math.round(s)} s`
   const m = Math.floor(s / 60)
-  if (m < 60) return `${m} min ${Math.round(s % 60)} s`
+  const unit = (a, ua, b, ub) => (b ? `${a} ${ua} ${b} ${ub}` : `${a} ${ua}`) // "1 h", not "1 h 0 min"
+  if (m < 60) return unit(m, 'min', Math.round(s % 60), 's')
   const h = Math.floor(m / 60)
-  return h < 48 ? `${h} h ${m % 60} min` : `${Math.floor(h / 24)} d ${h % 24} h`
+  return h < 48 ? unit(h, 'h', m % 60, 'min') : unit(Math.floor(h / 24), 'd', h % 24, 'h')
 }
 
 const exact = (at) => new Date(at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' })

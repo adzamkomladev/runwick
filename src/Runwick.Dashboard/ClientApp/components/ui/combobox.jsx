@@ -34,7 +34,7 @@ export function Combobox({ value, onChange, options, placeholder = 'Any', free =
         <input ref={input} value={text} onChange={(e) => { setText(e.target.value); setActive(0) }} onKeyDown={onKey} placeholder="Search…"
           role="combobox" aria-expanded="true" aria-controls={list} aria-activedescendant={items.length ? `${list}-${active}` : undefined} aria-autocomplete="list"
           className="mb-1 h-8 w-full rounded-md border-b bg-transparent px-2 text-sm outline-none placeholder:text-muted-foreground/70" />
-        <ul id={list} role="listbox" className="max-h-60 overflow-y-auto">
+        <ul id={list} role="listbox" className="fade-y max-h-60 overflow-y-auto">
           {value && <li role="option" aria-selected={false} onClick={() => pick('')} className="cursor-default rounded-sm px-2 py-1.5 text-sm text-muted-foreground press hover:bg-accent">Clear</li>}
           {items.map((o, i) => (
             <li key={o} id={`${list}-${i}`} role="option" aria-selected={o === value} onMouseEnter={() => setActive(i)} onClick={() => pick(o)}

@@ -242,17 +242,18 @@ internal sealed partial class SqliteStore : IReadinessDiagnostics
             {
                 var expires = tx.Query(tx.Sql("""
                     INSERT INTO runwick_worker_instances AS w (application, instance_id, process_id, host_name, build_id, status,
-                        capability_revision, presence_sequence, subscriptions, pool_targets, started_at, heartbeat_at, expires_at)
-                    VALUES (@application, @id, @pid, @host, @build, @status, @revision, @sequence, @subscriptions, @pools, @now, @now, @expires)
+                        capability_revision, presence_sequence, subscriptions, pool_targets, started_at, heartbeat_at, expires_at, detail)
+                    VALUES (@application, @id, @pid, @host, @build, @status, @revision, @sequence, @subscriptions, @pools, @now, @now, @expires, @detail)
                     ON CONFLICT (application, instance_id) DO UPDATE
                     SET status = excluded.status, capability_revision = excluded.capability_revision, presence_sequence = excluded.presence_sequence,
                         subscriptions = excluded.subscriptions, pool_targets = excluded.pool_targets, heartbeat_at = excluded.heartbeat_at,
-                        expires_at = excluded.expires_at
+                        expires_at = excluded.expires_at, detail = excluded.detail
                     WHERE w.presence_sequence < excluded.presence_sequence
                     RETURNING expires_at
                     """).P("id", presence.InstanceId).P("pid", presence.ProcessId).P("host", presence.HostName).P("build", presence.BuildId)
                     .P("status", presence.Status).P("revision", presence.CapabilityRevision).P("sequence", presence.PresenceSequence)
-                    .P("subscriptions", subscriptions).P("pools", pools).P("now", tx.Now).P("expires", SqTime.Floor(tx.Now + presence.Expiry)),
+                    .P("subscriptions", subscriptions).P("pools", pools).P("now", tx.Now).P("expires", SqTime.Floor(tx.Now + presence.Expiry))
+                    .P("detail", presence.DetailText()),
                     r => r.Time(0), mutation: true);
                 if (expires.Count == 0)
                 {

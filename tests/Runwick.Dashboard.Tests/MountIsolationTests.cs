@@ -80,7 +80,7 @@ public sealed class MountIsolationTests
 
         adminB.Csrf = tokenA;
         var position = new { expectedGeneration = 1, expectedRevision = (await SecurityTests.JobAsync(admin, job, "/ops/a")).GetProperty("revision").GetInt64() };
-        Assert.Equal(HttpStatusCode.Forbidden, (await adminB.PostAsync($"/ops/b/jobs/{job}/cancel", position, Guid.NewGuid())).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await adminB.PostAsync($"/ops/b/runs/{job}/cancel", position, Guid.NewGuid())).StatusCode);
         Assert.Equal(0, await h.AuditsAsync());
 
         var monitor = h.App.Services.GetRequiredService<IOptionsMonitor<InertiaOptions>>();
@@ -116,7 +116,7 @@ public sealed class MountIsolationTests
         }
 
         two.Csrf = one.Csrf;
-        Assert.Equal(HttpStatusCode.Forbidden, (await two.PostAsync($"/runwick/jobs/{job}/cancel", position, Guid.NewGuid())).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await two.PostAsync($"/runwick/runs/{job}/cancel", position, Guid.NewGuid())).StatusCode);
         Assert.Equal(0, await first.AuditsAsync());
     }
 
@@ -146,7 +146,7 @@ public sealed class MountIsolationTests
         Assert.DoesNotContain("host-secret-user", body, StringComparison.Ordinal);
         Assert.DoesNotContain("<title>host</title>", body, StringComparison.Ordinal);
         Assert.NotEqual("host-1", page.GetProperty("version").GetString());
-        var visit = await browser.VisitAsync($"/runwick/jobs/{job}");
+        var visit = await browser.VisitAsync($"/runwick/runs/{job}");
         Assert.Equal(HttpStatusCode.OK, visit.StatusCode);
         Assert.DoesNotContain("hostUser", await visit.Content.ReadAsStringAsync(), StringComparison.Ordinal);
     }
@@ -175,7 +175,7 @@ public sealed class MountIsolationTests
         await using var h = await DashHost.StartAsync(f, services: b =>
             b.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseUpper));
         var job = await h.DispatchAsync(new PingJob("x"));
-        var (_, _, page) = await h.Browser(Users.Admin).LoadAsync($"/runwick/jobs/{job}");
+        var (_, _, page) = await h.Browser(Users.Admin).LoadAsync($"/runwick/runs/{job}");
         var detail = page.Props().GetProperty("job").GetProperty("job");
         Assert.Equal(job, detail.GetProperty("jobId").GetGuid());
         Assert.Equal(1, detail.GetProperty("generation").GetInt32());
@@ -221,9 +221,17 @@ public sealed class MountIsolationTests
             }
 
             var path = i % 3 == 0 ? "/runwick" : "/ops/view";
-            var (_, body, page) = await browser.LoadAsync(path);
+            var (response, body, page) = await browser.LoadAsync(path);
+            Assert.True(response.StatusCode == HttpStatusCode.OK, $"{path}: {(int)response.StatusCode} {body}");
             return (path, page.Props().GetProperty("can").GetProperty("cancel").GetBoolean(),
                 body.Contains("<title>Viewing</title>", StringComparison.Ordinal) ? "Viewing" : "Runwick");
+        }
+
+        // Warm each path first: the burst is about keeping mounts apart, and a cold host's first reads can outlast the 1 s wait for a
+        // slot (MaxWait), which answers 503 busy by design.
+        foreach (var warm in new[] { 0, 1, 2 })
+        {
+            await OneAsync(warm);
         }
 
         var results = await Task.WhenAll(Enumerable.Range(0, 30).Select(OneAsync));
@@ -234,7 +242,7 @@ public sealed class MountIsolationTests
         var viewer = h.Browser(Users.Admin);
         await viewer.LoadAsync("/ops/view");
         var position = SecurityTests.Position(await SecurityTests.JobAsync(viewer, job, "/ops/view"));
-        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PostAsync($"/ops/view/jobs/{job}/cancel", position, Guid.NewGuid())).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.PostAsync($"/ops/view/runs/{job}/cancel", position, Guid.NewGuid())).StatusCode);
         Assert.Equal(0, await h.AuditsAsync());
         Assert.Equal("sibling", await (await viewer.SendAsync(HttpMethod.Get, "/ops/other", inertia: false)).Content.ReadAsStringAsync());
     }

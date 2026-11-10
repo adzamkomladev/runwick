@@ -20,6 +20,19 @@ var conn = Environment.GetEnvironmentVariable("RUNWICK_DASH_PG") ?? throw new In
 var port = Environment.GetEnvironmentVariable("RUNWICK_DASH_PORT") ?? "5791";
 var demo = Environment.GetEnvironmentVariable("RUNWICK_DASH_DEMO") == "1";
 await RunwickPostgresMigrations.MigrateAsync(conn);
+var application = "dashhost_" + Guid.NewGuid().ToString("N")[..8];
+
+// A schedule needs capability "scheduler", which an operator raises once per application after its first start registers it
+// (13 §6.1; CLI: store activate-capability). This sample does both here, with a short start of a host that runs nothing.
+var first = Host.CreateApplicationBuilder();
+first.Services.AddRunwick(r => r.Application(application).UsePostgres(conn));
+using (var registrar = first.Build())
+{
+    await registrar.StartAsync();
+    await registrar.StopAsync();
+}
+
+await RunwickPostgresMigrations.ActivateCapabilityAsync(conn, application, "scheduler", "dashboard-sample");
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ContentRootPath = AppContext.BaseDirectory });
 builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
@@ -30,11 +43,13 @@ builder.Services.AddInertia(o =>
 });
 builder.Services.AddRunwick(r =>
 {
-    r.Application("dashhost_" + Guid.NewGuid().ToString("N")[..8]).UsePostgres(conn);
+    r.Application(application).UsePostgres(conn);
     r.AddJob<Report>().Named("sample.report").ToQueue("reports");
     r.AddJob<Flaky>().Named("sample.flaky").ToQueue("default");
     r.AddHandler<Report, ReportHandler>();
     r.AddHandler<Flaky, FlakyHandler>();
+    r.AddScheduler();
+    r.AddSchedule("sample.yearly-report", new Report("finance@example.com")).Cron("0 6 1 1 *"); // never due during a run: the counts the flows check stay put
     r.AddWorker(w =>
     {
         w.Pool("main", p => p.Queue("default", 1).FixedConcurrency(2)); // "reports" has no worker: its jobs stay pending
@@ -60,11 +75,13 @@ IReadOnlyList<ManagementGrant> WithDisclosure(IReadOnlyList<ManagementGrant> pre
     new(ManagementPermissions.JobsReadPayload), new(ManagementPermissions.JobsReadError), new(ManagementPermissions.AuditRead)];
 var grants = new Dictionary<string, IReadOnlyList<ManagementGrant>>(StringComparer.Ordinal)
 {
-    ["admin"] = WithDisclosure(ManagementRoles.Administrator), ["operator"] = WithDisclosure(ManagementRoles.Operator), ["viewer"] = ManagementRoles.Viewer,
+    ["admin"] = [.. WithDisclosure(ManagementRoles.Administrator), new(ManagementPermissions.JobsDispatch)], ["operator"] = WithDisclosure(ManagementRoles.Operator), ["viewer"] = ManagementRoles.Viewer,
 };
 builder.Services.AddRunwickManagement(m => m
     .AuthenticationSchemes(CookieAuthenticationDefaults.AuthenticationScheme)
-    .MapGrants(p => grants.GetValueOrDefault(p.FindFirstValue(ClaimTypes.NameIdentifier) ?? "", [])));
+    .MapGrants(p => grants.GetValueOrDefault(p.FindFirstValue(ClaimTypes.NameIdentifier) ?? "", []))
+    // A page load is the HTML plus its deferred props; the browser flows load every page at both widths within a minute.
+    .Configure(o => o.ReadsPerMinute = 1_000));
 builder.Services.AddRunwickDashboard("default", d =>
 {
     d.SignOutPath = "/ops/logout"; // the sidebar's Sign out posts here (21 §2)
@@ -81,12 +98,8 @@ app.MapRunwickDashboard("/runwick"); // before UseInertia(): the host's version 
 app.UseInertia();
 app.MapGet("/", () => Inertia.Net.Inertia.Render("Home", new InertiaProps { ["greeting"] = "host page" }));
 app.MapGet("/healthz", () => "ok");
-app.MapGet("/login", (string? ReturnUrl) => Results.Content($"""
-    <!DOCTYPE html><html><head><title>Sign in</title></head><body><h1>Sign in</h1>
-    <ul><li><a href="login/admin?returnUrl={Uri.EscapeDataString(ReturnUrl ?? "")}">admin</a></li>
-    <li><a href="login/operator?returnUrl={Uri.EscapeDataString(ReturnUrl ?? "")}">operator</a></li>
-    <li><a href="login/viewer?returnUrl={Uri.EscapeDataString(ReturnUrl ?? "")}">viewer</a></li></ul></body></html>
-    """, "text/html"));
+app.MapGet("/login", (string? ReturnUrl, string? signedOut) =>
+    Results.Content(SignInPage.Html(ReturnUrl, signedOut == "1", "/ops/runwick"), "text/html"));
 app.MapGet("/login/{user}", async (HttpContext ctx, string user, string? returnUrl) =>
 {
     var display = user == "operator" ? Hostile : user; // the operator's display name is hostile text too
@@ -97,7 +110,7 @@ app.MapGet("/login/{user}", async (HttpContext ctx, string user, string? returnU
 app.MapMethods("/logout", ["GET", "POST"], async (HttpContext ctx) =>
 {
     await ctx.SignOutAsync();
-    return Results.LocalRedirect("/ops/login");
+    return Results.LocalRedirect("/ops/login?signedOut=1");
 });
 
 await app.StartAsync();

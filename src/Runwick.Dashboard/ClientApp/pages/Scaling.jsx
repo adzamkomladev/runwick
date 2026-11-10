@@ -1,10 +1,10 @@
 import { IconArrowRight, IconTrendingDown, IconTrendingUp } from '@tabler/icons-react'
 import { Table, TableBody, TableCell, TableHeader, TableRow } from '../components/ui/table'
 import { DateRangePicker } from '../components/date-range'
-import { Copyable, FilterSheet, Layout, Pager, TableCard, time, usePoll, useSort } from '../lib'
+import { Copyable, FilterSheet, Layout, NameLink, Pager, TableCard, time, usePoll, useSort } from '../lib'
 
 
-export default function Scaling({ events, query }) {
+export default function Scaling({ base, events, query }) {
   const live = usePoll(['events'], 15)
   const [rows, head] = useSort(events.items)
   return (
@@ -21,8 +21,8 @@ export default function Scaling({ events, query }) {
             const Trend = e.newTarget > e.oldTarget ? IconTrendingUp : e.newTarget < e.oldTarget ? IconTrendingDown : IconArrowRight
             return (
               <TableRow key={e.eventId} data-testid="event-row">
-                <TableCell className="whitespace-nowrap text-muted-foreground">{time(e.createdAt)}</TableCell><TableCell className="max-w-40"><Copyable value={e.instanceId} label="Copy instance ID"><code className="text-xs">{e.instanceId}</code></Copyable></TableCell>
-                <TableCell data-testid="event-pool" className="font-medium">{e.pool}</TableCell>
+                <TableCell className="whitespace-nowrap text-muted-foreground">{time(e.createdAt)}</TableCell><TableCell className="max-w-40"><Copyable value={e.instanceId} label="Copy instance ID"><NameLink href={`${base}/workers/${e.instanceId}`} className="font-mono text-xs font-normal">{e.instanceId}</NameLink></Copyable></TableCell>
+                <TableCell data-testid="event-pool"><NameLink href={`${base}/pools/${encodeURIComponent(e.pool)}`}>{e.pool}</NameLink></TableCell>
                 <TableCell className="whitespace-nowrap tabular-nums"><span className="inline-flex items-center gap-1.5">{e.oldTarget}
                   <Trend aria-hidden className={`size-4 ${e.newTarget > e.oldTarget ? 'text-success' : e.newTarget < e.oldTarget ? 'text-warning' : 'text-muted-foreground'}`} />
                   <span className="sr-only">→</span>{e.newTarget}</span></TableCell>

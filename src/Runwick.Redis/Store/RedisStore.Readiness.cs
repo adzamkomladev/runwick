@@ -102,6 +102,11 @@ internal sealed partial class RedisStore : IReadinessDiagnostics
             ["subscriptions"] = new JsonArray([.. presence.SubscribedQueues.Distinct().Order(StringComparer.Ordinal).Select(q => (JsonNode?)q)]),
             ["pools"] = pools, ["caps"] = Contracts(capabilities),
         };
+        if (presence.DetailText() is { } detail)
+        {
+            record["detail"] = detail;
+        }
+
         var r = await Write(Op(application, Guid.CreateVersion7(), "PublishPresence", time.GetUtcNow() + TimeSpan.FromSeconds(10), null, RxLane.Background, 'd'),
             "presence", ct, Hex(presence.InstanceId), Json(record), LeaseMs(presence.Expiry)).ConfigureAwait(false);
         if (r.HasValue)

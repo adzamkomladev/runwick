@@ -16,6 +16,8 @@ Not in SP-024: server-side rendering, a live push channel (SSE or WebSocket), qu
 
 ## Changes
 
+- (2026-11-10, round 4, part 2) **Exact numbers**: every count on the dashboard comes from exact store reads (16 GetJobStats, GetScheduleStats, GetAuditStats); nothing counts a 200-row sample, and the "200+" and "newest 200" captions are gone. **Stats headers** on the list pages (§4.12). **Runs**: the page that lists job instances is now Runs (`/runs`, `/runs/{id}`); `/jobs/{id}` answers 301 to `/runs/{id}` for old links (§4). **Jobs** is now the job types: a list with figures per type and a detail page with charts, definition, handlers, schedules, error codes, runs and actions (trigger, retry failed, cancel pending, dispatch snippets; §4.11). **No visible scrollbars**; long areas fade at the edge, and no page scrolls sideways (§4.10). **Status pages**: a page visit that is refused (403), finds nothing (404) or cannot reach the store (503) gets a page in the shell saying so, with the way back (§3.7); the sample host's sign-in page matches the dashboard.
+- (2026-11-10, round 4) Detail pages for queues, workers, schedules and pools, with a Pools list (§4.9); worker host and process figures on the Workers list and the worker page, from a new presence detail the worker publishes (16 WorkerSummary.Detail); two new session reads, `GetQueueStatsAsync` and `GetScheduleAsync` (16). Rows open their detail page from a name link and a labelled chevron button at the row's end, never from the whole row (§4.7). Hovers move only transform and opacity on one 200 ms curve, charts trace in and tween between polls (§4.8). The polling interval is the reader's choice (§4.1). Opening a menu, popover, select or sheet no longer moves the page: the scrollbar gutter is reserved (`scrollbar-gutter: stable`), and an e2e step checks every overlay. A revealed payload stays open across the Job page's polls (§5.1).
 - (2026-11-09, micro-interactions) One press feedback on every pressable control, command buttons show their result, counts tween, pills crossfade, the sidebar labels fade instead of reflowing, and reduced motion is checked in e2e (§4.6).
 - (2026-11-09, skeletons) Every page and late panel loads behind a skeleton drawn from the page's own components (§4.5), replacing the generic navigation skeleton and the fixed-height blocks; content fades in without moving; an e2e step checks layout shift.
 - (2026-11-09, Overview range fix) The Overview's key figures and charts cover the range in the picker (default the last 24 hours, as the picker shows), replacing the fitted 15 min to 24 h span of entry 4 below. Figures are tallies over the range from the 200-row samples; when a sample hit the limit, the caption says "newest 200 jobs in <range> (back to <time>)", the count shows "200+" and no half-vs-half delta is shown (the delta compares the range's second half with its first only when the sample covers the whole range). "In flight now" and "Pending by queue" are live snapshots and are labelled as such. The shared textarea has no resize grip (`resize-none`).
@@ -225,15 +227,21 @@ Runwick reads `PathBase`, `IsHttps` and the principal only. Trusting `X-Forwarde
 - Props carry the safe DTOs of 16 §2 as they are. No payload, error text, lease token, uniqueness key, resource key, connection string or antiforgery token is ever a prop. `EncryptHistory` stays on as an extra layer, not as the protection.
 - **Partial reloads (sp-023 gap 5).** Each page lists its props. A partial reload (`X-Inertia-Partial-Data`) naming a prop the page does not have, or one the caller may not read, is 403 before anything is read.
 
+### 3.7 Status pages
+
+A page visit (a GET or HEAD for HTML or an Inertia visit, not a partial reload) that ends in 403, 404 or 503 renders the Status page inside the shell with that status code, instead of the JSON problem body that API clients and partial reloads still get. It says in plain words what happened (no access, nothing there, the store not answering), shows the page path and, for 403, the permission the page needs, both copyable. Its main button goes to the first page the caller can read; 503 adds "Try again"; 403 adds "Sign in as someone else" when a `SignOutPath` is set. It shows no data and reads nothing from the store. The sample host's sign-in page uses the dashboard's stylesheet and theme, lists its three demo accounts with what each role may do, says where the reader will continue, and confirms a sign-out.
+
 ## 4. Pages
 
 Routes are relative to the mount. All pages are `GET`. "Poll" is the interval while the tab is visible (§4.1).
 
 | Page (component) | Route | Session reads (permission) | Actions (permission) | Poll |
 |---|---|---|---|---|
-| Overview (`Overview`) | `/overview?range\|from&to` | first pages (200 rows) of `ListJobsAsync` (created in the range, default the last 24 h; failed, created in the range; pending; running), `ListQueuesAsync`, `ListWorkersAsync`, `ListScalingEventsAsync` (page: `Jobs.Read`; each prop its own read permission, `null` without it) | none | 10 s |
-| Jobs (`Jobs`) | `/`, `/jobs?queue&state&jobName&range\|from&to&cursor` | `ListJobsAsync` (`Jobs.Read`) | bulk cancel of selected rows, ≤ 100 (`Jobs.Cancel` per item) | 5 s |
-| Job (`Job`) | `/jobs/{id}` | `GetJobAsync` (`Jobs.Read` on its queue) | cancel, retry, rerun (`Jobs.Cancel`/`Retry`/`Rerun`); reveal payload (`Jobs.ReadPayload`); reveal an attempt's error (`Jobs.ReadError`) | 5 s |
+| Overview (`Overview`) | `/overview?range\|from&to` | `GetJobStatsAsync` by queue and job name (default the last 24 h), the 6 newest failed runs, `ListQueuesAsync`, every live worker, `ListScalingEventsAsync` (page: `Jobs.Read`; each prop its own read permission, `null` without it) | none | 10 s |
+| Jobs (`Jobs`) | `/jobs?range\|from&to` | `ListJobTypesAsync`, `GetJobStatsAsync` by job name (`Jobs.Read`); live workers (`Capacity.Read`) | none | 15 s |
+| Job (`Job`) | `/jobs/{name}?queue&state&range\|from&to&cursor` | `ListJobTypesAsync`, `GetJobStatsAsync`, `ListJobsAsync` (`Jobs.Read`); live workers (`Capacity.Read`) | trigger (`Jobs.Dispatch`); retry failed (`Jobs.Retry` per run); cancel pending (`Jobs.Cancel` per run) | 10 s |
+| Runs (`Runs`) | `/`, `/runs?queue&state&jobName&range\|from&to&cursor` | `ListJobsAsync`, `GetJobStatsAsync` (`Jobs.Read`) | bulk cancel of selected rows, ≤ 100 (`Jobs.Cancel` per item) | 5 s |
+| Run (`Run`) | `/runs/{id}` (`/jobs/{id}` redirects here, 301) | `GetJobAsync` (`Jobs.Read` on its queue) | cancel, retry, rerun (`Jobs.Cancel`/`Retry`/`Rerun`); reveal payload (`Jobs.ReadPayload`); reveal an attempt's error (`Jobs.ReadError`) | 5 s |
 | Queues (`Queues`) | `/queues?cursor` | `ListQueuesAsync` (`Queues.Read`) | pause, resume (`Queues.Control` on that queue) | 10 s |
 | Workers and capacity (`Workers`) | `/workers?expired&cursor` | `ListWorkersAsync`, `ListScopesAsync` (`Capacity.Read`) | set scope capacity (`Capacity.Edit`) | 10 s |
 | Schedules (`Schedules`) | `/schedules?cursor` | `ListSchedulesAsync` (`Schedules.Read`) | pause, resume with policy (`Schedules.Control`); trigger (`Schedules.Trigger`); revalidate (`Schedules.Edit`) | 10 s |
@@ -241,6 +249,11 @@ Routes are relative to the mount. All pages are `GET`. "Poll" is the interval wh
 | Settings (`Settings`) | `/settings` | `GetSettingsAsync` (`Settings.Read`) | none | none |
 | Retention (`Retention`) | `/retention` | `GetRetentionAsync` (`Settings.Read`) | edit policy (`Retention.Manage`) | 30 s |
 | Audit (`Audit`) | `/audit?targetKind&targetId&range\|from&to&cursor` | `ListAuditAsync` (`Audit.Read`) | none | 15 s |
+| Queue (`Queue`) | `/queues/{name}?range\|from&to` | `GetQueueStatsAsync`, `ListJobsAsync` (10 rows) (`Jobs.Read`); `ListWorkersAsync` (`Capacity.Read`); page: `Queues.Read` | pause, resume (`Queues.Control`) | 5 s |
+| Worker (`Worker`) | `/workers/{instance}` | `ListWorkersAsync` with expired, `ListScalingEventsAsync` (`Capacity.Read`) | none | 5 s |
+| Schedule (`Schedule`) | `/schedules/{key}` | `GetScheduleAsync`, 100 occurrences (`Schedules.Read`) | as on Schedules | 10 s |
+| Pools (`Pools`) | `/pools` | `ListWorkersAsync` (`Capacity.Read`) | none | 10 s |
+| Pool (`Pool`) | `/pools/{name}` | `ListWorkersAsync`, `ListScalingEventsAsync` (`Capacity.Read`) | none | 10 s |
 
 Rules for every page:
 
@@ -249,7 +262,7 @@ Rules for every page:
 - A cursor that is rejected (`invalid_cursor`, for example expired after 15 minutes) renders the first page with a notice. It is not an error screen.
 - Each list with a pager shows its `observedAt` ("as of 12:04:31").
 - A job whose detail expired shows `detailExpiredAt`; its reveal button answers "detail expired" (410 from the session).
-- Queues show paused state and revision, no depth (16 has no count read). **[choice]** The page links to the telemetry dashboard (18 §9) for depth and age.
+- Queues show paused state, revision, pending now and runs in the range per queue (exact, 16 GetJobStats by queue).
 - Job, attempt and error data are shown as text nodes. Error detail is shown as error **code** only until revealed.
 
 ### 4.1 Polling
@@ -264,6 +277,7 @@ Rules for every page:
 - On failure (network error, 429, 5xx) the interval doubles up to 60 s; the first success resets it. A 409 asset-version answer is handled by the Inertia client (full reload).
 - Polls stop while a control or reveal request is in flight on the page, so a refreshed revision cannot change under a submitted command.
 - No interval is below 5 s (management-retention-defaults, "Browser poll").
+- **Reader's choice.** Beside the Live pill a select offers 5 s, 30 s, 1 min, 3 min, 15 min, 1 h and Off; the default is 5 s. The choice is kept in `localStorage` (`runwick-dashboard-poll`; without storage it lasts until reload). Each page polls at the longer of the choice and its own interval in the table above; the pill shows the interval in use ("Live · 30 s") or "Off". The notifications prop follows the choice too, never more often than 60 s. Off stops every poll; a page visit still loads fresh data.
 
 ### 4.2 Date range and filters
 
@@ -277,8 +291,7 @@ Props use Inertia.Net 1.7.0's factories; the permission check of §3.6 runs firs
 
 | Page | Prop | Kind |
 |---|---|---|
-| Overview | `recent`, `failed` | deferred, group `charts` |
-| Overview | `pending`, `running` | deferred, group `flight` |
+| Overview | `stats`, `failed` | deferred, group `charts` |
 | Overview | `queues`, `workers`, `events` | deferred, group `side` |
 | Jobs | `jobs` | merge, appending `items` matched on `jobId`: "Load more" is a partial reload with the next cursor and `preserveUrl` |
 | Jobs | `queueNames` | once, 5 minutes (null without `Queues.Read`) |
@@ -286,7 +299,7 @@ Props use Inertia.Net 1.7.0's factories; the permission check of §3.6 runs firs
 | Settings | `settings` | once, 5 minutes |
 | every page | `notifications` | deferred, group `notifications`, once for 1 minute |
 
-The rest load with the page. Overview shows a skeleton until its first two groups arrive; each side panel shows one until `side` does. **[choice]** Live props are not used: they need a broadcaster (`IInertiaLiveBroadcaster`) and a push channel the dashboard does not have, so polling stays (§4.1).
+The rest load with the page. Overview shows a skeleton until `charts` arrives; each side panel shows one until `side` does. **[choice]** Live props are not used: they need a broadcaster (`IInertiaLiveBroadcaster`) and a push channel the dashboard does not have, so polling stays (§4.1).
 
 ### 4.4 Notifications
 
@@ -314,6 +327,53 @@ Each one is quick (120 to 200 ms) and quiet, and needs no library beyond Tailwin
 - **Commands.** A command button shows a spinner while its control is sent, then a check or a cross for 1.2 s; on Pause/Resume it shows on whichever twin is now on screen. The Save buttons in sheets are command buttons: the sheet closes half a second after the change is applied and stays open when it is not.
 - **Focus.** Table rows tint on hover and while something in them has keyboard focus; focus rings use the `ring` token (pine blue).
 - **Reduced motion.** With `prefers-reduced-motion: reduce`, every animation and transition is cut to nothing, presses do not scale, the Overview cards do not lift, and numbers change at once. The Chromium flow checks this: a held press scales to 0.97 normally and not at all under reduced motion, and no element has a running transition or animation.
+
+### 4.7 Rows and links
+
+A row is not a link. Where a row has a page of its own, its name is a link (underlined on hover) and the row ends with a chevron button labelled for screen readers ("Open job sample.flaky"). The row itself keeps only the hover tint of §4.6. Other names in a row link to their own pages: a job's queue, an event's worker and pool.
+
+### 4.8 Hovers and chart motion
+
+- **Hovers** move only `transform` and `opacity` (the `lift` and `tint` utilities draw their ring, shadow and wash on pseudo-elements that fade in), on one curve (`--ease-glide`, cubic-bezier(0.2, 0.8, 0.2, 1)) over 200 ms, so nothing reflows.
+- **Charts.** Lines trace in, areas fade up, bars grow from their base, staggered a little per bar or series; horizontal bars and meters grow with `scaleX`. On each poll the values tween over 450 ms (requestAnimationFrame) instead of jumping. The tooltip, crosshair and hover dots glide with `transform`. Sparklines do the same.
+- Under `prefers-reduced-motion` none of this runs (§4.6).
+
+### 4.9 Detail pages and pools
+
+- **Queue.** State, the exact counts by state of runs created in the range and the live pending and running counts (16 GetJobStats), a throughput chart in 24 buckets (created, succeeded, failed), the failure rate of jobs that ended, the age of the oldest eligible pending job (live), the newest 10 jobs, and the pools and workers that serve the queue. Pause and resume as on Queues.
+- **Worker.** Host, process ID, version, start and heartbeat; CPU (process share of the machine and the CPU count), working set, GC heap and machine memory; its pools with queues, weights, concurrency and in-flight counts; its running attempts (at most 20 listed) and its last 10 finished attempts; its worker settings; its scaling changes of the last 24 hours. A worker of an older version publishes no detail; the page says so and shows the presence row only. Expired workers are found too.
+- **Schedule.** Expression (or the one-off time), dialect, zone, job, queue and policies; next and last occurrences; a chart of the newest occurrences by what became of their job; the occurrence history with each job's state. Pause, resume with policy, trigger and revalidate as on Schedules.
+- **Pools** are worker configuration, not stored rows. The Pools page groups the live workers' published pools by name: queues and weights, mode and limits, the summed target and in-flight count, and the workers. The Pool page adds each worker's CPU and memory, the settings and the pool's scaling changes. Read only.
+- **Limits.** Pools, fleet figures and a queue's workers read every live worker, a page of 200 at a time, up to 5,000; beyond that the page answers 503 `too_many` rather than show a partial fleet. The worker page looks through at most 2,000 presence rows.
+
+### 4.10 Scrollbars and overflow
+
+No scrollbar is drawn anywhere (`scrollbar-width: none` and `::-webkit-scrollbar { display: none }` on every element); the wheel, trackpad, touch and keyboard still scroll. Long scroll areas (the sidebar, sheets, select lists, the combobox and wide tables) fade at the side with more content, driven by the area's own scroll timeline in CSS: an area that does not overflow has no fade, and browsers without scroll timelines show none. No page scrolls sideways at 1440 or 390 px; wide tables hide columns as the width shrinks. The Chromium flow checks both widths on every list page.
+
+### 4.11 Jobs: the job types
+
+- **List.** One row per job name known to the system: registered in this host's registry, handled by a live worker (worker detail `handlers`), seen in stored runs or used by a schedule (16 ListJobTypes). Each row shows the default queue, runs, success rate, failed and p95 duration in the range, the last run and its outcome, a sparkline of runs, whether a live worker has a handler (a warning when none does), the schedules that use it, and a View button.
+- **Detail.** Header figures (runs, succeeded, failed, retries, success rate, median and p95 duration, throughput), charts of runs by outcome and of duration, the definition as the registry knows it (queue, priority, payload version and type, execution policy, uniqueness, rate scopes, capacity), the pools and workers that handle it, its schedules, its top error codes, and its runs with the state chips, a queue filter, View buttons and pages.
+- **Trigger.** A side sheet with a JSON payload editor (checked for syntax here, against the job's contract by the session), queue, priority, a delay and a reason; it posts `POST /jobs/{name}/dispatch` to `DispatchAsync`, and an applied trigger opens the new run. The command ID is the idempotency key; a job with a uniqueness rule reuses the run holding its key.
+- **Retry failed / cancel pending.** The confirm dialog shows the exact count from the stats. The server lists those runs (this type, failed and created in the confirmed range; or pending now) and sends them to `RetryJobsAsync` / `CancelJobsAsync` in batches of 100, at most 1,000 runs (`too_many_runs` above that). Each run is checked and audited as a single control would be; each gets a command ID derived from the request's, so a resent request replays rather than repeats. The answer is the page with an outcome listing each run's status.
+- **Snippets.** Copy a C# (`IJobDispatcher.DispatchAsync`) or CLI (`runwick dispatch`) line for the job.
+
+### 4.12 Stats headers
+
+Each list page opens with a row of compact cards: an exact figure that tweens, a line under it and, where a series exists, a sparkline; they follow the page's range (default the last 24 hours) and filters.
+
+| Page | Cards |
+|---|---|
+| Runs | runs, success rate, failed (and cancelled), retries, p95 and median duration, throughput per minute (and pending now) |
+| Jobs | job types, runs, success rate, failed (and retries), p95 duration, types with no live handler |
+| Queues | queues, paused, pending now, oldest pending, busiest queue, failed; the table adds pending and runs per queue |
+| Workers | live workers and hosts, concurrency in use of capacity, busiest host, mean process CPU, working set, machine memory |
+| Pools | pools, auto / fixed, slots in use, workers |
+| Schedules | schedules (needing review), active and paused, runs in the range, missed or misfired, next run |
+| Audit | actions, top actor, top action, denied or rejected |
+| Retention | rows kept, removed today, batches and failures today, classes behind |
+
+Queue, paused and schedule totals and the fleet figures page through every item of their list (at most 5,000; above that the prop answers `too_many`). Scaling has no header: its list is the history itself.
 
 ## 5. Controls
 
@@ -355,7 +415,7 @@ An asset-version 409 on a POST never replays the POST: the client reloads the pa
 
 - Sent with plain `fetch` (not an Inertia visit), with the antiforgery header and an optional `reason`. They are POST because the session writes an audit row first (16 §3).
 - Answer: JSON, `Cache-Control: no-store`, the stored value as a JSON value. 410 `detail_expired` and 403/404 use the error body of 16 §5.
-- The client keeps the value in component state only: not in props, history, flash or remembered state. It shows it as formatted text and clears it on navigation.
+- The client keeps the value in component state only: not in props, history, flash or remembered state. It shows it as formatted text and clears it on navigation (a page visit or a control; the page's own polls keep it open).
 
 ## 6. Management addition: scaling history
 
@@ -483,7 +543,7 @@ DSH-01 … 04 are new IDs for checks the source cases do not name.
 
 - that hiding a page or button is authorization; the server checks every request;
 - live updates: the dashboard polls; a list can be up to one interval (or 60 s after failures) old, and every list says when it was read;
-- queue depth, job totals or any count beyond one page; the Overview tallies at most one page of a read ("50+" beyond it);
+- a count it did not read exactly: every figure comes from an exact store read (16 GetJobStats and friends) or from paging a whole list;
 - that a cancel stopped a handler (00 §9 rule 5); "cancel requested" is shown as requested;
 - that an `outcome_unknown` action failed or succeeded;
 - that a revealed payload can be taken back from the browser, a screenshot or memory;

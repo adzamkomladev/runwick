@@ -150,11 +150,13 @@ local function purge_jobs(p, cutoff, rows)
     return old and expired and not live(id)
   end)
   for _, id in ipairs(out) do
-    local f = redis.call('HMGET', P .. 'job:' .. id, 'queue', 'state')
+    local f = redis.call('HMGET', P .. 'job:' .. id, 'queue', 'state', 'name', 'created')
     U.del('job:' .. id)
     U.zrem('idx:created', id)
     U.zrem('idx:created:q:' .. f[1], id)
     U.zrem('idx:created:s:' .. f[2], id)
+    U.zrem('idx:terminal', id)
+    if U.counted(tonumber(f[4]), id) then U.jobtype(f[1], f[3], -1) end
   end
   return #out, exhausted, cs, ca, ck
 end

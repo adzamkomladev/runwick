@@ -4,6 +4,14 @@
 
 Numeric values are restated here where the engine behavior depends on them; [06-defaults.md](06-defaults.md) is the single table of defaults, derived formulas and startup inequalities. Where the two disagree, 06 is authoritative for the number and this file for the behavior.
 
+## Changes (2026-11-10, exact stats)
+
+- §14: the detail is version 2 and adds `handlers`, the job names this worker has a handler for (16 §2.3).
+
+## Changes (2026-11-10, worker detail)
+
+- §14: every presence publication also carries the worker's detail (16 §2.3): host figures, pools with target and tickets held, the `WorkerOptions` values, the attempts running now (at most 20) and the last 10 this process finished (an in-memory ring, filled when an attempt that ran retires). Building it never throws; a figure that cannot be read is left out. It changes nothing about presence cadence, expiry or authority.
+
 ## Changes (2026-11-03)
 
 Clarification of §9.6 (batched claim) against §8.3 and §8.4. No engine behavior changes.
@@ -660,7 +668,7 @@ LIMIT 32;            -- [choice] bounded batch per scan
 
 ## 14. Presence loop
 
-Publishes: worker instance ID, application, subscribed queues, capability revision and full decoding tuples (≤512), pool targets, build identifier, status (`starting`, `ready`, `draining`, `degraded`, `stopping`) and heartbeat expiry. Cadence 5 s ± 10% (uniform [4.5 s, 5.5 s]); expiry 20 s in store time. First publication happens before admission is enabled (§3.1). Uses the background I/O class (presence/readiness take precedence over heavy background work). Failures retry with backoff and only degrade observability. Presence is never lease authority; its expiry changes nothing about job ownership. No `queue_events` heartbeat rows are written.
+Publishes: worker instance ID, application, subscribed queues, capability revision and full decoding tuples (≤512), pool targets, build identifier, status (`starting`, `ready`, `draining`, `degraded`, `stopping`) and heartbeat expiry. Cadence 5 s ± 10% (uniform [4.5 s, 5.5 s]); expiry 20 s in store time. First publication happens before admission is enabled (§3.1). Uses the background I/O class (presence/readiness take precedence over heavy background work). Failures retry with backoff and only degrade observability. Presence is never lease authority; its expiry changes nothing about job ownership. No `queue_events` heartbeat rows are written. Each publication also carries the worker's detail (host, pools, settings, running and recently finished attempts; 16 §2.3), built fresh and never failing the publication.
 
 ## 15. Pressure gates and pool suspension
 

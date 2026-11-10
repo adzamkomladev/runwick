@@ -279,6 +279,30 @@ function U.set_state(j, state)
   else
     U.zrem('leases', j.id)
   end
+  -- idx:terminal orders ended jobs by end time for the job stats read (16 §2.4); callers write terminalat first.
+  if U.TERMINAL[state] and j.terminalat then
+    U.zadd('idx:terminal', tonumber(j.terminalat), j.id)
+  else
+    U.zrem('idx:terminal', j.id)
+  end
+end
+
+-- Whether a job is already in the jobtypes counts: meta.bf is the StatsIndex walk's (created, id) cursor over idx:created, or
+-- 'done'. A job the walk has not reached yet is counted by the walk itself, so writers leave it alone (16 §2.6).
+function U.counted(created, id)
+  local bf = U.meta and U.meta.bf
+  if bf == 'done' then return true end
+  if not bf then return false end
+  local s, k = string.match(bf, '^(%d+):(.*)$')
+  s = tonumber(s)
+  return created < s or (created == s and not U.blt(k, id))
+end
+
+-- jobtypes: stored jobs per (queue, job name), so ListJobTypes reads the distinct pairs without a scan.
+function U.jobtype(queue, name, delta)
+  local f = queue .. '\0' .. name
+  local n = tonumber(U.hget('jobtypes', f) or '0') + delta
+  U.hset('jobtypes', f, n > 0 and U.S(n) or nil)
 end
 
 function U.gen(j, f) return j['g:' .. j.gen .. ':' .. f] end

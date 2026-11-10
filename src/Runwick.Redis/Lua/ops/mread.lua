@@ -170,6 +170,171 @@ elseif SUB == 'schedules' then
       if #out - 3 >= limit then break end
     end
   end
+elseif SUB == 'jscan' then
+  -- 16 §2.4 job stats: one row per job of an index range in score order. 2 index key, 3 min score, 4 max score ('(' = exclusive),
+  -- 5 after score ('' = none), 6 after id, 7 worker id ('' = any), 8 error range from ms ('' = no error codes), 9 to ms (exclusive).
+  -- A row: id, queue, name, state, created, terminal and eligible times, executions, the current generation's first start
+  -- (earliest authorization, else earliest reservation), whether worker 7 ran an attempt, and the error codes of attempts
+  -- (by worker 7 when given) that finished in [8, 9). After BUDGET entries the last row is the cursor { more, sc, id }.
+  local from, after, worker = tonumber(ARGS(5)), ARGS(6), ARGS(7)
+  local ef, et = tonumber(ARGS(8)), tonumber(ARGS(9))
+  local min = ARGS(5) ~= '' and ARGS(5) or ARGS(3)
+  local offset, examined = 0, 0
+  while true do
+    local page = redis.call('ZRANGE', P .. ARGS(2), min, ARGS(4), 'BYSCORE', 'LIMIT', offset, 200, 'WITHSCORES')
+    if #page == 0 then return out end
+    offset = offset + #page / 2
+    for i = 1, #page, 2 do
+      local id, score = page[i], page[i + 1]
+      if not (from and tonumber(score) == from and not U.blt(after, id)) then
+        if examined >= BUDGET then
+          add(U.enc({ more = true, sc = U.raw(score), id = id }))
+          return out
+        end
+        examined = examined + 1
+        local j = U.hgetall('job:' .. id)
+        if j.state then
+          local auth, res, ran, errs = nil, nil, false, U.arr()
+          for f in pairs(j) do
+            local a = string.match(f, '^a:([0-9a-f]+):res$')
+            if a then
+              local p = 'a:' .. a .. ':'
+              local by = j[p .. 'worker'] == worker
+              if by then ran = true end
+              if j[p .. 'gen'] == j.gen then
+                local x, r = tonumber(j[p .. 'auth']), tonumber(j[p .. 'reserved'])
+                if x and (not auth or x < auth) then auth = x end
+                if r and (not res or r < res) then res = r end
+              end
+              local fin = tonumber(j[p .. 'fin'])
+              if ef and fin and fin >= ef and fin < et and j[p .. 'error'] and (worker == '' or by) then
+                local ok, e = pcall(cjson.decode, j[p .. 'error'])
+                if ok and type(e) == 'table' and type(U.nn(e.code)) == 'string' then errs[#errs + 1] = e.code end
+              end
+            end
+          end
+          local st = auth or res
+          add(U.enc({ id = id, sc = U.raw(score), q = j.queue, n = j.name, s = j.state, c = num(j.created), t = num(j.terminalat),
+            e = num(j.eligible), x = num(j.xcount), st = st and U.raw(U.S(st)) or NULL, w = ran, err = errs }))
+        end
+      end
+    end
+  end
+elseif SUB == 'jobnames' then
+  -- 16 §2.6: the stored (queue, job name) pairs, then each schedule's key with its current definition's job name and queue.
+  local t = redis.call('HKEYS', P .. 'jobtypes')
+  if #t > BUDGET then return { 'BUDGET' } end
+  local names, schedules = U.arr(), U.arr()
+  for _, f in ipairs(t) do
+    local q, n = string.match(f, '^([^%z]*)%z(.*)$')
+    names[#names + 1] = U.arr({ q, n })
+  end
+  if redis.call('HLEN', P .. 'sched') > BUDGET then return { 'BUDGET' } end
+  for _, id in ipairs(redis.call('HKEYS', P .. 'sched')) do
+    if not string.find(id, ':', 1, true) then
+      local r = U.jget('sched', id)
+      local d = cjson.decode(redis.call('HGET', P .. 'sched', 'd:' .. id .. ':' .. U.S(r.drev)))
+      schedules[#schedules + 1] = U.arr({ r.key, d.template.jobName, d.template.queue })
+    end
+  end
+  add(U.enc({ names = names, schedules = schedules }))
+elseif SUB == 'sstats' then
+  -- 16 §2.7: 2 from ms, 3 to ms (exclusive). Schedules now; occurrences (occ:idx) and misfire ranges (sched:ar) in the range.
+  local from, to = ARGS(2), '(' .. ARGS(3)
+  if redis.call('HLEN', P .. 'sched') > BUDGET then return { 'BUDGET' } end
+  local total, paused, review, nextDue = 0, 0, 0, NULL
+  for _, id in ipairs(redis.call('HKEYS', P .. 'sched')) do
+    if not string.find(id, ':', 1, true) then
+      local r = U.jget('sched', id)
+      total = total + 1
+      if r.paused then paused = paused + 1 end
+      if r.review then review = review + 1 end
+      local n = U.nn(r.next)
+      if not r.paused and n and (nextDue == NULL or n < nextDue) then nextDue = n end
+    end
+  end
+  if redis.call('ZCOUNT', P .. 'occ:idx', from, to) > BUDGET then return { 'BUDGET' } end
+  local occ = {}
+  for _, m in ipairs(redis.call('ZRANGE', P .. 'occ:idx', from, to, 'BYSCORE')) do
+    local raw = redis.call('HGET', P .. 'occ:' .. string.sub(m, 1, 32), string.sub(m, 34))
+    if raw then
+      local d = cjson.decode(raw).disp
+      occ[d] = (occ[d] or 0) + 1
+    end
+  end
+  if redis.call('ZCOUNT', P .. 'sched:ar', from, to) > BUDGET then return { 'BUDGET' } end
+  local misfires = 0
+  for _, m in ipairs(redis.call('ZRANGE', P .. 'sched:ar', from, to, 'BYSCORE')) do
+    local raw = redis.call('HGET', P .. 'sched', 'ar:' .. m)
+    if raw then
+      local reason = cjson.decode(raw).reason
+      if reason == 'misfire_skip' or reason == 'run_once_covered' or reason == 'catch_up_skipped' then misfires = misfires + 1 end
+    end
+  end
+  add(U.enc({ total = total, paused = paused, review = review, next = nextDue, occ = occ, misfires = misfires }))
+elseif SUB == 'astats' then
+  -- 16 §2.7: 2 from ms, 3 to ms (exclusive), 4 before audit id ('' = newest). Counts by operation and actor of the audit rows
+  -- in the range, newest first; after BUDGET rows the reply carries the next audit id to continue from.
+  local from, to, top = tonumber(ARGS(2)), tonumber(ARGS(3)), ARGS(4) ~= '' and '(' .. ARGS(4) or '+inf'
+  local ops, actors, examined, offset = {}, {}, 0, 0
+  while true do
+    local ids = redis.call('ZRANGE', P .. 'audit', top, '-inf', 'BYSCORE', 'REV', 'LIMIT', offset, 100)
+    if #ids == 0 then break end
+    offset = offset + #ids
+    local rows = redis.call('HMGET', P .. 'audit:data', unpack(ids))
+    for i, raw in ipairs(rows) do
+      if examined >= BUDGET then
+        add(U.enc({ ops = ops, actors = actors, next = ids[i] }))
+        return out
+      end
+      examined = examined + 1
+      if raw then
+        local a = cjson.decode(raw)
+        -- Audit IDs grow with store time, which never goes backward: the first row before the range ends the walk.
+        if a.at < from then
+          add(U.enc({ ops = ops, actors = actors }))
+          return out
+        end
+        if a.at < to then
+          ops[a.action] = (ops[a.action] or 0) + 1
+          actors[a.subject] = (actors[a.subject] or 0) + 1
+        end
+      end
+    end
+  end
+  add(U.enc({ ops = ops, actors = actors }))
+elseif SUB == 'schedule' then
+  -- 2 schedule key, 3 limit. The summary, the current definition as stored, then the newest occurrences (by materialization
+  -- time, then scheduled time with manual ones first, then key; as the SQL stores) with each job's current state.
+  local id = redis.call('HGET', P .. 'sched', 'k:' .. ARGS(2))
+  if not id then return out end
+  local r = cjson.decode(redis.call('HGET', P .. 'sched', id))
+  local occ = redis.call('HGETALL', P .. 'occ:' .. id)
+  if #occ > 2 * BUDGET then return { 'BUDGET' } end
+  local rows, mat = {}, NULL
+  for i = 1, #occ, 2 do
+    local o = cjson.decode(occ[i + 1])
+    o.f = occ[i]
+    rows[#rows + 1] = o
+    if mat == NULL or o.mat > mat then mat = o.mat end
+  end
+  local function at(o) return U.nn(o.at) or math.huge end
+  table.sort(rows, function(a, b)
+    if a.mat ~= b.mat then return a.mat > b.mat end
+    if at(a) ~= at(b) then return at(a) > at(b) end
+    return U.blt(b.f, a.f)
+  end)
+  add(U.enc({ key = r.key, paused = r.paused and true or false, review = r.review and true or false, drev = r.drev, crev = r.crev,
+    next = U.nn(r.next) or NULL, mat = mat }))
+  add(redis.call('HGET', P .. 'sched', 'd:' .. id .. ':' .. U.S(r.drev)))
+  for i = 1, math.min(tonumber(ARGS(3)), #rows) do
+    local o = rows[i]
+    local kind, key = string.match(o.f, '^([^:]*):(.*)$')
+    local job = U.nn(o.job)
+    local state = job and redis.call('HGET', P .. 'job:' .. job, 'state') or NULL
+    add(U.enc({ kind = kind, key = key, at = U.nn(o.at) or NULL, mat = o.mat, disp = o.disp, coal = o.coal and true or false, job = job or NULL,
+      state = state }))
+  end
 elseif SUB == 'audit' then
   -- 2 target kind, 3 target id, 4 from ms, 5 to ms ('' = none), 6 after audit id ('' = none), 7 limit
   local kind, target, limit = ARGS(2), ARGS(3), tonumber(ARGS(7))
