@@ -76,6 +76,8 @@
 
 :root {
   --radius: 0.625rem;
+  /* Shadows are tinted with the palette's darkest violet, never pure black. */
+  --shadow-tint: var(--color-midnight-violet-900);
   --background: var(--color-dry-sage-100);
   --foreground: var(--color-midnight-violet-950);
   --card: var(--color-dry-sage-50);
@@ -110,6 +112,7 @@
 
 .dark {
   --background: var(--color-midnight-violet-950);
+  --shadow-tint: color-mix(in oklch, var(--color-midnight-violet-950) 70%, black);
   --foreground: var(--color-dry-sage-50);
   --card: var(--color-midnight-violet-900);
   --card-foreground: var(--color-dry-sage-50);
@@ -181,6 +184,7 @@
   --animate-skeleton: skeleton 1.6s ease-in-out infinite;
   --animate-live: live 2s ease-out infinite;
   --ease-glide: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @keyframes flash {
@@ -298,7 +302,7 @@
   transition: translate 200ms var(--ease-glide), scale 200ms var(--ease-glide);
   &::after {
     content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0;
-    box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 30%, transparent), 0 10px 24px -8px rgb(0 0 0 / 0.18);
+    box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 30%, transparent), 0 6px 12px -6px color-mix(in oklch, var(--shadow-tint) 9%, transparent);
     transition: opacity 200ms var(--ease-glide);
   }
   &:hover::after, &:focus-visible::after { opacity: 1; }
