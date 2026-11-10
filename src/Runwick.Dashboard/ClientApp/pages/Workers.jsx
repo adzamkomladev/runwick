@@ -1,5 +1,8 @@
 import { router } from '@inertiajs/react'
-import { IconDeviceFloppy, IconPencil } from '@tabler/icons-react'
+import { IconCpu, IconDeviceFloppy, IconFlame, IconMemory, IconPencil, IconRocket, IconServer2 } from '@tabler/icons-react'
+import { Kpi, KpiStrip } from '../components/kpis'
+import { percent } from '../components/host'
+import { bytes } from '../components/usage'
 import { useState } from 'react'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
@@ -10,7 +13,8 @@ import { Switch } from '../components/ui/switch'
 import { Textarea } from '../components/ui/textarea'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
-import { AnimatedNumber, CommandButton, Copyable, flash, Layout, Pager, StateBadge, TableCard, time, useChanged, useCommand, usePoll, useSort } from '../lib'
+import { CpuCell, hostOf, MemoryCell } from '../components/host'
+import { AnimatedNumber, CommandButton, Copyable, flash, Layout, NameLink, OpenButton, Pager, StateBadge, TableCard, time, useChanged, useCommand, usePoll, useSort } from '../lib'
 
 /** Edit a scope's capacity in a side sheet: the new value and an optional reason, checked against the policy revision shown. */
 function CapacitySheet({ scope, url, command, onClose }) {
@@ -44,8 +48,8 @@ function CapacitySheet({ scope, url, command, onClose }) {
   )
 }
 
-export default function Workers({ base, can, workers, scopes, query }) {
-  const live = usePoll(['workers', 'scopes'], 10)
+export default function Workers({ base, can, workers, fleet, scopes, query }) {
+  const live = usePoll(['workers', 'fleet', 'scopes'], 10)
   const command = useCommand()
   const [workerRows, workerHead] = useSort(workers.items)
   const [scopeRows, scopeHead] = useSort(scopes.items)
@@ -55,6 +59,15 @@ export default function Workers({ base, can, workers, scopes, query }) {
   return (
     <Layout heading="Workers and capacity" live={live}>
       <CapacitySheet key={editing ? `${editing.kind}/${editing.key}` : 'none'} scope={editing} url={editing && capacityUrl(editing)} command={command} onClose={() => setEditing(null)} />
+      <KpiStrip label="Fleet stats">
+        <Kpi testId="kpi-live" icon={IconServer2} label="Live workers" value={fleet.live} foot={`on ${fleet.hosts} host${fleet.hosts === 1 ? '' : 's'}`} />
+        <Kpi testId="kpi-concurrency" icon={IconRocket} label="Concurrency in use" value={fleet.inFlight} suffix={`/ ${fleet.target}`} foot={fleet.target ? `${Math.round((fleet.inFlight / fleet.target) * 100)} % of capacity` : 'No capacity'} />
+        <Kpi testId="kpi-busiest" icon={IconFlame} label="Busiest host" value={fleet.busiest?.hostName ?? '—'} foot={fleet.busiest ? `${fleet.busiest.inFlight} in flight` : 'Nothing running'} />
+        <Kpi testId="kpi-cpu" icon={IconCpu} label="Fleet CPU" value={percent(fleet.cpuPercent)} foot="Mean process share of its machine" />
+        <Kpi testId="kpi-working-set" icon={IconMemory} label="Working set" value={bytes(fleet.workingSetBytes)} foot="All worker processes" />
+        <Kpi testId="kpi-memory" icon={IconMemory} label="Machine memory" value={fleet.memoryTotalBytes ? `${Math.round((1 - fleet.memoryAvailableBytes / fleet.memoryTotalBytes) * 100)} %` : '—'}
+          foot={fleet.memoryTotalBytes ? `${bytes(fleet.memoryAvailableBytes)} free of ${bytes(fleet.memoryTotalBytes)}` : 'Not published'} />
+      </KpiStrip>
       <Tabs defaultValue="workers">
         <TabsList>
           <TabsTrigger value="workers">Workers <Badge variant="secondary" className="px-1.5">{workers.next ? '50+' : workers.items.length}</Badge></TabsTrigger>
@@ -69,12 +82,15 @@ export default function Workers({ base, can, workers, scopes, query }) {
               <TableHeader><TableRow className="hover:bg-transparent">
                 {workerHead('host', 'Host', (w) => w.hostName)}{workerHead('pid', 'Process', (w) => w.processId)}{workerHead('build', 'Build', (w) => w.buildId)}
                 {workerHead('status', 'Status', (w) => w.status)}{workerHead('beat', 'Heartbeat', (w) => Date.parse(w.heartbeatAt))}{workerHead('expires', 'Expires', (w) => Date.parse(w.expiresAt))}
+                {workerHead('cpu', 'CPU', (w) => hostOf(w)?.processCpuPercent ?? -1, 'hidden lg:table-cell')}{workerHead('memory', 'Memory', (w) => hostOf(w)?.workingSetBytes ?? -1, 'hidden xl:table-cell')}<TableHead className="w-10" />
               </TableRow></TableHeader>
               <TableBody>{workerRows.map((w) => (
                 <TableRow key={w.instanceId}>
-                  <TableCell className="font-medium">{w.hostName}</TableCell><TableCell className="tabular-nums">{w.processId}</TableCell><TableCell><Copyable value={w.buildId} label="Copy build ID"><code>{w.buildId}</code></Copyable></TableCell>
+                  <TableCell><NameLink href={`${base}/workers/${w.instanceId}`} testId="worker-link">{w.hostName}</NameLink></TableCell><TableCell className="tabular-nums">{w.processId}</TableCell><TableCell><Copyable value={w.buildId} label="Copy build ID"><code>{w.buildId}</code></Copyable></TableCell>
                   <TableCell><StateBadge state={w.status} /></TableCell>
                   <TableCell className="whitespace-nowrap text-muted-foreground">{time(w.heartbeatAt)}</TableCell><TableCell className="whitespace-nowrap text-muted-foreground">{time(w.expiresAt)}</TableCell>
+                  <TableCell className="hidden lg:table-cell"><CpuCell host={hostOf(w)} /></TableCell><TableCell className="hidden xl:table-cell"><MemoryCell host={hostOf(w)} /></TableCell>
+                  <TableCell className="text-right"><OpenButton href={`${base}/workers/${w.instanceId}`} label={`Open worker ${w.hostName}`} testId="worker-open" /></TableCell>
                 </TableRow>
               ))}</TableBody>
             </Table>

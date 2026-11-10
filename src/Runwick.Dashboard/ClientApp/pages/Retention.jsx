@@ -1,4 +1,5 @@
-import { IconAlertTriangle, IconCheck, IconDeviceFloppy, IconPencil } from '@tabler/icons-react'
+import { IconAlertTriangle, IconCheck, IconDatabase, IconDeviceFloppy, IconPencil, IconTrash } from '@tabler/icons-react'
+import { Kpi, KpiStrip } from '../components/kpis'
 import { useState } from 'react'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
@@ -32,7 +33,7 @@ function PolicySheet({ open, onOpenChange, retention, url, command }) {
       <SheetContent data-testid="policy-sheet">
         <SheetHeader><SheetTitle>Retention policy</SheetTitle><SheetDescription>Hours each record class is kept. Empty keeps it forever.</SheetDescription></SheetHeader>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
-          <div className="grid flex-1 content-start gap-4 overflow-y-auto px-5">
+          <div className="fade-y grid flex-1 content-start gap-4 overflow-y-auto px-5">
             {NAMES.map(([name, label]) => (
               <div key={name} className="grid gap-1.5">
                 <Label htmlFor={`policy-${name}`}>{label}</Label>
@@ -61,6 +62,13 @@ export default function Retention({ base, can, retention }) {
     <Layout heading="Retention" live={live}
       actions={can.retentionManage && <CommandButton command={command} url={url} variant="default" data-testid="edit-policy" icon={IconPencil} onClick={() => setEditing(true)}>Edit policy</CommandButton>}>
       <PolicySheet key={editing ? `open-${retention.revision}` : 'closed'} open={editing} onOpenChange={setEditing} retention={retention} url={url} command={command} />
+      <KpiStrip label="Retention stats" className="xl:grid-cols-5">
+        <Kpi testId="kpi-kept" icon={IconDatabase} label="Rows kept" value={retention.classes.reduce((t, c) => t + (c.totalRows ?? 0), 0)} foot={`${retention.classes.length} record classes`} />
+        <Kpi testId="kpi-removed" icon={IconTrash} label="Removed today" value={retention.classes.reduce((t, c) => t + (c.todayRows ?? 0), 0)} foot="Rows past their retention" />
+        <Kpi testId="kpi-batches" label="Batches today" value={retention.classes.reduce((t, c) => t + (c.todayBatches ?? 0), 0)} />
+        <Kpi testId="kpi-failures" icon={IconAlertTriangle} label="Failures today" value={retention.classes.reduce((t, c) => t + (c.todayFailures ?? 0), 0)} />
+        <Kpi testId="kpi-behind" icon={IconCheck} label="Behind" value={retention.classes.filter((c) => c.behind).length} foot="Classes not caught up" />
+      </KpiStrip>
       <Card className="gap-4">
         <CardHeader><CardTitle>Policy</CardTitle><CardAction><Badge variant="secondary">revision <span data-testid="retention-revision" className="ml-1">{retention.revision}</span></Badge></CardAction></CardHeader>
         <CardContent>

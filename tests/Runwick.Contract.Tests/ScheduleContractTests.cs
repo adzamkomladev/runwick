@@ -695,4 +695,90 @@ public sealed class ScheduleContractTests
         Assert.Equal(1, await Count(f, "SELECT count(*) FROM runwick.queue_events WHERE event_kind = 'schedule_registered'"));
         Assert.Equal(await Occurrences(f), await Count(f, "SELECT count(*) FROM runwick.job_generations WHERE created_reason = 'scheduled'"));
     }
+
+    [Theory]
+    [MemberData(nameof(CoreContractTests.Kinds), MemberType = typeof(CoreContractTests))]
+    [Trait("Case", "SCHD-01")]
+    public async Task Schedule_detail_shows_the_definition_and_the_newest_occurrences_with_their_job_state(StoreKind kind)
+    {
+        var (f, c) = await OpenAsync(kind, "schd01");
+        await using var _ = f;
+        await RegisterAsync(c, "tick");
+        await RewindAsync(f, "tick", 2);
+        Assert.Equal(StoreStatus.Applied, (await SendAsync(c, (await PlanAsync(c, "tick")).Plan!)).Status);
+        var trigger = await Store(c).TriggerScheduleAsync(c.Command(new TriggerScheduleRequest("tick", 1, Guid.CreateVersion7(), Guid.CreateVersion7(), Actor)), Ct);
+        Assert.Equal(StoreStatus.Applied, trigger.Status);
+
+        var session = c.Services.GetRequiredService<Runwick.Management.IManagementSession>();
+        var admin = new Runwick.Management.ManagementCaller(new("admin", null, "test"),
+            [.. Runwick.Management.ManagementPermissions.All.Select(p => new Runwick.Management.ManagementGrant(p))]);
+        var detail = await session.GetScheduleAsync(admin, "tick", cancellationToken: Ct);
+        Assert.Equal(("tick", 1L), (detail.Schedule.Key, detail.Schedule.DefinitionRevision));
+        Assert.Equal((1L, "cron", "* * * * *", "test.tick", "default"),
+            (detail.Definition.Revision, detail.Definition.Kind, detail.Definition.CronText, detail.Definition.JobName, detail.Definition.Queue));
+        Assert.Equal(await Occurrences(f) + await Occurrences(f, "manual"), detail.Occurrences.Count);
+        var manual = detail.Occurrences[0];
+        Assert.Equal(("manual", null, trigger.Value!.Occurrences[0].JobId), (manual.Kind, manual.ScheduledAt, manual.JobId));
+        Assert.Equal(detail.Schedule.LastMaterializedAt, manual.MaterializedAt);
+        Assert.All(detail.Occurrences.Skip(1), o => Assert.Equal("scheduled", o.Kind));
+        Assert.All(detail.Occurrences, o => Assert.Equal("pending", o.JobState));
+
+        // Without Jobs.Read on the definition's queue the occurrences stay, their job states do not.
+        var schedulesOnly = new Runwick.Management.ManagementCaller(new("viewer", null, "test"),
+            [new Runwick.Management.ManagementGrant(Runwick.Management.ManagementPermissions.SchedulesRead)]);
+        var hidden = await session.GetScheduleAsync(schedulesOnly, "tick", cancellationToken: Ct);
+        Assert.Equal(detail.Occurrences.Count, hidden.Occurrences.Count);
+        Assert.All(hidden.Occurrences, o => Assert.Null(o.JobState));
+
+        Assert.Single((await session.GetScheduleAsync(admin, "tick", 1, Ct)).Occurrences);
+        await Assert.ThrowsAsync<Runwick.Management.ManagementValidationException>(() => session.GetScheduleAsync(admin, "tick", 0, Ct));
+        await Assert.ThrowsAsync<Runwick.Management.ManagementNotFoundException>(() => session.GetScheduleAsync(admin, "nope", cancellationToken: Ct));
+        await Assert.ThrowsAsync<Runwick.Management.ManagementDeniedException>(() => session.GetScheduleAsync(
+            new Runwick.Management.ManagementCaller(new("none", null, "test"), []), "tick", cancellationToken: Ct));
+    }
+
+    [Theory]
+    [MemberData(nameof(CoreContractTests.Kinds), MemberType = typeof(CoreContractTests))]
+    [Trait("Case", "SCHD-02")]
+    public async Task Schedule_stats_count_exactly_and_a_scheduled_job_name_is_a_job_type(StoreKind kind)
+    {
+        var (f, c) = await OpenAsync(kind, "schd02");
+        await using var _ = f;
+        await RegisterAsync(c, "tick", d => d.Misfire = MisfirePolicy.Skip);
+        await RegisterAsync(c, "tock");
+        var admin = new Runwick.Management.ManagementCaller(new("admin", null, "test"),
+            [.. Runwick.Management.ManagementPermissions.All.Select(p => new Runwick.Management.ManagementGrant(p))]);
+
+        // A host that does not register test.tick still lists it, from the schedules, with no stored job yet.
+        var other = await f.OpenClient(configure: r => Runwick.Harness.Jobs.TestJobs.Register(r));
+        var types = await other.Services.GetRequiredService<Runwick.Management.IManagementSession>().ListJobTypesAsync(admin, Ct);
+        var tick = types.Single(t => t.Name == "test.tick");
+        Assert.Equal((false, null, false), (tick.Registered, tick.Definition, tick.SeenInStore));
+        Assert.Equal(["tick", "tock"], tick.Schedules);
+
+        await RewindAsync(f, "tick", 10);
+        Assert.Equal(StoreStatus.Applied, (await SendAsync(c, (await PlanAsync(c, "tick")).Plan!)).Status);
+        Assert.Equal(StoreStatus.Applied, (await Store(c).TriggerScheduleAsync(c.Command(new TriggerScheduleRequest("tock", 1, Guid.CreateVersion7(),
+            Guid.CreateVersion7(), Actor)), Ct)).Status);
+        var pause = await Store(c).SetScheduleStateAsync(c.Command(new ScheduleStateRequest("tock", true, null, 1, Actor)), Ct);
+        Assert.Equal(StoreStatus.Applied, pause.Status);
+
+        var session = c.Services.GetRequiredService<Runwick.Management.IManagementSession>();
+        var stats = await session.GetScheduleStatsAsync(admin, cancellationToken: Ct);
+        Assert.Equal((2L, 1L, 0L), (stats.Total, stats.Paused, stats.NeedsReview));
+        Assert.Equal((await ReadAsync(c, "tick")).NextDueAt, stats.NextDueAt);
+        Assert.Equal(await Occurrences(f) + await Occurrences(f, "manual"), stats.Occurrences.Values.Sum());
+        Assert.Equal((1L, 1L), (await Jobs(f), stats.Occurrences.GetValueOrDefault("created")));
+        Assert.Equal(1L, stats.Misfires);
+        Assert.Equal(1, await Count(f, "SELECT count(*) FROM runwick.schedule_audit_ranges"));
+
+        // The range is [from, to): one ending before now sees no occurrence, while the counts of schedules stay.
+        var past = await session.GetScheduleStatsAsync(admin, stats.From - TimeSpan.FromDays(1), stats.From, Ct);
+        Assert.Equal((2L, 0L, 0L), (past.Total, past.Occurrences.Values.Sum(), past.Misfires));
+        Assert.True((await other.Services.GetRequiredService<Runwick.Management.IManagementSession>().ListJobTypesAsync(admin, Ct))
+            .Single(t => t.Name == "test.tick").SeenInStore);
+        await Assert.ThrowsAsync<Runwick.Management.ManagementDeniedException>(() => session.GetScheduleStatsAsync(
+            new Runwick.Management.ManagementCaller(new("none", null, "test"), []), cancellationToken: Ct));
+        await Assert.ThrowsAsync<Runwick.Management.ManagementValidationException>(() => session.GetScheduleStatsAsync(admin, stats.To, stats.From, Ct));
+    }
 }

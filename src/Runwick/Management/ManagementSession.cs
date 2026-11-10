@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Runwick.Dispatching;
 using Runwick.Hosting;
 using Runwick.Protocol;
@@ -31,6 +32,32 @@ public interface IManagementSession
     Task<ManagementPage<ScheduleSummary>> ListSchedulesAsync(ManagementCaller caller, int? limit = null, string? cursor = null,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Exact job figures over a created/ended range (16 §2.4); the range defaults to the last 24 hours, at most 31 days, in 1-96
+    /// buckets. Needs <c>Jobs.Read</c>; only the queues it covers are counted (a queue outside it reads as empty).
+    /// </summary>
+    Task<JobStats> GetJobStatsAsync(ManagementCaller caller, JobStatsQuery query, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Every job name the registry, the stored jobs or a schedule knows, by name (16 §2.6). Needs <c>Jobs.Read</c>; a name shows
+    /// when one of its queues is covered.
+    /// </summary>
+    Task<IReadOnlyList<JobTypeSummary>> ListJobTypesAsync(ManagementCaller caller, CancellationToken cancellationToken = default);
+
+    /// <summary>Schedule counts now and occurrences in the range (default the last 24 hours, at most 31 days). Needs <c>Schedules.Read</c>.</summary>
+    Task<ScheduleStats> GetScheduleStatsAsync(ManagementCaller caller, DateTimeOffset? from = null, DateTimeOffset? to = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Audit counts in the range (default the last 24 hours, at most 31 days). Needs <c>Audit.Read</c>.</summary>
+    Task<AuditStats> GetAuditStatsAsync(ManagementCaller caller, DateTimeOffset? from = null, DateTimeOffset? to = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// A schedule with its current definition and its newest occurrences (default 50, at most 200). Needs <c>Schedules.Read</c>;
+    /// each occurrence's job state is shown only with <c>Jobs.Read</c> on the definition's queue.
+    /// </summary>
+    Task<ScheduleDetail> GetScheduleAsync(ManagementCaller caller, string key, int? limit = null, CancellationToken cancellationToken = default);
+
     Task<ManagementPage<AuditEntry>> ListAuditAsync(ManagementCaller caller, AuditQuery query, CancellationToken cancellationToken = default);
 
     /// <summary>Autoscaler target changes, newest first (21 §6). Needs <c>Capacity.Read</c>.</summary>
@@ -58,6 +85,10 @@ public interface IManagementSession
 
     /// <summary>At most 100 items, 4 at a time; one command, receipt and audit row each; results in request order.</summary>
     Task<IReadOnlyList<BulkCancelResult>> CancelJobsAsync(ManagementCaller caller, IReadOnlyList<BulkCancelItem> items, string? reason = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Manual retries as <see cref="CancelJobsAsync"/>: at most 100 items, 4 at a time, each authorized and audited alone.</summary>
+    Task<IReadOnlyList<BulkRetryResult>> RetryJobsAsync(ManagementCaller caller, IReadOnlyList<BulkRetryItem> items, string? reason = null,
         CancellationToken cancellationToken = default);
 
     Task<QueueControlResult> PauseQueueAsync(ManagementCaller caller, string queue, Guid commandId, long expectedRevision, string? reason = null,
@@ -249,7 +280,217 @@ internal sealed class ManagementSession(
         (DateTimeOffset, Guid)? after = cursor is null ? null : cursors.Open(cursor, "workers", App, filters, "*") is var k ? (FromMs(k[0]), Guid.Parse(k[1])) : null;
         await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
         var read = await Read(() => Store.ListWorkersAsync(App, includeExpired, after, size + 1, cancellationToken), cancellationToken).ConfigureAwait(false);
-        return Page(read, size, "workers", filters, "*", w => [Ms(w.HeartbeatAt), w.InstanceId.ToString("D")]);
+        var jobs = TryScope(caller, ManagementPermissions.JobsRead, out var readable);
+        var items = read.Value.Select(w => w.Detail is JsonObject d ? w with { Detail = VisibleDetail(d, jobs, readable) } : w).ToList();
+        return Page(new StoreRead<IReadOnlyList<WorkerSummary>>(items, read.ObservedAt), size, "workers", filters, "*",
+            w => [Ms(w.HeartbeatAt), w.InstanceId.ToString("D")]);
+    }
+
+    /// <summary>Running and recent attempts name jobs: only those in queues the caller may read jobs in, none without <c>Jobs.Read</c>.</summary>
+    static JsonObject VisibleDetail(JsonObject detail, bool jobs, IReadOnlyList<string>? queues)
+    {
+        foreach (var list in (string[])["running", "recent"])
+        {
+            if (!jobs)
+            {
+                detail.Remove(list);
+            }
+            else if (queues is not null && detail[list] is JsonArray items)
+            {
+                detail[list] = new JsonArray([.. items.Where(x => x is JsonObject o && o["queue"] is JsonValue v && v.TryGetValue<string>(out var q)
+                    && queues.Contains(q, StringComparer.Ordinal)).Select(x => x!.DeepClone())]);
+            }
+        }
+
+        return detail;
+    }
+
+    public const int MaxStatsBuckets = 96;
+    static readonly TimeSpan DefaultStatsRange = TimeSpan.FromDays(1);
+    static readonly string[] LiveKinds = ["pending", "scheduled", "reserved", "running"];
+
+    public async Task<JobStats> GetJobStatsAsync(ManagementCaller caller, JobStatsQuery query, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        var queues = Require(caller, ManagementPermissions.JobsRead);
+        if (query.Buckets is < 1 or > MaxStatsBuckets)
+        {
+            throw new ManagementValidationException("invalid_request", "buckets must be 1-96.");
+        }
+
+        var (from, to) = StatsRange(query.From, query.To);
+        var groups = query.WorkerInstanceId is null;
+        var filter = new JobStatsFilter(from, to, query.Buckets, query.Queue, query.JobName, query.WorkerInstanceId, queues,
+            groups && (query.ByQueue || query.ByJobName));
+        await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+        if (query.Queue is { } q && queues is not null && !queues.Contains(q, StringComparer.Ordinal))
+        {
+            // A queue outside the caller's scope reads as empty, as ListJobs does.
+            return BuildStats(filter, new JobStatsCells([], [], [], [], [], []), time.GetUtcNow(), false, false);
+        }
+
+        var read = await Read(() => Store.GetJobStatsAsync(App, filter, cancellationToken), cancellationToken).ConfigureAwait(false);
+        return BuildStats(filter, read.Value, read.ObservedAt, groups && query.ByQueue, groups && query.ByJobName);
+    }
+
+    /// <summary>A stats range at millisecond precision: default the last 24 hours, From before To, at most 31 days.</summary>
+    (DateTimeOffset From, DateTimeOffset To) StatsRange(DateTimeOffset? from, DateTimeOffset? to)
+    {
+        var end = DateTimeOffset.FromUnixTimeMilliseconds((to ?? time.GetUtcNow()).ToUnixTimeMilliseconds());
+        var start = DateTimeOffset.FromUnixTimeMilliseconds((from ?? end - DefaultStatsRange).ToUnixTimeMilliseconds());
+        return start >= end || end - start > MaxRange
+            ? throw new ManagementValidationException("invalid_request", "The range must be ordered, not empty and at most 31 days.")
+            : (start, end);
+    }
+
+    static JobStats BuildStats(JobStatsFilter f, JobStatsCells c, DateTimeOffset observedAt, bool byQueue, bool byName)
+    {
+        var durations = c.Durations.ToDictionary(d => (d.Queue, d.JobName, d.Slice));
+        JobDurationStats Duration(string? queue, string? name, int? slice) =>
+            durations.TryGetValue((queue, name, slice), out var d) ? new JobDurationStats(d.Count, d.MedianMs, d.P95Ms, d.MaxMs) : new JobDurationStats(0, null, null, null);
+
+        (Dictionary<string, long> States, long Retries, JobStatsBucket[] Buckets, Dictionary<string, long> Now, DateTimeOffset? Oldest) Figures(
+            Func<string, string, bool> match, string? queue, string? name)
+        {
+            var states = JobStateNames.ToDictionary(n => n, _ => 0L, StringComparer.Ordinal);
+            var now = LiveKinds.ToDictionary(n => n, _ => 0L, StringComparer.Ordinal);
+            var created = new long[f.Buckets];
+            var ended = new long[f.Buckets, 3];
+            long retries = 0;
+            DateTimeOffset? oldest = null;
+            foreach (var x in c.Created.Where(x => match(x.Queue, x.JobName)))
+            {
+                states[x.State] = states.GetValueOrDefault(x.State) + x.Jobs;
+                created[x.Slice] += x.Jobs;
+                retries += x.Retries;
+            }
+
+            foreach (var x in c.Ended.Where(x => match(x.Queue, x.JobName)))
+            {
+                ended[x.Slice, x.State switch { "succeeded" => 0, "failed" => 1, _ => 2 }] += x.Jobs;
+            }
+
+            foreach (var x in c.Live.Where(x => match(x.Queue, x.JobName)))
+            {
+                now[x.Kind] = now.GetValueOrDefault(x.Kind) + x.Jobs;
+                if (x.OldestEligibleAt is { } e && (oldest is null || e < oldest))
+                {
+                    oldest = e;
+                }
+            }
+
+            var buckets = new JobStatsBucket[f.Buckets];
+            for (var i = 0; i < f.Buckets; i++)
+            {
+                var d = Duration(queue, name, i);
+                buckets[i] = new JobStatsBucket(f.SliceStart(i), created[i], ended[i, 0], ended[i, 1], ended[i, 2], d.MedianMs, d.P95Ms);
+            }
+
+            return (states, retries, buckets, now, oldest);
+        }
+
+        JobStatsGroup Group(string key, Func<JobStatsLast, bool> mine, Func<string, string, bool> match, string? queue, string? name)
+        {
+            var g = Figures(match, queue, name);
+            var last = c.Last.Where(mine).OrderByDescending(l => l.CreatedAt).ThenByDescending(l => l.JobId).Select(l => (JobStatsLast?)l).FirstOrDefault();
+            return new JobStatsGroup(key, g.States, g.Retries, Duration(queue, name, null), last?.CreatedAt, last?.State, last?.JobId, g.Buckets, g.Now,
+                g.Oldest);
+        }
+
+        IEnumerable<string> Keys(Func<(string Queue, string JobName), string> key) =>
+            c.Created.Select(x => key((x.Queue, x.JobName))).Concat(c.Ended.Select(x => key((x.Queue, x.JobName))))
+                .Concat(c.Live.Select(x => key((x.Queue, x.JobName)))).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal);
+
+        var all = Figures((_, _) => true, null, null);
+        return new JobStats(f.From, f.To, observedAt, all.States, all.Retries, Duration(null, null, null), all.Buckets, all.Now, all.Oldest,
+            byQueue ? [.. Keys(x => x.Queue).Select(q => Group(q, l => l.Queue == q, (xq, _) => xq == q, q, null))] : null,
+            byName ? [.. Keys(x => x.JobName).Select(n => Group(n, l => l.JobName == n, (_, xn) => xn == n, null, n))] : null,
+            c.ErrorCodes);
+    }
+
+    public async Task<IReadOnlyList<JobTypeSummary>> ListJobTypesAsync(ManagementCaller caller, CancellationToken cancellationToken = default)
+    {
+        var queues = Require(caller, ManagementPermissions.JobsRead);
+        bool Readable(string queue) => queues is null || queues.Contains(queue, StringComparer.Ordinal);
+        await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+        var read = await Read(() => Store.ListJobNamesAsync(App, cancellationToken), cancellationToken).ConfigureAwait(false);
+        var names = runtime.Registry.Compiled.Where(j => Readable(j.Queue)).Select(j => j.Name)
+            .Concat(read.Value.Stored.Where(s => Readable(s.Queue)).Select(s => s.JobName))
+            .Concat(read.Value.Schedules.Where(s => Readable(s.Queue)).Select(s => s.JobName))
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal);
+        return [.. names.Select(name =>
+        {
+            var job = runtime.Registry.ByName(name);
+            return new JobTypeSummary(name, job is not null, job?.Queue, job?.Priority, job?.CurrentVersion, job is null ? null : JobDefinition(job),
+                [.. read.Value.Schedules.Where(s => s.JobName == name).Select(s => s.Key).Order(StringComparer.Ordinal)],
+                read.Value.Stored.Any(s => s.JobName == name));
+        })];
+    }
+
+    /// <summary>The registered contract as plain values: policy, scopes and type names, never payload values or selector code.</summary>
+    static JsonObject JobDefinition(CompiledJob job)
+    {
+        static JsonObject Retry(RetryPolicy r) => new()
+        {
+            ["backoff"] = r.Backoff, ["jitter"] = r.JitterKind, ["initialDelayMs"] = r.InitialDelayMs, ["maximumDelayMs"] = r.MaximumDelayMs,
+        };
+
+        var p = job.Policy;
+        return new JsonObject
+        {
+            ["payloadType"] = job.PayloadType.FullName,
+            ["payloadVersions"] = new JsonArray([.. job.Routes.Keys.Order().Select(v => (JsonNode?)v)]),
+            ["handlerType"] = job.HandlerType?.FullName,
+            ["maxExecutions"] = p.MaxExecutions,
+            ["executionTimeoutMs"] = p.ExecutionTimeoutMs,
+            ["retry"] = Retry(p.Retry),
+            ["maxUnstartedAbandonments"] = p.MaxConsecutiveUnstartedAbandonments,
+            ["unstartedRetry"] = Retry(p.UnstartedRetry),
+            ["jobTypeCapacity"] = job.JobTypeCapacity,
+            ["resources"] = new JsonArray([.. job.Resources.Select(r => (JsonNode?)new JsonObject { ["capacity"] = r.Capacity })]),
+            ["rates"] = new JsonArray([.. job.Rates.Select(r => (JsonNode?)new JsonObject { ["kind"] = r.Kind, ["limit"] = r.Limit, ["windowMs"] = r.WindowMs })]),
+            ["unique"] = job.ActiveSelector is not null,
+            ["windowMs"] = job.WindowSelector is { } w ? (long)w.Window.TotalMilliseconds : null,
+            ["middleware"] = new JsonArray([.. job.MiddlewareChain.Select(t => (JsonNode?)t.FullName)]),
+        };
+    }
+
+    public async Task<ScheduleStats> GetScheduleStatsAsync(ManagementCaller caller, DateTimeOffset? from = null, DateTimeOffset? to = null,
+        CancellationToken cancellationToken = default)
+    {
+        Require(caller, ManagementPermissions.SchedulesRead);
+        var (start, end) = StatsRange(from, to);
+        await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+        return (await Read(() => Store.GetScheduleStatsAsync(App, start, end, cancellationToken), cancellationToken).ConfigureAwait(false)).Value;
+    }
+
+    public const int TopAuditActors = 5;
+
+    public async Task<AuditStats> GetAuditStatsAsync(ManagementCaller caller, DateTimeOffset? from = null, DateTimeOffset? to = null,
+        CancellationToken cancellationToken = default)
+    {
+        Require(caller, ManagementPermissions.AuditRead);
+        var (start, end) = StatsRange(from, to);
+        await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+        var s = (await Read(() => Store.GetAuditStatsAsync(App, start, end, cancellationToken), cancellationToken).ConfigureAwait(false)).Value;
+        return s with
+        {
+            Operations = [.. s.Operations.OrderByDescending(o => o.Count).ThenBy(o => o.Operation, StringComparer.Ordinal)],
+            Actors = [.. s.Actors.OrderByDescending(a => a.Count).ThenBy(a => a.Actor, StringComparer.Ordinal).Take(TopAuditActors)],
+        };
+    }
+
+    public async Task<ScheduleDetail> GetScheduleAsync(ManagementCaller caller, string key, int? limit = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        Require(caller, ManagementPermissions.SchedulesRead);
+        var size = PageSize(limit);
+        await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+        var read = await Read(() => Store.GetScheduleAsync(App, key, size, cancellationToken), cancellationToken).ConfigureAwait(false);
+        var detail = read.Value ?? throw new ManagementNotFoundException();
+        return Covers(caller, ManagementPermissions.JobsRead, detail.Definition.Queue)
+            ? detail
+            : detail with { Occurrences = [.. detail.Occurrences.Select(o => o with { JobState = null })] };
     }
 
     public async Task<ManagementPage<ScopeSummary>> ListScopesAsync(ManagementCaller caller, string? kind = null, int? limit = null, string? cursor = null,
@@ -466,45 +707,55 @@ internal sealed class ManagementSession(
         };
     }
 
-    public async Task<IReadOnlyList<BulkCancelResult>> CancelJobsAsync(ManagementCaller caller, IReadOnlyList<BulkCancelItem> items, string? reason = null,
-        CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<BulkCancelResult>> CancelJobsAsync(ManagementCaller caller, IReadOnlyList<BulkCancelItem> items, string? reason = null,
+        CancellationToken cancellationToken = default) =>
+        BulkAsync(items, reason, "cancel", (item, ct) => BulkItemAsync(item.JobId,
+            ct => CancelJobAsync(caller, item.JobId, new JobControlRequest(item.CommandId, item.ExpectedGeneration, item.ExpectedRevision, reason), ct),
+            r => r.Effect == "cancel_requested" ? "accepted" : "applied", (id, status, code, r) => new BulkCancelResult(id, status, code, r), ct),
+            cancellationToken);
+
+    public Task<IReadOnlyList<BulkRetryResult>> RetryJobsAsync(ManagementCaller caller, IReadOnlyList<BulkRetryItem> items, string? reason = null,
+        CancellationToken cancellationToken = default) =>
+        BulkAsync(items, reason, "retry", (item, ct) => BulkItemAsync(item.JobId,
+            ct => RetryJobAsync(caller, item.JobId, new JobControlRequest(item.CommandId, item.ExpectedGeneration, item.ExpectedRevision, reason), ct),
+            _ => "applied", (id, status, code, r) => new BulkRetryResult(id, status, code, r), ct),
+            cancellationToken);
+
+    static async Task<IReadOnlyList<TResult>> BulkAsync<TItem, TResult>(IReadOnlyList<TItem> items, string? reason, string verb,
+        Func<TItem, CancellationToken, Task<TResult>> one, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(items);
         ManagementText.Reason(reason);
         if (items.Count is 0 or > MaxBulkItems)
         {
-            throw new ManagementValidationException("invalid_request", "A bulk cancel carries 1-100 items.");
+            throw new ManagementValidationException("invalid_request", $"A bulk {verb} carries 1-100 items.");
         }
 
-        var results = new BulkCancelResult[items.Count];
+        var results = new TResult[items.Count];
         await Parallel.ForEachAsync(Enumerable.Range(0, items.Count), new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
-            async (i, ct) =>
-            {
-                var item = items[i];
-                results[i] = await BulkItemAsync(caller, item, reason, ct).ConfigureAwait(false);
-            }).ConfigureAwait(false);
+            async (i, ct) => results[i] = await one(items[i], ct).ConfigureAwait(false)).ConfigureAwait(false);
         return results;
     }
 
-    async Task<BulkCancelResult> BulkItemAsync(ManagementCaller caller, BulkCancelItem item, string? reason, CancellationToken ct)
+    static async Task<TResult> BulkItemAsync<TResult>(Guid jobId, Func<CancellationToken, Task<JobControlResult>> control, Func<JobControlResult, string> succeeded,
+        Func<Guid, string, string?, JobControlResult?, TResult> result, CancellationToken ct)
     {
         try
         {
-            var r = await CancelJobAsync(caller, item.JobId, new JobControlRequest(item.CommandId, item.ExpectedGeneration, item.ExpectedRevision, reason), ct)
-                .ConfigureAwait(false);
-            return new BulkCancelResult(item.JobId, !r.Succeeded ? "rejected" : r.Effect == "cancel_requested" ? "accepted" : "applied", r.Code, r);
+            var r = await control(ct).ConfigureAwait(false);
+            return result(jobId, r.Succeeded ? succeeded(r) : "rejected", r.Code, r);
         }
         catch (ManagementNotFoundException)
         {
-            return new BulkCancelResult(item.JobId, "not_found", "not_found", null);
+            return result(jobId, "not_found", "not_found", null);
         }
         catch (ManagementDeniedException)
         {
-            return new BulkCancelResult(item.JobId, "forbidden", "forbidden", null);
+            return result(jobId, "forbidden", "forbidden", null);
         }
         catch (RunwickException ex) when (ex is StoreUnavailableException or ControlOutcomeUnknownException or ManagementQueryBudgetException)
         {
-            return new BulkCancelResult(item.JobId, "unavailable", ex.Code, null);
+            return result(jobId, "unavailable", ex.Code, null);
         }
     }
 

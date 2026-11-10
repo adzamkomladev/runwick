@@ -383,10 +383,10 @@ internal sealed partial class PgStore : IReadinessDiagnostics
         }
 
         // The clock, the instance upsert (sequence-fenced), the capability rows and the subscription rows run in
-        // runwick.publish_presence_v1 (04 §7.12, 09 §3).
+        // runwick.publish_presence_v1 (04 §7.12, 09 §3), behind publish_presence_v2, which then stores the worker's detail.
         var reply = await runner.CallAsync(
             Op(application, Guid.CreateVersion7(), "PublishPresence", notAfter, null, PgLane.Background),
-            new PgCall("publish_presence_v1").P("p_instance_id", presence.InstanceId).P("p_process_id", presence.ProcessId)
+            new PgCall("publish_presence_v2").P("p_instance_id", presence.InstanceId).P("p_process_id", presence.ProcessId)
                 .P("p_host_name", presence.HostName).P("p_build_id", presence.BuildId).P("p_status", presence.Status)
                 .P("p_capability_revision", presence.CapabilityRevision).P("p_presence_sequence", presence.PresenceSequence)
                 .Json("p_subscriptions", subscriptions).Json("p_pool_targets", pools).P("p_expiry", presence.Expiry)
@@ -394,7 +394,8 @@ internal sealed partial class PgStore : IReadinessDiagnostics
                 .Arr("p_versions", [.. capabilities.Select(x => x.PayloadVersion)], NpgsqlDbType.Integer)
                 .Arr("p_profile_ids", [.. capabilities.Select(x => x.SerializerProfileId)], NpgsqlDbType.Text)
                 .Arr("p_profile_versions", [.. capabilities.Select(x => x.SerializerProfileVersion)], NpgsqlDbType.Integer)
-                .Arr("p_queues", [.. presence.SubscribedQueues.Distinct().Order(StringComparer.Ordinal)], NpgsqlDbType.Text),
+                .Arr("p_queues", [.. presence.SubscribedQueues.Distinct().Order(StringComparer.Ordinal)], NpgsqlDbType.Text)
+                .P("p_detail", presence.DetailText(), NpgsqlDbType.Jsonb),
             row =>
             {
                 if (row.HasValue)

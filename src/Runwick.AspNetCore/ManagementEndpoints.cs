@@ -306,6 +306,8 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
         ? Guid.TryParse(s, out var v) ? v : throw Invalid(name)
         : null;
 
+    static bool QBool(HttpContext ctx, string name) => Q(ctx, name) is { } s && (bool.TryParse(s, out var v) ? v : throw Invalid(name));
+
     static ManagementValidationException Invalid(string name) => new("invalid_request", $"Query parameter '{name}' is not valid.");
 
     // Every async handler takes a second parameter so it binds as a Delegate, not as a RequestDelegate whose result is dropped.
@@ -331,10 +333,21 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
         g.MapPost("jobs/{id:guid}/rerun", (HttpContext ctx, Guid id) => JobAsync(ctx, id, (s, c, b, t) => s.RerunJobAsync(c, id, b, t)));
         g.MapPost("jobs:cancel", async (HttpContext ctx, CancellationToken _) =>
         {
-            var body = await Body<BulkBody>(ctx);
+            var body = await Body<BulkBody<BulkCancelItem>>(ctx);
             var items = await Session(ctx).CancelJobsAsync(Caller(ctx), body.Items ?? [], body.Reason, ctx.RequestAborted);
             return Ok(new { items });
         });
+        g.MapPost("jobs:retry", async (HttpContext ctx, CancellationToken _) =>
+        {
+            var body = await Body<BulkBody<BulkRetryItem>>(ctx);
+            var items = await Session(ctx).RetryJobsAsync(Caller(ctx), body.Items ?? [], body.Reason, ctx.RequestAborted);
+            return Ok(new { items });
+        });
+        g.MapGet("jobs/stats", async (HttpContext ctx, CancellationToken _) => Ok(await Session(ctx).GetJobStatsAsync(Caller(ctx),
+            new JobStatsQuery(QTime(ctx, "from"), QTime(ctx, "to"), QInt(ctx, "buckets") ?? 24, Q(ctx, "queue"), Q(ctx, "jobName"), QGuid(ctx, "worker"),
+                QBool(ctx, "byQueue"), QBool(ctx, "byJobName")), ctx.RequestAborted)));
+        g.MapGet("jobtypes", async (HttpContext ctx, CancellationToken _) =>
+            Ok(new { items = await Session(ctx).ListJobTypesAsync(Caller(ctx), ctx.RequestAborted) }));
 
         g.MapGet("queues", async (HttpContext ctx, CancellationToken _) =>
             Ok(await Session(ctx).ListQueuesAsync(Caller(ctx), QInt(ctx, "limit"), Q(ctx, "cursor"), ctx.RequestAborted)));
@@ -342,7 +355,7 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
         g.MapPost("queues/{name}/resume", (HttpContext ctx, string name) => QueueAsync(ctx, name, false));
 
         g.MapGet("workers", async (HttpContext ctx, CancellationToken _) => Ok(await Session(ctx).ListWorkersAsync(Caller(ctx),
-            Q(ctx, "includeExpired") is { } e && (bool.TryParse(e, out var b) ? b : throw Invalid("includeExpired")), QInt(ctx, "limit"), Q(ctx, "cursor"),
+            QBool(ctx, "includeExpired"), QInt(ctx, "limit"), Q(ctx, "cursor"),
             ctx.RequestAborted)));
         g.MapGet("scopes", async (HttpContext ctx, CancellationToken _) =>
             Ok(await Session(ctx).ListScopesAsync(Caller(ctx), Q(ctx, "kind"), QInt(ctx, "limit"), Q(ctx, "cursor"), ctx.RequestAborted)));
@@ -358,6 +371,10 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
 
         g.MapGet("schedules", async (HttpContext ctx, CancellationToken _) =>
             Ok(await Session(ctx).ListSchedulesAsync(Caller(ctx), QInt(ctx, "limit"), Q(ctx, "cursor"), ctx.RequestAborted)));
+        g.MapGet("schedules/stats", async (HttpContext ctx, CancellationToken _) =>
+            Ok(await Session(ctx).GetScheduleStatsAsync(Caller(ctx), QTime(ctx, "from"), QTime(ctx, "to"), ctx.RequestAborted)));
+        g.MapGet("schedules/{key}", async (HttpContext ctx, string key) =>
+            Ok(await Session(ctx).GetScheduleAsync(Caller(ctx), key, QInt(ctx, "limit"), ctx.RequestAborted)));
         g.MapPost("schedules/{key}/pause", (HttpContext ctx, string key) =>
             ScheduleAsync(ctx, (s, c, b, t) => s.PauseScheduleAsync(c, key, b.CommandId, b.ExpectedRevision, b.Reason, t)));
         g.MapPost("schedules/{key}/resume", (HttpContext ctx, string key) =>
@@ -367,6 +384,8 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
         g.MapPost("schedules/{key}/revalidate", (HttpContext ctx, string key) =>
             ScheduleAsync(ctx, (s, c, b, t) => s.RevalidateScheduleAsync(c, key, b.CommandId, b.ExpectedRevision, b.Reason, t)));
 
+        g.MapGet("audit/stats", async (HttpContext ctx, CancellationToken _) =>
+            Ok(await Session(ctx).GetAuditStatsAsync(Caller(ctx), QTime(ctx, "from"), QTime(ctx, "to"), ctx.RequestAborted)));
         g.MapGet("audit", async (HttpContext ctx, CancellationToken _) => Ok(await Session(ctx).ListAuditAsync(Caller(ctx),
             new AuditQuery(Q(ctx, "targetKind"), Q(ctx, "targetId"), QTime(ctx, "from"), QTime(ctx, "to"), QInt(ctx, "limit"), Q(ctx, "cursor")),
             ctx.RequestAborted)));
@@ -457,9 +476,9 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
         public string? Reason { get; set; }
     }
 
-    sealed class BulkBody
+    sealed class BulkBody<T>
     {
-        public List<BulkCancelItem>? Items { get; set; }
+        public List<T>? Items { get; set; }
 
         public string? Reason { get; set; }
     }

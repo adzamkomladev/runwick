@@ -111,4 +111,33 @@ public sealed class WorkerContractTests
         await w.StopAsync(TestContext.Current.CancellationToken);
         Assert.Null(Assert.Single(detail!.Attempts).Usage);
     }
+
+    [Theory]
+    [MemberData(nameof(CoreContractTests.Kinds), MemberType = typeof(CoreContractTests))]
+    [Trait("Case", "WDT-03")]
+    public async Task A_running_worker_publishes_its_detail_with_the_attempts_it_finished(StoreKind kind)
+    {
+        await using var f = await DriverFixture.StartAsync("wdt_" + Guid.NewGuid().ToString("N")[..8], kind);
+        await using var w = WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults);
+        await w.StartAsync();
+        var job = (await w.DispatchAsync("j")).JobId.Value.ToString("D");
+        var session = (await f.OpenClient()).Services.GetRequiredService<IManagementSession>();
+        var admin = new ManagementCaller(new ManagementActor("admin", null, "test"), [.. ManagementPermissions.All.Select(p => new ManagementGrant(p))]);
+        System.Text.Json.Nodes.JsonNode? detail = null;
+        await WorkerHost.WaitUntil(() => (detail = session.ListWorkersAsync(admin).GetAwaiter().GetResult().Items.SingleOrDefault()?.Detail)?["recent"]?.AsArray()
+            .Any(r => r!["jobId"]!.GetValue<string>() == job) == true, Wait, "the finished attempt is published");
+        await w.StopAsync(TestContext.Current.CancellationToken);
+
+        var recent = detail!["recent"]!.AsArray().First(r => r!["jobId"]!.GetValue<string>() == job)!;
+        Assert.Equal("succeeded", recent["outcome"]!.GetValue<string>());
+        Assert.False(string.IsNullOrEmpty(recent["queue"]!.GetValue<string>()));
+        Assert.Equal(2, detail["v"]!.GetValue<int>());
+        Assert.Contains(recent["jobName"]!.GetValue<string>(), detail["handlers"]!.AsArray().Select(h => h!.GetValue<string>()));
+        Assert.Equal(Environment.ProcessorCount, detail["host"]!["cpus"]!.GetValue<int>());
+        Assert.True(detail["host"]!["memoryTotalBytes"]!.GetValue<long>() > 0);
+        Assert.NotEmpty(detail["pools"]!.AsArray());
+        Assert.True(detail["settings"]!["leaseDurationMs"]!.GetValue<long>() > 0);
+        Assert.True(detail["settings"]!["recordResourceUsage"]!.GetValue<bool>());
+        Assert.NotNull(detail["runningCount"]);
+    }
 }

@@ -31,16 +31,21 @@ public sealed class DeliveryTests
         await using var h = await DashHost.StartAsync(f, before: a => a.UsePathBase("/ops"));
         var job = await h.DispatchAsync(new PingJob("x"));
         var browser = h.Browser(Users.Admin);
-        var (response, body, page) = await browser.LoadAsync($"/ops/runwick/jobs/{job}?tab=a%20b");
+        var (response, body, page) = await browser.LoadAsync($"/ops/runwick/runs/{job}?tab=a%20b");
         Assert.Contains($"src=\"/ops/runwick/{DashboardAssets.Embedded.Entry}\"", body, StringComparison.Ordinal);
-        Assert.Equal($"/ops/runwick/jobs/{job}?tab=a%20b", page.GetProperty("url").GetString());
+        Assert.Equal($"/ops/runwick/runs/{job}?tab=a%20b", page.GetProperty("url").GetString());
         Assert.Equal("/ops/runwick", page.Props().GetProperty("base").GetString());
         Assert.Contains("path=/ops/runwick", response.Header("Set-Cookie"), StringComparison.OrdinalIgnoreCase);
 
-        var cancel = await browser.PostAsync($"/ops/runwick/jobs/{job}/cancel", SecurityTests.Position(page.Props().GetProperty("job").GetProperty("job")),
+        // Run pages moved from /jobs/{id} to /runs/{id}; old links answer 301 with the query kept (21 §4).
+        var moved = await browser.SendAsync(HttpMethod.Get, $"/ops/runwick/jobs/{job}?tab=a%20b", inertia: false);
+        Assert.Equal(HttpStatusCode.MovedPermanently, moved.StatusCode);
+        Assert.Equal($"/ops/runwick/runs/{job}?tab=a%20b", moved.Headers.Location!.OriginalString);
+
+        var cancel = await browser.PostAsync($"/ops/runwick/runs/{job}/cancel", SecurityTests.Position(page.Props().GetProperty("job").GetProperty("job")),
             Guid.NewGuid());
         Assert.True(cancel.StatusCode == HttpStatusCode.SeeOther, await cancel.Content.ReadAsStringAsync());
-        Assert.Equal($"/ops/runwick/jobs/{job}", cancel.Headers.Location!.OriginalString);
+        Assert.Equal($"/ops/runwick/runs/{job}", cancel.Headers.Location!.OriginalString);
         var queueRevision = (await browser.VisitJsonAsync("/ops/runwick/queues")).Props().GetProperty("queues").GetProperty("items").EnumerateArray()
             .Single(q => q.GetProperty("name").GetString() == "default").GetProperty("revision").GetInt64();
         var queue = await browser.PostAsync("/ops/runwick/queues/default/pause", new { expectedRevision = queueRevision }, Guid.NewGuid());
@@ -104,8 +109,8 @@ public sealed class DeliveryTests
         var plain = h.Browser(Users.Admin, https: false);
         foreach (var (method, path, inertia) in new[]
                  {
-                     (HttpMethod.Get, "/runwick", false), (HttpMethod.Get, $"/runwick/jobs/{job}", true), (HttpMethod.Post, $"/runwick/jobs/{job}/cancel", true),
-                     (HttpMethod.Post, "/runwick/jobs:cancel", true), (HttpMethod.Post, $"/runwick/jobs/{job}/payload:reveal", false),
+                     (HttpMethod.Get, "/runwick", false), (HttpMethod.Get, $"/runwick/runs/{job}", true), (HttpMethod.Post, $"/runwick/runs/{job}/cancel", true),
+                     (HttpMethod.Post, "/runwick/runs:cancel", true), (HttpMethod.Post, $"/runwick/runs/{job}/payload:reveal", false),
                  })
         {
             var response = await plain.SendAsync(method, path, inertia, "{}");
@@ -127,7 +132,7 @@ public sealed class DeliveryTests
 
         // IDs are GUIDs and names follow the store's identifier grammar, so "\\evil.example" never reaches a Location header:
         // it is not a route (404) or not a known queue (404/400), and nothing redirects off the mount.
-        foreach (var path in new[] { "/runwick/jobs/%5C%5Cevil.example/cancel", "/runwick/queues/%5C%5Cevil.example/pause", "/runwick/schedules/%5C%5Cevil.example/trigger" })
+        foreach (var path in new[] { "/runwick/runs/%5C%5Cevil.example/cancel", "/runwick/queues/%5C%5Cevil.example/pause", "/runwick/schedules/%5C%5Cevil.example/trigger" })
         {
             var response = await browser.PostAsync(path, new { expectedRevision = 0, expectedGeneration = 1 }, Guid.NewGuid());
             // 404/400, or 200 with a not_found outcome for a schedule key: never a redirect.
@@ -137,7 +142,7 @@ public sealed class DeliveryTests
 
         // Every 303 the dashboard writes is a path under the mount.
         var job = await h.DispatchAsync(new PingJob("x"));
-        var cancel = await browser.PostAsync($"/runwick/jobs/{job}/cancel", SecurityTests.Position(await SecurityTests.JobAsync(browser, job)), Guid.NewGuid());
+        var cancel = await browser.PostAsync($"/runwick/runs/{job}/cancel", SecurityTests.Position(await SecurityTests.JobAsync(browser, job)), Guid.NewGuid());
         Assert.StartsWith("/runwick/", cancel.Headers.Location!.OriginalString, StringComparison.Ordinal);
     }
 
@@ -173,16 +178,16 @@ public sealed class DeliveryTests
         var job = await h.DispatchAsync(new PingJob("x"));
         await f.FailNextAsync("boom", "m");
         var browser = h.Browser(Users.Admin);
-        await browser.LoadAsync($"/runwick/jobs/{job}");
+        await browser.LoadAsync($"/runwick/runs/{job}");
         var position = SecurityTests.Position(await SecurityTests.JobAsync(browser, job));
         browser.Version = DashboardAssets.Embedded.Version; // the old build
 
         var id = Guid.NewGuid();
-        var post = await browser.PostAsync($"/runwick/jobs/{job}/retry", position, id);
+        var post = await browser.PostAsync($"/runwick/runs/{job}/retry", position, id);
         Assert.Equal(HttpStatusCode.SeeOther, post.StatusCode);
         var follow = await browser.VisitAsync(post.Headers.Location!.OriginalString);
         Assert.Equal(HttpStatusCode.Conflict, follow.StatusCode); // the client reloads with a GET; nothing resends the POST
-        Assert.Equal(HttpStatusCode.SeeOther, (await browser.PostAsync($"/runwick/jobs/{job}/retry", position, id)).StatusCode); // same command ID
+        Assert.Equal(HttpStatusCode.SeeOther, (await browser.PostAsync($"/runwick/runs/{job}/retry", position, id)).StatusCode); // same command ID
         Assert.Equal(1, await h.AuditsAsync(id));
         Assert.Equal(2, await f.CountAsync("SELECT count(*) FROM runwick.job_generations WHERE job_id = @j", ("j", job)));
     }
@@ -196,24 +201,24 @@ public sealed class DeliveryTests
         await using var h = await DashHost.StartAsync(f, services: b => unknown.Install(b.Services));
         var job = await h.DispatchAsync(new PingJob("x"));
         var browser = h.Browser(Users.Admin);
-        await browser.LoadAsync($"/runwick/jobs/{job}");
+        await browser.LoadAsync($"/runwick/runs/{job}");
         var detail = await SecurityTests.JobAsync(browser, job);
 
         var staleId = Guid.NewGuid();
-        var stale = await browser.PostAsync($"/runwick/jobs/{job}/cancel",
+        var stale = await browser.PostAsync($"/runwick/runs/{job}/cancel",
             new { expectedGeneration = 1, expectedRevision = detail.GetProperty("revision").GetInt64() + 5 }, staleId);
-        AssertOutcome(stale, "stale_revision", staleId, $"/runwick/jobs/{job}");
+        AssertOutcome(stale, "stale_revision", staleId, $"/runwick/runs/{job}");
         Assert.Equal(detail.GetProperty("revision").GetInt64(), (await Browser.JsonAsync(stale)).Props().GetProperty("outcome").GetProperty("actualRevision").GetInt64());
 
         var unknownId = Guid.NewGuid();
         unknown.CommandId = unknownId;
-        var ambiguous = await browser.PostAsync($"/runwick/jobs/{job}/cancel", SecurityTests.Position(detail), unknownId);
-        AssertOutcome(ambiguous, "outcome_unknown", unknownId, $"/runwick/jobs/{job}");
+        var ambiguous = await browser.PostAsync($"/runwick/runs/{job}/cancel", SecurityTests.Position(detail), unknownId);
+        AssertOutcome(ambiguous, "outcome_unknown", unknownId, $"/runwick/runs/{job}");
 
         // The client's "Try again" resends the same ID and body; once the session answers, it is one transition and one audit row.
         unknown.CommandId = null;
-        Assert.Equal(HttpStatusCode.SeeOther, (await browser.PostAsync($"/runwick/jobs/{job}/cancel", SecurityTests.Position(detail), unknownId)).StatusCode);
-        Assert.Equal(HttpStatusCode.SeeOther, (await browser.PostAsync($"/runwick/jobs/{job}/cancel", SecurityTests.Position(detail), unknownId)).StatusCode);
+        Assert.Equal(HttpStatusCode.SeeOther, (await browser.PostAsync($"/runwick/runs/{job}/cancel", SecurityTests.Position(detail), unknownId)).StatusCode);
+        Assert.Equal(HttpStatusCode.SeeOther, (await browser.PostAsync($"/runwick/runs/{job}/cancel", SecurityTests.Position(detail), unknownId)).StatusCode);
         Assert.Equal(1, await h.AuditsAsync(unknownId));
         Assert.Equal(1, await h.AuditsAsync());
     }
@@ -241,14 +246,14 @@ public sealed class DeliveryTests
         var a = await h.DispatchAsync(new PingJob("a"));
         var b = await h.DispatchAsync(new PingJob("b"));
         var browser = h.Browser(Users.Admin);
-        foreach (var page in new[] { "/runwick", "/runwick/jobs", $"/runwick/jobs/{a}", "/runwick/queues", "/runwick/workers", "/runwick/schedules",
+        foreach (var page in new[] { "/runwick", "/runwick/runs", $"/runwick/runs/{a}", "/runwick/queues", "/runwick/workers", "/runwick/schedules",
                      "/runwick/scaling", "/runwick/settings", "/runwick/retention", "/runwick/audit" })
         {
             Assert.True((await browser.LoadAsync(page)).Response.StatusCode == HttpStatusCode.OK, page);
         }
 
-        // The same reads: the Jobs page and GET /v1/jobs list the same jobs in the same order.
-        var dashJobs = (await browser.VisitJsonAsync("/runwick/jobs")).Props().GetProperty("jobs").GetProperty("items").EnumerateArray()
+        // The same reads: the Runs page and GET /v1/jobs list the same jobs in the same order.
+        var dashJobs = (await browser.VisitJsonAsync("/runwick/runs")).Props().GetProperty("jobs").GetProperty("items").EnumerateArray()
             .Select(j => j.GetProperty("jobId").GetGuid()).ToList();
         var apiJobs = (await Browser.JsonAsync(await browser.SendAsync(HttpMethod.Get, "/api/v1/jobs", inertia: false))).GetProperty("items").EnumerateArray()
             .Select(j => j.GetProperty("jobId").GetGuid()).ToList();
@@ -257,7 +262,7 @@ public sealed class DeliveryTests
 
         // The same controls: cancel one job from each; the audit rows match apart from the target and command.
         var positionA = SecurityTests.Position(await SecurityTests.JobAsync(browser, a));
-        Assert.Equal(HttpStatusCode.SeeOther, (await browser.PostAsync($"/runwick/jobs/{a}/cancel", positionA, Guid.NewGuid())).StatusCode);
+        Assert.Equal(HttpStatusCode.SeeOther, (await browser.PostAsync($"/runwick/runs/{a}/cancel", positionA, Guid.NewGuid())).StatusCode);
         var pb = await SecurityTests.JobAsync(browser, b);
         var antiforgery = await Browser.JsonAsync(await browser.SendAsync(HttpMethod.Get, "/api/v1/antiforgery", inertia: false));
         var api = await browser.SendAsync(HttpMethod.Post, $"/api/v1/jobs/{b}/cancel", inertia: false, JsonSerializer.Serialize(new

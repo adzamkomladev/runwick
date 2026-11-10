@@ -15,7 +15,8 @@ const STATES = {
   pending: ['neutral'], reserved: ['blue', true], running: ['indigo', true], retrying: ['amber'], succeeded: ['green'],
   failed: ['red'], cancelled: ['neutral'], paused: ['amber'], active: ['green'], live: ['green'], draining: ['amber'],
   expired: ['neutral'], permanent_failure: ['red'], retryable_failure: ['amber'], user_cancelled: ['neutral'], interrupted: ['amber'],
-  timed_out: ['red'],
+  timed_out: ['red'], ready: ['green'], degraded: ['amber'], starting: ['blue'], stopping: ['amber'], created: ['blue'], linked_existing: ['neutral'],
+  skipped: ['neutral'],
 }
 
 export const toneOf = (state) => TONES[STATES[state]?.[0] ?? 'neutral']

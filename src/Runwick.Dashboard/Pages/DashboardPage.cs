@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Inertia.Net;
+using Microsoft.AspNetCore.Http;
 using Runwick.Management;
 using P = Runwick.Management.ManagementPermissions;
 
@@ -16,12 +17,12 @@ internal abstract class DashboardPage
     /// <summary>Page and action names to the permission each needs: the <c>can</c> map and the navigation (a display hint only).</summary>
     public static readonly IReadOnlyDictionary<string, string> Abilities = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        ["overview"] = P.JobsRead, ["jobs"] = P.JobsRead, ["queues"] = P.QueuesRead, ["workers"] = P.CapacityRead, ["schedules"] = P.SchedulesRead,
-        ["scaling"] = P.CapacityRead, ["settings"] = P.SettingsRead, ["retention"] = P.SettingsRead, ["audit"] = P.AuditRead,
+        ["overview"] = P.JobsRead, ["runs"] = P.JobsRead, ["jobs"] = P.JobsRead, ["queues"] = P.QueuesRead, ["workers"] = P.CapacityRead, ["schedules"] = P.SchedulesRead,
+        ["scaling"] = P.CapacityRead, ["pools"] = P.CapacityRead, ["settings"] = P.SettingsRead, ["retention"] = P.SettingsRead, ["audit"] = P.AuditRead,
         ["cancel"] = P.JobsCancel, ["retry"] = P.JobsRetry, ["rerun"] = P.JobsRerun, ["revealPayload"] = P.JobsReadPayload,
         ["revealError"] = P.JobsReadError, ["queueControl"] = P.QueuesControl, ["capacityEdit"] = P.CapacityEdit,
         ["scheduleControl"] = P.SchedulesControl, ["scheduleTrigger"] = P.SchedulesTrigger, ["scheduleEdit"] = P.SchedulesEdit,
-        ["retentionManage"] = P.RetentionManage,
+        ["retentionManage"] = P.RetentionManage, ["dispatch"] = P.JobsDispatch,
     };
 
     public abstract string Component { get; }
@@ -53,7 +54,7 @@ internal abstract class DashboardPage
             return;
         }
 
-        if (!r.Has(Permission))
+        if (Permission.Length > 0 && !r.Has(Permission))
         {
             throw new ManagementDeniedException(Permission);
         }
@@ -114,6 +115,38 @@ internal static class Notifications
         }
 
         return new { failed, scaling, paused };
+    }
+}
+
+/// <summary>
+/// A status page (21 §3.7): a page visit the dashboard cannot serve (403, 404, 503) is drawn in the shell with what happened and
+/// where to go, keeping its status code. Polls, partial reloads, controls and API-like requests keep the JSON error body.
+/// </summary>
+internal sealed class StatusPage(int status, string code, string message, string? permission) : DashboardPage
+{
+    public override string Component => "Status";
+
+    public override string Permission => "";
+
+    public override IReadOnlyDictionary<string, string> Props { get; } = Pages.Props.Of(("status", ""));
+
+    protected override Task<object?> LoadAsync(DashboardRequest r, string prop) =>
+        Task.FromResult<object?>(new { status, code, message, permission, path = r.Http.Request.Path.Value });
+
+    /// <summary>Whether this request is a page visit (a full load or an Inertia visit, not a poll or partial reload).</summary>
+    public static bool Fits(DashboardRequest r)
+    {
+        var request = r.Http.Request;
+        return (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method))
+            // A partial reload is answered as before, except one the Status page itself sends (its shell's notifications poll).
+            && (!request.Headers.ContainsKey("X-Inertia-Partial-Data") || request.Headers["X-Inertia-Partial-Component"] == "Status")
+            && (request.Headers.ContainsKey("X-Inertia") || request.Headers.Accept.ToString().Contains("text/html", StringComparison.Ordinal));
+    }
+
+    public async Task RenderStatusAsync(DashboardRequest r)
+    {
+        r.Http.Response.OnStarting(() => { r.Http.Response.StatusCode = status; return Task.CompletedTask; });
+        await RenderAsync(r);
     }
 }
 

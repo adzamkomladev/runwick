@@ -1,7 +1,7 @@
 import { cn } from './utils'
 
 export const Table = ({ className, ...props }) => (
-  <div data-slot="table-container" className="relative w-full overflow-x-auto">
+  <div data-slot="table-container" className="fade-x relative w-full overflow-x-auto">
     <table data-slot="table" className={cn('w-full caption-bottom text-sm', className)} {...props} />
   </div>
 )

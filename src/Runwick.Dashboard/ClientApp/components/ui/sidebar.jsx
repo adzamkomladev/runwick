@@ -66,7 +66,7 @@ export function Sidebar({ label, children }) {
 export const SidebarHeader = ({ className, ...props }) => <div className={cn('flex flex-col gap-2 p-2.5', className)} {...props} />
 export const SidebarFooter = ({ className, ...props }) => <div className={cn('mt-auto flex flex-col gap-2 border-t border-sidebar-border p-2.5', className)} {...props} />
 export const SidebarContent = ({ className, ...props }) =>
-  <div className={cn('flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto p-2.5', className)} {...props} />
+  <div className={cn('fade-y flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto p-2.5', className)} {...props} />
 
 export function SidebarGroup({ label, children }) {
   return (

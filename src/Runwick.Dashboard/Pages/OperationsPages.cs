@@ -15,10 +15,22 @@ internal sealed class QueuesPage : DashboardPage
 
     public override string Permission => P.QueuesRead;
 
-    public override IReadOnlyDictionary<string, string> Props { get; } = Pages.Props.Of(("queues", P.QueuesRead));
+    public override IReadOnlyDictionary<string, string> Props { get; } =
+        Pages.Props.Of(("queues", P.QueuesRead), ("counts", P.QueuesRead), ("stats", P.JobsRead), ("query", P.QueuesRead));
 
-    protected override async Task<object?> LoadAsync(DashboardRequest r, string prop) =>
-        await r.ListAsync(cursor => r.Session.ListQueuesAsync(r.Caller, r.QInt("limit"), cursor, r.Ct));
+    protected override async Task<object?> LoadAsync(DashboardRequest r, string prop) => prop switch
+    {
+        "queues" => await r.ListAsync(cursor => r.Session.ListQueuesAsync(r.Caller, r.QInt("limit"), cursor, r.Ct)),
+        "counts" => await Counts(r),
+        "stats" => r.Has(P.JobsRead) ? await JobTypesPage.Stats(r, null, queue: null, byQueue: true) : null,
+        _ => new { range = r.Q("range"), from = r.Q("from"), to = r.Q("to") },
+    };
+
+    static async Task<object> Counts(DashboardRequest r)
+    {
+        var all = await QueuePage.All(cursor => r.Session.ListQueuesAsync(r.Caller, ManagementSession.MaxPageSize, cursor, r.Ct));
+        return new { total = all.Count, paused = all.Count(q => q.Paused) };
+    }
 
     /// <summary><c>POST /queues/{name}/pause|resume</c>.</summary>
     public static async Task ControlAsync(DashboardRequest r, string queue, bool pause)
@@ -28,13 +40,14 @@ internal sealed class QueuesPage : DashboardPage
             return;
         }
 
+        var detail = read.Body.View == "detail" ? "/queues/" + DashboardControls.Escape(queue) : null;
         await DashboardControls.RunAsync(r, read.CommandId, async () =>
         {
             var result = pause
                 ? await r.Session.PauseQueueAsync(r.Caller, queue, read.CommandId, read.Body.ExpectedRevision, read.Body.Reason, r.Ct)
                 : await r.Session.ResumeQueueAsync(r.Caller, queue, read.CommandId, read.Body.ExpectedRevision, read.Body.Reason, r.Ct);
             return (result.Succeeded, result.Code, result.Revision);
-        }, "/queues", Instance, "/queues");
+        }, detail ?? "/queues", detail is null ? Instance : new QueuePage(queue), detail ?? "/queues");
     }
 }
 
@@ -48,12 +61,13 @@ internal sealed class WorkersPage : DashboardPage
     public override string Permission => P.CapacityRead;
 
     public override IReadOnlyDictionary<string, string> Props { get; } =
-        Pages.Props.Of(("workers", P.CapacityRead), ("scopes", P.CapacityRead), ("query", P.CapacityRead));
+        Pages.Props.Of(("workers", P.CapacityRead), ("fleet", P.CapacityRead), ("scopes", P.CapacityRead), ("query", P.CapacityRead));
 
     protected override async Task<object?> LoadAsync(DashboardRequest r, string prop) => prop switch
     {
         "workers" => await r.ListAsync(cursor => r.Session.ListWorkersAsync(r.Caller, r.Q("expired") is "true" or "1", r.QInt("limit"), cursor, r.Ct)),
         "scopes" => await r.ListAsync(cursor => r.Session.ListScopesAsync(r.Caller, null, r.QInt("limit"), cursor, r.Ct), "scopeCursor"),
+        "fleet" => Fleet.Of(await QueuePage.Live(r)),
         _ => new { expired = r.Q("expired") is "true" or "1" },
     };
 
@@ -92,10 +106,20 @@ internal sealed class SchedulesPage : DashboardPage
 
     public override string Permission => P.SchedulesRead;
 
-    public override IReadOnlyDictionary<string, string> Props { get; } = Pages.Props.Of(("schedules", P.SchedulesRead));
+    public override IReadOnlyDictionary<string, string> Props { get; } =
+        Pages.Props.Of(("schedules", P.SchedulesRead), ("stats", P.SchedulesRead), ("query", P.SchedulesRead));
 
-    protected override async Task<object?> LoadAsync(DashboardRequest r, string prop) =>
-        await r.ListAsync(cursor => r.Session.ListSchedulesAsync(r.Caller, r.QInt("limit"), cursor, r.Ct));
+    protected override async Task<object?> LoadAsync(DashboardRequest r, string prop)
+    {
+        var (from, to) = r.Range(TimeSpan.FromDays(1));
+        return prop switch
+        {
+            "schedules" => await r.ListAsync(cursor => r.Session.ListSchedulesAsync(r.Caller, r.QInt("limit"), cursor, r.Ct)),
+            "stats" => await r.StatsAsync(() => r.Session.GetScheduleStatsAsync(r.Caller, from, to, r.Ct),
+                () => new ScheduleStats(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, null, new Dictionary<string, long>(), 0)),
+            _ => new { range = r.Q("range"), from = r.Q("from"), to = r.Q("to") },
+        };
+    }
 
     /// <summary><c>POST /schedules/{key}/pause|resume|trigger|revalidate</c>.</summary>
     public static async Task ControlAsync(DashboardRequest r, string key, string operation)
@@ -106,6 +130,7 @@ internal sealed class SchedulesPage : DashboardPage
         }
 
         var (s, c, id, b) = (r.Session, r.Caller, read.CommandId, read.Body);
+        var detail = b.View == "detail" ? "/schedules/" + DashboardControls.Escape(key) : null;
         await DashboardControls.RunAsync(r, id, async () =>
         {
             var result = operation switch
@@ -116,7 +141,7 @@ internal sealed class SchedulesPage : DashboardPage
                 _ => await s.RevalidateScheduleAsync(c, key, id, b.ExpectedRevision, b.Reason, r.Ct),
             };
             return (result.Succeeded, result.Code, operation is "pause" or "resume" ? result.ControlRevision : result.DefinitionRevision);
-        }, "/schedules", Instance, "/schedules");
+        }, detail ?? "/schedules", detail is null ? Instance : new SchedulePage(key), detail ?? "/schedules");
     }
 
     static ResumePolicy Policy(string? policy) => policy switch
@@ -159,10 +184,12 @@ internal sealed class AuditPage : DashboardPage
 
     public override string Permission => P.AuditRead;
 
-    public override IReadOnlyDictionary<string, string> Props { get; } = Pages.Props.Of(("audit", P.AuditRead), ("query", P.AuditRead));
+    public override IReadOnlyDictionary<string, string> Props { get; } = Pages.Props.Of(("audit", P.AuditRead), ("stats", P.AuditRead), ("query", P.AuditRead));
 
     protected override async Task<object?> LoadAsync(DashboardRequest r, string prop) => prop switch
     {
+        "stats" => await r.StatsAsync(() => r.Session.GetAuditStatsAsync(r.Caller, r.Range(TimeSpan.FromDays(1)).From, r.Range(TimeSpan.FromDays(1)).To, r.Ct),
+            () => new AuditStats(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, [], [], null)),
         "audit" => await r.ListAsync(cursor =>
         {
             var (from, to) = r.Range();
@@ -267,4 +294,7 @@ internal sealed class RevisionBody
     public string? Policy { get; set; }
 
     public string? Reason { get; set; }
+
+    /// <summary>"detail" when the control was sent from the resource's own page, so the answer is that page.</summary>
+    public string? View { get; set; }
 }

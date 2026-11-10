@@ -15,6 +15,17 @@ Not in SP-020: retention cleanup and the detail-expired projection (SP-021), the
 
 ## Changes
 
+- (2026-11-10, exact stats, job types, bulk retry) The dashboard needs exact figures, so the capped queue stats read is replaced:
+  - `GetJobStats` (`GET jobs/stats`, §2.4) replaces `GetQueueStats` and its route `GET queues/{name}/stats`, which are removed. Every count is exact (no sample, no cap); a read that cannot finish within its 5 s budget fails with 503 `query_budget_exceeded` rather than return partial figures. It takes optional queue, job name and worker filters and can group by queue and by job name.
+  - `ListJobTypes` (`GET jobtypes`, §2.6): every job name known to the registry, the store or a schedule, with the registered definition (policy and type names, never payloads).
+  - `GetScheduleStats` (`GET schedules/stats`) and `GetAuditStats` (`GET audit/stats`) (§2.7).
+  - Bulk retry (`POST jobs:retry`, §4), shaped and answered like bulk cancel.
+  - `ListWorkers` detail is version 2 and gains `handlers` (§2.3).
+  - Schema: PostgreSQL revision 20 (04), SQLite revision 4 (20): two indexes each, no data change. Redis: two new projections filled by a one-time backfill (22), no layout revision.
+- (2026-11-10, worker detail, queue stats, schedule detail) Three reads for the dashboard, all on the HTTP API:
+  - `ListWorkers` items gain `detail` (§2.3): what each worker reported about itself with its last presence (host figures, pools, its settings, the attempts it runs now and the last ten it finished). Null for an older worker or a row written before the migration. Running and recent attempts name jobs, so they are listed only for queues the caller has `Jobs.Read` on, and left out entirely without `Jobs.Read`. Schema: PostgreSQL revision 19 (04), SQLite revision 3 (20), Redis unchanged (22).
+  - `GetQueueStats` (`GET queues/{name}/stats?from=&to=`): job states and 24 buckets from the newest 5,000 jobs created in the range. No schema change. Replaced the same day by `GetJobStats` (above).
+  - `GetSchedule` (`GET schedules/{key}?limit=`, §2.5): a schedule, its current definition without the payload, and its newest occurrences with each job's state. No schema change.
 - (2026-11-09, attempt usage) `GetJob`'s attempts gain `usage` (`AttemptResourceUsage`, §3.1): what the worker process used while the attempt ran (CPU time, managed allocations, working set at start, end and peak, and how many other attempts overlapped it). Null means not recorded. The worker records it unless `WorkerOptions.RecordResourceUsage` is off (06), and it is stored with the attempt when the Finish applies. It is on the HTTP API (`GET jobs/{id}`), in the CLI JSON of `jobs get`, and on the dashboard job page. Schema: PostgreSQL revision 18 (04), SQLite revision 2 (20), Redis unchanged (22).
 - (2026-11-08) New document.
 - (2026-11-08, implementation of SP-020) What the build settled where this document was silent or could not be met as written:
@@ -74,7 +85,12 @@ All lists use **keyset pagination only**: page size 50 by default, at most 200. 
 | `ListJobs` | `Jobs.Read` | queue, state, job name, created-from/to (default last 7 days, at most 31 days) | `created_at DESC, job_id DESC` | id, job name, payload version, queue, priority, state, generation, revision, created/updated/eligible/terminal times, terminal reason, cancel requested, execution count |
 | `GetJob` | `Jobs.Read` on its queue | — | — | summary + generations (number, created reason, created by, started count, max executions) + attempts (id, generation, reservation/execution numbers, worker instance, times, outcome, disposition, applied reason, error **code** only, `usage` or null, §3.1) |
 | `ListQueues` | `Queues.Read` | — | queue name | name, paused, revision, ready count per state is **not** included (needs a count; SP-022 metrics) |
-| `ListWorkers` | `Capacity.Read` | include expired (default no) | `heartbeat_at DESC` | instance id, host, process id, build, status, subscriptions, pool targets, started/heartbeat/expires |
+| `ListWorkers` | `Capacity.Read` | include expired (default no) | `heartbeat_at DESC` | instance id, host, process id, build, status, subscriptions, pool targets, started/heartbeat/expires, `detail` or null (§2.3) |
+| `GetJobStats` | `Jobs.Read` (only queues in scope are counted) | from/to (default last 24 h, at most 31 days), buckets (1–96, default 24), queue, job name, worker, by queue, by job name | — | exact counts, durations, buckets, live counts, top error codes, optional groups (§2.4) |
+| `ListJobTypes` | `Jobs.Read` (names in scope) | — | name | name, registered, queue, priority, payload version, definition, schedules, seen in store (§2.6) |
+| `GetScheduleStats` | `Schedules.Read` | from/to (as `GetJobStats`) | — | totals and occurrence counts (§2.7) |
+| `GetAuditStats` | `Audit.Read` | from/to (as `GetJobStats`) | — | totals by operation and top actors (§2.7) |
+| `GetSchedule` | `Schedules.Read` | limit (default 50, at most 200) | occurrences newest first | summary, current definition (no payload), occurrences with job state (§2.5) |
 | `ListScopes` | `Capacity.Read` | kind | kind, key | kind, key, capacity, policy revision, live permits |
 | `ListSchedules` | `Schedules.Read` | — | key | key, paused, needs review, definition and control revisions, next due, last materialized |
 | `ListAudit` | `Audit.Read` | target kind, target id, from/to | `audit_id DESC` | every audit column except `details` beyond its allowlisted keys |
@@ -102,6 +118,53 @@ A cursor is `base64url(payload ‖ tag)`, at most 2 KiB. The payload holds: form
 
 The figures are stored with the attempt in the transaction that applies its Finish. They are not part of any receipt and the fingerprint includes them only when present, so a Finish without them has the fingerprint older releases computed. A replayed Finish never changes stored figures. A transactional (staged) completion records them up to the moment of staging.
 
+### 2.3 Worker detail
+
+The worker builds `detail` on every presence publication (05 §14) and the store keeps the latest one per instance (at most 16 KiB of JSON; a larger one is dropped, the presence still applies). Shape, version `v: 2` (version 1 had no `handlers`):
+
+| Field | Meaning |
+|---|---|
+| `host` | `os`, `runtime`, `arch`, `cpus`, `memoryTotalBytes` and `memoryAvailableBytes` (Linux: `/proc/meminfo`; elsewhere what the GC sees), `processCpuPercent` (process CPU time over wall time since the previous publication, across all cores; 0 on the first), `workingSetBytes`, `gcHeapBytes`. A figure that cannot be read is left out. |
+| `pools` | per pool: `name`, `queues` (`queue`, `weight`), `mode` (`fixed` or `auto`), `target`, `min` (auto only), `max`, `inFlight` (tickets held now), `laneSelection`, `laneWeights` |
+| `settings` | every `WorkerOptions` value: durations as milliseconds (`leaseDurationMs`), switches as booleans |
+| `running`, `runningCount` | attempts running now (at most 20 listed, oldest first; `runningCount` is the true count): `jobId`, `attemptId`, `jobName`, `queue`, `pool`, `startedAt` |
+| `handlers` | the job names this worker has a handler for, in ordinal order |
+| `recent` | the last 10 attempts this process finished, newest first, kept in memory only: as `running` plus `outcome`, `finishedAt`, `cpuMicroseconds` |
+
+`running` and `recent` keep only items in queues the caller has `Jobs.Read` on; without `Jobs.Read` both are removed. `runningCount`, host, pools and settings stay (the caller has `Capacity.Read`).
+
+### 2.4 Job stats
+
+Every figure is exact: the store counts rows, never a sample, and nothing is capped. A read that does not finish within its budget (5 s; PostgreSQL also turns JIT off for it) fails with 503 `query_budget_exceeded`; no partial figures are returned. The range is `[from, to)` at millisecond precision, default the last 24 hours, at most 31 days; `buckets` cuts it into equal slices (1–96, default 24): a time `t` is in slice `(t − from) · buckets / (to − from)` in integer milliseconds, and each bucket's `from` is the first millisecond of its slice.
+
+| Field | Meaning |
+|---|---|
+| `states`, `retries` | jobs **created** in the range by current state (every state, zero when absent); `retries` sums executions beyond the first |
+| `duration` | jobs that **ended** in the range (whenever created): `count`, `medianMs`, `p95Ms`, `maxMs`. Duration runs from the first authorization (else reservation) of the current generation's attempts to the terminal time; a job that never had an attempt is not counted. Percentiles are PostgreSQL's `percentile_cont` (linear interpolation) on every store |
+| `buckets[]` | `from`, `created` (by creation time), `succeeded`, `failed`, `cancelled` (by terminal time), `medianMs`, `p95Ms` (of the jobs that ended in the slice) |
+| `now` | live, whenever created: `pending` (pending or retrying and eligible now), `scheduled` (eligible later), `reserved`, `running` |
+| `oldestPendingEligibleAt` | earliest eligible time among `now.pending` |
+| `errorCodes[]` | attempts that finished in the range with an error: the 10 most frequent `{code, count}`, ties by code (ordinal) |
+| `queues[]`, `jobNames[]` | with `byQueue` / `byJobName`: one group per key that has any figure, each with `key`, `states`, `retries`, `duration`, `lastAt`, `lastState`, `lastJobId` (the newest job created in the range), `buckets`, `now`, `oldestPendingEligibleAt` |
+
+Filters: `queue` and `jobName` narrow every figure. `worker` keeps jobs with any attempt by that worker instance, and error codes of that worker's attempts; groups are not returned with it. Only queues the caller has `Jobs.Read` on are counted; a `queue` outside that scope reads as empty, as `ListJobs` does. A null value is left out of the JSON (for example `medianMs` when nothing ended).
+
+The figures come from separate statements in one read-only snapshot on PostgreSQL and SQLite. On Redis they come from atomic pages of at most 5,000 index entries (22 §7.2), so a job that changes state while the read runs can be seen in its old state by one page and its new state by another (counted twice or not at all in the live figures, or in its old state in the created counts). Each page is exact; on an idle store the whole read is.
+
+### 2.5 Schedule detail
+
+`definition` is the current revision: revision, kind, cron text and dialect, zone, due time (one-time), job name, queue, misfire policy and grace, overlap, gap and fold policies, max batch, max episode jobs, max catch-up age. Occurrences are newest materialized first (then scheduled time, manual ones first, then key): kind, key, scheduled time, materialized time, disposition, coalesced, job id, and `jobState`, the job's current state, null when the job is gone or the caller lacks `Jobs.Read` on the definition's queue. An unknown key is 404.
+
+### 2.6 Job types
+
+The names are the union of the registry, the `(queue, job_name)` pairs of stored jobs and the current definitions of schedules, limited to queues the caller has `Jobs.Read` on. A registered name has `queue`, `priority`, `payloadVersion` and `definition`: `payloadType` (the payload's full type name), `payloadVersions`, `handlerType`, `maxExecutions`, `executionTimeoutMs`, `retry` and `unstartedRetry` (`backoff`, `jitter`, `initialDelayMs`, `maximumDelayMs`), `maxUnstartedAbandonments`, `jobTypeCapacity`, `resources[]` (`capacity`), `rates[]` (`kind`, `limit`, `windowMs`), `unique`, `windowMs`, `middleware[]` (type names). An unregistered name has `registered: false` and no definition. `schedules` lists the keys of schedules whose current definition names the job; `seenInStore` says a stored job has the name.
+
+### 2.7 Schedule and audit stats
+
+`GetScheduleStats`: `total`, `paused` and `needsReview` count schedules now; `nextDueAt` is the earliest next due time of an unpaused schedule; `occurrences` counts occurrences materialized in the range by disposition; `misfires` counts schedule audit ranges created in the range with reason `misfire_skip`, `run_once_covered` or `catch_up_skipped`.
+
+`GetAuditStats`: `total` audit rows in the range, `operations[]` (`{operation, count}`, most frequent first, ties by name) and `actors[]` (`{actor, count}` by actor subject, the top 5). `denied` is null (left out): denied requests are not audited.
+
 ## 3. Reveal
 
 `RevealPayload(jobId)` needs `Jobs.ReadPayload`; `RevealError(attemptId)` needs `Jobs.ReadError`. Both also need the queue to be in scope.
@@ -114,7 +177,7 @@ One store transaction (`RecordDisclosure/1`): insert an audit row (`operation = 
 |---|---|---|
 | Cancel / Retry / Rerun job | `Jobs.Cancel` / `Jobs.Retry` / `Jobs.Rerun` (job's queue) | `commandId`, `expectedGeneration`, `expectedRevision`, `reason?` |
 | Dispatch by job name (SP-032, 19 §6.2) | `Jobs.Dispatch` (resulting queue) | `commandId`, `jobName`, `payload`, `payloadVersion?`, `queue?`, `priority?`, `notBefore?`, `reason?` |
-| Bulk cancel | `Jobs.Cancel` per item | `items[]` (≤ 100: `jobId`, `commandId`, `expectedGeneration`, `expectedRevision`), `reason?` |
+| Bulk cancel / bulk retry | `Jobs.Cancel` / `Jobs.Retry` per item | `items[]` (≤ 100: `jobId`, `commandId`, `expectedGeneration`, `expectedRevision`), `reason?` |
 | Pause / resume queue | `Queues.Control` (that queue) | `commandId`, `expectedRevision`, `reason?` |
 | Set scope capacity | `Capacity.Edit` | `commandId`, `capacity`, `expectedPolicyRevision`, `reason?` |
 | Pause / resume / trigger / revalidate schedule | `Schedules.Control` / `Schedules.Control` / `Schedules.Trigger` / `Schedules.Edit` | `commandId`, expected revision, `policy` (resume), `reason?` |
@@ -167,10 +230,14 @@ Route table (all under `{prefix}/v1`):
 | `GET jobs?queue&state&jobName&from&to&limit&cursor` | ListJobs |
 | `GET jobs/{id}` | GetJob |
 | `POST jobs/{id}/payload:reveal`, `POST attempts/{id}/error:reveal` | RevealPayload, RevealError (POST: they write audit) |
-| `POST jobs/{id}/cancel`, `…/retry`, `…/rerun`; `POST jobs:cancel` | controls; bulk cancel |
+| `GET jobs/stats?from&to&buckets&queue&jobName&worker&byQueue&byJobName` | GetJobStats |
+| `GET jobtypes` | ListJobTypes (`{items}`) |
+| `POST jobs/{id}/cancel`, `…/retry`, `…/rerun`; `POST jobs:cancel`, `POST jobs:retry` | controls; bulk cancel, bulk retry |
 | `GET queues`; `POST queues/{name}/pause`, `…/resume` | ListQueues; queue controls |
 | `GET workers?includeExpired` | ListWorkers |
 | `GET scopes?kind`; `POST scopes/{kind}/{key}/capacity` | ListScopes; SetScopeCapacity |
+| `GET schedules/stats?from&to`; `GET schedules/{key}?limit` | GetScheduleStats; GetSchedule (a schedule keyed `stats` is reachable only through `ListSchedules`) |
+| `GET audit/stats?from&to` | GetAuditStats |
 | `GET schedules`; `POST schedules/{key}/pause`, `…/resume`, `…/trigger`, `…/revalidate` | ListSchedules; schedule controls |
 | `GET audit?targetKind&targetId&from&to&limit&cursor` | ListAudit |
 | `GET settings` | GetSettings |

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Runwick.Management;
@@ -104,8 +105,187 @@ internal sealed partial class RedisStore : IManagementQueryStore
                 var w = o["row"]!;
                 return new WorkerSummary(Guid.Parse(o["id"]!.GetValue<string>()), w["host"]!.GetValue<string>(), w["pid"]!.GetValue<int>(),
                     w["build"]!.GetValue<string>(), w["status"]!.GetValue<string>(), w["subscriptions"]!.DeepClone(), w["pools"]!.DeepClone(),
-                    MsTime(w["started"]), MsTime(w["heartbeat"]), MsTime(w["expires"]));
+                    MsTime(w["started"]), MsTime(w["heartbeat"]), MsTime(w["expires"]),
+                    w["detail"]?.GetValue<string>() is { } detail ? JsonNode.Parse(detail) : null);
             })], ct);
+
+    static readonly TimeSpan StatsBudget = TimeSpan.FromSeconds(5);
+    readonly ConcurrentDictionary<string, bool> _statsIndexed = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Runs the StatsIndex walk to its end once per application and process: stores written by an older binary lack
+    /// <c>idx:terminal</c> and the <c>jobtypes</c> counts (applications registered by this binary start complete).
+    /// </summary>
+    async Task EnsureStatsIndexAsync(string application, CancellationToken ct)
+    {
+        if (_statsIndexed.ContainsKey(application))
+        {
+            return;
+        }
+
+        await EnsureStoreIdAsync(application, ct).ConfigureAwait(false);
+        while (true)
+        {
+            var r = await Write(Op(application, Guid.CreateVersion7(), "StatsIndex", time.GetUtcNow() + TimeSpan.FromSeconds(10), null, RxLane.Background, 'r'),
+                "stats_index", ct, 500).ConfigureAwait(false);
+            if (!r.HasValue)
+            {
+                throw new StoreNotAppliedException(r.Code ?? "store_unavailable");
+            }
+
+            if (r.Result!["done"]!.GetValue<bool>())
+            {
+                _statsIndexed[application] = true;
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Exact by scan, in pages of at most 5,000 index entries: jobs created in range (<c>idx:created</c> or the queue's), jobs
+    /// ended since From (<c>idx:terminal</c>; those before To are the ended set, all of them carry error codes) and live jobs
+    /// (<c>idx:created:s:</c> of the four live states). Each page is atomic; the whole read is bounded by <see cref="StatsBudget"/>
+    /// and answers <c>statement_timeout</c> past it, never a partial figure.
+    /// </summary>
+    public async Task<StoreRead<JobStatsCells>> GetJobStatsAsync(string application, JobStatsFilter f, CancellationToken ct)
+    {
+        await EnsureStatsIndexAsync(application, ct).ConfigureAwait(false);
+        var deadline = time.GetUtcNow() + StatsBudget;
+        var observed = time.GetUtcNow();
+        var worker = f.Worker is { } w ? Hex(w) : "";
+        string fromMs = FloorMs(f.From), toMs = FloorMs(f.To);
+
+        async Task<List<JsonObject>> Scan(string key, string min, string max, bool errors)
+        {
+            var rows = new List<JsonObject>();
+            string afterScore = "", afterId = "";
+            while (true)
+            {
+                if (time.GetUtcNow() > deadline)
+                {
+                    throw new StoreNotAppliedException("statement_timeout");
+                }
+
+                var read = await ManagementReadAsync(application, "jscan", [key, min, max, afterScore, afterId, worker, errors ? fromMs : "", errors ? toMs : ""],
+                    r => Rows(r).ToList(), ct).ConfigureAwait(false);
+                observed = read.ObservedAt;
+                if (read.Value.Count > 0 && read.Value[^1]["more"] is not null)
+                {
+                    var cursor = read.Value[^1];
+                    (afterScore, afterId) = (cursor["sc"]!.ToJsonString(), cursor["id"]!.GetValue<string>());
+                    rows.AddRange(read.Value.SkipLast(1));
+                }
+                else
+                {
+                    rows.AddRange(read.Value);
+                    return rows;
+                }
+            }
+        }
+
+        bool Keep(JsonObject j, bool byWorker = true) =>
+            f.Allows(j["q"]!.GetValue<string>()) && (f.JobName is null || j["n"]!.GetValue<string>() == f.JobName) && (!byWorker || f.Worker is null || j["w"]!.GetValue<bool>());
+
+        var created = (await Scan(f.Queue is { } q ? "idx:created:q:" + q : "idx:created", fromMs, "(" + toMs, false).ConfigureAwait(false)).Where(j => Keep(j));
+        var ended = await Scan("idx:terminal", fromMs, "+inf", true).ConfigureAwait(false);
+        var live = new List<JsonObject>();
+        foreach (var state in (string[])["pending", "retrying", "reserved", "running"])
+        {
+            live.AddRange(await Scan("idx:created:s:" + state, "-inf", "+inf", true).ConfigureAwait(false));
+        }
+
+        var now = observed;
+        var cells = JobStatsCells.From(f,
+            created.Select(j => (j["q"]!.GetValue<string>(), j["n"]!.GetValue<string>(), j["s"]!.GetValue<string>(), MsTime(j["c"]), j["x"]?.GetValue<long>() ?? 0,
+                Guid.Parse(j["id"]!.GetValue<string>()))),
+            ended.Where(j => Keep(j) && j["t"] is not null && f.Contains(MsTime(j["t"])) && j["s"]!.GetValue<string>() is "succeeded" or "failed" or "cancelled")
+                .Select(j => (j["q"]!.GetValue<string>(), j["n"]!.GetValue<string>(), j["s"]!.GetValue<string>(), MsTime(j["t"]),
+                    j["st"] is { } st ? (double?)(j["t"]!.GetValue<long>() - st.GetValue<long>()) : null)),
+            live.Where(j => Keep(j)).Select(j =>
+            {
+                var state = j["s"]!.GetValue<string>();
+                var eligible = MsTime(j["e"]);
+                return (j["q"]!.GetValue<string>(), j["n"]!.GetValue<string>(), state is "reserved" or "running" ? state : eligible <= now ? "pending" : "scheduled",
+                    eligible);
+            }),
+            ended.Concat(live).Where(j => Keep(j, byWorker: false)).SelectMany(j => j["err"]!.AsArray().Select(e => e!.GetValue<string>())));
+        return new StoreRead<JobStatsCells>(cells, observed);
+    }
+
+    public async Task<StoreRead<JobNamesRead>> ListJobNamesAsync(string application, CancellationToken ct)
+    {
+        await EnsureStatsIndexAsync(application, ct).ConfigureAwait(false);
+        return await ManagementReadAsync(application, "jobnames", [], r =>
+        {
+            var o = Rows(r).Single();
+            return new JobNamesRead(
+                [.. o["names"]!.AsArray().Select(x => (x![1]!.GetValue<string>(), x[0]!.GetValue<string>()))],
+                [.. o["schedules"]!.AsArray().Select(x => (x![0]!.GetValue<string>(), x[1]!.GetValue<string>(), x[2]!.GetValue<string>()))]);
+        }, ct).ConfigureAwait(false);
+    }
+
+    public Task<StoreRead<ScheduleStats>> GetScheduleStatsAsync(string application, DateTimeOffset from, DateTimeOffset to, CancellationToken ct) =>
+        ManagementReadAsync(application, "sstats", [FloorMs(from), FloorMs(to)], r =>
+        {
+            var o = Rows(r).Single();
+            return new ScheduleStats(from, to, o["total"]!.GetValue<long>(), o["paused"]!.GetValue<long>(), o["review"]!.GetValue<long>(), MsTimeN(o["next"]),
+                o["occ"]!.AsObject().ToDictionary(p => p.Key, p => p.Value!.GetValue<long>(), StringComparer.Ordinal), o["misfires"]!.GetValue<long>());
+        }, ct);
+
+    /// <summary>Pages of at most 5,000 audit rows, newest first, merged; bounded by <see cref="StatsBudget"/> like the job stats.</summary>
+    public async Task<StoreRead<AuditStats>> GetAuditStatsAsync(string application, DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
+    {
+        var deadline = time.GetUtcNow() + StatsBudget;
+        var ops = new Dictionary<string, long>(StringComparer.Ordinal);
+        var actors = new Dictionary<string, long>(StringComparer.Ordinal);
+        var before = "";
+        while (true)
+        {
+            if (time.GetUtcNow() > deadline)
+            {
+                throw new StoreNotAppliedException("statement_timeout");
+            }
+
+            var read = await ManagementReadAsync(application, "astats", [FloorMs(from), FloorMs(to), before], r => Rows(r).Single(), ct).ConfigureAwait(false);
+            foreach (var (map, field) in ((Dictionary<string, long>, string)[])[(ops, "ops"), (actors, "actors")])
+            {
+                foreach (var p in read.Value[field]!.AsObject())
+                {
+                    map[p.Key] = map.GetValueOrDefault(p.Key) + p.Value!.GetValue<long>();
+                }
+            }
+
+            if (read.Value["next"] is not { } next)
+            {
+                return new StoreRead<AuditStats>(new AuditStats(from, to, ops.Values.Sum(), [.. ops.Select(p => new AuditOperationCount(p.Key, p.Value))],
+                    [.. actors.Select(p => new AuditActorCount(p.Key, p.Value))], null), read.ObservedAt);
+            }
+
+            // The next page starts at the row this one stopped before (exclusive bound is that row's successor).
+            before = (long.Parse(next.GetValue<string>(), CultureInfo.InvariantCulture) + 1).ToString(CultureInfo.InvariantCulture);
+        }
+    }
+
+    public Task<StoreRead<ScheduleDetail?>> GetScheduleAsync(string application, string key, int limit, CancellationToken ct) =>
+        ManagementReadAsync(application, "schedule", [key, limit], r =>
+        {
+            if (r.Length <= 4)
+            {
+                return null;
+            }
+
+            var s = JsonNode.Parse((string)r[3]!)!;
+            var d = SchReadDefinition(JsonNode.Parse((string)r[4]!)!.AsObject());
+            var revision = s["drev"]!.GetValue<long>();
+            return (ScheduleDetail?)new ScheduleDetail(
+                new ScheduleSummary(s["key"]!.GetValue<string>(), s["paused"]!.GetValue<bool>(), s["review"]!.GetValue<bool>(), revision,
+                    s["crev"]!.GetValue<long>(), MsTimeN(s["next"]), MsTimeN(s["mat"])),
+                new ScheduleDefinitionInfo(revision, d.Kind, d.CronText, d.CronDialect, d.ZoneId, d.DueAt, d.Template.JobName, d.Template.Queue,
+                    d.MisfirePolicy, d.MisfireGraceMs, d.OverlapPolicy, d.GapPolicy, d.FoldPolicy, d.MaxBatch, d.MaxEpisodeJobs, d.MaxCatchUpAgeMs),
+                [.. r.Skip(5).Select(x => JsonNode.Parse((string)x!)!).Select(o => new ScheduleOccurrenceInfo(o["kind"]!.GetValue<string>(),
+                    o["key"]!.GetValue<string>(), MsTimeN(o["at"]), MsTime(o["mat"]), o["disp"]!.GetValue<string>(), o["coal"]!.GetValue<bool>(),
+                    o["job"] is { } job ? Guid.Parse(job.GetValue<string>()) : null, o["state"]?.GetValue<string>()))]);
+        }, ct);
 
     public Task<StoreRead<IReadOnlyList<ScopeSummary>>> ListScopesAsync(string application, string? kind, (string Kind, string Key)? after, int limit,
         CancellationToken ct) =>

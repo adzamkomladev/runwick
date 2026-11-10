@@ -148,13 +148,18 @@ internal sealed class PresenceLoop(WorkerEngine engine)
 
     public bool Failing { get; private set; }
 
+    public WorkerDetail Detail { get; } = new(engine);
+
     public async Task PublishAsync(string status, CancellationToken ct)
     {
         Status = status;
         var record = new PresenceRecord(engine.WorkerInstanceId, Interlocked.Increment(ref _sequence), 1, status, Environment.ProcessId,
             Environment.MachineName, typeof(PresenceLoop).Assembly.GetName().Version?.ToString() ?? "0",
             [.. engine.Settings.Pools.SelectMany(p => p.Queues.Select(q => q.Queue)).Distinct()],
-            engine.Pools.ToDictionary(p => p.Settings.Name, p => p.Gate.Target), engine.Contracts, WorkerSettings.PresenceExpiry);
+            engine.Pools.ToDictionary(p => p.Settings.Name, p => p.Gate.Target), engine.Contracts, WorkerSettings.PresenceExpiry)
+        {
+            Detail = Detail.Build(),
+        };
         try
         {
             await engine.CallAsync(engine.BackgroundIo, 0, engine.Options.ControlRequestTimeout,

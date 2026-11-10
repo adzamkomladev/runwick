@@ -180,6 +180,7 @@
   --animate-page-in: page-in 150ms ease-out;
   --animate-skeleton: skeleton 1.6s ease-in-out infinite;
   --animate-live: live 2s ease-out infinite;
+  --ease-glide: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 @keyframes flash {
@@ -231,7 +232,16 @@
   body { @apply bg-background text-foreground antialiased; }
   /* Set by the react-remove-scroll shim while a dialog, sheet or menu is open. */
   body[data-scroll-locked] { overflow: hidden; }
+  /* The scroll lock hides the page scrollbar; a reserved gutter keeps the content from widening (and jumping) when a menu opens. */
+  html { scrollbar-gutter: stable; }
+  /* No visible scrollbars anywhere (21 §4.10); wheel, trackpad, touch and keyboard still scroll. Long areas fade at the edge instead. */
+  * { scrollbar-width: none; }
+  *::-webkit-scrollbar { display: none; }
   code { @apply font-mono text-[0.85em]; }
+  /* Browser surfaces in the palette: selection in the lime highlight, the caret in pine blue, figures in tables aligned. */
+  ::selection { background: color-mix(in oklch, var(--highlight) 45%, transparent); color: var(--foreground); }
+  :is(input, textarea, [contenteditable]) { caret-color: var(--primary); }
+  :is(td, th) { font-variant-numeric: tabular-nums; }
 }
 
 /* Every animation and transition is cut to nothing when the person asks for less motion. */
@@ -239,6 +249,7 @@
   *, ::before, ::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+    animation-delay: 0s !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
@@ -262,9 +273,77 @@
   to { opacity: 1; transform: none; }
 }
 @utility animate-node-in { animation: node-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); }
-@keyframes chart-in { from { opacity: 0; } to { opacity: 1; } }
-@utility animate-chart-in { animation: chart-in 0.6s ease-out; }
-@keyframes bar-in { from { transform: scaleY(0); } to { transform: none; } }
-@utility animate-bar-in { animation: bar-in 0.5s cubic-bezier(0.2, 0.8, 0.2, 1); transform-box: fill-box; transform-origin: bottom; }
-/* Poll updates morph the chart instead of jumping: path shape, bar height and hover dot ease to their new values. */
-@utility chart-morph { transition: d 0.5s ease-out, y 0.5s ease-out, height 0.5s ease-out, cx 0.15s ease-out, cy 0.15s ease-out; }
+/*
+ * Chart and stat motion (21 §4.8): transform and opacity only, eased with --ease-glide. Lines trace in (pathLength="1" and a
+ * dash offset), areas rise, bars grow, progress bars scale on x; staggers are animation delays set per element. Values that change
+ * on a poll are tweened in JS (charts.jsx useTween), so no CSS d/width transitions are needed and every browser animates them.
+ */
+@keyframes trace { from { stroke-dasharray: 1 1; stroke-dashoffset: 1; } to { stroke-dasharray: 1 1; stroke-dashoffset: 0; } }
+@utility animate-trace { animation: trace 0.8s var(--ease-glide) backwards; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@utility animate-rise { animation: rise 0.6s var(--ease-glide) backwards; }
+@keyframes bar-in { from { scale: 1 0; } }
+@utility animate-bar-in { animation: bar-in 0.5s var(--ease-glide) backwards; transform-box: fill-box; transform-origin: bottom; }
+@keyframes grow-x { from { scale: 0 1; } }
+@utility animate-grow-x { animation: grow-x 0.6s var(--ease-glide) backwards; }
+/* Cursor, hover dots and the tooltip glide between points; bars glide to a polled value. */
+@utility glide { transition: transform 160ms var(--ease-glide), opacity 160ms var(--ease-glide); }
+@utility glide-slow { transition: transform 500ms var(--ease-glide), opacity 200ms var(--ease-glide); }
+/*
+ * Hover on stat cards and list items, without layout or paint-heavy transitions: `lift` raises the element 2 px and fades in a
+ * shadow and an accent ring drawn on ::after; `tint` fades in a muted wash drawn on ::before under the content.
+ */
+@utility lift {
+  position: relative;
+  transition: translate 200ms var(--ease-glide), scale 200ms var(--ease-glide);
+  &::after {
+    content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0;
+    box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 30%, transparent), 0 10px 24px -8px rgb(0 0 0 / 0.18);
+    transition: opacity 200ms var(--ease-glide);
+  }
+  &:hover::after, &:focus-visible::after { opacity: 1; }
+  @media (prefers-reduced-motion: no-preference) {
+    &:hover { translate: 0 -2px; }
+    &:active { translate: 0; scale: 0.99; }
+  }
+}
+@utility tint {
+  position: relative; isolation: isolate;
+  &::before {
+    content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; opacity: 0;
+    background: color-mix(in oklch, var(--muted) 70%, transparent);
+    transition: opacity 200ms var(--ease-glide);
+  }
+  &:hover::before { opacity: 1; }
+}
+
+/*
+ * Fade edges on scroll areas (21 §4.10): a mask fades the side that has more content. Driven by the element's own scroll
+ * timeline, so it needs no script; an area that does not overflow has an inactive timeline and no fade. Browsers without
+ * scroll timelines show no fade.
+ */
+@property --fade-start { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@property --fade-end { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@keyframes fade-edges {
+  0% { --fade-start: 0px; --fade-end: 28px; }
+  8%, 92% { --fade-start: 28px; --fade-end: 28px; }
+  100% { --fade-start: 28px; --fade-end: 0px; }
+}
+@utility fade-y {
+  @supports (animation-timeline: scroll()) {
+    mask-image: linear-gradient(to bottom, transparent, #000 var(--fade-start), #000 calc(100% - var(--fade-end)), transparent);
+    animation: fade-edges linear both;
+    animation-timeline: scroll(self block);
+  }
+}
+@utility fade-x {
+  @supports (animation-timeline: scroll()) {
+    mask-image: linear-gradient(to right, transparent, #000 var(--fade-start), #000 calc(100% - var(--fade-end)), transparent);
+    animation: fade-edges linear both;
+    animation-timeline: scroll(self inline);
+  }
+}
+/* Under reduced motion the generic rule above would cut the scroll timeline to 0.01 ms; the fade is not motion, so it keeps auto. */
+@media (prefers-reduced-motion: reduce) {
+  .fade-y, .fade-x { animation-duration: auto !important; }
+}

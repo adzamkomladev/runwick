@@ -117,6 +117,7 @@ internal sealed partial class WorkerEngine
         }
 
         Untrack(entry);
+        Presence.Detail.Finished(entry);
         entry.Dispose();
     }
 

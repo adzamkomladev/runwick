@@ -1,4 +1,5 @@
--- PublishPresence/1 (04 §7.12): no receipt. ARGS: 1 instance id, 2 record JSON (without times), 3 expiry ms.
+-- PublishPresence/1 (04 §7.12): no receipt. ARGS: 1 instance id, 2 record JSON (without times), 3 expiry ms. The record's
+-- optional `detail` is the worker's own report as JSON text (16 §2 WorkerSummary.Detail), kept only up to 16 KiB.
 local M = {}
 function M.decide()
   local id = ARGS(1)
@@ -6,6 +7,7 @@ function M.decide()
   local old = U.jget('workers', id)
   if old and old.seq >= rec.seq then return U.noeffect('VersionConflict', 'presence_sequence_stale', { decided = NOWS }) end
   local expires = NOW + tonumber(ARGS(3))
+  if type(rec.detail) ~= 'string' or #rec.detail > 16384 then rec.detail = nil end
   rec.started = old and old.started or NOW
   rec.heartbeat = NOW
   rec.expires = expires

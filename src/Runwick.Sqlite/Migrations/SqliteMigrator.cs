@@ -31,9 +31,9 @@ namespace Sqlite.Migrations
     internal static class SqliteMigrator
     {
         /// <summary>Migrations in apply order with the schema revision each installs; the last one's is this binary's revision.</summary>
-        static readonly (string Id, long Revision)[] Migrations = [("0001_initial", 1), ("0002_attempt_usage", 2)];
+        static readonly (string Id, long Revision)[] Migrations = [("0001_initial", 1), ("0002_attempt_usage", 2), ("0003_worker_detail", 3), ("0004_stats_indexes", 4)];
 
-        public const long CurrentRevision = 2;
+        public const long CurrentRevision = 4;
         const string MigrationId = "0001_initial";
         const string ManifestDomain = "runwick.manifest.v1";
         static readonly string RunnerBuild = "runwick/" + (typeof(SqliteMigrator).Assembly.GetName().Version?.ToString() ?? "0");

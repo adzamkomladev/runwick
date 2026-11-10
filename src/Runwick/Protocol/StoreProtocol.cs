@@ -534,7 +534,18 @@ internal sealed record PresenceRecord(
     IReadOnlyList<string> SubscribedQueues,
     IReadOnlyDictionary<string, int> PoolTargets,
     IReadOnlyList<JobContract> Capabilities,
-    TimeSpan Expiry);
+    TimeSpan Expiry)
+{
+    /// <summary>At most this many bytes of compact JSON are stored; a larger detail is dropped, never the presence.</summary>
+    public const int MaxDetailBytes = 16_384;
+
+    /// <summary>What the worker reports about itself (05 §14, 16 §2 <c>WorkerSummary.Detail</c>); null = not reported.</summary>
+    public System.Text.Json.Nodes.JsonObject? Detail { get; init; }
+
+    /// <summary>The detail as the stores keep it: compact JSON text, or null when absent or over <see cref="MaxDetailBytes"/>.</summary>
+    public string? DetailText() =>
+        Detail?.ToJsonString() is { } text && System.Text.Encoding.UTF8.GetByteCount(text) <= MaxDetailBytes ? text : null;
+}
 
 internal sealed record PresenceAck(DateTimeOffset ExpiresAt, bool Accepted);
 

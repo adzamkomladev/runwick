@@ -1,8 +1,8 @@
 import { Link, router, usePage } from '@inertiajs/react'
 import {
-  IconAlertTriangle, IconArrowDown, IconArrowRight, IconArrowUp, IconArrowsSort, IconBell, IconBolt, IconCalendarTime, IconCheck,
-  IconCopy, IconDeviceDesktop, IconFilter, IconGauge, IconHistory, IconLayoutDashboard, IconListDetails, IconLoader2, IconLogout,
-  IconMoon, IconPlayerPause, IconSelector, IconServer2, IconSettings, IconStack2, IconSun, IconTrash, IconX,
+  IconAlertTriangle, IconArrowDown, IconArrowRight, IconArrowUp, IconArrowsSort, IconBell, IconBolt, IconCalendarTime, IconCheck, IconChevronRight,
+  IconCopy, IconDeviceDesktop, IconFilter, IconGauge, IconHistory, IconLayoutDashboard, IconListDetails, IconPlayerPlay, IconLoader2, IconLogout,
+  IconMoon, IconPlayerPause, IconSelector, IconServer2, IconSettings, IconStack2, IconStack3, IconSun, IconTrash, IconX,
 } from '@tabler/icons-react'
 import { createContext, use, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { NOTIFICATIONS, PLACEHOLDERS } from './components/placeholders'
@@ -41,19 +41,42 @@ const useHidden = () => useSyncExternalStore((l) => {
   return () => document.removeEventListener('visibilitychange', l)
 }, () => document.hidden)
 
+// ---- Polling interval: the viewer's choice (21 §4.1), kept in this browser; 0 = off. -----------------------------------------
+
+const POLL_KEY = 'runwick-dashboard-poll'
+export const POLL_CHOICES = [[5, '5 s'], [30, '30 s'], [60, '1 min'], [180, '3 min'], [900, '15 min'], [3600, '1 h'], [0, 'Off']]
+const pollListeners = new Set()
+let pollChoice = (() => {
+  try {
+    const v = localStorage.getItem(POLL_KEY)
+    return v != null && POLL_CHOICES.some(([s]) => String(s) === v) ? Number(v) : 5
+  } catch { return 5 }
+})()
+export const usePollChoice = () => useSyncExternalStore((l) => { pollListeners.add(l); return () => pollListeners.delete(l) }, () => pollChoice)
+export const setPollChoice = (seconds) => {
+  pollChoice = seconds
+  try { localStorage.setItem(POLL_KEY, String(seconds)) } catch { /* not remembered */ }
+  pollListeners.forEach((l) => l())
+}
+export const pollLabel = (seconds) => POLL_CHOICES.find(([s]) => s === seconds)?.[1] ?? `${seconds} s`
+
 /**
  * Polls the page's list props (21 §4.1): a partial reload of `only`, first page only (no cursor in the URL), one request in
  * flight, paused while the tab is hidden (one poll on becoming visible), and the interval doubles to 60 s on failure.
- * Returns the interval in seconds, or 0 when this page does not poll.
+ * `floor` is the page's shortest interval; the viewer's choice applies above it (Off stops polling).
+ * Returns the interval in seconds, 0 when polling is off, or null when this page does not poll now.
  */
-export function usePoll(only, seconds) {
+export function usePoll(only, floor) {
   const { url } = usePage()
   const key = only.join(',')
   const skeleton = useSkeleton()
-  const active = !skeleton && !!seconds && !!key && !new URL(url, window.location.href).searchParams.has('cursor')
+  const choice = usePollChoice()
+  const polls = !skeleton && !!floor && !!key && !new URL(url, window.location.href).searchParams.has('cursor')
+  const seconds = polls && choice ? Math.max(choice, floor, 5) : 0
+  const active = seconds > 0
   useEffect(() => {
     if (!active) return undefined
-    const base = Math.max(seconds, 5) * 1000
+    const base = seconds * 1000
     let delay = base, timer = 0, inFlight = false, stopped = false
     const schedule = () => {
       clearTimeout(timer)
@@ -90,7 +113,7 @@ export function usePoll(only, seconds) {
       document.removeEventListener('visibilitychange', visibility)
     }
   }, [url, key, seconds, active])
-  return active ? Math.max(seconds, 5) : 0
+  return polls ? seconds : null
 }
 
 const RESULT_TOAST = 'command-result'
@@ -201,8 +224,14 @@ export function CommandBar({ command }) {
 export function useReveal() {
   const [value, setValue] = useState(null)
   const [loading, setLoading] = useState(null)
-  useEffect(() => { // 'success' also covers the 303 that follows a command on the same page
-    const off = [router.on('navigate', () => setValue(null)), router.on('success', () => setValue(null))]
+  useEffect(() => {
+    // Cleared by a real visit (another page, or a command's POST and its 303), never by a poll: polls are partial GET reloads, and
+    // clearing on every 'success' hid a revealed value at the next poll.
+    let real = false
+    const off = [
+      router.on('start', (e) => { const v = e.detail.visit; if (v.method !== 'get' || !v.only?.length) real = true }),
+      router.on('success', () => { if (real) { real = false; setValue(null) } }),
+    ]
     return () => off.forEach((f) => f())
   }, [])
   const reveal = async (key, url) => {
@@ -268,17 +297,19 @@ const SEEN_KEY = 'runwick-dashboard-seen'
 const readSeen = () => { try { return JSON.parse(localStorage.getItem(SEEN_KEY)) ?? {} } catch { return {} } }
 
 const notificationItems = (n) => [
-  ...(n?.failed ?? []).map((f) => ({ key: `f${f.jobId}`, kind: 'failed', at: f.at, title: f.jobName, text: `failed on ${f.queue}`, href: `/jobs/${f.jobId}` })),
+  ...(n?.failed ?? []).map((f) => ({ key: `f${f.jobId}`, kind: 'failed', at: f.at, title: f.jobName, text: `failed on ${f.queue}`, href: `/runs/${f.jobId}` })),
   ...(n?.scaling ?? []).map((e) => ({ key: `s${e.eventId}`, kind: 'scaling', at: e.at, title: e.pool, text: `target ${e.oldTarget} → ${e.newTarget}`, href: '/scaling' })),
   ...(n?.paused ?? []).map((q) => ({ key: `p${q.name}@${q.revision}`, kind: 'paused', at: null, title: q.name, text: 'queue paused', href: '/queues' })),
 ].sort((a, b) => (b.at ? Date.parse(b.at) : Infinity) - (a.at ? Date.parse(a.at) : Infinity))
 
 function useNotifications() {
   const { notifications: n } = usePage().props
-  useEffect(() => { // the prop is deferred and kept for a minute; refresh it each minute while the tab is visible
-    const t = setInterval(() => { if (!document.hidden && acting === 0) router.reload({ only: ['notifications'], async: true, onHttpException: () => false, onNetworkError: () => false }) }, 60_000)
+  const choice = usePollChoice()
+  useEffect(() => { // the prop is deferred and kept for a minute; refresh it while the tab is visible, at most each minute
+    if (!choice) return undefined
+    const t = setInterval(() => { if (!document.hidden && acting === 0) router.reload({ only: ['notifications'], async: true, onHttpException: () => false, onNetworkError: () => false }) }, Math.max(choice, 60) * 1000)
     return () => clearInterval(t)
-  }, [])
+  }, [choice])
   const [seen, setSeen] = useState(readSeen)
   const at = seen.at ? Date.parse(seen.at) : 0
   const items = notificationItems(n)
@@ -303,7 +334,7 @@ function NotificationsSheet({ open, onOpenChange, notes }) {
         <SheetHeader className="border-b"><SheetTitle>Notifications</SheetTitle><SheetDescription>The last 24 hours</SheetDescription></SheetHeader>
         {!loaded ? <SkeletonScope><NotificationList items={notificationItems(NOTIFICATIONS)} base={base} unread={() => false} /></SkeletonScope>
           : items.length === 0 ? <p className="px-3 py-12 text-center text-sm text-muted-foreground">Nothing new.</p>
-            : <div className="min-h-0 flex-1 overflow-y-auto animate-page-in"><NotificationList items={items} base={base} unread={unread} onPick={() => onOpenChange(false)} /></div>}
+            : <div className="fade-y min-h-0 flex-1 overflow-y-auto animate-page-in"><NotificationList items={items} base={base} unread={unread} onPick={() => onOpenChange(false)} /></div>}
       </SheetContent>
     </Sheet>
   )
@@ -336,10 +367,12 @@ const relativeTime = (iso) => {
 const NAV = [
   ['Monitor', [
     ['overview', 'Overview', '/overview', IconLayoutDashboard, ['Overview']],
-    ['jobs', 'Jobs', '', IconListDetails, ['Jobs', 'Job']],
-    ['queues', 'Queues', '/queues', IconStack2, ['Queues']],
-    ['workers', 'Workers', '/workers', IconServer2, ['Workers']],
-    ['schedules', 'Schedules', '/schedules', IconCalendarTime, ['Schedules']],
+    ['runs', 'Runs', '', IconPlayerPlay, ['Runs', 'Run']],
+    ['jobs', 'Jobs', '/jobs', IconListDetails, ['Jobs', 'Job']],
+    ['queues', 'Queues', '/queues', IconStack2, ['Queues', 'Queue']],
+    ['workers', 'Workers', '/workers', IconServer2, ['Workers', 'Worker']],
+    ['pools', 'Pools', '/pools', IconStack3, ['Pools', 'Pool']],
+    ['schedules', 'Schedules', '/schedules', IconCalendarTime, ['Schedules', 'Schedule']],
     ['scaling', 'Scaling', '/scaling', IconGauge, ['Scaling']],
   ]],
   ['Govern', [
@@ -451,20 +484,34 @@ function Footer() {
   )
 }
 
-/** "Live" with a pulsing dot while the page polls; "Paused" while the tab is hidden; nothing when the page does not poll. */
+/**
+ * The Live pill and the polling interval beside it: "Live · 5 s" with a pulsing dot while the page polls, "Paused" while the tab
+ * is hidden, "Off" when the viewer turned polling off; nothing when the page does not poll now.
+ */
 function LiveIndicator({ seconds }) {
   const hidden = useHidden()
-  if (!seconds) return null
+  const choice = usePollChoice()
+  if (seconds == null) return null
+  const on = seconds > 0 && !hidden
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span tabIndex={0} className="inline-flex items-center gap-2 rounded-full border bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
-          <span className={cn('size-2 rounded-full', hidden ? 'bg-muted-foreground/50' : 'animate-live bg-highlight')} />
-          {hidden ? 'Paused' : 'Live'}
-        </span>
-      </TooltipTrigger>
-      <TooltipContent>{hidden ? 'Polling pauses while this tab is hidden.' : `Refreshes every ${seconds} s; this is not a push channel.`}</TooltipContent>
-    </Tooltip>
+    <div className="flex items-center gap-1.5">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span tabIndex={0} data-testid="live" className="inline-flex h-7 items-center gap-2 rounded-full border bg-card px-2.5 text-xs font-medium text-muted-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+            <span className={cn('size-2 rounded-full', on ? 'animate-live bg-highlight' : 'bg-muted-foreground/50')} />
+            {!seconds ? 'Off' : hidden ? 'Paused' : <span>Live <span className="tabular-nums text-muted-foreground/80">· {pollLabel(seconds)}{seconds !== choice && <span data-testid="live-min"> min</span>}</span></span>}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{!seconds ? 'Polling is off; reload the page to refresh.' : hidden ? 'Polling pauses while this tab is hidden.'
+          : `Refreshes every ${pollLabel(seconds)}${seconds !== choice ? ' (this page\'s shortest interval)' : ''}; this is not a push channel.`}</TooltipContent>
+      </Tooltip>
+      <Select value={String(choice)} onValueChange={(v) => setPollChoice(Number(v))}>
+        <SelectTrigger aria-label="Polling interval" data-testid="poll-interval" className="h-7 gap-1 rounded-full px-2.5 text-xs"><SelectValue /></SelectTrigger>
+        <SelectContent align="end">
+          {POLL_CHOICES.map(([s, text]) => <SelectItem key={s} value={String(s)} data-testid={`poll-${s}`}>{s ? `Every ${text}` : 'Off (paused)'}</SelectItem>)}
+        </SelectContent>
+      </Select>
+    </div>
   )
 }
 
@@ -502,7 +549,8 @@ export function SkeletonScope({ className, children }) {
   )
 }
 
-const ROUTES = [[/^\/?$/, 'Jobs'], [/^\/jobs\/?$/, 'Jobs'], [/^\/jobs\/[^/]+$/, 'Job'], [/^\/overview$/, 'Overview'], [/^\/queues$/, 'Queues'], [/^\/workers$/, 'Workers'],
+const ROUTES = [[/^\/?$/, 'Runs'], [/^\/runs\/?$/, 'Runs'], [/^\/runs\/[^/]+$/, 'Run'], [/^\/jobs\/?$/, 'Jobs'], [/^\/jobs\/[^/]+$/, 'Job'], [/^\/overview$/, 'Overview'], [/^\/queues$/, 'Queues'], [/^\/workers$/, 'Workers'],
+  [/^\/queues\/[^/]+$/, 'Queue'], [/^\/workers\/[^/]+$/, 'Worker'], [/^\/pools$/, 'Pools'], [/^\/pools\/[^/]+$/, 'Pool'], [/^\/schedules\/[^/]+$/, 'Schedule'],
   [/^\/schedules$/, 'Schedules'], [/^\/scaling$/, 'Scaling'], [/^\/audit$/, 'Audit'], [/^\/retention$/, 'Retention'], [/^\/settings$/, 'Settings']]
 
 /** The page a slow page visit is going to: set 150 ms after the visit starts (not polls, controls or partial reloads) until it ends. */
@@ -545,11 +593,11 @@ export function Layout(props) {
           <span aria-hidden className="h-5 w-px bg-border" />
           <p className="min-w-0 truncate text-sm text-muted-foreground"><span className="hidden sm:inline">Runwick / </span><span className="font-medium text-foreground">{TITLES[target ?? component] ?? component}</span></p>
           <div className="flex-1" />
-          <LiveIndicator seconds={target ? 0 : props.live} />
+          <LiveIndicator seconds={target ? null : props.live} />
         </header>
-        <main className="mx-auto grid w-full max-w-[96rem] min-w-0 flex-1 content-start gap-6 p-4 md:p-6">
-          {Target ? <SkeletonScope className="grid min-w-0 gap-6"><Target {...standIn(target, pageProps)} /></SkeletonScope>
-            : <div key={component} className="grid min-w-0 animate-page-in gap-6"><LayoutBody {...props} /></div>}
+        <main className="mx-auto grid w-full max-w-[96rem] min-w-0 flex-1 grid-cols-[minmax(0,1fr)] content-start gap-6 p-4 md:p-6">
+          {Target ? <SkeletonScope className="grid min-w-0 grid-cols-1 gap-6"><Target {...standIn(target, pageProps)} /></SkeletonScope>
+            : <div key={component} className="grid min-w-0 grid-cols-1 animate-page-in gap-6"><LayoutBody {...props} /></div>}
         </main>
       </div>
     </SidebarProvider>
@@ -628,7 +676,7 @@ export function FilterSheet({ fields, values }) {
       <SheetContent data-testid="filter-sheet">
         <SheetHeader><SheetTitle>Filters</SheetTitle><SheetDescription className="sr-only">Narrow the list</SheetDescription></SheetHeader>
         <form onSubmit={apply} className="flex min-h-0 flex-1 flex-col">
-          <div className="grid flex-1 content-start gap-4 overflow-y-auto px-5">
+          <div className="fade-y grid flex-1 content-start gap-4 overflow-y-auto px-5">
             {fields.map((f) => (
               <div key={f.name} className="grid gap-1.5">
                 <Label htmlFor={`filter-${f.name}`}>{f.label}</Label>
@@ -697,6 +745,20 @@ export function useChanged(items, key, value) {
     setTimeout(() => setHot((h) => Object.fromEntries(Object.entries(h).filter(([k]) => !changed.includes(k)))), 1700)
   }, [items]) // eslint-disable-line react-hooks/exhaustive-deps -- key and value are pure
   return hot
+}
+
+/** A name that opens its detail page: the name alone is the link (21 §4.8); a row is never a link. */
+export function NameLink({ href, children, testId, className }) {
+  return <Link href={href} data-testid={testId} className={cn('rounded-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50', className)}>{children}</Link>
+}
+
+/** The control at a row's end that opens its detail page. */
+export function OpenButton({ href, label, testId }) {
+  return (
+    <Button asChild variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground">
+      <Link href={href} aria-label={label} data-testid={testId}><IconChevronRight /></Link>
+    </Button>
+  )
 }
 
 /** The flash class for a row that changed `n` times: alternating names restart it without remounting the row (so its pills crossfade). */
@@ -774,23 +836,6 @@ export function AnimatedNumber({ value, more, className }) {
   return <span className={cn('tabular-nums', className)}>{typeof shown === 'number' ? Math.round(shown).toLocaleString() : shown}{more && '+'}</span>
 }
 
-/**
- * A small area chart drawn as SVG, in the shadcn chart style (colour from a --chart-n token through currentColor). Recharts is
- * not used: its d3 dependencies are ISC, outside the dashboard's licence allow-list.
- */
-export function Sparkline({ data, className, label }) {
-  const points = data.length === 1 ? [data[0], data[0]] : data
-  if (points.length === 0) return <div className={cn('h-10', className)} />
-  const max = Math.max(...points), min = Math.min(...points), span = max - min || 1
-  const xy = points.map((v, i) => [(i / (points.length - 1)) * 100, 36 - ((v - min) / span) * 32])
-  const line = xy.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(2)},${y.toFixed(2)}`).join(' ')
-  return (
-    <svg viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label={label} className={cn('h-10 w-full overflow-visible', className)}>
-      <path d={`${line} L100,40 L0,40 Z`} fill="currentColor" fillOpacity="0.12" className="transition-[d] duration-500" />
-      <path d={line} fill="none" stroke="currentColor" strokeWidth="1.75" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" className="transition-[d] duration-500" />
-    </svg>
-  )
-}
 
 /** A table inside a card, with an empty state and the pager underneath. */
 export function TableCard({ children, empty, pager, toolbar, title, description }) {

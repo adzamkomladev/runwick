@@ -38,7 +38,7 @@ function Shared({ n }) {
 
 function Stat({ label, value, foot, testId }) {
   return (
-    <div className="grid gap-1 rounded-lg border bg-muted/30 p-3 transition-colors hover:bg-muted/60">
+    <div className="tint grid gap-1 rounded-lg border bg-muted/30 p-3">
       <span className="text-xs text-muted-foreground">{label}</span>
       <span data-testid={testId} className="text-lg font-semibold tabular-nums">{value}</span>
       {foot && <span className="text-xs text-muted-foreground">{foot}</span>}

@@ -17,10 +17,13 @@ internal sealed partial class PgStore : IManagementQueryStore
     internal const string RecordDisclosure = "RecordDisclosure";
     static readonly TimeSpan ReadBudget = TimeSpan.FromSeconds(1);
 
+    /// <summary>The aggregate reads (16 §2.4, §2.7) count whole ranges, not pages: 5 s, then <c>query_budget_exceeded</c>.</summary>
+    internal static readonly TimeSpan StatsBudget = TimeSpan.FromSeconds(5);
+
     /// <summary>One read-only transaction (rolled back) under the read budget; the value carries the store time.</summary>
-    async Task<StoreRead<T>> ReadAsync<T>(string application, Func<PgTx, Task<T>> body, CancellationToken ct)
+    async Task<StoreRead<T>> ReadAsync<T>(string application, Func<PgTx, Task<T>> body, CancellationToken ct, TimeSpan? budget = null)
     {
-        var op = new PgOp(application, Guid.CreateVersion7(), ManagementRead, PgTime.Floor(time.GetUtcNow() + ReadBudget), null, PgLane.Background, null);
+        var op = new PgOp(application, Guid.CreateVersion7(), ManagementRead, PgTime.Floor(time.GetUtcNow() + (budget ?? ReadBudget)), null, PgLane.Background, null);
         var reply = await runner.ExecuteAsync<StoreRead<T>>(op,
             async tx =>
             {
@@ -145,15 +148,248 @@ internal sealed partial class PgStore : IManagementQueryStore
         ReadAsync<IReadOnlyList<WorkerSummary>>(application, async tx =>
         {
             using var q = tx.Sql($"""
-                SELECT instance_id, host_name, process_id, build_id, status, subscriptions::text, pool_targets::text, started_at, heartbeat_at, expires_at
+                SELECT instance_id, host_name, process_id, build_id, status, subscriptions::text, pool_targets::text, started_at, heartbeat_at, expires_at,
+                       detail::text
                 FROM runwick.worker_instances
                 WHERE application = @application{(includeExpired ? "" : " AND expires_at > @now")}
                   {(after is null ? "" : "AND (heartbeat_at, instance_id) < (@after_at, @after_id)")}
                 ORDER BY heartbeat_at DESC, instance_id DESC LIMIT @limit
                 """).P("now", tx.Now).P("after_at", after?.HeartbeatAt).P("after_id", after?.InstanceId, NpgsqlDbType.Uuid).P("limit", limit);
             return await tx.QueryAsync(q, r => new WorkerSummary(r.GetGuid(0), r.GetString(1), r.GetInt32(2), r.GetString(3), r.GetString(4),
-                JsonNode.Parse(r.GetString(5)), JsonNode.Parse(r.GetString(6)), PgTime.Read(r, 7), PgTime.Read(r, 8), PgTime.Read(r, 9))).ConfigureAwait(false);
+                JsonNode.Parse(r.GetString(5)), JsonNode.Parse(r.GetString(6)), PgTime.Read(r, 7), PgTime.Read(r, 8), PgTime.Read(r, 9),
+                r.IsDBNull(10) ? null : JsonNode.Parse(r.GetString(10)))).ConfigureAwait(false);
         }, ct);
+
+    /// <summary>
+    /// Grouped in SQL: jobs created in range from <c>jobs_created_list</c> (or <c>jobs_queue_list</c>), jobs ended in range from
+    /// <c>jobs_terminal_retention</c> with exact <c>percentile_cont</c> durations per grouping set, live jobs from <c>jobs_ready</c> and
+    /// <c>jobs_expired_lease</c>, and the error codes of attempts that finished in range from <c>job_attempts_errors</c>. One
+    /// snapshot, under <see cref="StatsBudget"/>.
+    /// </summary>
+    public Task<StoreRead<JobStatsCells>> GetJobStatsAsync(string application, JobStatsFilter f, CancellationToken ct) =>
+        ReadAsync(application, async tx =>
+        {
+            using (var jit = tx.Sql("SET LOCAL jit = off"))
+            {
+                // A whole-range aggregate plans as expensive; compiling it costs more than it saves.
+                await tx.ExecAsync(jit, mutation: false).ConfigureAwait(false);
+            }
+
+            var filter = new StringBuilder(QueuePredicate(f.Queues, "j.queue"))
+                .Append(f.Queue is null ? "" : " AND j.queue = @queue")
+                .Append(f.JobName is null ? "" : " AND j.job_name = @job_name").ToString();
+            var worker = f.Worker is null ? "" : """
+                 AND EXISTS (SELECT 1 FROM runwick.job_attempts AS a
+                             WHERE a.application = j.application AND a.job_id = j.job_id AND a.worker_instance_id = @worker)
+                """;
+            NpgsqlCommand Cmd(string sql)
+            {
+                var cmd = Queues(tx.Sql(sql), f.Queues).P("from", f.From).P("to", f.To).P("buckets", (long)f.Buckets).P("span", f.SpanMs).P("now", tx.Now);
+                if (f.Queue is not null)
+                {
+                    cmd.P("queue", f.Queue);
+                }
+
+                if (f.JobName is not null)
+                {
+                    cmd.P("job_name", f.JobName);
+                }
+
+                return f.Worker is { } w ? cmd.P("worker", w) : cmd;
+            }
+
+            static string Slice(string column) => $"((extract(epoch FROM {column} - @from) * 1000)::bigint * @buckets / @span)::int";
+
+            using var created = Cmd($"""
+                SELECT j.queue, j.job_name, j.state, {Slice("j.created_at")}, count(*), sum(greatest(j.execution_count - 1, 0))::bigint
+                FROM runwick.jobs AS j
+                WHERE j.application = @application AND j.created_at >= @from AND j.created_at < @to{filter}{worker}
+                GROUP BY 1, 2, 3, 4
+                """);
+            var cells = await tx.QueryAsync(created, r => new JobStatsCreated(r.GetString(0), r.GetString(1), r.GetString(2), r.GetInt32(3), r.GetInt64(4),
+                r.GetInt64(5))).ConfigureAwait(false);
+
+            using var ended = Cmd($"""
+                WITH t AS MATERIALIZED (
+                    SELECT j.queue, j.job_name, j.state, {Slice("j.terminal_at")} AS slice,
+                           (extract(epoch FROM j.terminal_at - (SELECT coalesce(min(a.authorized_at), min(a.reserved_at)) FROM runwick.job_attempts AS a
+                                WHERE a.application = j.application AND a.job_id = j.job_id AND a.generation = j.generation)) * 1000)::float8 AS ms
+                    FROM runwick.jobs AS j
+                    WHERE j.application = @application AND j.state IN ('succeeded', 'failed', 'cancelled')
+                      AND j.terminal_at >= @from AND j.terminal_at < @to{filter}{worker})
+                SELECT GROUPING(queue, job_name, state, slice), queue, job_name, state, slice, count(*), count(ms),
+                       percentile_cont(0.5) WITHIN GROUP (ORDER BY ms), percentile_cont(0.95) WITHIN GROUP (ORDER BY ms), max(ms)
+                FROM t
+                GROUP BY GROUPING SETS ((queue, job_name, state, slice), (), (slice){(f.Groups ? ", (queue), (queue, slice), (job_name), (job_name, slice)" : "")})
+                """);
+            var ends = new List<JobStatsEnded>();
+            var durations = new List<JobStatsDuration>();
+            foreach (var r in await tx.QueryAsync(ended, r => (Mask: r.GetInt32(0), Queue: r.IsDBNull(1) ? null : r.GetString(1),
+                         Name: r.IsDBNull(2) ? null : r.GetString(2), State: r.IsDBNull(3) ? null : r.GetString(3), Slice: r.IsDBNull(4) ? (int?)null : r.GetInt32(4),
+                         Jobs: r.GetInt64(5), Ran: r.GetInt64(6), Median: r.IsDBNull(7) ? (double?)null : r.GetDouble(7),
+                         P95: r.IsDBNull(8) ? (double?)null : r.GetDouble(8), Max: r.IsDBNull(9) ? (double?)null : r.GetDouble(9))).ConfigureAwait(false))
+            {
+                // GROUPING bits, high to low: queue 8, job_name 4, state 2, slice 1 (a set bit = not grouped by it).
+                if (r.Mask == 0)
+                {
+                    ends.Add(new JobStatsEnded(r.Queue!, r.Name!, r.State!, r.Slice!.Value, r.Jobs));
+                }
+                else if (r.Ran > 0)
+                {
+                    durations.Add(new JobStatsDuration((r.Mask & 8) == 0 ? r.Queue : null, (r.Mask & 4) == 0 ? r.Name : null, (r.Mask & 1) == 0 ? r.Slice : null,
+                        r.Ran, r.Median, r.P95, r.Max));
+                }
+            }
+
+            using var live = Cmd($"""
+                SELECT j.queue, j.job_name, CASE WHEN j.eligible_at <= @now THEN 'pending' ELSE 'scheduled' END, count(*), min(j.eligible_at)
+                FROM runwick.jobs AS j
+                WHERE j.application = @application AND j.state IN ('pending', 'retrying'){filter}{worker}
+                GROUP BY 1, 2, 3
+                UNION ALL
+                SELECT j.queue, j.job_name, j.state::text, count(*), NULL
+                FROM runwick.jobs AS j
+                WHERE j.application = @application AND j.state IN ('reserved', 'running'){filter}{worker}
+                GROUP BY 1, 2, 3
+                """);
+            var lives = await tx.QueryAsync(live, r => new JobStatsLive(r.GetString(0), r.GetString(1), r.GetString(2), r.GetInt64(3),
+                r.GetString(2) == "pending" ? PgTime.ReadNullable(r, 4) : null)).ConfigureAwait(false);
+
+            // jobs_attempt_errors: only attempts that recorded an error, by finish time.
+            using var errors = Cmd($"""
+                SELECT a.error ->> 'code', count(*) FROM runwick.job_attempts AS a
+                JOIN runwick.jobs AS j ON j.application = a.application AND j.job_id = a.job_id
+                WHERE a.application = @application AND a.error IS NOT NULL AND a.finished_at >= @from AND a.finished_at < @to
+                  AND a.error ->> 'code' IS NOT NULL{filter}{(f.Worker is null ? "" : " AND a.worker_instance_id = @worker")}
+                GROUP BY 1 ORDER BY 2 DESC, (a.error ->> 'code') COLLATE "C" LIMIT {JobStatsCells.TopErrorCodes}
+                """);
+            var codes = await tx.QueryAsync(errors, r => new JobErrorCount(r.GetString(0), r.GetInt64(1))).ConfigureAwait(false);
+
+            List<JobStatsLast> last = [];
+            if (f.Groups)
+            {
+                using var newest = Cmd($"""
+                    SELECT DISTINCT ON (j.queue, j.job_name) j.queue, j.job_name, j.created_at, j.state, j.job_id
+                    FROM runwick.jobs AS j
+                    WHERE j.application = @application AND j.created_at >= @from AND j.created_at < @to{filter}{worker}
+                    ORDER BY j.queue, j.job_name, j.created_at DESC, j.job_id DESC
+                    """);
+                last = await tx.QueryAsync(newest, r => new JobStatsLast(r.GetString(0), r.GetString(1), PgTime.Read(r, 2), r.GetString(3), r.GetGuid(4)))
+                    .ConfigureAwait(false);
+            }
+
+            return new JobStatsCells(cells, ends, durations, last, lives, JobStatsCells.TopCodes(codes));
+        }, ct, StatsBudget);
+
+    /// <summary>
+    /// Distinct (queue, job name) by skip scan over <c>jobs_name_list</c>: one index probe per pair, whatever the job count; then
+    /// each schedule's current definition.
+    /// </summary>
+    public Task<StoreRead<JobNamesRead>> ListJobNamesAsync(string application, CancellationToken ct) =>
+        ReadAsync(application, async tx =>
+        {
+            using var names = tx.Sql("""
+                WITH RECURSIVE q(v) AS (
+                    SELECT (SELECT min(queue) FROM runwick.jobs WHERE application = @application)
+                    UNION ALL
+                    SELECT (SELECT min(queue) FROM runwick.jobs WHERE application = @application AND queue > q.v) FROM q WHERE q.v IS NOT NULL),
+                n(q, v) AS (
+                    SELECT q.v, (SELECT min(job_name) FROM runwick.jobs WHERE application = @application AND queue = q.v) FROM q WHERE q.v IS NOT NULL
+                    UNION ALL
+                    SELECT n.q, (SELECT min(job_name) FROM runwick.jobs WHERE application = @application AND queue = n.q AND job_name > n.v)
+                    FROM n WHERE n.v IS NOT NULL)
+                SELECT v, q FROM n WHERE v IS NOT NULL
+                """);
+            var stored = await tx.QueryAsync(names, r => (r.GetString(0), r.GetString(1))).ConfigureAwait(false);
+            using var schedules = tx.Sql("""
+                SELECT s.schedule_key, d.job_name, d.template ->> 'queue' FROM runwick.schedules AS s
+                JOIN runwick.schedule_definitions AS d
+                  ON d.application = s.application AND d.schedule_id = s.schedule_id AND d.revision = s.definition_revision
+                WHERE s.application = @application
+                """);
+            return new JobNamesRead(stored, await tx.QueryAsync(schedules, r => (r.GetString(0), r.GetString(1), r.GetString(2))).ConfigureAwait(false));
+        }, ct);
+
+    public Task<StoreRead<ScheduleStats>> GetScheduleStatsAsync(string application, DateTimeOffset from, DateTimeOffset to, CancellationToken ct) =>
+        ReadAsync(application, async tx =>
+        {
+            using var s = tx.Sql("""
+                SELECT count(*), count(*) FILTER (WHERE paused), count(*) FILTER (WHERE needs_review), min(next_due_at) FILTER (WHERE NOT paused)
+                FROM runwick.schedules WHERE application = @application
+                """);
+            var row = (await tx.QueryAsync(s, r => (r.GetInt64(0), r.GetInt64(1), r.GetInt64(2), PgTime.ReadNullable(r, 3))).ConfigureAwait(false))[0];
+            using var o = tx.Sql("""
+                SELECT disposition, count(*) FROM runwick.schedule_occurrences
+                WHERE application = @application AND materialized_at >= @from AND materialized_at < @to GROUP BY disposition
+                """).P("from", from).P("to", to);
+            var occurrences = await tx.QueryAsync(o, r => (r.GetString(0), r.GetInt64(1))).ConfigureAwait(false);
+            using var m = tx.Sql("""
+                SELECT count(*) FROM runwick.schedule_audit_ranges
+                WHERE application = @application AND created_at >= @from AND created_at < @to
+                  AND reason IN ('misfire_skip', 'run_once_covered', 'catch_up_skipped')
+                """).P("from", from).P("to", to);
+            var misfires = (await tx.QueryAsync(m, r => r.GetInt64(0)).ConfigureAwait(false))[0];
+            return new ScheduleStats(from, to, row.Item1, row.Item2, row.Item3, row.Item4,
+                occurrences.ToDictionary(x => x.Item1, x => x.Item2, StringComparer.Ordinal), misfires);
+        }, ct, StatsBudget);
+
+    public Task<StoreRead<AuditStats>> GetAuditStatsAsync(string application, DateTimeOffset from, DateTimeOffset to, CancellationToken ct) =>
+        ReadAsync(application, async tx =>
+        {
+            async Task<List<(string, long)>> Count(string column)
+            {
+                using var c = tx.Sql($"""
+                    SELECT {column}, count(*) FROM runwick.management_audit
+                    WHERE application = @application AND occurred_at >= @from AND occurred_at < @to GROUP BY {column}
+                    """).P("from", from).P("to", to);
+                return await tx.QueryAsync(c, r => (r.GetString(0), r.GetInt64(1))).ConfigureAwait(false);
+            }
+
+            var operations = await Count("operation").ConfigureAwait(false);
+            var actors = await Count("actor_subject").ConfigureAwait(false);
+            return new AuditStats(from, to, operations.Sum(o => o.Item2), [.. operations.Select(o => new AuditOperationCount(o.Item1, o.Item2))],
+                [.. actors.Select(a => new AuditActorCount(a.Item1, a.Item2))], null);
+        }, ct, StatsBudget);
+
+    public async Task<StoreRead<ScheduleDetail?>> GetScheduleAsync(string application, string key, int limit, CancellationToken ct)
+    {
+        var read = await ReadAsync<ScheduleDetail[]>(application, async tx =>
+        {
+            using var s = tx.Sql("""
+                SELECT s.schedule_id, s.schedule_key, s.paused, s.needs_review, s.definition_revision, s.control_revision, s.next_due_at,
+                       (SELECT max(o.materialized_at) FROM runwick.schedule_occurrences AS o
+                        WHERE o.application = s.application AND o.schedule_id = s.schedule_id),
+                       d.kind, d.cron_text, d.cron_dialect, d.zone_id, d.due_at, d.job_name, d.template ->> 'queue', d.misfire_policy,
+                       d.misfire_grace_ms, d.overlap_policy, d.gap_policy, d.fold_policy, d.max_batch, d.max_episode_jobs, d.max_catchup_age_ms
+                FROM runwick.schedules AS s
+                JOIN runwick.schedule_definitions AS d
+                  ON d.application = s.application AND d.schedule_id = s.schedule_id AND d.revision = s.definition_revision
+                WHERE s.application = @application AND s.schedule_key = @key
+                """).P("key", key);
+            var rows = await tx.QueryAsync(s, r => (Id: r.GetGuid(0),
+                Summary: new ScheduleSummary(r.GetString(1), r.GetBoolean(2), r.GetBoolean(3), r.GetInt64(4), r.GetInt64(5), PgTime.ReadNullable(r, 6),
+                    PgTime.ReadNullable(r, 7)),
+                Definition: new ScheduleDefinitionInfo(r.GetInt64(4), r.GetString(8), Str(r, 9), Str(r, 10), Str(r, 11), PgTime.ReadNullable(r, 12),
+                    r.GetString(13), r.GetString(14), r.GetString(15), r.GetInt64(16), r.GetString(17), r.GetString(18), r.GetString(19),
+                    r.GetInt32(20), r.GetInt32(21), r.GetInt64(22)))).ConfigureAwait(false);
+            if (rows.Count == 0)
+            {
+                return [];
+            }
+
+            using var o = tx.Sql("""
+                SELECT o.occurrence_kind, o.occurrence_key, o.scheduled_at, o.materialized_at, o.disposition, o.coalesced, o.job_id, j.state
+                FROM runwick.schedule_occurrences AS o
+                LEFT JOIN runwick.jobs AS j ON j.application = o.application AND j.job_id = o.job_id
+                WHERE o.application = @application AND o.schedule_id = @id
+                ORDER BY o.materialized_at DESC, o.scheduled_at DESC NULLS FIRST, o.occurrence_key DESC LIMIT @limit
+                """).P("id", rows[0].Id).P("limit", limit);
+            var occurrences = await tx.QueryAsync(o, r => new ScheduleOccurrenceInfo(r.GetString(0), r.GetString(1), PgTime.ReadNullable(r, 2), PgTime.Read(r, 3),
+                r.GetString(4), r.GetBoolean(5), r.IsDBNull(6) ? null : r.GetGuid(6), Str(r, 7))).ConfigureAwait(false);
+            return [new ScheduleDetail(rows[0].Summary, rows[0].Definition, occurrences)];
+        }, ct).ConfigureAwait(false);
+        return new StoreRead<ScheduleDetail?>(read.Value.FirstOrDefault(), read.ObservedAt);
+    }
 
     public Task<StoreRead<IReadOnlyList<ScopeSummary>>> ListScopesAsync(string application, string? kind, (string Kind, string Key)? after, int limit,
         CancellationToken ct) =>

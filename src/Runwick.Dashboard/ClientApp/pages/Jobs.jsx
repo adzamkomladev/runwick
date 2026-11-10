@@ -1,123 +1,73 @@
-import { Link, router, usePage } from '@inertiajs/react'
-import { IconBan, IconChevronDown, IconLoader2 } from '@tabler/icons-react'
-import { useEffect, useState } from 'react'
+import { IconAlertTriangle, IconCircleCheck, IconClockHour4, IconListDetails, IconPercentage, IconPlayerPlay, IconPlugConnectedX } from '@tabler/icons-react'
+import { Spark } from '../components/charts'
 import { DateRangePicker } from '../components/date-range'
-import { Button } from '../components/ui/button'
-import { StatusDot } from '../components/status'
+import { Kpi, KpiStrip, successRate, sum } from '../components/kpis'
+import { ms } from '../components/stat'
 import { relative } from '../components/timeline'
-import { Checkbox } from '../components/ui/checkbox'
-import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
-import { cn } from '../components/ui/utils'
-import { CommandBar, CommandButton, Copyable, FilterSheet, flash, Layout, StateBadge, TableCard, time, useChanged, useCommand, usePoll, useSort } from '../lib'
+import { Layout, NameLink, OpenButton, StateBadge, TableCard, usePoll, useSort } from '../lib'
 
-const STATES = ['pending', 'reserved', 'running', 'retrying', 'succeeded', 'failed', 'cancelled']
+/** Whether a live worker has a handler for the job: true, false, or null when the caller cannot read workers. */
+export const handled = (workers, name) => (workers ? workers.some((w) => w.detail?.handlers?.includes(name)) : null)
 
-/** Quick state filters: links that keep the other filters. */
-function StateChips({ query }) {
-  const { url } = usePage()
-  const href = (state) => {
-    const u = new URL(url, window.location.href)
-    u.searchParams.delete('cursor')
-    if (state) u.searchParams.set('state', state); else u.searchParams.delete('state')
-    return u.pathname + u.search
-  }
-  return (
-    <nav aria-label="Filter by state" className="flex flex-wrap gap-1.5">
-      {[null, ...STATES].map((st) => {
-        const on = (query.state ?? null) === st
-        return (
-          <Link key={st ?? 'all'} href={href(st)} aria-current={on ? 'true' : undefined}
-            className={cn('inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium press outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
-              on ? 'border-primary bg-primary text-primary-foreground shadow-sm' : 'bg-card text-muted-foreground hover:border-foreground/20 hover:text-foreground')}>
-            {st && <StatusDot state={st} />}{st ?? 'All'}
-          </Link>
-        )
-      })}
-    </nav>
-  )
+export function HandlerCell({ workers, name }) {
+  const h = handled(workers, name)
+  if (h == null) return <span className="text-muted-foreground">—</span>
+  return h
+    ? <span className="flex items-center gap-1 text-xs text-muted-foreground"><IconCircleCheck className="size-3.5 text-success" aria-hidden />live</span>
+    : <span data-testid="no-handler" className="flex items-center gap-1 text-xs text-warning"><IconPlugConnectedX className="size-3.5" aria-hidden />no live handler</span>
 }
 
-/**
- * "Load more": a partial reload of the merge prop `jobs` with the next cursor; Inertia appends the rows (matched on the job ID)
- * and the URL stays the first page. Polling pauses while more than the first page is shown, as it did for a cursor in the URL.
- */
-function useLoadMore(jobs) {
-  const { url } = usePage()
-  const [state, setState] = useState({ url, more: false, loading: false })
-  useEffect(() => setState({ url, more: false, loading: false }), [url])
-  const load = () => {
-    setState((x) => ({ ...x, loading: true }))
-    router.reload({ only: ['jobs'], data: { cursor: jobs.next }, preserveUrl: true, preserveScroll: true,
-      onFinish: () => setState((x) => ({ ...x, more: true, loading: false })) })
-  }
-  return { more: state.url === url && state.more, loading: state.loading, load }
-}
-
-export default function Jobs({ base, can, jobs, query, queueNames }) {
-  const more = useLoadMore(jobs)
-  const live = usePoll(['jobs'], more.more ? 0 : 5)
-  const command = useCommand()
-  const [selected, setSelected] = useState({})
-  const [rows, head] = useSort(jobs.items)
-  const changed = useChanged(jobs.items, (j) => j.jobId, (j) => j.state + j.cancelRequested)
-  const chosen = jobs.items.filter((j) => selected[j.jobId])
-  const toggle = (id) => setSelected((s) => ({ ...s, [id]: !s[id] }))
-  const all = jobs.items.length > 0 && chosen.length === jobs.items.length
-  const toggleAll = () => setSelected(all ? {} : Object.fromEntries(jobs.items.map((j) => [j.jobId, true])))
-  const bulkUrl = `${base}/jobs:cancel`
-  const cancelSelected = () => command.bulk(`Cancel ${chosen.length} job(s)`, bulkUrl,
-    chosen.map((j) => ({ jobId: j.jobId, expectedGeneration: j.generation, expectedRevision: j.revision })))
+export default function Jobs({ base, can, types, stats, workers, query }) {
+  const live = usePoll(['stats', ...(can.workers ? ['workers'] : [])], 15)
+  const groups = Object.fromEntries((stats.jobNames ?? []).map((g) => [g.key, g]))
+  const rows0 = types.map((t) => ({ ...t, g: groups[t.name] }))
+  const [rows, head] = useSort(rows0)
+  const missing = workers ? types.filter((t) => t.registered !== false && handled(workers, t.name) === false).length : null
+  const rate = successRate(stats.states)
   return (
-    <Layout heading="Jobs" live={live}
-      actions={can.cancel && <CommandButton command={command} url={bulkUrl} data-testid="bulk-cancel" icon={IconBan}
-        disabled={chosen.length === 0 || chosen.length > 100} onClick={cancelSelected}>
-        Cancel selected ({chosen.length})
-      </CommandButton>}>
-      <CommandBar command={command} />
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <StateChips query={query} />
-        <div className="flex items-center gap-2">
-          <DateRangePicker query={query} />
-          <FilterSheet values={query} fields={[{ name: 'queue', label: 'Queue', options: queueNames ?? [], free: true }, { name: 'jobName', label: 'Job name' }]} />
-        </div>
-      </div>
-      <TableCard pager={jobs.next && <div className="flex justify-center border-t pt-3">
-        <Button variant="outline" size="sm" data-testid="load-more" onClick={more.load} disabled={more.loading}>
-          {more.loading ? <IconLoader2 className="animate-spin" /> : <IconChevronDown />}Load more
-        </Button>
-      </div>}
-        empty={jobs.items.length === 0 && 'No jobs in this range.'}>
-        <Table data-testid="jobs">
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              {can.cancel && <TableHead className="w-10"><Checkbox aria-label="select all" checked={all} onCheckedChange={toggleAll} /></TableHead>}
-              {head('job', 'Job', (j) => j.jobName)}
-              {head('queue', 'Queue', (j) => j.queue, 'hidden sm:table-cell')}
-              {head('state', 'State', (j) => j.state)}
-              {head('created', 'Created', (j) => Date.parse(j.createdAt), 'hidden md:table-cell')}
-              {head('revision', 'Revision', (j) => j.revision, 'hidden text-right md:table-cell')}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((j) => (
-              <TableRow key={j.jobId} data-testid="job-row" data-state={selected[j.jobId] ? 'selected' : undefined}
-                className={flash(changed[j.jobId])}>
-                {can.cancel && <TableCell><Checkbox aria-label="select" checked={!!selected[j.jobId]} onCheckedChange={() => toggle(j.jobId)} /></TableCell>}
-                <TableCell className="max-w-80 font-medium">
-                  <Copyable value={j.jobName} label="Copy job name">
-                    <Link href={`${base}/jobs/${j.jobId}`} data-testid="job-link" className="rounded-sm underline-offset-4 outline-none hover:text-primary hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50">{j.jobName}</Link>
-                  </Copyable>
-                </TableCell>
-                <TableCell data-testid="job-queue" className="hidden text-muted-foreground sm:table-cell"><Copyable value={j.queue} label="Copy queue name" /></TableCell>
-                <TableCell data-testid="job-state"><StateBadge state={j.state} />{j.cancelRequested && <span className="ml-1.5 text-xs text-warning">cancel requested</span>}</TableCell>
-                <TableCell className="hidden whitespace-nowrap text-muted-foreground md:table-cell">
-                  <Tooltip><TooltipTrigger asChild><time dateTime={j.createdAt} className="cursor-default">{relative(j.createdAt)}</time></TooltipTrigger><TooltipContent>{time(j.createdAt)}</TooltipContent></Tooltip>
-                </TableCell>
-                <TableCell className="hidden text-right tabular-nums md:table-cell">{j.revision}</TableCell>
+    <Layout heading="Jobs" live={live} description="The job types this application knows: registered here, handled by a worker, seen in runs or used by a schedule."
+      actions={<DateRangePicker query={query} fallback="1d" />}>
+      <KpiStrip label="Job stats">
+        <Kpi testId="kpi-types" icon={IconListDetails} label="Job types" value={types.length} foot={`${(stats.jobNames ?? []).filter((g) => sum(g.states) > 0).length} ran in the range`} />
+        <Kpi testId="kpi-runs" icon={IconPlayerPlay} label="Runs" value={sum(stats.states)} foot="Created in the range" spark={stats.buckets.map((b) => b.created)} />
+        <Kpi testId="kpi-success" icon={IconPercentage} label="Success rate" value={rate ?? '—'} suffix={rate == null ? null : '%'} foot="Of runs that ended"
+          spark={stats.buckets.map((b) => b.succeeded)} color="text-chart-2" />
+        <Kpi testId="kpi-failed" icon={IconAlertTriangle} label="Failed" value={stats.states.failed ?? 0} foot={`${stats.retries} retries`} spark={stats.buckets.map((b) => b.failed)} color="text-chart-3" />
+        <Kpi testId="kpi-p95" icon={IconClockHour4} label="p95 duration" value={ms(stats.duration.p95Ms)} foot={`median ${ms(stats.duration.medianMs)}`} spark={stats.buckets.map((b) => b.p95Ms ?? 0)} color="text-chart-4" />
+        <Kpi testId="kpi-unhandled" icon={IconPlugConnectedX} label="No live handler" value={missing ?? '—'} foot={missing ? 'Runs of these wait for a worker' : 'Every type has a worker'} />
+      </KpiStrip>
+      <TableCard empty={types.length === 0 && 'No job types are known yet.'}>
+        <Table data-testid="job-types">
+          <TableHeader><TableRow className="hover:bg-transparent">
+            {head('name', 'Job', (t) => t.name)}{head('queue', 'Queue', (t) => t.queue ?? '', 'hidden lg:table-cell')}
+            {head('runs', 'Runs', (t) => sum(t.g?.states))}{head('success', 'Success', (t) => successRate(t.g?.states) ?? -1, 'hidden sm:table-cell')}
+            {head('failed', 'Failed', (t) => t.g?.states?.failed ?? 0)}{head('p95', 'p95', (t) => t.g?.duration?.p95Ms ?? -1, 'hidden md:table-cell')}
+            {head('last', 'Last run', (t) => (t.g?.lastAt ? Date.parse(t.g.lastAt) : 0), 'hidden md:table-cell')}
+            <TableHead className="hidden w-28 xl:table-cell">Trend</TableHead><TableHead className="hidden lg:table-cell">Handler</TableHead>
+            <TableHead className="hidden xl:table-cell">Schedules</TableHead><TableHead className="w-10" />
+          </TableRow></TableHeader>
+          <TableBody>{rows.map((t) => {
+            const href = `${base}/jobs/${encodeURIComponent(t.name)}`, g = t.g, r = successRate(g?.states)
+            return (
+              <TableRow key={t.name} data-testid="job-row">
+                <TableCell className="max-w-72 truncate"><NameLink href={href} testId="job-link">{t.name}</NameLink>{!t.registered && <span className="ml-1.5 text-xs text-muted-foreground">not registered here</span>}</TableCell>
+                <TableCell className="hidden text-muted-foreground lg:table-cell">{t.queue ? <NameLink href={`${base}/queues/${encodeURIComponent(t.queue)}`} className="font-normal">{t.queue}</NameLink> : '—'}</TableCell>
+                <TableCell className="tabular-nums">{sum(g?.states).toLocaleString()}</TableCell>
+                <TableCell className="hidden tabular-nums sm:table-cell">{r == null ? '—' : `${r} %`}</TableCell>
+                <TableCell className={g?.states?.failed ? 'tabular-nums text-destructive' : 'tabular-nums text-muted-foreground'}>{(g?.states?.failed ?? 0).toLocaleString()}</TableCell>
+                <TableCell className="hidden tabular-nums md:table-cell">{ms(g?.duration?.p95Ms)}</TableCell>
+                <TableCell className="hidden whitespace-nowrap md:table-cell">{g?.lastAt
+                  ? <span className="inline-flex items-center gap-1.5">{g.lastJobId ? <NameLink href={`${base}/runs/${g.lastJobId}`} className="font-normal text-muted-foreground">{relative(g.lastAt)}</NameLink> : relative(g.lastAt)}{g.lastState && <StateBadge state={g.lastState} />}</span>
+                  : <span className="text-muted-foreground">none in range</span>}</TableCell>
+                <TableCell className="hidden w-28 xl:table-cell">{g?.buckets?.length > 1 && <Spark small data={g.buckets.map((b) => b.created)} label={`Runs of ${t.name}`} color="text-chart-1" />}</TableCell>
+                <TableCell className="hidden lg:table-cell"><HandlerCell workers={workers} name={t.name} /></TableCell>
+                <TableCell className="hidden max-w-40 truncate xl:table-cell">{t.schedules.length === 0 ? <span className="text-muted-foreground">—</span>
+                  : t.schedules.map((k) => <NameLink key={k} href={`${base}/schedules/${encodeURIComponent(k)}`} className="mr-2 font-normal">{k}</NameLink>)}</TableCell>
+                <TableCell className="text-right"><OpenButton href={href} label={`Open job ${t.name}`} testId="job-open" /></TableCell>
               </TableRow>
-            ))}
-          </TableBody>
+            )
+          })}</TableBody>
         </Table>
       </TableCard>
     </Layout>

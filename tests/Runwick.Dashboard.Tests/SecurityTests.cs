@@ -26,7 +26,7 @@ public sealed class SecurityTests
     };
 
     internal static async Task<JsonElement> JobAsync(Browser b, Guid job, string mount = "/runwick") =>
-        (await b.VisitJsonAsync($"{mount}/jobs/{job}")).Props().GetProperty("job").GetProperty("job");
+        (await b.VisitJsonAsync($"{mount}/runs/{job}")).Props().GetProperty("job").GetProperty("job");
 
     [Fact]
     [Trait("Case", "DASH-03")]
@@ -84,7 +84,7 @@ public sealed class SecurityTests
         Assert.Equal(HttpStatusCode.Conflict, xhr.StatusCode);
         Assert.StartsWith("https://localhost/login", xhr.Header("X-Inertia-Location"), StringComparison.Ordinal);
         Assert.Empty(await xhr.Content.ReadAsStringAsync());
-        var idp = await browser.VisitAsync($"/oidc/jobs/{job}");
+        var idp = await browser.VisitAsync($"/oidc/runs/{job}");
         Assert.Equal(HttpStatusCode.Conflict, idp.StatusCode);
         Assert.StartsWith("https://idp.example/authorize", idp.Header("X-Inertia-Location"), StringComparison.Ordinal);
 
@@ -94,8 +94,8 @@ public sealed class SecurityTests
         Assert.Equal(HttpStatusCode.OK, (await browser.LoadAsync("/cookie")).Response.StatusCode);
         var (oidc, _, _) = await browser.LoadAsync("/oidc");
         Assert.Equal(HttpStatusCode.OK, oidc.StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await browser.RevealAsync($"/oidc/jobs/{job}/payload:reveal")).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await browser.PostAsync($"/oidc/jobs/{job}/cancel", Position(await JobAsync(browser, job)), Guid.NewGuid()))
+        Assert.Equal(HttpStatusCode.Forbidden, (await browser.RevealAsync($"/oidc/runs/{job}/payload:reveal")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await browser.PostAsync($"/oidc/runs/{job}/cancel", Position(await JobAsync(browser, job)), Guid.NewGuid()))
             .StatusCode);
 
         // A principal of the cookie scheme with no grant: forbid goes to the access-denied page, a full visit for Inertia.
@@ -124,10 +124,10 @@ public sealed class SecurityTests
 
         string[] routes =
         [
-            $"/runwick/jobs/{job}/cancel", $"/runwick/jobs/{job}/retry", $"/runwick/jobs/{job}/rerun", "/runwick/jobs:cancel",
+            $"/runwick/runs/{job}/cancel", $"/runwick/runs/{job}/retry", $"/runwick/runs/{job}/rerun", "/runwick/runs:cancel",
             "/runwick/queues/default/pause", "/runwick/queues/default/resume", "/runwick/scopes/job-type/test.capped/capacity",
             "/runwick/schedules/nightly/pause", "/runwick/schedules/nightly/resume", "/runwick/schedules/nightly/trigger",
-            "/runwick/schedules/nightly/revalidate", "/runwick/retention/policy", $"/runwick/jobs/{job}/payload:reveal",
+            "/runwick/schedules/nightly/revalidate", "/runwick/retention/policy", $"/runwick/runs/{job}/payload:reveal",
         ];
         foreach (var route in routes)
         {
@@ -158,16 +158,16 @@ public sealed class SecurityTests
         await cookie.LoadAsync("/runwick");
         var cookieToken = cookie.Csrf;
         cookie.Csrf = null;
-        Assert.Equal(HttpStatusCode.Forbidden, (await cookie.PostAsync($"/runwick/jobs/{job}/cancel", position, Guid.NewGuid())).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await cookie.PostAsync($"/runwick/runs/{job}/cancel", position, Guid.NewGuid())).StatusCode);
         cookie.Csrf = token; // the Basic principal's token: bound to another scheme
-        Assert.Equal(HttpStatusCode.Forbidden, (await cookie.PostAsync($"/runwick/jobs/{job}/cancel", position, Guid.NewGuid())).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await cookie.PostAsync($"/runwick/runs/{job}/cancel", position, Guid.NewGuid())).StatusCode);
 
         Assert.Equal(0, await h.AuditsAsync());
         Assert.Equal(position.ToString(), Position(await JobAsync(admin, job)).ToString());
 
         // With the right token both principals act: the token check is the only thing that changed.
         cookie.Csrf = cookieToken;
-        Assert.Equal(HttpStatusCode.SeeOther, (await cookie.PostAsync($"/runwick/jobs/{job}/cancel", position, Guid.NewGuid())).StatusCode);
+        Assert.Equal(HttpStatusCode.SeeOther, (await cookie.PostAsync($"/runwick/runs/{job}/cancel", position, Guid.NewGuid())).StatusCode);
         Assert.Equal(1, await h.AuditsAsync());
     }
 
@@ -179,22 +179,60 @@ public sealed class SecurityTests
         await using var h = await DashHost.StartAsync(f);
         var job = await h.DispatchAsync(new PingJob("secret-payload"));
         var viewer = h.Browser(Users.Viewer);
-        await viewer.LoadAsync($"/runwick/jobs/{job}");
-        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.VisitAsync($"/runwick/jobs/{job}", Partial("Job", "audit"))).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.VisitAsync($"/runwick/jobs/{job}", Partial("Job", "nosuchprop"))).StatusCode);
-        var reveal = await viewer.RevealAsync($"/runwick/jobs/{job}/payload:reveal");
+        await viewer.LoadAsync($"/runwick/runs/{job}");
+        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.VisitAsync($"/runwick/runs/{job}", Partial("Run", "audit"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await viewer.VisitAsync($"/runwick/runs/{job}", Partial("Run", "nosuchprop"))).StatusCode);
+        var reveal = await viewer.RevealAsync($"/runwick/runs/{job}/payload:reveal");
         Assert.Equal(HttpStatusCode.Forbidden, reveal.StatusCode);
         Assert.DoesNotContain("secret-payload", await reveal.Content.ReadAsStringAsync(), StringComparison.Ordinal);
 
         var admin = h.Browser(Users.Admin);
-        await admin.LoadAsync($"/runwick/jobs/{job}");
-        var allowed = await admin.VisitJsonAsync($"/runwick/jobs/{job}", Partial("Job", "audit"));
+        await admin.LoadAsync($"/runwick/runs/{job}");
+        var allowed = await admin.VisitJsonAsync($"/runwick/runs/{job}", Partial("Run", "audit"));
         var names = allowed.Props().EnumerateObject().Select(p => p.Name).ToList();
         Assert.Contains("audit", names);
         Assert.DoesNotContain("job", names); // only the requested prop (plus the adapter's errors)
-        var payload = await admin.RevealAsync($"/runwick/jobs/{job}/payload:reveal");
+        var payload = await admin.RevealAsync($"/runwick/runs/{job}/payload:reveal");
         Assert.Equal("secret-payload", (await Browser.JsonAsync(payload)).GetProperty("payload").GetProperty("id").GetString());
         Assert.Equal("no-store, private", payload.Header("Cache-Control"));
+    }
+
+    [Fact]
+    [Trait("Case", "DASH-03")]
+    public async Task A_refused_or_missing_page_visit_is_a_status_page_and_an_api_call_stays_json()
+    {
+        await using var f = await DriverFixture.StartAsync(Ns("dash03s"));
+        await using var h = await DashHost.StartAsync(f);
+        var viewer = h.Browser(Users.Viewer);
+        static void Html(HttpRequestMessage m) => m.Headers.Accept.ParseAdd("text/html");
+
+        var denied = await viewer.SendAsync(HttpMethod.Get, "/runwick/audit", inertia: false, configure: Html);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        var page = JsonDocument.Parse(PageScript().Match(await denied.Content.ReadAsStringAsync()).Groups[1].Value).RootElement;
+        Assert.Equal("Status", page.GetProperty("component").GetString());
+        var status = page.GetProperty("props").GetProperty("status");
+        Assert.Equal(403, status.GetProperty("status").GetInt32());
+        Assert.Equal(ManagementPermissions.AuditRead, status.GetProperty("permission").GetString());
+        Assert.Equal("/audit", status.GetProperty("path").GetString());
+
+        // The Status page's own poll gets the Status page again, still 403; another page's partial reload stays a JSON 403.
+        await viewer.LoadAsync("/runwick/runs");
+        var poll = await viewer.VisitAsync("/runwick/audit", Partial("Status", "notifications"));
+        Assert.Equal(HttpStatusCode.Forbidden, poll.StatusCode);
+        Assert.Equal("Status", JsonDocument.Parse(await poll.Content.ReadAsStringAsync()).RootElement.GetProperty("component").GetString());
+        var other = await viewer.VisitAsync("/runwick/audit", Partial("Audit", "audit"));
+        Assert.Equal(HttpStatusCode.Forbidden, other.StatusCode);
+        Assert.False(JsonDocument.Parse(await other.Content.ReadAsStringAsync()).RootElement.TryGetProperty("component", out _));
+
+        await viewer.LoadAsync("/runwick/runs");
+        var missing = await viewer.VisitAsync("/runwick/nowhere");
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        Assert.Equal("Status", JsonDocument.Parse(await missing.Content.ReadAsStringAsync()).RootElement.GetProperty("component").GetString());
+
+        // No Accept: text/html and no X-Inertia: the JSON problem body, as before.
+        var api = await viewer.SendAsync(HttpMethod.Get, "/runwick/audit", inertia: false);
+        Assert.Equal(HttpStatusCode.Forbidden, api.StatusCode);
+        Assert.DoesNotContain("data-page", await api.Content.ReadAsStringAsync(), StringComparison.Ordinal);
     }
 
     /// <summary>The store kinds this run covers (RUNWICK_TEST_STORES narrows it, as for the contract suite).</summary>
@@ -227,12 +265,12 @@ public sealed class SecurityTests
         await browser.SendAsync(HttpMethod.Get, "/login/admin?display=" + Uri.EscapeDataString(DashHost.Hostile), inertia: false);
         var (_, _, first) = await browser.LoadAsync("/runwick");
         var other = first.Props().GetProperty("jobs").GetProperty("items").EnumerateArray().Single(j => j.GetProperty("jobId").GetGuid() != job);
-        var cancel = await browser.PostAsync($"/runwick/jobs/{other.GetProperty("jobId")}/cancel",
+        var cancel = await browser.PostAsync($"/runwick/runs/{other.GetProperty("jobId")}/cancel",
             new { expectedGeneration = other.GetProperty("generation").GetInt32(), expectedRevision = other.GetProperty("revision").GetInt64(), reason = DashHost.Hostile },
             Guid.NewGuid());
         Assert.Equal(HttpStatusCode.SeeOther, cancel.StatusCode);
 
-        foreach (var path in new[] { "/runwick", $"/runwick/jobs/{job}", "/runwick/audit", "/runwick/scaling" })
+        foreach (var path in new[] { "/runwick", $"/runwick/runs/{job}", "/runwick/audit", "/runwick/scaling" })
         {
             var (response, body, page) = await browser.LoadAsync(path);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -254,9 +292,9 @@ public sealed class SecurityTests
         }
 
         // Data round-trips unchanged, in the initial HTML and in partial reloads (what a poll sends).
-        var detail = (await browser.LoadAsync($"/runwick/jobs/{job}")).Page.Props().GetProperty("job");
+        var detail = (await browser.LoadAsync($"/runwick/runs/{job}")).Page.Props().GetProperty("job");
         Assert.Equal(DashHost.Hostile, detail.GetProperty("attempts")[0].GetProperty("errorCode").GetString());
-        var poll = await browser.VisitJsonAsync($"/runwick/jobs/{job}", Partial("Job", "job"));
+        var poll = await browser.VisitJsonAsync($"/runwick/runs/{job}", Partial("Run", "job"));
         Assert.Equal(DashHost.Hostile, poll.Props().GetProperty("job").GetProperty("attempts")[0].GetProperty("errorCode").GetString());
         var audit = await browser.VisitJsonAsync("/runwick/audit", Partial("Audit", "audit"));
         Assert.Equal(DashHost.Hostile, audit.Props().GetProperty("audit").GetProperty("items")[0].GetProperty("reason").GetString());
@@ -264,12 +302,12 @@ public sealed class SecurityTests
         var events = await browser.VisitJsonAsync("/runwick/scaling", Partial("Scaling", "events"));
         Assert.Equal(Short, events.Props().GetProperty("events").GetProperty("items")[0].GetProperty("pool").GetString());
         Assert.Equal(Short, events.Props().GetProperty("events").GetProperty("items")[0].GetProperty("reason").GetString());
-        var jobs = await browser.VisitJsonAsync("/runwick", Partial("Jobs", "jobs"));
+        var jobs = await browser.VisitJsonAsync("/runwick", Partial("Runs", "jobs"));
         AssertNothingSensitive(jobs.GetRawText(), browser.Csrf!);
         AssertNothingSensitive(poll.GetRawText(), browser.Csrf!);
 
         // Reveals: plain JSON, no-store, the stored value as data.
-        var payload = await browser.RevealAsync($"/runwick/jobs/{job}/payload:reveal");
+        var payload = await browser.RevealAsync($"/runwick/runs/{job}/payload:reveal");
         Assert.Equal("no-store, private", payload.Header("Cache-Control"));
         Assert.Equal(DashHost.Hostile, (await Browser.JsonAsync(payload)).GetProperty("payload").GetProperty("id").GetString());
         var error = await browser.RevealAsync($"/runwick/attempts/{attempt}/error:reveal");
@@ -308,9 +346,9 @@ public sealed class SecurityTests
         var job = await h.DispatchAsync(new PingJob("secret-payload"));
         var paths = new (HttpMethod Method, string Path, bool Inertia, Action<HttpRequestMessage>? Partial)[]
         {
-            (HttpMethod.Get, "/runwick", false, null), (HttpMethod.Get, $"/runwick/jobs/{job}", true, null),
-            (HttpMethod.Get, $"/runwick/jobs/{job}", true, Partial("Job", "job")), (HttpMethod.Post, $"/runwick/jobs/{job}/cancel", true, null),
-            (HttpMethod.Post, "/runwick/jobs:cancel", true, null), (HttpMethod.Post, $"/runwick/jobs/{job}/payload:reveal", false, null),
+            (HttpMethod.Get, "/runwick", false, null), (HttpMethod.Get, $"/runwick/runs/{job}", true, null),
+            (HttpMethod.Get, $"/runwick/runs/{job}", true, Partial("Run", "job")), (HttpMethod.Post, $"/runwick/runs/{job}/cancel", true, null),
+            (HttpMethod.Post, "/runwick/runs:cancel", true, null), (HttpMethod.Post, $"/runwick/runs/{job}/payload:reveal", false, null),
         };
         var credentials = new Action<HttpRequestMessage>?[]
         {
@@ -360,24 +398,24 @@ public sealed class SecurityTests
         var scoped = h.Browser(Users.Scoped);
         await scoped.LoadAsync("/runwick");
 
-        Assert.Equal(HttpStatusCode.NotFound, (await scoped.LoadAsync($"/runwick/jobs/{hidden}")).Response.StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await scoped.VisitAsync($"/runwick/jobs/{hidden}")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await scoped.VisitAsync($"/runwick/jobs/{hidden}", Partial("Job", "job"))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await scoped.LoadAsync($"/runwick/runs/{hidden}")).Response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await scoped.VisitAsync($"/runwick/runs/{hidden}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await scoped.VisitAsync($"/runwick/runs/{hidden}", Partial("Run", "job"))).StatusCode);
         foreach (var op in new[] { "cancel", "retry", "rerun" })
         {
-            var r = await scoped.PostAsync($"/runwick/jobs/{hidden}/{op}", new { expectedGeneration = 1, expectedRevision = 1 }, Guid.NewGuid());
+            var r = await scoped.PostAsync($"/runwick/runs/{hidden}/{op}", new { expectedGeneration = 1, expectedRevision = 1 }, Guid.NewGuid());
             Assert.Equal(HttpStatusCode.NotFound, r.StatusCode);
         }
 
-        Assert.Equal(HttpStatusCode.NotFound, (await scoped.RevealAsync($"/runwick/jobs/{hidden}/payload:reveal")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await scoped.RevealAsync($"/runwick/runs/{hidden}/payload:reveal")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await scoped.RevealAsync($"/runwick/attempts/{hiddenAttempt}/error:reveal")).StatusCode);
-        var bulk = await scoped.PostAsync("/runwick/jobs:cancel",
+        var bulk = await scoped.PostAsync("/runwick/runs:cancel",
             new { items = new[] { new { jobId = hidden, commandId = Guid.NewGuid(), expectedGeneration = 1, expectedRevision = 1 } } });
         Assert.Equal("not_found", (await Browser.JsonAsync(bulk)).Props().GetProperty("outcome").GetProperty("items")[0].GetProperty("status").GetString());
 
         // Lists and their next pages hold only the allowed queue.
         var queues = new List<string>();
-        var url = "/runwick/jobs?limit=1";
+        var url = "/runwick/runs?limit=1";
         while (true)
         {
             var page = await scoped.VisitJsonAsync(url);
@@ -388,7 +426,7 @@ public sealed class SecurityTests
                 break;
             }
 
-            url = "/runwick/jobs?limit=1&cursor=" + next;
+            url = "/runwick/runs?limit=1&cursor=" + next;
         }
 
         Assert.Equal(["default", "default"], queues);
@@ -396,14 +434,14 @@ public sealed class SecurityTests
         Assert.Equal(["default"], queueList.EnumerateArray().Select(q => q.GetProperty("name").GetString()));
 
         // A tampered cursor renders the first page with a notice.
-        var first = (await scoped.VisitJsonAsync("/runwick/jobs?limit=1")).Props().GetProperty("jobs").GetProperty("next").GetString()!;
-        var tampered = await scoped.VisitJsonAsync("/runwick/jobs?limit=1&cursor=" + first[..^4] + "AAAA");
+        var first = (await scoped.VisitJsonAsync("/runwick/runs?limit=1")).Props().GetProperty("jobs").GetProperty("next").GetString()!;
+        var tampered = await scoped.VisitJsonAsync("/runwick/runs?limit=1&cursor=" + first[..^4] + "AAAA");
         Assert.Equal("invalid_cursor", tampered.Props().GetProperty("notice").GetString());
         Assert.Single(tampered.Props().GetProperty("jobs").GetProperty("items").EnumerateArray());
 
         // An actor field in a POST body is ignored: the audit row names the authenticated caller.
         var position = Position(await JobAsync(scoped, mine));
-        var cancel = await scoped.PostAsync($"/runwick/jobs/{mine}/cancel",
+        var cancel = await scoped.PostAsync($"/runwick/runs/{mine}/cancel",
             new { expectedGeneration = 1, expectedRevision = ((dynamic)position).expectedRevision, actor = "admin", actorSubject = "admin", grants = "all" }, Guid.NewGuid());
         Assert.Equal(HttpStatusCode.SeeOther, cancel.StatusCode);
         Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM runwick.management_audit WHERE actor_subject = 'scoped'"));

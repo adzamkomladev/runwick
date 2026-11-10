@@ -494,6 +494,7 @@ function U.dispatch_core(items, continueOnConflict, createdReason, actor)
     U.zadd('idx:created', NOW, id)
     U.zadd('idx:created:q:' .. it.queue, NOW, id)
     U.zadd('idx:created:s:pending', NOW, id)
+    if U.counted(NOW, id) then U.jobtype(it.queue, it.name, 1) end
     U.zadd(U.ready_key(j), eligible, id)
   end
   for _, i in ipairs(created) do

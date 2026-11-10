@@ -103,6 +103,20 @@ internal sealed class DashboardRequest(DashboardMount mount, HttpContext http, M
         }
     }
 
+    /// <summary>A figures read whose filter is invalid (a range over 31 days): the page notice and the empty figures, as a list does.</summary>
+    public async Task<T> StatsAsync<T>(Func<Task<T>> read, Func<T> empty)
+    {
+        try
+        {
+            return await read();
+        }
+        catch (ManagementValidationException ex)
+        {
+            Notice = ex.Code;
+            return empty();
+        }
+    }
+
     // The adapter would serialize props with the host's HttpJsonOptions; a JsonElement is written as is (sp-023 gap 2).
     public static JsonElement Element(object? value) => JsonSerializer.SerializeToElement(value, DashboardMount.Json);
 }

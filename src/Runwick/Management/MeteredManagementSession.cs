@@ -91,6 +91,23 @@ internal sealed class MeteredManagementSession(IManagementSession inner, Microso
         CancellationToken cancellationToken = default) =>
         Measure("ListSchedules", false, () => inner.ListSchedulesAsync(caller, limit, cursor, cancellationToken));
 
+    public Task<JobStats> GetJobStatsAsync(ManagementCaller caller, JobStatsQuery query, CancellationToken cancellationToken = default) =>
+        Measure("GetJobStats", false, () => inner.GetJobStatsAsync(caller, query, cancellationToken));
+
+    public Task<IReadOnlyList<JobTypeSummary>> ListJobTypesAsync(ManagementCaller caller, CancellationToken cancellationToken = default) =>
+        Measure("ListJobTypes", false, () => inner.ListJobTypesAsync(caller, cancellationToken));
+
+    public Task<ScheduleStats> GetScheduleStatsAsync(ManagementCaller caller, DateTimeOffset? from = null, DateTimeOffset? to = null,
+        CancellationToken cancellationToken = default) =>
+        Measure("GetScheduleStats", false, () => inner.GetScheduleStatsAsync(caller, from, to, cancellationToken));
+
+    public Task<AuditStats> GetAuditStatsAsync(ManagementCaller caller, DateTimeOffset? from = null, DateTimeOffset? to = null,
+        CancellationToken cancellationToken = default) =>
+        Measure("GetAuditStats", false, () => inner.GetAuditStatsAsync(caller, from, to, cancellationToken));
+
+    public Task<ScheduleDetail> GetScheduleAsync(ManagementCaller caller, string key, int? limit = null, CancellationToken cancellationToken = default) =>
+        Measure("GetSchedule", false, () => inner.GetScheduleAsync(caller, key, limit, cancellationToken));
+
     public Task<ManagementPage<AuditEntry>> ListAuditAsync(ManagementCaller caller, AuditQuery query, CancellationToken cancellationToken = default) =>
         Measure("ListAudit", false, () => inner.ListAuditAsync(caller, query, cancellationToken));
 
@@ -115,6 +132,10 @@ internal sealed class MeteredManagementSession(IManagementSession inner, Microso
     public Task<IReadOnlyList<BulkCancelResult>> CancelJobsAsync(ManagementCaller caller, IReadOnlyList<BulkCancelItem> items, string? reason = null,
         CancellationToken cancellationToken = default) =>
         Measure("CancelJobs", true, () => inner.CancelJobsAsync(caller, items, reason, cancellationToken));
+
+    public Task<IReadOnlyList<BulkRetryResult>> RetryJobsAsync(ManagementCaller caller, IReadOnlyList<BulkRetryItem> items, string? reason = null,
+        CancellationToken cancellationToken = default) =>
+        Measure("RetryJobs", true, () => inner.RetryJobsAsync(caller, items, reason, cancellationToken));
 
     public Task<QueueControlResult> PauseQueueAsync(ManagementCaller caller, string queue, Guid commandId, long expectedRevision, string? reason = null,
         CancellationToken cancellationToken = default) =>

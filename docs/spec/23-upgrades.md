@@ -15,6 +15,10 @@ Four things are new in code:
 
 ## Changes
 
+- (2026-11-10, exact stats) PostgreSQL revision 20 (`0020_stats_indexes`) and SQLite revision 4 (`0004_stats_indexes`) add two indexes each; the same drain, stop, migrate, start rule. Building the indexes takes a write lock on `jobs` and `job_attempts` for its duration (not `CONCURRENTLY`, like the earlier index migrations). Redis stays at layout revision 1; the first stats read after the upgrade backfills its new projections (22).
+
+- (2026-11-10, worker detail) PostgreSQL revision 19 (`0019_worker_detail`) and SQLite revision 3 (`0003_worker_detail`) add a nullable worker-presence column; Redis stays at layout revision 1. Same rule: drain, stop old binaries, migrate, start new. A row written before the migration, or by an older worker, has no detail (16 §2.3).
+
 - (2026-11-09, attempt usage) PostgreSQL revision 18 (`0018_attempt_usage`) and SQLite revision 2 (`0002_attempt_usage`) add a nullable attempt column; Redis stays at layout revision 1. The one-revision-per-binary rule is unchanged: drain, stop old binaries, migrate, start new. Rows written before the migration read as "not recorded" (16 §2.2).
 
 - (2026-11-09, user decision on sp-030 item 7) §3.6: activating a capability through the operator path now writes the store operation's `ActivateCapabilities` audit row and `capabilities_activated` event, with the operator as actor (scheme `operator`). Before, it wrote neither. No schema revision.
