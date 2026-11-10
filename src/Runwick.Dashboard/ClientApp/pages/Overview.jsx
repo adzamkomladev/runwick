@@ -75,7 +75,7 @@ function Kpi({ title, value, more, suffix, delta, foot, spark, color, href, test
           <span>{foot}</span>
         </CardContent>
         <div className="mt-auto -mb-px">{spark}</div>
-        <span aria-hidden className={cn('absolute inset-x-0 top-0 h-0.5 origin-left scale-x-0 bg-current transition-transform duration-200 ease-glide group-hover:scale-x-100', color)} />
+        <span aria-hidden className={cn('absolute inset-x-0 top-0 h-0.5 origin-left scale-x-0 bg-current transition-transform duration-700 ease-settle group-hover:scale-x-100', color)} />
       </Card>
     </Link>
   )
