@@ -13,13 +13,13 @@
         "dependencies": {
           "Cronos": "[0.13.0, )",
           "NodaTime": "[3.3.7, )",
-          "Runwick.Contracts": "[0.1.0, )"
+          "Runwick.Contracts": "[0.1.1, )"
         }
       },
       "runwick.aspnetcore": {
         "type": "Project",
         "dependencies": {
-          "Runwick": "[0.1.0, )"
+          "Runwick": "[0.1.1, )"
         }
       },
       "runwick.contracts": {
