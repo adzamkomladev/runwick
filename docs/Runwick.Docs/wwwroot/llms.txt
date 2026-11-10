@@ -1,0 +1,52 @@
+# Runwick
+
+> Runwick is a background-job library for .NET 10. An app writes a job to a store (PostgreSQL, SQLite or Redis) and a worker, in the same process or another, runs its handler. Delivery is at-least-once; schedules, retries, rate limits, uniqueness, a transactional outbox, a management API, a dashboard and a CLI are included.
+
+Full documentation as one file: https://runwick.temtem.dev/llms-full.txt. Agent conventions: https://runwick.temtem.dev/docs/ai-agents.
+
+## Get started
+
+- [Introduction](https://runwick.temtem.dev/docs/introduction): Runwick is a background-job library for .NET 10 that stores jobs in PostgreSQL, SQLite or Redis and runs them on workers you control.
+- [Installation](https://runwick.temtem.dev/docs/installation): Install Runwick and one store package, add the optional packages you need, install the CLI and create the store's schema.
+- [Quick start](https://runwick.temtem.dev/docs/quick-start): Go from an empty project to a background job that a worker picks up and runs.
+- [Choosing a store](https://runwick.temtem.dev/docs/choosing-a-store): Compare PostgreSQL, SQLite and Redis as Runwick stores, see where each one stops, and pick a deployment shape.
+
+## Jobs
+
+- [Jobs and handlers](https://runwick.temtem.dev/docs/jobs-and-handlers): Define a job contract with a stable name, write the handler that runs it, and register both.
+- [Dispatching](https://runwick.temtem.dev/docs/dispatching): Create jobs with IJobDispatcher, set queue, priority, start time and metadata, dispatch in batches, and handle an unknown outcome.
+- [Queues and priorities](https://runwick.temtem.dev/docs/queues-and-priorities): Route jobs to queues, use the high, medium and low priority lanes, tune weights and aging, and pause a queue.
+- [Retries and timeouts](https://runwick.temtem.dev/docs/retries-and-timeouts): How many times a job runs, how long Runwick waits between tries, how execution timeouts work, and how failures are recorded.
+- [Uniqueness](https://runwick.temtem.dev/docs/uniqueness): Stop duplicate jobs from being created with active keys and window keys, and know what uniqueness does not prevent.
+- [Rate limits and concurrency](https://runwick.temtem.dev/docs/rate-limits-and-concurrency): Cap how many jobs run at once and how many start per time window, per process or across every worker.
+- [Schedules](https://runwick.temtem.dev/docs/schedules): Create jobs on a cron timetable or at one fixed time, handle missed runs and daylight saving, and pause or trigger a schedule.
+- [Cancellation](https://runwick.temtem.dev/docs/cancellation): Cancelling a job is a request, not a kill. How the token works, how long Runwick waits, and how to write handlers that stop cleanly.
+- [Job context](https://runwick.temtem.dev/docs/job-context): Read facts about the current run with IJobContext, log with them, and wrap runs in middleware.
+
+## Stores
+
+- [PostgreSQL](https://runwick.temtem.dev/docs/postgresql): Run Runwick on PostgreSQL 16, 17 or 18, create its schema with a migration role, and stage jobs in your own transactions.
+- [SQLite](https://runwick.temtem.dev/docs/sqlite): Run Runwick on one SQLite file for apps whose workers all live on one machine, with WAL and synchronous=FULL enforced.
+- [Redis](https://runwick.temtem.dev/docs/redis): Run Runwick on one durable Redis primary with append-only fsync on every write, and know the limits that come with it.
+- [Transactions](https://runwick.temtem.dev/docs/transactions): Create a job, or mark one as succeeded, inside your own PostgreSQL or SQLite transaction so it commits with your data or not at all.
+- [Outbox](https://runwick.temtem.dev/docs/outbox): Commit a job with your business data in a database that is not the job store, then let a relay deliver it at least once.
+
+## Operations
+
+- [Workers](https://runwick.temtem.dev/docs/workers): Run jobs with AddWorker - pools, queues, concurrency, leases, shutdown and recovery after a crash.
+- [Management API](https://runwick.temtem.dev/docs/management-api): The authenticated HTTP API behind the dashboard and the CLI - sign-in, permissions, antiforgery, limits and audit.
+- [Dashboard](https://runwick.temtem.dev/docs/dashboard): A web UI for jobs, queues, workers and schedules, served from inside your ASP.NET Core app.
+- [Command line](https://runwick.temtem.dev/docs/cli): The runwick CLI - contexts, job and queue controls, store administration, and stable output for scripts and agents.
+- [Observability](https://runwick.temtem.dev/docs/observability): Traces, metrics and logs from Runwick, how to export them with OpenTelemetry, and how to read the numbers.
+- [Health checks](https://runwick.temtem.dev/docs/health-checks): Liveness and per-role readiness checks for ASP.NET Core, and how to map them for your orchestrator.
+- [Retention](https://runwick.temtem.dev/docs/retention): How Runwick deletes old payloads, finished jobs, audit rows and history, and how to tune the cleanup.
+- [Deployment](https://runwick.temtem.dev/docs/deployment): Process shapes, containers, the migration step, shutdown timeouts, capabilities and a checklist for going live.
+- [Upgrades and restores](https://runwick.temtem.dev/docs/upgrades): How to upgrade Runwick safely, why there is no rolling upgrade, and what a restore from backup does and does not bring back.
+
+## Reference
+
+- [Delivery guarantees](https://runwick.temtem.dev/docs/delivery-guarantees): What Runwick promises about running your jobs, how to make repeated runs harmless, and the list of things it does not claim.
+- [Configuration](https://runwick.temtem.dev/docs/configuration): Every default in one place, for jobs, workers, producers, stores, retention, the scheduler, the outbox relay and the fixed limits.
+- [Testing](https://runwick.temtem.dev/docs/testing): Test handlers as plain classes, fake IJobDispatcher in code that dispatches, and run end-to-end tests against a real SQLite file.
+- [Troubleshooting](https://runwick.temtem.dev/docs/troubleshooting): Common startup refusals, error codes and stuck jobs, each with its cause and the fix.
+- [AI agents](https://runwick.temtem.dev/docs/ai-agents): Give coding agents Runwick's docs as plain text, let them drive the runwick CLI in --agent mode, and the conventions worth putting in AGENTS.md.

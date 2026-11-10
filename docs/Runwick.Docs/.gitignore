@@ -1,0 +1,8 @@
+node_modules/
+bin/
+obj/
+wwwroot/hot
+wwwroot/build/
+ssr/
+.impeccable/
+.playwright-cli/

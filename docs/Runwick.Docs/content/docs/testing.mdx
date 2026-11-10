@@ -1,0 +1,215 @@
+---
+title: Testing
+description: Test handlers as plain classes, fake IJobDispatcher in code that dispatches, and run end-to-end tests against a real SQLite file.
+section: Reference
+order: 3
+---
+
+Runwick's public surface is small and made of interfaces, so most tests need no special library: a handler is a plain class, and dispatching goes through `IJobDispatcher`. For the full path (dispatch, claim, run, finish), run a real worker against a temporary SQLite file.
+
+<Callout type="info" title="About Runwick.Testing">
+
+The `Runwick.Testing` package is reserved for test helpers (a recording dispatcher and a direct handler invoker), but in this release it does not contain any public types yet. The patterns on this page use only the main packages.
+
+</Callout>
+
+## Testing a handler
+
+A handler is a class with a `HandleAsync` method. Construct it with its dependencies and call it:
+
+```csharp
+public sealed class SendWelcomeEmailHandler(IEmailSender email) : IJobHandler<SendWelcomeEmail>
+{
+    public Task HandleAsync(SendWelcomeEmail job, CancellationToken cancellationToken) =>
+        email.SendAsync(job.UserId, "welcome", cancellationToken);
+}
+
+public class SendWelcomeEmailHandlerTests
+{
+    [Fact]
+    public async Task Sends_the_welcome_template()
+    {
+        var email = new FakeEmailSender();
+        var handler = new SendWelcomeEmailHandler(email);
+
+        await handler.HandleAsync(new SendWelcomeEmail(UserId: Guid.NewGuid()), CancellationToken.None);
+
+        Assert.Equal("welcome", Assert.Single(email.Sent).Template);
+    }
+}
+```
+
+Test the things Runwick relies on too:
+
+- **Repeats are harmless.** Call `HandleAsync` twice with the same job and check that the outside effect happened once, or that the same idempotency key was used both times. Runwick can and will run a handler more than once; see [Delivery guarantees](/docs/delivery-guarantees).
+- **Cancellation is observed.** Pass a cancelled token and check that the handler stops with an `OperationCanceledException` instead of finishing the work.
+- **Permanent failures are permanent.** If the handler throws `PermanentJobFailureException` for bad input, assert that it does.
+
+### Handlers that use `IJobContext`
+
+`IJobContext` is an interface, so a test can pass its own implementation. A small fake with settable properties is enough:
+
+```csharp
+sealed class FakeJobContext : IJobContext
+{
+    public string Application { get; init; } = "tests";
+    public JobId JobId { get; init; } = new(Guid.NewGuid());
+    public AttemptId AttemptId { get; init; } = new(Guid.NewGuid());
+    public int Generation { get; init; } = 1;
+    public int ExecutionNumber { get; init; } = 1;
+    public int MaxExecutions { get; init; } = 3;
+    public string JobName { get; init; } = "test.job";
+    public string Queue { get; init; } = "default";
+    public string Priority { get; init; } = "medium";
+    public int OriginalPayloadVersion { get; init; } = 1;
+    public int CurrentPayloadVersion { get; init; } = 1;
+    public string SerializerProfileId { get; init; } = "test";
+    public int SerializerProfileVersion { get; init; } = 1;
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
+    public IReadOnlyDictionary<string, string> Metadata { get; init; } = new Dictionary<string, string>();
+    public JobTraceContext Trace { get; init; }
+    public IReadOnlyList<ResourceFence> Fences { get; init; } = [];
+    public JobScheduleInfo? Schedule { get; init; }
+    public JobCancellationCause CancellationCauses { get; init; }
+    public IDictionary<object, object?> Items { get; } = new Dictionary<object, object?>();
+    public object? Payload { get; init; }
+    public TJob GetPayload<TJob>() where TJob : class, IQueueJob => (TJob)Payload!;
+}
+```
+
+Then test, for example, that a handler uses the job ID as its idempotency key, or behaves differently on the last attempt:
+
+```csharp
+[Fact]
+public async Task Uses_the_job_id_as_the_idempotency_key()
+{
+    var context = new FakeJobContext();
+    var payments = new FakePaymentClient();
+    var handler = new ChargeCardHandler(context, payments);
+
+    await handler.HandleAsync(new ChargeCard(OrderId: 42, Amount: 10m), CancellationToken.None);
+    await handler.HandleAsync(new ChargeCard(OrderId: 42, Amount: 10m), CancellationToken.None);
+
+    Assert.All(payments.Calls, c => Assert.Equal($"charge:{context.JobId}", c.IdempotencyKey));
+}
+```
+
+## Testing code that dispatches
+
+`IJobDispatcher` has two methods. A recording fake that returns a receipt is a dozen lines:
+
+```csharp
+sealed class RecordingDispatcher : IJobDispatcher
+{
+    public List<(IQueueJob Job, DispatchOptions? Options)> Dispatched { get; } = [];
+
+    public Task<DispatchReceipt> DispatchAsync<TJob>(TJob job, DispatchOptions? options = null, CancellationToken cancellationToken = default)
+        where TJob : class, IQueueJob
+    {
+        Dispatched.Add((job, options));
+        return Task.FromResult(Receipt());
+    }
+
+    public Task<BatchDispatchReceipt> DispatchManyAsync(IReadOnlyList<BatchDispatchItem> items, BatchDispatchOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        Dispatched.AddRange(items.Select(i => (i.Job, i.Options)));
+        return Task.FromResult(new BatchDispatchReceipt(new DispatchOperationId(Guid.NewGuid()),
+            [.. items.Select((_, i) => new BatchItemResult(i, Receipt(), null))], "test"));
+    }
+
+    static DispatchReceipt Receipt() => new(new JobId(Guid.NewGuid()), new DispatchOperationId(Guid.NewGuid()),
+        DispatchDisposition.Created, DuplicateMatch.None, PolicyDrift: false, ConfirmedAcknowledgementProfile: "test");
+}
+```
+
+Use it in place of the real dispatcher:
+
+```csharp
+[Fact]
+public async Task Signup_queues_a_welcome_email()
+{
+    var jobs = new RecordingDispatcher();
+    var service = new SignupService(new FakeUserStore(), jobs);
+
+    var userId = await service.SignUpAsync("ada@example.com", CancellationToken.None);
+
+    var (job, _) = Assert.Single(jobs.Dispatched);
+    Assert.Equal(new SendWelcomeEmail(userId), job);
+}
+```
+
+A fake cannot tell you whether the real store would accept the job: unknown queues, keys that are too long and payloads over 1 MiB are only refused by the real dispatcher. Cover those with an end-to-end test.
+
+To test how your code handles failures, make the fake throw the real exception types, for example `DispatchOutcomeUnknownException` or `LocalCapacityExceededException`.
+
+## End-to-end with a real SQLite file
+
+SQLite needs no server, so a test can create a fresh database file, start a real host with a worker, dispatch a job and wait for the handler. The handler signals a `TaskCompletionSource` from dependency injection:
+
+```csharp
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Runwick;
+
+public class WelcomeEmailEndToEndTests
+{
+    [Fact]
+    public async Task A_dispatched_job_runs_on_the_worker()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"runwick-{Guid.NewGuid():N}.db");
+        var connection = $"Data Source={path}";
+        await RunwickSqliteMigrations.MigrateAsync(connection);
+
+        var ran = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var builder = Host.CreateApplicationBuilder();
+        builder.Services.AddSingleton(ran);
+        builder.Services.AddRunwick(runwick =>
+        {
+            runwick.Application("tests").UseSqlite(connection);
+            runwick.AddJob<SendWelcomeEmail>();
+            runwick.AddHandler<SendWelcomeEmail, SignalingHandler>();
+            runwick.AddWorker(w => w.Pool("main", p => p.Queues("default").FixedConcurrency(1)));
+        });
+
+        using var host = builder.Build();
+        await host.StartAsync();
+        try
+        {
+            var userId = Guid.NewGuid();
+            var dispatcher = host.Services.GetRequiredService<IJobDispatcher>();
+            await dispatcher.DispatchAsync(new SendWelcomeEmail(userId));
+
+            Assert.Equal(userId, await ran.Task.WaitAsync(TimeSpan.FromSeconds(30)));
+        }
+        finally
+        {
+            await host.StopAsync();
+            foreach (var file in new[] { path, path + "-wal", path + "-shm" })
+            {
+                File.Delete(file);
+            }
+        }
+    }
+
+    sealed class SignalingHandler(TaskCompletionSource<Guid> ran) : IJobHandler<SendWelcomeEmail>
+    {
+        public Task HandleAsync(SendWelcomeEmail job, CancellationToken cancellationToken)
+        {
+            ran.TrySetResult(job.UserId);
+            return Task.CompletedTask;
+        }
+    }
+}
+```
+
+Tips:
+
+- Give every test its own file. Runwick refuses in-memory databases, so a temporary file is the way to isolate tests.
+- Keep the temp directory on a local disk. A network share is refused.
+- Leave a generous timeout. Workers poll, and a fresh worker needs a moment to start.
+- Use the same registration code as production where you can, and swap only the store line.
+
+### When to test against PostgreSQL or Redis
+
+All three stores give the same job behaviour, so SQLite covers most application tests. Test against your production store when the test depends on store-specific behaviour: staging jobs or completing them in your PostgreSQL transaction, connection limits, or Redis server settings. A disposable server per test run (for example with Testcontainers) works well. Remember to run the store's migration first.

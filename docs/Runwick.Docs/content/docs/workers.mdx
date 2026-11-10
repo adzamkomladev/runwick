@@ -1,0 +1,166 @@
+---
+title: Workers
+description: Run jobs with AddWorker - pools, queues, concurrency, leases, shutdown and recovery after a crash.
+section: Operations
+order: 1
+---
+
+A worker is any process that calls `AddWorker`. It claims jobs from the store, runs your handlers and writes the results back. The same process can also dispatch, run the scheduler or serve the dashboard. A process without `AddWorker` only produces jobs and never runs a handler.
+
+## Adding a worker
+
+```csharp
+builder.Services.AddRunwick(runwick =>
+{
+    runwick.Application("my-app")
+        .UsePostgres(connectionString)
+        .AddJobsFromAssemblyContaining<SendWelcomeEmail>();
+    runwick.AddHandlersFromAssemblyContaining<SendWelcomeEmail>();
+
+    runwick.AddWorker(w => w
+        .Pool("main", p => p.Queues("default", "emails").FixedConcurrency(8))
+        .Pool("reports", p => p.Queues("reports").FixedConcurrency(2)));
+});
+```
+
+`AddWorker` may be called once per application. A worker needs at least one pool, and pool names must be unique. Startup fails with a clear configuration error if any of these rules is broken.
+
+## Pools
+
+A pool is a group of slots (tickets) that share a set of queues. A job needs a free ticket before the worker claims it, and the ticket comes back only when the job has finished *and* its result is stored. That is what keeps memory bounded when the store is slow or away.
+
+Use more than one pool when some work must not starve other work. In the example above, a flood of reports can never take the slots that emails need.
+
+| Method | What it does |
+|---|---|
+| `Queues("a", "b")` | Subscribes to queues, each with weight 1 |
+| `Queue("a", weight)` | Subscribes to one queue with a weight from 1 to 1,000. Higher weight means a larger share of claims |
+| `FixedConcurrency(n)` | A fixed number of tickets. This is the default, with 4 |
+| `AutoConcurrency(min, max)` | Lets the pool grow and shrink between `min` and `max` |
+| `LaneSelection(mode)` | `Weighted` (default), `StrictWithAging` or `Strict` |
+| `LaneWeights(high, medium, low)` | Shares of the priority lanes. Default 6 : 3 : 1 |
+
+Rules checked at startup:
+
+- Every queue a pool names must be used by a registered job or declared with `runwick.Queue("name")`.
+- A pool subscribes to at least one queue, and to each queue only once.
+- A pool is either fixed or automatic, never both.
+- The sum of every pool's maximum must not exceed `MaxOutstandingAttempts`, which is 16 by default.
+
+```csharp
+runwick.Queue("imports");   // a queue no job type names by default
+
+runwick.AddWorker(w => w
+    .MaxOutstandingAttempts(32)
+    .Pool("main", p => p.Queue("default", 3).Queue("imports", 1).FixedConcurrency(24))
+    .Pool("slow", p => p.Queues("reports").FixedConcurrency(8)));
+```
+
+How priorities and lanes interact is explained in [Queues and priorities](/docs/queues-and-priorities).
+
+### Automatic concurrency
+
+`AutoConcurrency(min, max)` adjusts the pool's ticket count from how busy the tickets are and from the pool's share of waiting work. It moves carefully: it needs several samples in a row before it grows or shrinks, waits between changes, and never changes by more than a quarter at a time. It stops growing when the store looks unhealthy. Shrinking never cancels running work; it only stops refilling slots.
+
+<Callout type="info" title="One process, not the cluster">
+
+The automatic controller scales the slots of this process only. It does not start containers or coordinate with other replicas. To scale out, export the metrics (see [Observability](/docs/observability)) and let your platform add instances.
+
+</Callout>
+
+## Leases
+
+When a worker claims a job it gets a **lease**: ownership with an expiry time decided by the store's clock. The worker renews the lease in the background while the handler runs. Every write the worker makes carries a token from the claim, so a worker that lost its lease cannot overwrite the result of whoever took over.
+
+| `WorkerOptions` | Default | Meaning |
+|---|---|---|
+| `LeaseDuration` | 60 s | Length of each lease |
+| `LeaseSafetyMargin` | 10 s | The worker stops trusting a lease this long before the store would expire it |
+| `RenewalInterval` / `RenewalJitter` | 15 s / 3 s | Renewal runs every 12 to 18 s |
+| `MinimumInvocationMargin` | 15 s | A handler does not start unless at least this much lease time is left |
+| `ControlRequestTimeout` | 5 s | Longest wait for one store call on the ownership path |
+| `CancellationGrace` | 10 s | Time a cancelled handler gets to return |
+| `CleanupBudget` | 10 s | Time allowed for disposing the job's DI scope |
+
+Change them with `Configure`:
+
+```csharp
+runwick.AddWorker(w => w
+    .Pool("main", p => p.Queues("default"))
+    .Configure(o =>
+    {
+        o.LeaseDuration = TimeSpan.FromSeconds(90);
+        o.RenewalInterval = TimeSpan.FromSeconds(20);
+    }));
+```
+
+The timings depend on each other. Runwick checks the rules at startup and refuses a configuration that breaks them; it never quietly adjusts a value. The full list is in [Configuration](/docs/configuration).
+
+If a renewal is not confirmed in time, the worker treats the lease as lost for good. It cancels the handler's `CancellationToken`, stops renewing, and never writes a result for that attempt, even if a late reply arrives.
+
+<Callout type="warning" title="A lost lease does not stop your code">
+
+.NET has no safe way to kill a running method. A handler that ignores its token keeps running while another worker may already run the same job. Handlers must be safe to run more than once. See [Delivery guarantees](/docs/delivery-guarantees).
+
+</Callout>
+
+## Shutdown
+
+When the host stops, the worker shuts down in steps, measured from the moment the stop began:
+
+<Steps>
+<Step title="Stop claiming">
+
+No new jobs are claimed. This happens at once.
+
+</Step>
+<Step title="Drain (up to 15 s)">
+
+Running handlers keep going. Their leases are still renewed and their results are still written.
+
+</Step>
+<Step title="Cancel (15 s to 20 s)">
+
+Every handler still running has its `CancellationToken` cancelled and gets a few seconds to return.
+
+</Step>
+<Step title="Finish (20 s to 25 s)">
+
+Known results are written. At 25 s the worker stops talking to the store. Anything still open is left to lease expiry and recovery by another worker.
+
+</Step>
+</Steps>
+
+| `WorkerOptions` | Default |
+|---|---|
+| `ShutdownDrain` | 15 s |
+| `ShutdownCancellation` | 5 s |
+| `ShutdownFinalization` | 5 s |
+| `ShutdownBudget` | 25 s (the three slices must fit inside it) |
+
+The .NET host gives hosted services 30 seconds to stop by default. Keep it above Runwick's 25 seconds, and keep your container platform's grace period above the host's:
+
+```csharp
+builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(35));
+```
+
+If the host kills the process early, nothing is corrupted, but jobs still running wait for their leases to expire before another worker picks them up.
+
+## When a worker crashes
+
+Every worker runs a recovery loop, by default every 5 seconds (give or take 1 second, `RecoveryScanInterval` and `RecoveryScanJitter`). It finds jobs whose lease has expired and puts them back:
+
+- **The handler had started.** The attempt is closed as abandoned. The job retries if it has executions left, and otherwise fails. If someone asked to cancel it meanwhile, it ends as cancelled.
+- **The handler had not started yet.** The worker claimed the job but died before running it. This does not use up one of the job's executions. It is counted separately (5 times in a row by default, with short delays from 1 s to 30 s), so a job that crashes every worker before it starts still stops eventually.
+
+There is one small gap: the store records "this execution started" just before calling your handler. A crash in that instant still costs an execution.
+
+## Resource usage per attempt
+
+`WorkerOptions.RecordResourceUsage` is on by default. The worker records CPU time, allocated bytes and working set for each attempt and stores them with it, so the [dashboard](/docs/dashboard) can show them. The measured cost is a few microseconds per attempt. Set it to `false` to turn it off.
+
+## Other work a worker does
+
+- It publishes a heartbeat ("worker X is alive, listening to these queues"), which the dashboard and `runwick workers list` show.
+- It runs the cleanup loop for old records. See [Retention](/docs/retention).
+- It reports a `worker` readiness check. See [Health checks](/docs/health-checks).

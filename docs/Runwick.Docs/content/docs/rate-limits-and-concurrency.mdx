@@ -1,0 +1,168 @@
+---
+title: Rate limits and concurrency
+description: Cap how many jobs run at once and how many start per time window, per process or across every worker.
+section: Jobs
+order: 6
+---
+
+There are two different limits, and they answer different questions:
+
+| | Concurrency limit | Rate limit |
+|---|---|---|
+| Question | How many run **at the same time**? | How many **start** per window of time? |
+| Example | "At most 5 PDF renders at once" | "At most 100 calls to the email API per minute" |
+| Checked when | a worker claims the job | the run is authorized, just before the handler |
+
+A 1 ms job barely touches a concurrency limit but counts fully against a rate limit. A 10-minute job holds a concurrency slot the whole time but counts once against a rate limit.
+
+## Per process or across all workers
+
+Some limits live in one process's memory. Others live in the store and hold across every worker.
+
+| Setting | Scope |
+|---|---|
+| `FixedConcurrency(n)` / `AutoConcurrency(min, max)` on a pool | This process, this pool |
+| `MaxOutstandingAttempts(n)` on a worker (default 16) | This process, all pools |
+| `runwick.Queue("q", q => q.MaxConcurrent(n))` | All workers |
+| `MaxConcurrent(n)` on a job | All workers |
+| `PerResource(selector, n)` on a job | All workers, per key |
+| `RollingWindow(...)`, `RollingWindowPerResource(...)` | All workers |
+
+Four processes with `FixedConcurrency(8)` run up to 32 jobs. If you need "5 at most, anywhere", use a store-backed limit. Pool sizing is covered in [Workers](/docs/workers).
+
+## Concurrency caps
+
+A store-backed concurrency limit is called a **scope**. Each scope has a capacity. A job that needs a scope must get a free slot in it when it is claimed; a crashed worker's slot frees itself when its lease runs out.
+
+```csharp
+// Queue scope: at most 20 jobs from "emails" running anywhere.
+runwick.Queue("emails", q => q.MaxConcurrent(20));
+
+// Job-type scope: at most 5 renders running anywhere.
+runwick.ConfigureJob<RenderPdf>().MaxConcurrent(5);
+
+// Resource scope: at most 1 job per invoice at a time.
+runwick.ConfigureJob<RecalculateInvoice>().PerResource(job => $"invoice:{job.InvoiceId}", 1);
+```
+
+| Kind | Key | Example |
+|---|---|---|
+| `queue` | the queue name | `emails`, capacity 20 |
+| `job-type` | the job name | `pdf.render`, capacity 5 |
+| `resource` | what your selector returns | `invoice:123`, capacity 1 |
+
+A job can need several scopes at once, for example its queue, its type and two resources. It must get a slot in **all** of them or it waits. The limit is 8 scopes per job (`too_many_scopes`). All capacities must be at least 1.
+
+A resource scope with capacity 1 is a distributed lock on one thing. Use it for "never recalculate the same account twice at the same time". [Uniqueness](/docs/uniqueness) cannot do this: it controls creating jobs, not running them.
+
+### The resource selector
+
+The selector runs once, when the job is dispatched. Its result is stored with the job. Keep it a pure function of the payload. The key follows the same rules as uniqueness keys: 1 to 512 UTF-8 bytes, no control characters, case-sensitive. A throwing selector fails the dispatch with `key_selector_failed`.
+
+### Changing a capacity
+
+Queue and job-type scopes are created at startup if they do not exist. Resource scopes are created by the first dispatch that needs them. **An existing scope is never overwritten from code.** If you change `MaxConcurrent(5)` to `MaxConcurrent(10)` and redeploy, the stored capacity stays 5 and the difference is reported as drift.
+
+Change a live capacity with the CLI, the dashboard or `ICapacityControl`:
+
+```bash
+runwick capacity list --kind job-type
+runwick capacity set job-type pdf.render 10
+```
+
+```csharp
+using Runwick.Management;
+
+var result = await capacity.SetScopeCapacityAsync("job-type", "pdf.render", 10, expectedPolicyRevision,
+    new ManagementActor("ops-bot", "Ops bot", "service"));
+```
+
+Lowering a capacity revokes nothing. Jobs already running keep their slots; new claims wait until the count drops below the new limit.
+
+### Fencing tokens
+
+A worker can lose its lease and keep running, for example after a long pause. With a capacity-1 resource scope, another worker can then take the slot while the first one is still writing. Runwick cannot stop the first worker's code, but each new holder of a capacity-1 resource scope gets a **fencing token**: a number that only goes up.
+
+```csharp
+public sealed class SyncInvoiceHandler(IJobContext context, InvoiceApi api) : IJobHandler<SyncInvoice>
+{
+    public Task HandleAsync(SyncInvoice job, CancellationToken ct)
+    {
+        // One capacity-1 resource scope (PerResource(..., 1)), so one fence.
+        var fence = context.Fences.Single();
+        return api.UpdateAsync(job.InvoiceId, job.Data, fencingToken: fence.Value, ct);
+    }
+}
+```
+
+The token only protects you if the other system remembers the highest value it has seen and rejects lower ones.
+
+## Rate limits
+
+A rate limit allows at most N **run authorizations** in any rolling window of time:
+
+```csharp
+// At most 100 runs of this job type per minute, across all workers.
+runwick.ConfigureJob<SendSms>().RollingWindow(maxExecutions: 100, window: TimeSpan.FromMinutes(1));
+
+// At most 10 runs per customer per second.
+runwick.ConfigureJob<CallPartnerApi>()
+    .RollingWindowPerResource(job => $"customer:{job.CustomerId}", maxExecutions: 10, window: TimeSpan.FromSeconds(1));
+```
+
+| Bound | Value |
+|---|---|
+| Limit | 1 to 100,000 per window |
+| Window | whole milliseconds, 1 second to 24 hours |
+| Rate scopes per job | at most 8, and at most one `RollingWindow` for the job type |
+
+"Rolling" means the window always ends now. It is never "this calendar minute", so 200 cannot slip through across a minute boundary.
+
+### What happens at the limit
+
+When a scope is full, the job is **deferred**: it goes back to waiting with a new earliest start time, roughly when the oldest run in the window drops out (at least 250 ms later, plus up to 100 ms of jitter). A deferral costs nothing: no execution, no retry budget. The worker's slot is freed at once. The deferral time is a hint, not a reservation; another worker may take the capacity first.
+
+If a job needs several rate scopes, it needs room in all of them, or none is charged. A run that fails after it was authorized keeps its charge, and its retry needs a new one.
+
+### What a rate limit counts
+
+The limit counts authorizations, the moment Runwick says "run now". It does not count your handler's later HTTP calls. A handler that waits five minutes before calling the API, or calls it three times, is not tracked. If your provider is strict, add a limiter around the HTTP client too.
+
+### Turn on rate_admission first
+
+Rate limits need the store capability `rate_admission`, raised once per application. Until then, dispatching a job that has a rate limit is refused with `rate_admission_not_active` and nothing is written.
+
+<Steps>
+  <Step title="Start the application once">
+
+This registers the application in the store.
+
+  </Step>
+  <Step title="Activate the capability">
+
+```bash
+runwick store activate-capability --name rate_admission --application my-app --provider postgres --connection-env MY_CONN
+```
+
+Use `--provider sqlite` or `--provider redis` for the other stores. From code: `RunwickPostgresMigrations.ActivateCapabilityAsync(connectionString, "my-app", "rate_admission", "deploy")` (the SQLite and Redis migration classes have the same method).
+
+  </Step>
+  <Step title="Restart">
+
+The step is done once per application.
+
+  </Step>
+</Steps>
+
+<Callout type="warning" title="This cannot be undone">
+
+A capability is never lowered. After activation, older Runwick binaries that do not know `rate_admission` can no longer create jobs for that application. Upgrade every process first. See [Upgrades](/docs/upgrades).
+
+</Callout>
+
+Rate scopes, like concurrency scopes, are created by the first dispatch that needs them and are not overwritten from code later.
+
+## Next
+
+- [Workers](/docs/workers): pool sizes and automatic concurrency.
+- [Queues and priorities](/docs/queues-and-priorities)

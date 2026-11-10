@@ -1,0 +1,174 @@
+---
+title: Upgrades and restores
+description: How to upgrade Runwick safely, why there is no rolling upgrade, and what a restore from backup does and does not bring back.
+section: Operations
+order: 9
+---
+
+Read this before your first upgrade. One rule shapes everything else:
+
+<Callout type="warning" title="One binary, one store revision">
+
+A Runwick release works with exactly one store revision. Once the new schema is in place, the previous release cannot run at all: it cannot create work and it cannot finish work. There are no down migrations. The only way back is the backup you took before migrating.
+
+</Callout>
+
+So an upgrade is a short stop of new work: **drain, stop the old processes, migrate, reopen, start the new ones**. Plan for that, not for a rolling deploy.
+
+## Before you start
+
+- Use the CLI from the **new** release for `migrate`, and the **currently deployed** CLI for the `store` commands before migrating. Check with `runwick version`.
+- Have the migration-role credentials. The app's runtime role cannot run these commands.
+- Know every process that uses the store: workers, producers, schedulers, dashboards, CLI hosts. You must be able to stop each one. Runwick cannot stop them for you, and cannot prove that they stopped.
+
+The examples use PostgreSQL. Use `--provider sqlite` with a database file, or `--provider redis` with a Redis configuration string, the same way. `RUNWICK_STORE` is the name of an environment variable holding the migration-role connection string.
+
+## Upgrade, step by step
+
+<Steps>
+<Step title="Back up">
+
+PostgreSQL: `pg_dump -Fc mydb > before-upgrade.dump`. SQLite: stop every process on the file and copy it (with its `-wal` and `-shm` files), or run `sqlite3 runwick.db ".backup before-upgrade.db"`. Redis: copy the AOF or RDB files the way you normally do.
+
+</Step>
+<Step title="Look, then drain">
+
+```bash
+runwick store status    --provider postgres --connection-env RUNWICK_STORE
+runwick store admission --provider postgres --connection-env RUNWICK_STORE --mode drain
+```
+
+`store status` shows the store revision, the revision this CLI expects, each application's admission mode, and how many leases and worker heartbeats exist. Drain stops all new work (dispatch, claims, scheduled jobs, retries) and lets running work keep renewing and finish. Add `--application NAME` to drain one application.
+
+If you get `migration_lock_timeout`, a transaction that stages jobs has been open for over 5 seconds. Wait and try again.
+
+</Step>
+<Step title="Wait, then stop every old process">
+
+Run `store status` until it shows no owned leases, or decide to abandon what remains (an abandoned lease expires and the new version recovers it). Then stop the old workers, producers, schedulers and dashboards yourself.
+
+Do not read an expired lease or an expired heartbeat as "stopped". A paused or cut-off process looks exactly the same.
+
+</Step>
+<Step title="Migrate">
+
+```bash
+runwick migrate --provider postgres --connection-env RUNWICK_STORE
+```
+
+It prints the store ID, the new revision and what it applied. Running it again applies nothing.
+
+</Step>
+<Step title="Reopen">
+
+```bash
+runwick store admission --provider postgres --connection-env RUNWICK_STORE --mode open
+```
+
+Reopen **before** starting the new processes. A process that starts while its application is drained is refused at startup with `AdmissionClosedException`, because registering its queues counts as new work. Nothing was written; reopen and start it again.
+
+</Step>
+<Step title="Start the new release">
+
+Start workers, then producers, then dashboards. Check with `runwick doctor --connection-env RUNWICK_STORE` (the revision check passes when the CLI and the store agree) and `store status`.
+
+</Step>
+</Steps>
+
+### If migrate fails
+
+| Code | Meaning | What to do |
+|---|---|---|
+| `migration_connection_lost` | The session holding the migration lock died | Run again; it resumes where it stopped |
+| `migration_lock_timeout`, `migration_lock_unavailable` | Another migrator, or a long transaction | Wait, run again |
+| `schema_validation_failed` | Something in the database differs from what this release expects | Do not force it. The store stays at the last good revision and no release can run on it. Read the message, repair or restore, run again |
+| `migration_checksum_mismatch` | A released migration was changed | Stop. You are running a different build from the one that migrated this store |
+| `migration_unknown` | The store is **newer** than this CLI | You are rolling back by accident. Use the matching CLI, or restore |
+
+### If it goes wrong
+
+- **Before migrate finished:** nothing changed shape. Reopen with `--mode open` and keep running the old release.
+- **After migrate:** the old release cannot run. Restore the backup from step 1 and run the old release with the old CLI. Work done after the backup is lost.
+- **An old process is still running:** its next call is refused and nothing is written. Stop it anyway.
+
+## Capabilities cannot be undone
+
+`scheduler` and `rate_admission` are turned on with `runwick store activate-capability`. That is a second one-way door, separate from migrations:
+
+- A capability is never lowered. There is no command to turn it off.
+- A release that does not know the capability can no longer create work for that application. It can still renew and finish jobs it already holds.
+- Each activation writes an audit row and an event.
+
+Activate only after every process on the store runs a release that supports it.
+
+## Schedules after an upgrade
+
+- While an application is drained, the scheduler creates no jobs and its position does not move. After reopening, each schedule's misfire policy decides what happens to the fires it missed: skipped, run once, or caught up.
+- If a new release brings a new schedule evaluator or new time-zone data, roll the release out to **every** scheduler host first, and only then change schedule definitions to use it. A host that does not know the new version skips that schedule and says so in its logs.
+
+## Restoring from a backup
+
+A restore is a step back in time, and Runwick cannot tell that it happened. After a restore:
+
+- jobs and results written after the backup are gone;
+- a dispatch your callers saw succeed may now be unknown, and resending it creates the job again unless its idempotency key survived;
+- schedules move back and their fires run again or are skipped, following each schedule's misfire policy;
+- fencing tokens and rate-limit windows can hand out values they already handed out;
+- outbox messages delivered after the backup may be delivered again.
+
+Runwick does not undo emails sent or payments taken in the lost window. You reconcile those.
+
+### Replace, or copy?
+
+| Situation | Identity |
+|---|---|
+| **Replace** a broken store. The original is gone and will never run again | Keep the store ID |
+| **Copy** that runs beside the original (staging, inspection, disaster-recovery rehearsal) | Give it a **new** ID before anything connects |
+
+When unsure, give it a new ID. A new ID is harmless. A duplicate ID lets commands meant for one store land in the other.
+
+<Steps>
+<Step title="Stop everything that can write">
+
+Workers, producers, schedulers, dashboards, CLI hosts. If the old store is still reachable, put it in maintenance so a straggler is refused: `store admission --mode drain`, then `--mode maintenance`. Maintenance can only be reached from drain.
+
+</Step>
+<Step title="Restore it">
+
+PostgreSQL: `createdb restored && pg_restore -d restored --no-owner before-upgrade.dump`. SQLite: copy the file back. Redis: restore the AOF the way you normally do. A backup from an older schema needs the older release and CLI if you want to stay on that release.
+
+```bash
+runwick store status --provider postgres --connection-env RUNWICK_RESTORED
+```
+
+</Step>
+<Step title="Copy only: give it a new identity">
+
+```bash
+runwick store admission  --provider postgres --connection-env RUNWICK_RESTORED --mode drain
+runwick store admission  --provider postgres --connection-env RUNWICK_RESTORED --mode maintenance
+runwick store reidentify --provider postgres --connection-env RUNWICK_RESTORED --confirm
+```
+
+`reidentify` refuses unless every application is in maintenance and the store records no live leases or heartbeats. Right after a restore it may refuse because the backup carried heartbeats of processes that were running; wait until they expire. After it succeeds, anything bound to the old ID is refused with `store_identity_mismatch` and nothing is written.
+
+</Step>
+<Step title="Reopen and start">
+
+`store admission --mode open`, then start the processes.
+
+</Step>
+<Step title="Reconcile">
+
+Go through effects outside the database, lost acknowledgements, schedules, fences and outbox deliveries, as listed above. Decide per job type whether to run again or suppress.
+
+</Step>
+</Steps>
+
+## What Runwick does not promise
+
+- No mixed-version operation, no rolling upgrade across schema revisions, no zero-downtime migration. Drain pauses new work, not running work.
+- No downgrade. Rolling back means restoring, and restoring loses what came after the backup.
+- No proof that an old process has stopped, from leases, heartbeats or time.
+- No automatic detection of a copy. You must re-identify it yourself.
+- Admission and identity changes write no audit row. Capability activations do.

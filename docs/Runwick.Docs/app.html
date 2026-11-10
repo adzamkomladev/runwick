@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f8f7ee" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1a1019" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23241623'/%3E%3Cpath d='M35 10 16 36h14l-3 18 19-26H32z' fill='%23c7ef00'/%3E%3C/svg%3E" />
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('runwick-docs-theme')
+          var dark = stored === 'dark' || ((!stored || stored === 'system') && matchMedia('(prefers-color-scheme: dark)').matches)
+          document.documentElement.classList.toggle('dark', dark)
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+        } catch (_) {}
+      })()
+    </script>
+    @inertiaHead
+    @viteReactRefresh
+    @vite("ClientApp/app.tsx")
+  </head>
+  <body>
+    @inertia
+  </body>
+</html>

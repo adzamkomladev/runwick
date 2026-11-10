@@ -1,0 +1,13 @@
+```csharp
+[JobName("invoice.send")]
+public sealed record SendInvoice(Guid InvoiceId) : IQueueJob;
+
+public sealed class SendInvoiceHandler(IBilling billing)
+    : IJobHandler<SendInvoice>
+{
+    // May run more than once: pass a stable key.
+    public Task HandleAsync(SendInvoice job, CancellationToken ct) =>
+        billing.SendAsync(job.InvoiceId, idempotencyKey:
+            job.InvoiceId.ToString(), ct);
+}
+```

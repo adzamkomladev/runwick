@@ -1,0 +1,181 @@
+---
+title: Job context
+description: Read facts about the current run with IJobContext, log with them, and wrap runs in middleware.
+section: Jobs
+order: 9
+---
+
+`IJobContext` gives a handler read-only facts about the run it is in: the job ID, which run this is, the queue, metadata, schedule and more. Inject it into the handler's constructor. It is not a `HandleAsync` argument, so handlers that do not need it simply leave it out.
+
+```csharp
+public sealed class SendInvoiceHandler(IJobContext context, ILogger<SendInvoiceHandler> logger, IMailer mailer)
+    : IJobHandler<SendInvoice>
+{
+    public async Task HandleAsync(SendInvoice job, CancellationToken ct)
+    {
+        logger.LogInformation("Sending invoice {InvoiceId}, job {JobId}, run {Run} of {Max}",
+            job.InvoiceId, context.JobId, context.ExecutionNumber, context.MaxExecutions);
+
+        // The job ID is the same on every retry: a good idempotency key.
+        await mailer.SendAsync(job.InvoiceId, idempotencyKey: context.JobId.ToString(), ct);
+    }
+}
+```
+
+There is one context per run. It can only be resolved inside the run's DI scope; resolving it anywhere else throws `InvalidOperationException`.
+
+## What it exposes
+
+### Identity
+
+| Property | Meaning |
+|---|---|
+| `Application` | The application name. |
+| `JobId` | The job's permanent ID. Stable across retries and manual retries. |
+| `AttemptId` | The ID of this one attempt. New on every try. |
+| `JobName` | The stored job name, for example `email.welcome`. |
+| `CreatedAt` | When the store created the job. |
+
+### Runs and budget
+
+| Property | Meaning |
+|---|---|
+| `ExecutionNumber` | Which run this is within the current generation, from 1. |
+| `MaxExecutions` | The run budget for this generation. |
+| `Generation` | 1 for the original dispatch. A manual retry or rerun starts generation 2, 3 and so on, each with a fresh budget. |
+
+`ExecutionNumber == MaxExecutions` means this is the last automatic try. You might log louder, or send a different alert, on that run.
+
+### Routing and payload
+
+| Property | Meaning |
+|---|---|
+| `Queue`, `Priority` | Where the job was routed. |
+| `OriginalPayloadVersion` | The version of the stored bytes. |
+| `CurrentPayloadVersion` | The version handed to the handler after upgrades. |
+| `SerializerProfileId`, `SerializerProfileVersion` | `runwick.json`, 1. |
+| `GetPayload<TJob>()` | The same upgraded payload the handler received. Useful in middleware. `TJob` must be the registered current type. |
+
+### Metadata, tracing and fences
+
+| Property | Meaning |
+|---|---|
+| `Metadata` | Business metadata passed at dispatch, such as a tenant. |
+| `Trace` | The W3C `traceparent` and `tracestate` captured at dispatch. |
+| `Fences` | One fencing token per capacity-1 resource scope this run holds. See [Rate limits and concurrency](/docs/rate-limits-and-concurrency#fencing-tokens). |
+| `Schedule` | The schedule occurrence that created this job, or `null`. |
+| `CancellationCauses` | Which cancellation causes Runwick has seen. See [Cancellation](/docs/cancellation). |
+| `Items` | A per-run dictionary for passing data between middleware and the handler. Never saved. |
+
+Everything except `Items` and `CancellationCauses` stays the same for the whole run.
+
+### Scheduled jobs
+
+For a job created by a [schedule](/docs/schedules), `Schedule` holds:
+
+| Property | Meaning |
+|---|---|
+| `ScheduleName` | The schedule key. |
+| `ScheduledAt` | The occurrence this job belongs to. |
+| `CoveredFrom`, `CoveredUntil` | The time range the job covers. After a missed run with the `RunOnce` policy, one job can cover several occurrences. |
+
+```csharp
+if (context.Schedule is { } s)
+{
+    logger.LogInformation("Cleanup for {From:u} to {Until:u}", s.CoveredFrom, s.CoveredUntil);
+}
+```
+
+## What it does not expose
+
+The context is read-only by design. It has no database connection, no lease, no way to extend the lease or the timeout, and **no progress reporting**. Lease renewal is done by the worker, not the handler, so a handler cannot keep a job alive forever.
+
+If you need to report progress, write it to your own table or cache keyed by `JobId`.
+
+## Logging
+
+Runwick does not add a logging scope for you. Inject `ILogger<T>` as usual and include the IDs you need:
+
+```csharp
+using (logger.BeginScope(new Dictionary<string, object>
+{
+    ["JobId"] = context.JobId.ToString(),
+    ["AttemptId"] = context.AttemptId.ToString(),
+}))
+{
+    await DoWorkAsync(job, ct);
+}
+```
+
+When tracing is on, each run gets a `process {queue}` span, and the handler runs inside a `runwick.execute` child span. Spans your own code starts become its children, and the run is linked to the dispatch that created it. See [Observability](/docs/observability).
+
+## Middleware
+
+Middleware wraps every run, like ASP.NET Core middleware wraps a request. It receives the same context and token as the handler:
+
+```csharp
+public sealed class TenantMiddleware(ITenantAccessor tenants) : IJobMiddleware
+{
+    public async Task<JobExecutionResult> InvokeAsync(IJobContext context, JobExecutionDelegate next, CancellationToken ct)
+    {
+        if (!context.Metadata.TryGetValue("tenant", out var tenant))
+        {
+            return JobExecutionResult.Failed("tenant_missing", "Every job needs a tenant.");
+        }
+
+        tenants.Current = tenant;
+        context.Items["tenant"] = tenant;
+        return await next();   // call exactly once
+    }
+}
+```
+
+A middleware either calls `next()` exactly once and returns its result, or returns a result without calling it. Calling `next()` twice, or returning while it is still running, is a contract fault and fails the job permanently.
+
+| Result | Meaning |
+|---|---|
+| `JobExecutionResult.Succeeded()` | Success. Return it explicitly if you skip the handler on purpose. |
+| `JobExecutionResult.Retry(reason, delay)` | Retryable failure. Costs one run. |
+| `JobExecutionResult.Failed(code, message)` | Permanent failure. |
+| `JobExecutionResult.Cancelled(reason)` | Ends the job as cancelled. |
+
+Register middleware globally, per job, or by alias so that a contracts assembly can name middleware without referencing its code:
+
+<Tabs>
+  <Tab label="Global">
+
+```csharp
+runwick.UseMiddleware<TenantMiddleware>();
+```
+
+  </Tab>
+  <Tab label="Per job">
+
+```csharp
+runwick.ConfigureJob<SendInvoice>().UseMiddleware<AuditMiddleware>();
+```
+
+  </Tab>
+  <Tab label="By alias">
+
+```csharp
+// In the contracts assembly:
+[JobName("billing.invoice.send")]
+[UseJobMiddleware("audit", Order = 10)]
+public sealed record SendInvoice(Guid InvoiceId) : IQueueJob;
+
+// On the worker:
+runwick.AddMiddleware<AuditMiddleware>("audit");
+```
+
+  </Tab>
+</Tabs>
+
+The order, outer to inner, is: global middleware in registration order, then attribute aliases by `Order` (ties by alias name), then fluent per-job middleware, then the handler. Middleware is scoped and resolved fresh for every run. A worker that sees an alias nobody registered refuses to start (`unknown_middleware_alias`); a producer-only app does not check aliases.
+
+Middleware cannot extend leases, reset budgets or finish a job itself. Those are the worker's job.
+
+## Next
+
+- [Retries and timeouts](/docs/retries-and-timeouts)
+- [Testing](/docs/testing): run handlers without a database.

@@ -1,0 +1,169 @@
+---
+title: Observability
+description: Traces, metrics and logs from Runwick, how to export them with OpenTelemetry, and how to read the numbers.
+section: Operations
+order: 5
+---
+
+Runwick uses the standard .NET tools and exports nothing unless you ask:
+
+- **Traces:** one `ActivitySource` named `Runwick`.
+- **Metrics:** one `Meter` named `Runwick`, with fixed names, units and attributes.
+- **Logs:** `ILogger`, with fixed event IDs.
+
+Payloads, credentials, connection strings and exception messages stay out by default. Job IDs may appear in spans and logs, never in metrics.
+
+## Turning it on with OpenTelemetry
+
+```bash
+dotnet add package Runwick.OpenTelemetry
+dotnet add package OpenTelemetry.Extensions.Hosting
+dotnet add package OpenTelemetry.Exporter.OpenTelemetryProtocol
+```
+
+```csharp
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
+
+builder.Services.AddOpenTelemetry()
+    .WithTracing(t => t.AddRunwickInstrumentation().AddOtlpExporter())
+    .WithMetrics(m => m.AddRunwickInstrumentation().AddOtlpExporter());
+```
+
+`Runwick.OpenTelemetry` adds no exporter; use the one you already have. On the metrics side it keeps only Runwick's own attributes and sets a cardinality limit per instrument.
+
+Without OpenTelemetry, any listener works: subscribe to the `Runwick` source and meter by name (the constant is `RunwickTelemetry.SourceName`).
+
+## Options
+
+```csharp
+builder.Services.AddRunwick(r => r
+    .Application("my-app")
+    .UsePostgres(connectionString)
+    .Telemetry(t =>
+    {
+        t.CollectApplicationMetrics = true;    // this process samples queue depth for the whole application
+        t.ApplicationSamplePeriod = TimeSpan.FromSeconds(15);
+    }));
+```
+
+| `RunwickTelemetryOptions` | Default | Meaning |
+|---|---|---|
+| `RecordExceptionDetails` | `false` | Put a cleaned, size-limited exception message on spans and on log event 1011 |
+| `MaxSeriesPerInstrument` | 1,000 | Attribute combinations per instrument before measurements go to an overflow series (100 to 10,000) |
+| `CollectApplicationMetrics` | `false` | Make this process the application-wide collector |
+| `ApplicationSamplePeriod` | 15 s | How often the collector samples (5 s to 5 min) |
+| `CollectorName` | `"default"` | Value of the `runwick.collector` attribute |
+
+If you raise `MaxSeriesPerInstrument`, pass the same number to `AddRunwickInstrumentation(o => ...)` so the SDK limit matches.
+
+## Traces
+
+| Span | When |
+|---|---|
+| `send {queue}` | A dispatch, from prepare to confirmed reply |
+| `stage {queue}` | Staging a job inside your own transaction |
+| `process {queue}` | One attempt, from claim to stored result. Each attempt starts a new trace, linked to the dispatch |
+| `runwick.begin`, `runwick.execute`, `runwick.attempt.cleanup`, `settle {queue}` | Steps inside `process`. Your handler's spans are children of `runwick.execute` |
+| `runwick.recover` | Recovery of one expired lease |
+| `runwick.schedule.materialize` | The scheduler creating jobs |
+| `runwick.management.command` | A management change |
+| `runwick.retention.batch` | One cleanup batch |
+
+Lease renewals are not spans; they repeat too often. They show up in metrics.
+
+## Metrics
+
+Durations are in seconds unless noted.
+
+| Metric | Type | What it counts |
+|---|---|---|
+| `runwick.dispatch.operations` | Counter | Dispatches by result, kind and queue |
+| `runwick.dispatch.duration` | Histogram | Dispatch time |
+| `runwick.execution.authorized` | Counter | Executions that started, by queue, job name and pool |
+| `runwick.execution.duration` | Histogram | Handler time, by queue, job name and outcome |
+| `runwick.execution.start_delay` | Histogram | Time from due to start, by queue |
+| `runwick.admission.deferred` | Counter | Starts held back (for example by a rate limit), by reason |
+| `runwick.attempt.cleanup.duration` | Histogram | Time to dispose the job's DI scope |
+| `runwick.settlement.duration` | Histogram | Time to store a result, by settlement result |
+| `runwick.storage.operation.duration` | Histogram | Store calls, by operation, result and I/O class |
+| `runwick.lease.renewals` | Counter | Lease renewals by result |
+| `runwick.lease.margin` | Histogram | Lease time left at renewal, by pool |
+| `runwick.lease.authority_lost` | Counter | Attempts that lost their lease, by reason |
+| `runwick.recoveries` | Counter | Expired leases recovered |
+| `runwick.scaling.decisions` | Counter | Automatic concurrency changes, by pool, direction and reason |
+| `runwick.schedule.materialization.delay` | Histogram | How late scheduled jobs were created |
+| `runwick.schedule.occurrences` | Counter | Schedule occurrences by disposition |
+| `runwick.management.requests` | Counter | Management requests by operation and result |
+| `runwick.management.duration` | Histogram | Management request time |
+| `runwick.retention.rows` | Counter | Rows deleted by cleanup, by record class |
+| `runwick.retention.batches` | Counter | Cleanup batches by class and result |
+| `runwick.retention.batch.duration` | Histogram | Cleanup batch time |
+| `runwick.telemetry.dropped` | Counter | Log records dropped by Runwick's own limits |
+| `runwick.telemetry.overflow` | Counter | Measurements sent to the overflow series |
+| `runwick.worker.tickets` | Gauge | Tickets by pool and phase |
+| `runwick.worker.target` | Gauge | Target ticket count by pool |
+| `runwick.worker.oldest_unsettled.age` | Gauge | Oldest result not yet confirmed by the store, by pool |
+| `runwick.worker.admission` | Gauge | Whether a pool is claiming work |
+| `runwick.retention.caught_up.age` | Gauge | Time since cleanup last caught up, by class |
+| `runwick.queue.due` | Gauge, collector only | Jobs waiting and due, by queue |
+| `runwick.queue.oldest_due.age` | Gauge, collector only | Age of the oldest due job, by queue |
+| `runwick.schedule.needs_review` | Gauge, collector only | Schedules that need review |
+| `runwick.schedule.oldest_overdue.age` | Gauge, collector only | Most overdue schedule |
+| `runwick.collector.snapshot.age` | Gauge, collector only | Age of the collector's last sample |
+
+In Prometheus the names become `runwick_queue_due`, `runwick_execution_duration_seconds_bucket` and so on.
+
+## Logs
+
+Categories are `Runwick.Worker`, `Runwick.Dispatch`, `Runwick.Scheduler`, `Runwick.Outbox`, `Runwick.Management`, `Runwick.Retention`, `Runwick.Store` and `Runwick.Telemetry`. Every message has a fixed event ID, for example:
+
+| ID | Event |
+|---|---|
+| 1003 | A running attempt lost its lease |
+| 1004 | A result could not be confirmed |
+| 1011 | A handler failed |
+| 1101 | A dispatch outcome is unknown |
+| 1202 | A schedule needs review |
+| 1401 | A management sign-in failed |
+| 1501 | A cleanup batch failed |
+| 1701 | A role cannot reach the store |
+| 1703 | The store schema does not match this binary |
+
+Warnings are limited to 10 a minute per event ID per process. The rest are counted and summarised once a minute (event 1603).
+
+## Reading the numbers honestly
+
+- **Local and application-wide numbers are different.** Worker gauges describe one process and can be summed across processes. Queue depth and the oldest due job come only from processes with `CollectApplicationMetrics = true`. Usually that is one process, for example the [standalone management host](/docs/management-api#a-standalone-management-host).
+- **Never sum collector series.** Runwick does not elect a collector. If two processes collect, both report the same queue. Use `max by (runwick_queue)`; the shipped dashboard and alerts do.
+- **Missing is not zero.** When a collector's sample is older than three periods, its queue gauges disappear instead of reporting 0, and `runwick.collector.snapshot.age` keeps growing.
+- **"Due" is not "runnable".** A due job may still wait for a concurrency slot, a rate limit, a paused queue or a worker that can run it.
+- **A handler that succeeded is not a stored success.** If the result could not be confirmed, the span says `runwick.outcome = succeeded` with `runwick.settlement.result = unresolved`. A replayed command is not counted twice.
+- **Counts can be lost** when a process crashes. Use them for operations, not for billing or audit.
+
+## Grafana dashboard and Prometheus alerts
+
+`Runwick.OpenTelemetry` ships two files in its package `content` folder (they are also in the repository's `ops` folder):
+
+- `content/grafana/runwick-overview.json`: a Grafana dashboard with dispatch, execution, leases, pools, queues, schedules, management, retention and telemetry-health panels.
+- `content/prometheus/runwick-alerts.yml`: alert rules.
+
+| Alert | Fires when |
+|---|---|
+| `RunwickLeaseMarginLow` | The 5th percentile lease margin of a pool stays below 25 s |
+| `RunwickAuthorityLost` | Any attempt lost its lease in the last 10 minutes |
+| `RunwickSettlementOld` | A result has been unconfirmed for over 60 s |
+| `RunwickDueAgeRising` | A queue's oldest due job has waited over 10 minutes |
+| `RunwickFailuresRepeated` | More than 10% of a job type's executions do not succeed |
+| `RunwickScheduleLag` | A schedule is over 2 minutes late or needs review |
+| `RunwickRetentionFailing` | Cleanup fails repeatedly or has not caught up for 24 hours |
+| `RunwickCollectorStale` | No fresh collector sample, or no collector at all |
+| `RunwickStoreIncompatible` | Reads `runwick_host_readiness_incompatible`, a gauge **your host must export** from its health checks. Runwick does not emit it |
+
+<Callout type="warning" title="Thresholds are starting points">
+
+The thresholds are not tuned for your workload. Adjust them, especially the due-age and failure-rate rules.
+
+</Callout>
+
+The telemetry follows the OpenTelemetry semantic conventions version pinned in `RunwickTelemetry.SemanticConventionsVersion`, and no other.

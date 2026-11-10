@@ -1,0 +1,159 @@
+---
+title: Command line
+description: The runwick CLI - contexts, job and queue controls, store administration, and stable output for scripts and agents.
+section: Operations
+order: 4
+---
+
+`runwick` is a command-line tool with two halves:
+
+- **Management commands** (`jobs`, `queues`, `schedules`, `events`, ...) talk to a [management API](/docs/management-api) over HTTPS, with your permissions, and are audited like any other caller.
+- **Store commands** (`migrate`, `store ...`, and `doctor` with a connection) talk straight to the database, as the migration role.
+
+## Install
+
+```bash
+dotnet tool install --global Runwick.Cli
+runwick version
+```
+
+Self-contained single-file binaries also exist for Linux x64 and Windows x64.
+
+<Callout type="warning" title="Match the CLI to your release">
+
+`migrate` applies the migrations built into the CLI. Use the CLI from the same Runwick release as your application. `runwick doctor` tells you when the CLI and the store disagree.
+
+</Callout>
+
+## Contexts and sign-in
+
+A context saves a server URL, a sign-in method, a user name and the **name** of an environment variable that holds the secret:
+
+```bash
+runwick context add prod --url https://ops.example.com/runwick/api \
+  --auth basic --user ops --secret-env RUNWICK_PROD_SECRET
+runwick context use prod
+runwick login        # checks the credentials; stores nothing
+```
+
+- `--url` is the prefix you passed to `MapRunwickManagement`. It must be `https://`, or `http://` to a loopback address.
+- `--auth basic` sends a user and password; mutations fetch an antiforgery token automatically.
+- `--auth bearer` sends `Authorization: Bearer`. The server must map that API group with `.ForMachineClients()`.
+- Secrets are never written to the config file. The CLI looks for one in this order: `--secret-stdin`, the context's variable, `RUNWICK_SECRET`, then a hidden prompt (only in human mode at a terminal).
+
+The config file is `$RUNWICK_CONFIG`, or `runwick/config.json` in your application-data folder (`~/.config/runwick/config.json` on Linux). Use `--context NAME` or `--url URL` to override the current context for one command. Other commands: `context list`, `context show`, `context remove`.
+
+## Jobs
+
+```bash
+runwick jobs list --state failed --queue billing --limit 20
+runwick jobs get 0193c3a1-...
+runwick jobs tail 0193c3a1-...                 # follow one job until it ends
+runwick jobs cancel 0193c3a1-... --expected-generation 1 --expected-revision 7 --reason "duplicate import"
+runwick jobs retry  0193c3a1-...
+runwick jobs rerun  0193c3a1-...
+runwick jobs cancel-many --file stuck.jsonl    # up to 100 lines of {jobId, expectedGeneration, expectedRevision}
+runwick jobs reveal-payload 0193c3a1-... --reason "ticket 4411"   # audited
+runwick jobs reveal-error <attempt-id>                            # audited
+```
+
+`jobs list` and `jobs get` never show payloads. Only the two reveal commands do, and the server writes an audit row for each.
+
+To create a job of a registered type from a JSON payload (needs `Jobs.Dispatch`):
+
+```bash
+runwick dispatch email.welcome --payload @payload.json --queue emails --reason "resend after outage"
+echo '{"userId":"..."}' | runwick dispatch email.welcome --payload -
+```
+
+`--payload` takes `@file` or `-` for standard input. A payload is never accepted inline.
+
+## Queues, schedules and capacity
+
+```bash
+runwick queues list
+runwick queues pause default --expected-revision 3
+runwick queues resume default
+
+runwick schedules list
+runwick schedules pause nightly-report
+runwick schedules resume nightly-report --policy runOnce   # skipPaused (default), runOnce or catchUp
+runwick schedules trigger nightly-report
+runwick schedules revalidate nightly-report
+
+runwick workers list --include-expired
+runwick capacity list --kind queue
+runwick capacity set queue imports 4
+```
+
+## Events, audit and settings
+
+```bash
+runwick events tail --follow             # job events, polled every 2 s
+runwick events tail --after 9182.3       # resume from a cursor
+runwick audit list --target-kind job --from 2026-11-01T00:00:00Z
+runwick settings
+```
+
+## Expected revisions
+
+Every change says which version of the target you were looking at. If someone else changed it in the meantime, you get `stale_revision` (or `stale_generation`) and nothing happens. Two people acting on the same stale view cannot overwrite each other.
+
+In human and JSON mode you may leave out `--expected-revision` and `--expected-generation`. The CLI then reads the target first, uses what it read, and says which revision it used. In `--agent` mode they are required.
+
+Every change also has a command ID (`--command-id`, generated when you leave it out). If the reply is lost, the CLI resends the same request with the same ID up to 3 times in 30 seconds. The server answers a resend with the original result, so nothing happens twice. If no answer arrives, the result is `outcome_unknown` with the command ID; run the same command again with that `--command-id`.
+
+## Store commands
+
+These run as the migration role. The connection string comes from an environment variable (`--connection-env`) or standard input (`--connection-stdin`). It is never accepted as an argument.
+
+```bash
+runwick migrate --provider postgres --connection-env RUNWICK_STORE
+runwick store status --provider postgres --connection-env RUNWICK_STORE
+runwick store admission --mode drain --provider postgres --connection-env RUNWICK_STORE
+runwick store activate-capability --name scheduler --application my-app \
+  --provider postgres --connection-env RUNWICK_STORE
+runwick store reidentify --confirm --provider postgres --connection-env RUNWICK_STORE
+```
+
+| Command | What it does |
+|---|---|
+| `migrate` | Applies this CLI's migrations. Safe to run again |
+| `store status` | Store ID and revision, the revision this CLI expects, each application's admission mode, and counts of leases and worker heartbeats |
+| `store admission --mode` (`open`, `drain`, `maintenance`) | Drain stops new work and lets running work finish. Maintenance stops everything but status reads. Add `--application` for one application |
+| `store activate-capability --name` (`scheduler`, `rate_admission`) | Turns on a capability for an application. It cannot be undone |
+| `store reidentify --confirm` | Gives a restored copy a new identity. Offline only |
+
+`--provider` is `postgres` (default for `store` and `doctor`), `sqlite` or `redis`. `migrate` requires it. How these fit together is in [Upgrades](/docs/upgrades).
+
+## doctor
+
+```bash
+runwick doctor
+runwick doctor --connection-env RUNWICK_STORE
+```
+
+Checks that the server is reachable, the credentials work, the API version matches and the clocks agree within 5 seconds. With a connection it also checks the store: its revision against the CLI's, and the store's durability settings. A check it could not run is reported as `unverified`, never as passed.
+
+## Output for scripts and agents
+
+| Flag | Output |
+|---|---|
+| (none) | Tables and `key: value` lines for people. Errors go to stderr |
+| `--output json` | The API's JSON body on stdout. Errors are JSON on stdout too, with a non-zero exit code |
+| `--agent` | Exactly one JSON envelope per command on one line: `ok`, `result`, `error` (with `code`, `retryable` and `hint`), `commandId`, the revisions it saw, and suggested `nextActions` |
+
+`runwick --agent describe` prints every command with its arguments, options, required permission, error codes and exit codes. See [AI agents](/docs/ai-agents) for how to use it.
+
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | OK |
+| 1 | Rejected (conflict, invalid state, not found) |
+| 2 | Usage error |
+| 3 | Outcome unknown; resend with the same command ID |
+| 4 | Unavailable; retry |
+| 5 | Not signed in or not allowed |
+
+The CLI never prints secrets, cookies, tokens or connection strings, even with `--verbose`.

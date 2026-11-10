@@ -1,0 +1,237 @@
+---
+title: Troubleshooting
+description: Common startup refusals, error codes and stuck jobs, each with its cause and the fix.
+section: Reference
+order: 4
+---
+
+Runwick prefers refusing to start over running in a setup that could lose jobs. Most problems therefore show up as a clear error at startup, with a stable code. Every Runwick exception has a `Code` and a `Disposition`: `KnownNotApplied` means nothing was written, `OutcomeUnknown` means it may or may not have been.
+
+## Startup refusals
+
+<Accordion>
+  <AccordionItem title="Runwick configuration is invalid (configuration_invalid)">
+
+`RunwickConfigurationException` lists every problem at once, one per line, as `[code] subject: message`. Common codes:
+
+- `invalid_timing`: worker timings break one of the startup rules, for example a shorter `LeaseDuration` without shorter renewals. See [Startup validation](/docs/configuration#startup-validation).
+- `invalid_pool`: a pool subscribes a queue that no job or `Queue(...)` call registers, subscribes one twice, or has a bad weight or size.
+- `pool_without_queue`, `pool_budget_exceeded`: a pool has no queue, or pool maximums add up to more than `MaxOutstandingAttempts` (16 by default).
+- `missing_store`: no `UsePostgres`, `UseSqlite` or `UseRedis`, or an empty connection string.
+- `invalid_policy`: a store option is out of range, or the SQLite connection string asks for something refused.
+
+Fix the listed settings. Runwick never adjusts a value for you.
+
+  </AccordionItem>
+  <AccordionItem title="scheduler_not_active">
+
+The application registers schedules, but the `scheduler` capability has not been raised. Start the application once so it registers, then, with the migration role:
+
+```bash
+runwick store activate-capability --name scheduler --application my-app --provider postgres --connection-env RUNWICK_MIGRATE_CONN
+```
+
+Use `--provider sqlite` or `--provider redis` for those stores, and `--name rate_admission` if you use rate limits. Restart afterwards. This is done once per application and cannot be undone. See [Schedules](/docs/schedules).
+
+  </AccordionItem>
+  <AccordionItem title="The Runwick schema is not installed, or schema_incompatible">
+
+The store has not been migrated, or it was migrated by a different Runwick version than the one running. Workers never migrate on startup. Run the migration with the same Runwick version as the app:
+
+```bash
+runwick migrate --provider postgres --connection-env RUNWICK_MIGRATE_CONN
+```
+
+or `RunwickPostgresMigrations.MigrateAsync` / `RunwickSqliteMigrations.MigrateAsync` / `RunwickRedisMigrations.MigrateAsync` from code. See [Upgrades](/docs/upgrades) for the order of steps when the version changes.
+
+  </AccordionItem>
+  <AccordionItem title="Startup refused: the application's admission is closed">
+
+The application was drained or put in maintenance (for example during an upgrade), so new processes are refused with `AdmissionClosedException` (`admission_closed`). Reopen it when the upgrade is done:
+
+```bash
+runwick store admission --mode open --provider postgres --connection-env RUNWICK_MIGRATE_CONN
+```
+
+Then start the process again. The error is safe to retry.
+
+  </AccordionItem>
+  <AccordionItem title="Migration fails: server_version_unsupported, encoding_unsupported, migration_lock_unavailable">
+
+- `server_version_unsupported`: PostgreSQL 16 or later is required.
+- `encoding_unsupported`: the database must use `UTF8`. Create a new database with that encoding.
+- `migration_lock_unavailable`: another migration runner held the lock for 60 seconds. Wait for it to finish, or find the stuck session.
+
+Run migrations with a role that may create the `runwick` schema. The app's own role does not need that right.
+
+  </AccordionItem>
+</Accordion>
+
+## SQLite
+
+<Accordion>
+  <AccordionItem title="The SQLite database is on a network share">
+
+The file is on a UNC path or network drive (Windows) or on a network filesystem such as NFS, SMB/CIFS, 9p or sshfs (Linux). The message names the filesystem type. SQLite's locking is not safe across machines, so Runwick refuses it. Move the file to a local disk. If several machines must share jobs, use [PostgreSQL](/docs/postgresql) or [Redis](/docs/redis).
+
+  </AccordionItem>
+  <AccordionItem title="store_profile_mismatch on SQLite">
+
+A connection did not end up in WAL mode with `synchronous = FULL` and `foreign_keys = ON`. The usual cause is a file that was never migrated: the migration switches the file to WAL. Run `RunwickSqliteMigrations.MigrateAsync` (or `runwick migrate --provider sqlite`) on the same file.
+
+  </AccordionItem>
+  <AccordionItem title="invalid_policy for a SQLite connection string">
+
+In-memory databases (`:memory:`, `Mode=Memory`), an empty `Data Source`, `Mode=ReadOnly`, `Cache=Shared` and `Foreign Keys=False` are refused. Point `Data Source` at a file. In tests, use a temporary file per test; see [Testing](/docs/testing).
+
+  </AccordionItem>
+  <AccordionItem title="SQLITE_BUSY from my own transaction">
+
+Your transaction started deferred and could not take the write lock when it first wrote. Runwick passes the error through unchanged. Begin transactions that stage jobs with `BeginTransaction(deferred: false)`, keep them short, and retry the whole transaction.
+
+  </AccordionItem>
+</Accordion>
+
+## Redis
+
+<Accordion>
+  <AccordionItem title="Redis configuration refused at startup">
+
+The store's check found a setting it cannot run on. The error names the setting and the value it saw, for example `appendfsync=everysec` or `maxmemory-policy=allkeys-lru`. Set these on the server and restart the app:
+
+```conf
+appendonly yes
+appendfsync always
+no-appendfsync-on-rewrite no
+maxmemory-policy noeviction
+aof-load-truncated no
+```
+
+A value reported as `unverifiable` means an ACL blocked `CONFIG GET` or `MODULE LIST`. Allow both for Runwick's user. Managed services that hide `CONFIG` are not supported. See [Redis](/docs/redis).
+
+  </AccordionItem>
+  <AccordionItem title="topology_unsupported on Redis">
+
+Runwick needs exactly one standalone primary. It refuses a configuration string with several endpoints or a Sentinel service name, and a server that reports itself as a replica or as part of a Cluster. Point the app at the primary only.
+
+  </AccordionItem>
+  <AccordionItem title="Redis store unhealthy while running (store_profile_mismatch)">
+
+A recheck (every 30 seconds by default) found a changed setting, for example someone ran `CONFIG SET appendfsync everysec`. Runwick stops sending new work until a later check passes; calls already sent finish. Restore the settings. Work resumes on its own.
+
+  </AccordionItem>
+  <AccordionItem title="store_identity_mismatch or history_discontinuity">
+
+Redis came back empty (for example after `FLUSHALL`), with another store's identity, or with an older revision than this process saw (for example a restored backup or a promoted replica). Runwick stops admitting work and treats every lease it held as lost. Check what happened to the server. Restart the processes only once the store's history is the one you want to keep, and accept that recent work may be lost or repeated.
+
+  </AccordionItem>
+</Accordion>
+
+## Dispatching
+
+<Accordion>
+  <AccordionItem title="The outcome of operation ... is unknown (outcome_unknown, cancelled_after_send, expired_unknown)">
+
+The request was sent, but no answer came back: a timeout, a dropped connection, or your cancellation token fired after sending. The job may or may not exist. Do not dispatch a new job blindly. Use the operation ID and the prepared request on the exception:
+
+```csharp
+catch (DispatchOutcomeUnknownException ex)
+{
+    var resolution = await prepared.ResolveAsync(ex.OperationId, ct);   // IPreparedJobDispatcher
+    // Confirmed: the job exists. Otherwise, re-send ex.Prepared with prepared.DispatchAsync(...);
+    // a replay of the same operation never creates a second job.
+}
+```
+
+See [Delivery guarantees](/docs/delivery-guarantees#resolving-an-unknown-outcome).
+
+  </AccordionItem>
+  <AccordionItem title="local_capacity_exceeded">
+
+Too many dispatch calls were waiting in this process: more than 64 waiting for one of 8 slots, or a wait longer than 1 second. Nothing was sent. Retry with backoff, dispatch in batches with `DispatchManyAsync`, or raise `ProducerOptions.MaxConcurrentCalls` (this adds database connections on PostgreSQL).
+
+  </AccordionItem>
+  <AccordionItem title="command_expired">
+
+A prepared dispatch was sent after its deadline (5 minutes after it was prepared, by default). It can never apply. Prepare a new one.
+
+  </AccordionItem>
+  <AccordionItem title="command_conflict">
+
+The same operation ID was sent with different content. A prepared dispatch must be re-sent unchanged. For management commands and the CLI, use a new `--command-id` for a different request.
+
+  </AccordionItem>
+  <AccordionItem title="uniqueness_conflict">
+
+A window key was reused with a different payload or options, or a window key and an active key point at two different jobs. Runwick refuses rather than hand back an unrelated job. `UniquenessConflictException.ConflictingJobId` names the existing job. Check how you build the key. See [Uniqueness](/docs/uniqueness).
+
+  </AccordionItem>
+  <AccordionItem title="transaction_invalid, transaction_store_mismatch, transaction_profile_mismatch">
+
+`StageAsync` or `CompleteInTransactionAsync` refused your transaction: it is completed, read-only or has no connection; it points at a different database or file from the store; or (SQLite) its connection lacks `foreign_keys = 1` and `synchronous = FULL`. See [Transactions](/docs/transactions).
+
+  </AccordionItem>
+</Accordion>
+
+## Running jobs
+
+<Accordion>
+  <AccordionItem title="A job failed with staged_completion_not_committed">
+
+The handler called `CompleteInTransactionAsync` but returned while the transaction was still open, or after rolling it back. Commit before the handler returns. If you roll back on purpose and want a retry, throw an exception instead of returning.
+
+  </AccordionItem>
+  <AccordionItem title="JobOwnershipLostException (ownership_lost)">
+
+The worker no longer owns the job, usually because its lease expired during a long pause or a long transaction. Roll back your transaction. Another worker may run the job. Keep transactions inside handlers short, and check that the process is not starved of CPU.
+
+  </AccordionItem>
+  <AccordionItem title="A job ran twice">
+
+That is allowed: delivery is at-least-once. It happens after a crash, a lost lease or a lost reply. Make the handler safe to repeat with an idempotency key, or use transactional completion for changes in the same database. See [Delivery guarantees](/docs/delivery-guarantees).
+
+  </AccordionItem>
+  <AccordionItem title="Jobs stay pending">
+
+Check, in this order:
+
+- a worker pool subscribes the job's queue (`p.Queues(...)`), and a worker process is running;
+- the queue is not paused (`runwick queues list`);
+- the job has no `NotBefore` in the future;
+- a rate limit or concurrency limit is not holding it back;
+- the application is not drained (`runwick store status`).
+
+The [dashboard](/docs/dashboard) shows queue state, workers and why work is waiting.
+
+  </AccordionItem>
+  <AccordionItem title="Handlers are cut off at shutdown">
+
+Runwick's shutdown takes up to 25 seconds: 15 to drain, 5 to cancel, 5 to finish. If the host's own shutdown timeout is shorter, the host stops first. Keep `HostOptions.ShutdownTimeout` (30 s by default) above `WorkerOptions.ShutdownBudget`, and make handlers observe their `CancellationToken`.
+
+  </AccordionItem>
+  <AccordionItem title="An outbox message is blocked">
+
+The relay found a message it cannot deliver as written: the job type is no longer registered (`contract_not_registered`), the window passed (`horizon_passed_undelivered`), or the store rejected it. Blocked messages are never retried automatically. Read `blocked_reason` in the outbox table, fix the cause and reset the row to pending, or accept the loss. See [Outbox](/docs/outbox#blocked-messages).
+
+  </AccordionItem>
+</Accordion>
+
+## Management API and CLI
+
+<Accordion>
+  <AccordionItem title="stale_revision or stale_generation (409)">
+
+Every change takes the revision you last saw, so two operators cannot overwrite each other. Someone (or the job itself) changed the target since you read it. The response includes the current revision. Read the target again, check it is still the change you want, and retry with the new revision (and generation, for jobs).
+
+  </AccordionItem>
+  <AccordionItem title="invalid_state or no_change">
+
+The target's state does not allow the action (for example retrying a job that is still running), or it is already in that state. Read it again.
+
+  </AccordionItem>
+  <AccordionItem title="CLI: credential_missing or usage_error in --agent mode">
+
+Agent mode never prompts. Give the secret through the context's secret variable, `RUNWICK_SECRET` or `--secret-stdin`. Mutations in agent mode need `--expected-revision` (and `--expected-generation` for jobs); the error's next action tells you which read to run first. See [AI agents](/docs/ai-agents).
+
+  </AccordionItem>
+</Accordion>

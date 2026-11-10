@@ -1,0 +1,184 @@
+---
+title: Management API
+description: The authenticated HTTP API behind the dashboard and the CLI - sign-in, permissions, antiforgery, limits and audit.
+section: Operations
+order: 2
+---
+
+`Runwick.AspNetCore` adds an HTTP API for reading and controlling jobs, queues, schedules, capacity and retention. The [dashboard](/docs/dashboard) and the [CLI](/docs/cli) both go through the same checks, so they share one set of permissions and one audit trail.
+
+```bash
+dotnet add package Runwick.AspNetCore
+```
+
+## Setting it up
+
+```csharp
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie();
+
+builder.Services.AddRunwickManagement(m => m
+    .AuthenticationSchemes(CookieAuthenticationDefaults.AuthenticationScheme)   // required
+    .MapGrants(principal => ManagementRoles.Operator));                         // required
+
+var app = builder.Build();
+app.MapRunwickManagement("/runwick/api");   // routes under /runwick/api/v1/...
+```
+
+Both `AuthenticationSchemes` and `MapGrants` are required. `MapRunwickManagement` throws at startup when either is missing, or when a named scheme is not registered. There is no anonymous mode and no "localhost only" mode.
+
+You bring the sign-in: cookies, OpenID Connect, JWT bearer or anything else ASP.NET Core supports. Runwick does not change your default scheme. It tries the listed schemes in order and never sends a redirect challenge.
+
+## Permissions
+
+`MapGrants` turns the signed-in user into a list of `ManagementGrant` values. It runs on every request. Grants never come from the request body or headers.
+
+| Permission | Allows |
+|---|---|
+| `Jobs.Read` | Listing and reading jobs (no payloads) |
+| `Jobs.ReadPayload` | Revealing a job's payload (audited) |
+| `Jobs.ReadError` | Revealing an attempt's error detail (audited) |
+| `Jobs.Cancel`, `Jobs.Retry`, `Jobs.Rerun` | Job controls |
+| `Jobs.Dispatch` | Creating a job from the API or CLI (audited) |
+| `Queues.Read`, `Queues.Control` | Listing queues, pausing and resuming them |
+| `Schedules.Read`, `Schedules.Trigger`, `Schedules.Control`, `Schedules.Edit` | Reading, triggering, pausing and resuming, revalidating schedules |
+| `Capacity.Read`, `Capacity.Edit` | Workers and concurrency scopes |
+| `Settings.Read` | The host's settings page |
+| `Retention.Manage` | Editing the retention policy |
+| `Audit.Read` | Reading the audit trail |
+
+The names are constants on `ManagementPermissions`. Three presets cover the usual cases:
+
+| Preset | Contains |
+|---|---|
+| `ManagementRoles.Viewer` | `Jobs.Read`, `Queues.Read`, `Schedules.Read`, `Capacity.Read`, `Settings.Read` |
+| `ManagementRoles.Operator` | Viewer, plus cancel, retry, rerun, queue control, schedule trigger and control |
+| `ManagementRoles.Administrator` | Operator, plus `Schedules.Edit`, `Capacity.Edit`, `Retention.Manage` |
+
+Payload, error and audit reads and `Jobs.Dispatch` are in no preset. Add them on purpose:
+
+```csharp
+IReadOnlyList<ManagementGrant> GrantsFor(ClaimsPrincipal user) =>
+    user.IsInRole("ops-admin")
+        ? [.. ManagementRoles.Administrator,
+           new(ManagementPermissions.JobsReadPayload),
+           new(ManagementPermissions.JobsReadError),
+           new(ManagementPermissions.AuditRead)]
+    : user.IsInRole("ops") ? ManagementRoles.Operator
+    : user.IsInRole("support") ? ManagementRoles.Viewer
+    : [];
+
+builder.Services.AddRunwickManagement(m => m
+    .AuthenticationSchemes("Cookies")
+    .MapGrants(GrantsFor));
+```
+
+### Scoping to queues
+
+`Jobs.*` and `Queues.*` grants can be limited to some queues:
+
+```csharp
+new ManagementGrant(ManagementPermissions.JobsRead, new HashSet<string> { "billing" })
+```
+
+Jobs outside the caller's queues answer `404`, exactly like jobs that do not exist, so hidden IDs are never confirmed. Lists are filtered before paging. Schedule, capacity, settings, retention and audit permissions are application-wide; giving them a queue list throws when the grant is built, so a mistake never widens access.
+
+## Antiforgery
+
+Every `POST` from a browser or a Basic client needs an antiforgery token. Fetch it with `GET {prefix}/v1/antiforgery`, then send it in the `X-Runwick-Antiforgery` header:
+
+```bash
+curl -c jar -b jar https://ops.example.com/runwick/api/v1/antiforgery
+# {"token":"CfDJ8...","headerName":"X-Runwick-Antiforgery"}
+```
+
+The CLI does this for you.
+
+## Machine clients
+
+A service that calls the API with a bearer token has no cookie, so antiforgery adds nothing. Map the API for machine clients:
+
+```csharp
+builder.Services.AddRunwickManagement(m => m
+    .AuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
+    .MapGrants(p => p.HasClaim("scope", "runwick.ops") ? ManagementRoles.Operator : []));
+
+app.MapRunwickManagement("/runwick/api").ForMachineClients();
+```
+
+`ForMachineClients()` refuses cookie and Basic schemes. If any configured scheme is one of those, it throws at startup. Runwick ships no bearer handler; use your own.
+
+## Basic authentication
+
+For small setups, `AddRunwickBasic` adds a Basic scheme. You must supply the password check; there are no default credentials.
+
+```csharp
+builder.Services.AddAuthentication()
+    .AddRunwickBasic(o => o.Verifier = (user, password, ct) =>
+        ValueTask.FromResult(user == "ops" && CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(password),
+            Encoding.UTF8.GetBytes(builder.Configuration["Ops:Password"]!))));
+
+builder.Services.AddRunwickManagement(m => m
+    .AuthenticationSchemes(RunwickBasicDefaults.Scheme)   // "Basic"
+    .MapGrants(p => ManagementRoles.Operator));
+```
+
+- Requests over plain HTTP are refused.
+- After 10 failures a minute for one source address and user name, further tries are refused without checking.
+- Basic counts as a browser scheme, so `POST` requests still need the antiforgery token.
+
+## Revisions and command IDs
+
+Every control carries the revision the caller last saw, for example "cancel job 42 at generation 1, revision 7". If the target changed in between, the answer is a `409` conflict (`stale_revision` or `stale_generation`), not a surprise.
+
+Every control also carries a `commandId`. If a reply is lost, send the same request with the same command ID: the store returns the original result with `replayed: true`, with no second change and no second audit row.
+
+## Limits
+
+Limits are per process and per signed-in caller. Change them with `Configure`:
+
+| `ManagementOptions` | Default |
+|---|---|
+| `ReadsPerMinute` | 120 |
+| `MutationsPerMinute` | 30 |
+| `RevealsPerMinute` | 10 |
+| `MaxActiveRequests` | 16 |
+| `MaxWaitingRequests` / `MaxWait` | 32 / 1 s |
+
+Over a per-caller limit the answer is `429` with `Retry-After`. When the process is full it is `503 busy`. With several replicas, each replica counts on its own.
+
+List cursors are protected with ASP.NET Core Data Protection. Replicas that share a key ring accept each other's cursors. Set `CursorKey` (32 bytes or more) if they do not.
+
+## Audit
+
+Every successful change writes an audit row in the same transaction as the change: who, what, when, the command ID and the reason you passed. Revealing a payload or an error is audited too, and the data is returned only after the audit row is committed. Read the trail with `Audit.Read`, in the dashboard's Audit page or with `runwick audit list`.
+
+By default the actor is the user's `NameIdentifier` claim (or `Name`), their name, and the scheme used. Override it with `.Actor(principal => new ManagementActor(subject, display, scheme))`.
+
+Denied requests are not audited. Failed sign-ins are logged (event 1401) with a coarse hash of the source, never the address or user name.
+
+## A standalone management host
+
+The API does not need workers. A small internal web app can serve only the API and the dashboard:
+
+```csharp
+builder.Services.AddRunwick(r => r
+    .Application("billing")
+    .UsePostgres(connectionString)
+    .AddJobsFromAssemblyContaining<SendInvoice>());   // needed only for dispatch from the API
+// no AddWorker, no AddScheduler
+
+builder.Services.AddAuthentication().AddRunwickBasic(o => o.Verifier = VerifyAsync);
+builder.Services.AddRunwickManagement(m => m
+    .AuthenticationSchemes(RunwickBasicDefaults.Scheme)
+    .MapGrants(p => ManagementRoles.Operator));
+builder.Services.AddRunwickDashboard("default", _ => { });
+
+var app = builder.Build();
+app.MapRunwickManagement("/runwick/api");
+app.MapRunwickDashboard("/runwick");
+app.Run();
+```
+
+This process runs no worker and writes no worker heartbeat. It is also a good place to collect application-wide metrics; see [Observability](/docs/observability).

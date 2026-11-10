@@ -1,0 +1,139 @@
+---
+title: Uniqueness
+description: Stop duplicate jobs from being created with active keys and window keys, and know what uniqueness does not prevent.
+section: Jobs
+order: 5
+---
+
+Uniqueness stops the **same job from being created twice**. A user double-clicks "Sign up", or a client retries a request whose response was lost: you want one job, not two.
+
+Runwick has two kinds of key, for two different questions:
+
+| Key | Question | Held for |
+|---|---|---|
+| **Active key** | "Is one of these already queued or running?" | As long as the job is `pending`, `reserved`, `running` or `retrying` |
+| **Window key** | "Did I already ask for exactly this?" | A fixed time after the first dispatch, even after the job finished |
+
+Keys are scoped to the application and the job name. The same key on two different job types does not collide.
+
+## Active keys
+
+While a job with a given active key is waiting or running, another dispatch with the same key creates nothing. It returns the existing job with `Disposition = Reused` and `DuplicateMatch = Active`. When the job finishes (succeeded, failed or cancelled) the key is free again.
+
+<Tabs>
+  <Tab label="Per job type (fluent)">
+
+```csharp
+runwick.ConfigureJob<RecalculateStats>()
+    .UniqueWhileActive(job => $"tenant:{job.TenantId}");
+```
+
+  </Tab>
+  <Tab label="Per dispatch">
+
+```csharp
+await dispatcher.DispatchAsync(
+    new RecalculateStats(tenantId),
+    new DispatchOptions { Uniqueness = new DispatchUniqueness(ActiveKey: $"tenant:{tenantId}", WindowKey: null, Window: null) });
+```
+
+  </Tab>
+</Tabs>
+
+Use it for work where a second copy in the queue is pointless, such as "recalculate statistics for tenant X".
+
+<Callout type="info" title="First writer wins">
+
+The second dispatch's payload is discarded. Check `receipt.Disposition` if you need to know that your payload was not the one stored.
+
+</Callout>
+
+## Window keys
+
+A window key makes a dispatch **idempotent** for a fixed time. For the length of the window after the *first* dispatch, any dispatch with the same key and the same request returns the same job, even if that job finished hours ago.
+
+<Tabs>
+  <Tab label="Per job type (fluent)">
+
+```csharp
+runwick.ConfigureJob<PlaceOrder>()
+    .UniqueWithinWindow(job => job.RequestId, TimeSpan.FromHours(24));
+```
+
+  </Tab>
+  <Tab label="Per dispatch">
+
+```csharp
+app.MapPost("/orders", async (PlaceOrderRequest body, [FromHeader(Name = "Idempotency-Key")] string requestId, IJobDispatcher dispatcher) =>
+{
+    var receipt = await dispatcher.DispatchAsync(
+        new PlaceOrder(body.CartId),
+        new DispatchOptions { Uniqueness = new DispatchUniqueness(ActiveKey: null, WindowKey: requestId, Window: TimeSpan.FromHours(24)) });
+    return Results.Accepted(value: new { jobId = receipt.JobId.ToString() });
+});
+```
+
+  </Tab>
+</Tabs>
+
+The window does not slide. It is measured from the first dispatch, so retrying with the same key cannot keep it alive forever. After the window the key is forgotten and a new dispatch creates a new job. There is no default window; you always choose it. It must be positive, in whole milliseconds, and at most 3,650 days.
+
+### Same key, different request
+
+Runwick stores a fingerprint of what you asked for: the payload, job name, queue, priority, start time, keys, resource keys and business metadata. If you reuse a window key with a **different** request, that is not a retry. It is a bug or a key collision, and dispatch fails with `UniquenessConflictException` (`uniqueness_conflict`) instead of quietly handing back an unrelated job. The exception's `ConflictingJobId` names the existing job.
+
+A difference only in retry or timeout settings (for example after you changed a default) is not a conflict. The dispatch returns the existing job with `PolicyDrift = true`, and the existing job keeps its original settings.
+
+## Using both
+
+A dispatch can carry both keys:
+
+```csharp
+new DispatchUniqueness(ActiveKey: $"welcome:{userId}", WindowKey: requestId, Window: TimeSpan.FromHours(1))
+```
+
+The window key makes retries of *this* request safe. The active key makes *any* request for that user collapse onto one queued job. If a new window key meets an existing active job, the window key is linked to that job, so later retries find it even after it finishes. If the two keys point at two different jobs, dispatch fails with `uniqueness_composition_conflict`.
+
+## Declared keys are required
+
+When a job type declares `UniqueWhileActive` or `UniqueWithinWindow`, that key is **required** for every dispatch of it. There is no option to skip it.
+
+- If the dispatch also passes an explicit key for the same dimension, the two must be equal (and the windows equal), or it fails with `uniqueness_key_mismatch`.
+- A selector that returns `null` fails with `uniqueness_required`. A selector that throws fails with `key_selector_failed`.
+- Selectors run once, when the dispatch is prepared. Keep them pure and fast.
+
+Job types without declared keys can pass keys per dispatch, or not.
+
+## Key rules
+
+- 1 to 512 bytes as UTF-8.
+- Valid Unicode with no control characters.
+- Case-sensitive and compared exactly: no trimming, no case folding, no Unicode normalization.
+
+A key that breaks these rules fails with `invalid_key` before anything is written.
+
+## In batches
+
+In `DispatchManyAsync`, items behave as if dispatched one after another in input order. A later item that matches an earlier one is `Reused`. Conflicts fail the whole batch unless you set `ContinueOnConflict`. See [Dispatching](/docs/dispatching#batch-dispatch).
+
+## What uniqueness does not do
+
+Uniqueness is about **inserting** jobs. It is not an execution lock and it never promises a handler runs once.
+
+| You want to avoid… | Use |
+|---|---|
+| Two copies queued at once | Active key |
+| A client retry creating a second job | Window key |
+| Two jobs touching the same thing at the same moment | A [resource scope](/docs/rate-limits-and-concurrency) with capacity 1 |
+| A repeated run having a visible effect twice | Idempotent handlers: pass an idempotency key to the other side (see [Delivery guarantees](/docs/delivery-guarantees)) |
+
+Things to keep in mind:
+
+- An active key is about being queued. Retries and crash recovery can still run the job more than once.
+- A window key lives in the store. Restoring the database from a backup can bring back or lose keys.
+- Window keys are not tied to job retention. A key can outlive the job's history, and the reused job may already be cleaned up.
+
+## Next
+
+- [Rate limits and concurrency](/docs/rate-limits-and-concurrency)
+- [Delivery guarantees](/docs/delivery-guarantees)

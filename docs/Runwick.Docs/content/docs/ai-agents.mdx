@@ -1,0 +1,114 @@
+---
+title: AI agents
+description: Give coding agents Runwick's docs as plain text, let them drive the runwick CLI in --agent mode, and the conventions worth putting in AGENTS.md.
+section: Reference
+order: 5
+---
+
+Coding agents work well with Runwick when they know three things: where the docs are, which rules are easy to get wrong (at-least-once, stable job names, no auto-migration), and how to inspect and change a running system safely. This page gives you all three.
+
+## Point the agent at the docs
+
+The documentation is published as plain text for language models:
+
+| URL | Contents |
+|---|---|
+| [`https://runwick.temtem.dev/llms.txt`](https://runwick.temtem.dev/llms.txt) | An index of every page with a one-line summary, in the [llms.txt](https://llmstxt.org) format. |
+| [`https://runwick.temtem.dev/llms-full.txt`](https://runwick.temtem.dev/llms-full.txt) | The whole documentation in one Markdown file. |
+
+Agents that can fetch URLs can read these directly. For agents that cannot, download `llms-full.txt` into your repository (for example as `docs/runwick.md`) and reference it from your agent instructions.
+
+## Add an AGENTS.md section
+
+Most coding agents read a project instruction file: `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md` or `.cursor/rules`. Copy this section and adjust it to your app:
+
+````md
+## Runwick (background jobs)
+
+Docs: https://runwick.temtem.dev/llms.txt
+
+- A job is a record implementing `IQueueJob` with a `[JobName("area.action")]` attribute. The job name is
+  stored; never rename it. Change a payload with `[PayloadVersion]` and an `Upgrade<TFrom, TTo>(...)` route.
+- A handler implements `IJobHandler<TJob>`. It may run more than once: make side effects idempotent
+  (use `IJobContext.JobId` as the idempotency key, never the attempt ID) and observe the CancellationToken.
+- Register jobs, handlers and workers in `AddRunwick(...)`. A pool must subscribe every queue it should run.
+- Dispatch with `IJobDispatcher.DispatchAsync`. On `DispatchOutcomeUnknownException`, resolve with
+  `IPreparedJobDispatcher.ResolveAsync(ex.OperationId)` or re-send `ex.Prepared`; never dispatch a fresh copy.
+- To create a job with our own rows, use `IPostgresJobDispatcher.StageAsync` in the same transaction.
+  Runwick never commits or rolls back our transaction.
+- Schema changes are a deployment step (`runwick migrate`), never done at app startup.
+- Do not lower lease or shutdown timings without reading the configuration page; startup rejects bad combinations.
+- Tests: handlers are plain classes; fake `IJobDispatcher` in unit tests; end-to-end tests use a temp SQLite file.
+````
+
+## The CLI in agent mode
+
+The `runwick` command line talks to a running management API (and, for `migrate`, `store ...` and `doctor`, to the database). Add `--agent` to any command and it prints exactly one JSON object per command on standard output, on one line, with no colour, no prompts and no pager:
+
+```bash
+runwick --agent jobs get 0193a1b2-...
+```
+
+```json
+{
+  "schemaVersion": 1,
+  "command": "jobs cancel",
+  "ok": false,
+  "result": null,
+  "error": { "code": "stale_revision", "message": "...", "retryable": false,
+             "hint": "Read the target again and retry with its current revision.", "actualRevision": 9 },
+  "commandId": "0193...",
+  "revisions": { "job:0193...": { "generation": 2, "revision": 9 } },
+  "nextActions": [ { "command": "jobs get", "argv": ["runwick", "--agent", "jobs", "get", "0193..."],
+                     "reason": "Read the current generation and revision." } ],
+  "cli": { "version": "...", "context": "prod", "url": "https://ops.example.com/runwick/api" }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `ok`, `result`, `error` | `result` is the same object `--output json` prints. `error` has a stable `code`, whether it is `retryable`, and a `hint`. |
+| `commandId` | Set for every change, also on failure, so the agent can re-send the same command. |
+| `revisions` | The revision of every target seen, ready for the next change. |
+| `nextActions` | Suggested follow-up commands as full `argv` arrays. They are suggestions: the CLI does not know your permissions. |
+
+Streaming commands (`jobs tail`, `events tail`) print one envelope per line (JSON Lines), with `"stream": "item"` on each item and a final `"stream": "end"` line.
+
+### Learn the tool: `runwick --agent describe`
+
+```bash
+runwick --agent describe
+```
+
+This prints one envelope whose `result` lists every command, its arguments and options (with which ones are required in agent mode), its permission, a JSON Schema of its result, the envelope schema, every error code with its hint, and the exit codes. An agent can learn the CLI from it without reading these pages.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | ok |
+| 1 | rejected (for example `stale_revision`, `not_found`) |
+| 2 | usage error |
+| 3 | outcome unknown: re-send with the same `--command-id` |
+| 4 | unavailable (for example `connection_failed`, `store_unavailable`) |
+| 5 | unauthenticated or forbidden |
+
+### Rules that differ in agent mode
+
+- **No prompts.** A missing secret fails at once with `credential_missing`. Give it through the context's secret variable, `RUNWICK_SECRET`, or `--secret-stdin`.
+- **Expected revisions are required.** In human mode, a change without `--expected-revision` reads the target first. In agent mode it is a `usage_error` whose next action is the read to run. This keeps an agent from overwriting a change it never saw.
+- `--agent` and `--output` cannot be combined, and `--verbose` is ignored.
+
+## Tips for agents operating Runwick
+
+- **Read, then change.** Run `jobs get`, `queues list` or `schedules list` first, and pass the revision from `revisions` to the change. On `stale_revision` or `stale_generation`, read again and decide again; do not just retry with the new number.
+- **Re-send, do not repeat.** On exit code 3 (`outcome_unknown`), re-send the same command with the same `--command-id`. A new command ID is a new request.
+- **Payloads are never printed by accident.** Only `jobs reveal-payload` and `jobs reveal-error` show them, and each writes an audit row. Do not reveal payloads unless the task needs it.
+- **Connection strings stay out of argv.** `migrate`, `store ...` and `doctor` take `--connection-env <VAR>` or `--connection-stdin`, never a connection string as an argument.
+- **Store administration is a deliberate step.** `store admission`, `store activate-capability` and `store reidentify` change the whole application and need the migration role. Activating a capability cannot be undone. Ask a human first.
+- **Use `--reason`.** Every change takes `--reason <text>`, which is recorded in the audit trail. Say that an agent made the change and why.
+- **Check the setup with `runwick doctor`.** It checks the connection, credentials and settings and reports failed checks with `check_failed`.
+
+## Let the agent check its own work
+
+Ask the agent to finish with `dotnet build` and `dotnet test`, including an end-to-end test against a temporary SQLite file for any new job (see [Testing](/docs/testing)). A test that calls the handler twice with the same job is a cheap way to catch handlers that are not safe to repeat.

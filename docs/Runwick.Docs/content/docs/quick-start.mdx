@@ -1,0 +1,242 @@
+---
+title: Quick start
+description: Go from an empty project to a background job that a worker picks up and runs.
+section: Get started
+order: 3
+---
+
+This page builds one small console app that is both a producer and a worker. It dispatches a job, and its own worker runs it. The same job and handler work unchanged when you later split them into a web app and a separate worker service.
+
+You need the .NET 10 SDK and one store. Docker is the quickest way to get PostgreSQL or Redis; SQLite needs nothing.
+
+<Steps>
+  <Step title="Create a project and start a store">
+
+```bash
+dotnet new worker -n QuickStart
+cd QuickStart
+dotnet add package Runwick
+```
+
+<Tabs>
+  <Tab label="PostgreSQL">
+
+```bash
+dotnet add package Runwick.Postgres
+docker run -d --name runwick-pg -e POSTGRES_PASSWORD=pg -p 5432:5432 postgres:18
+```
+
+  </Tab>
+  <Tab label="SQLite">
+
+```bash
+dotnet add package Runwick.Sqlite
+# no server: the store is a file on local disk
+```
+
+  </Tab>
+  <Tab label="Redis">
+
+```bash
+dotnet add package Runwick.Redis
+docker run -d --name runwick-redis -p 6379:6379 redis:8.2 \
+  redis-server --appendonly yes --appendfsync always --no-appendfsync-on-rewrite no \
+  --maxmemory-policy noeviction --aof-load-truncated no
+```
+
+Runwick refuses a Redis server without these durability settings.
+
+  </Tab>
+</Tabs>
+
+  </Step>
+  <Step title="Define a job and its handler">
+
+Create `Jobs.cs`. A job is a record that implements `IQueueJob` and has a `[JobName]`. The name is what gets stored, so you can rename or move the C# type later without breaking jobs already in the store.
+
+```csharp
+using Runwick;
+
+namespace QuickStart;
+
+[JobName("email.welcome")]
+public sealed record SendWelcomeEmail(Guid UserId) : IQueueJob;
+
+public sealed class SendWelcomeEmailHandler(ILogger<SendWelcomeEmailHandler> logger, IJobContext context)
+    : IJobHandler<SendWelcomeEmail>
+{
+    public Task HandleAsync(SendWelcomeEmail job, CancellationToken cancellationToken)
+    {
+        // Stop promptly when cancellationToken is cancelled. This code may run more than once.
+        logger.LogInformation("Welcome email for {UserId}, execution {Execution}", job.UserId, context.ExecutionNumber);
+        return Task.CompletedTask;
+    }
+}
+```
+
+The handler is created from dependency injection, in a fresh scope for each run, so constructor injection works as usual. `IJobContext` tells it which job and which execution it is on.
+
+  </Step>
+  <Step title="Create the schema">
+
+Workers never create the schema themselves. Run the migration once, before the app starts. In a real deployment this is a separate step with its own credentials; here it runs at the top of `Program.cs` to keep things short.
+
+Delete the template's `Worker.cs` and replace `Program.cs` with:
+
+<Tabs>
+  <Tab label="PostgreSQL">
+
+```csharp
+using QuickStart;
+using Runwick;
+using Runwick.Postgres.Migrations;
+
+var conn = "Host=localhost;Username=postgres;Password=pg;Database=postgres";
+await RunwickPostgresMigrations.MigrateAsync(conn);
+```
+
+  </Tab>
+  <Tab label="SQLite">
+
+```csharp
+using QuickStart;
+using Runwick;
+
+var conn = "Data Source=runwick.db";
+await RunwickSqliteMigrations.MigrateAsync(conn);
+```
+
+  </Tab>
+  <Tab label="Redis">
+
+```csharp
+using QuickStart;
+using Runwick;
+
+var conn = "localhost:6379";
+await RunwickRedisMigrations.MigrateAsync(conn);
+```
+
+  </Tab>
+</Tabs>
+
+You can run the same migration from the command line instead: `runwick migrate --provider postgres --connection-env MY_CONN`. See [Installation](/docs/installation#create-the-schema).
+
+  </Step>
+  <Step title="Register Runwick and a worker">
+
+Continue `Program.cs` below the migration. Only the `Use...` line depends on the store.
+
+```csharp
+var builder = Host.CreateApplicationBuilder(args);
+
+builder.Services.AddRunwick(runwick =>
+{
+    runwick.Application("quickstart")
+        .UsePostgres(conn)                       // or .UseSqlite(conn) or .UseRedis(conn)
+        .AddJobsFromAssemblyContaining<SendWelcomeEmail>();
+    runwick.AddHandler<SendWelcomeEmail, SendWelcomeEmailHandler>();
+    runwick.AddWorker(w => w.Pool("main", p => p.Queues("default").FixedConcurrency(4)));
+});
+
+using var host = builder.Build();
+await host.StartAsync();
+```
+
+- `Application("quickstart")` names your app inside the store, so several apps can share one database.
+- `AddJobsFromAssemblyContaining` registers every `[JobName]` type in that assembly.
+- `AddWorker` makes this process a worker. Pool `main` reads queue `default` and runs at most 4 jobs at once. Jobs with no `[Queue]` go to `default`.
+
+Leave out `AddWorker` in an app that only dispatches.
+
+  </Step>
+  <Step title="Dispatch a job and watch it run">
+
+Add this after `StartAsync`:
+
+```csharp
+var dispatcher = host.Services.GetRequiredService<IJobDispatcher>();
+var receipt = await dispatcher.DispatchAsync(new SendWelcomeEmail(Guid.NewGuid()));
+Console.WriteLine($"Dispatched job {receipt.JobId.Value}");
+
+await host.WaitForShutdownAsync();
+```
+
+Run it:
+
+```bash
+dotnet run
+```
+
+You should see the `Dispatched job` line, then the handler's log line a moment later. Press <Kbd>Ctrl</Kbd>+<Kbd>C</Kbd> to stop. The worker stops taking new jobs and gives running ones time to finish.
+
+In a web app, inject `IJobDispatcher` into an endpoint or a service instead of resolving it by hand:
+
+```csharp
+app.MapPost("/users/{id:guid}/welcome", async (Guid id, IJobDispatcher dispatcher) =>
+{
+    await dispatcher.DispatchAsync(new SendWelcomeEmail(id));
+    return Results.Accepted();
+});
+```
+
+  </Step>
+</Steps>
+
+## What just happened
+
+`DispatchAsync` returned only after the store confirmed the job was written. The worker found the job, took a lease on it, ran your handler in its own dependency-injection scope, and recorded the result as `succeeded`.
+
+If the handler had thrown, the job would have waited a few seconds and run again. By default a job runs at most 3 times, so 2 automatic retries, before it ends up `failed`.
+
+<Callout type="warning" title="If dispatch reports an unknown outcome">
+A network failure can leave `DispatchAsync` unable to tell whether the write happened. The job may or may not exist. [Dispatching](/docs/dispatching) and [Delivery guarantees](/docs/delivery-guarantees) explain how to handle it safely.
+</Callout>
+
+## Check it with the sample host
+
+The repository ships a sample host for PostgreSQL that migrates, dispatches a batch of jobs, runs them on an in-process worker, and prints how many succeeded:
+
+```bash
+dotnet run --project samples/Runwick.Samples.Host -- \
+  --conn "Host=localhost;Username=postgres;Password=pg;Database=postgres" --migrate --dispatch 10
+```
+
+It prints `10 succeeded` and exits with code 0 when every job ran.
+
+## Add the dashboard (optional)
+
+The dashboard runs inside an ASP.NET Core app and needs your own sign-in, such as cookie authentication registered with `AddAuthentication().AddCookie()` and `app.UseAuthentication()`. There is no anonymous mode.
+
+```bash
+dotnet add package Runwick.Dashboard
+```
+
+```csharp
+builder.Services.AddRunwickManagement(m => m
+    .AuthenticationSchemes("Cookies")                     // you bring the sign-in
+    .MapGrants(principal => ManagementRoles.Operator));   // using Runwick.Management;
+builder.Services.AddRunwickDashboard("default", d => { });
+
+app.MapRunwickManagement("/runwick/api");
+app.MapRunwickDashboard("/runwick");
+```
+
+This example gives every signed-in user the Operator role; map roles from your own claims in a real app. Sign in, open `/runwick`, and you can see the job, its attempts and its status history. [Dashboard](/docs/dashboard) covers permissions and setup in full.
+
+## Next steps
+
+<Cards>
+  <Card title="Jobs and handlers" icon="code" href="/docs/jobs-and-handlers">
+    Queues, priorities, execution limits and the fluent alternative to attributes.
+  </Card>
+  <Card title="Retries and timeouts" icon="gauge" href="/docs/retries-and-timeouts">
+    Change the retry budget and delay, and set an execution timeout.
+  </Card>
+  <Card title="Workers" icon="server" href="/docs/workers">
+    Pools, concurrency, shutdown and running workers in a separate process.
+  </Card>
+  <Card title="Delivery guarantees" icon="shield" href="/docs/delivery-guarantees">
+    Why handlers must be safe to repeat, and how to make them so.
+  </Card>
+</Cards>

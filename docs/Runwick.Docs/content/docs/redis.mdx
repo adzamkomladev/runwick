@@ -1,0 +1,151 @@
+---
+title: Redis
+description: Run Runwick on one durable Redis primary with append-only fsync on every write, and know the limits that come with it.
+section: Stores
+order: 3
+---
+
+The Redis store keeps Runwick's data on one Redis primary that writes every change to its append-only file and syncs it to disk before it replies. Producers and workers can run on many hosts. Job behaviour is the same as on PostgreSQL: the same states, retries, receipts, uniqueness and rate rules.
+
+Redis is only safe for jobs with the right server settings, so Runwick checks them before it starts and keeps checking while it runs.
+
+## Requirements
+
+| Item | Requirement |
+|---|---|
+| Server | Redis 8.2 or newer |
+| Topology | One standalone primary. No Cluster, no Sentinel. |
+| Persistence | AOF with `appendfsync always` (see below) |
+| Package | `Runwick.Redis` (uses StackExchange.Redis) |
+
+## Server configuration
+
+Start Redis with these settings. Runwick refuses to run with anything else:
+
+```conf
+# redis.conf
+appendonly yes
+appendfsync always
+no-appendfsync-on-rewrite no
+maxmemory-policy noeviction
+aof-load-truncated no
+```
+
+| Setting | Why |
+|---|---|
+| `appendonly yes`, `appendfsync always` | Every write is on disk before Redis replies, so a confirmed job survives a crash. |
+| `no-appendfsync-on-rewrite no` | Keeps fsync on while the AOF is being rewritten. |
+| `maxmemory-policy noeviction` | Redis must never drop keys to free memory. A full server returns errors instead. |
+| `aof-load-truncated no` | A damaged AOF stops Redis at startup instead of quietly loading less data. |
+
+Size `maxmemory` with room to spare. With `noeviction`, a full server refuses writes, and dispatches fail until you free space.
+
+<Callout type="warning" title="Keep CONFIG GET readable">
+
+Runwick reads the settings with `CONFIG GET` and `MODULE LIST`. If an ACL blocks either, the value counts as unverifiable and the store refuses to run. Restrict `CONFIG SET` with ACLs if you need to, but leave `CONFIG GET` and `MODULE LIST` allowed for Runwick's user. Do not remove `CONFIG` with `rename-command`. Managed Redis services that hide `CONFIG` are not supported.
+
+</Callout>
+
+## Install and migrate
+
+```bash
+dotnet add package Runwick
+dotnet add package Runwick.Redis
+```
+
+Write the store's identity once before the first start:
+
+<Tabs>
+  <Tab label="C#">
+
+```csharp
+using Runwick;
+
+await RunwickRedisMigrations.MigrateAsync("redis-primary:6379,password=...");
+```
+
+  </Tab>
+  <Tab label="CLI">
+
+```bash
+export RUNWICK_REDIS="redis-primary:6379,password=..."
+runwick migrate --provider redis --connection-env RUNWICK_REDIS
+```
+
+  </Tab>
+</Tabs>
+
+Running it again does nothing if the store is already installed. Without it, the app refuses to start because the store is not installed.
+
+## Register the store
+
+```csharp
+builder.Services.AddRunwick(runwick =>
+{
+    runwick.Application("notifications")
+        .UseRedis(builder.Configuration.GetConnectionString("Redis")!, o =>
+        {
+            o.ProfileRecheckInterval = TimeSpan.FromSeconds(30);
+        })
+        .AddJobsFromAssemblyContaining<SendPush>();
+    runwick.AddHandler<SendPush, SendPushHandler>();
+    runwick.AddWorker(w => w.Pool("main", p => p.Queues("default").FixedConcurrency(4)));
+});
+```
+
+The configuration string is a StackExchange.Redis string. Runwick uses only the endpoint, credentials, TLS settings, `defaultDatabase` and `connectTimeout` from it, and never logs it. Several endpoints, or a Sentinel service name, are refused at startup with `topology_unsupported`.
+
+| Option | Default | Allowed | What it does |
+|---|---|---|---|
+| `ProfileRecheckInterval` | 30 s | 5 s to 5 min | How often the settings and topology check runs while the app runs. |
+
+## What Runwick checks
+
+At startup, on every reconnect and every `ProfileRecheckInterval`, Runwick checks on a separate connection:
+
+- the five settings above, through `CONFIG GET`;
+- through `INFO`: `role:master`, `redis_mode:standalone`, `cluster_enabled:0`, AOF enabled, the last AOF write succeeded, and the version is at least 8.2;
+- through `MODULE LIST`: the loaded modules, which are reported but allowed.
+
+| When | A failed check means |
+|---|---|
+| At startup | The app does not start. The error names the setting and the value it saw, for example `appendfsync=everysec`. |
+| While running | Runwick stops sending new work: no new claims, dispatches or schedule runs. Health reports the store as unhealthy (`store_profile_mismatch`) until a later check passes. Calls already sent finish as usual. |
+
+Replicas attached to the primary are allowed and reported. But a replica promoted to primary is a different history, and Runwick does not follow a failover.
+
+### History checks
+
+Each process remembers the store's identity and the highest revision it has seen for the application. If Redis comes back empty (for example after `FLUSHALL`), with another store's identity, or with a lower revision, Runwick stops admitting work and treats every lease it held as lost. It does not resume until you restart the process against an intact store. This check catches a history that went backwards. It cannot prove that no write was lost.
+
+## One application, one hash slot
+
+Every key of an application starts with `rw:{<application>}:`, so all of them live in one hash slot. That is what lets one Lua script change a job's records together. Several applications can share one Redis database.
+
+The cost: one application's throughput is bounded by one Redis server thread, and one very large command (for example a big batch) delays every other command of that application while it runs. If one application needs more, split the work into separate applications.
+
+## No transactions with your data
+
+Redis cannot join your business database's transaction. There is no `StageAsync` and no transactional completion on Redis. To create a job only when your business data commits, write it to an [outbox](/docs/outbox) in your business database; the relay delivers it to the Redis store.
+
+## Polling
+
+There are no wake-up notifications between processes. Workers find new jobs by polling. Within one process, a commit wakes that process's own workers.
+
+## What Redis does not promise
+
+- No high availability. Failover, Sentinel promotion and Cluster are not supported. A promoted replica may have lost acknowledged jobs.
+- Durability is the primary's disk and `appendfsync always`. Restoring an AOF or RDB file is a break in history.
+- Running Redis without `appendfsync always` is not a supported configuration, even for benchmarks.
+- Results on Redis say nothing about speed compared with PostgreSQL.
+
+## Next steps
+
+<Cards>
+  <Card title="Outbox" icon="blocks" href="/docs/outbox">
+    Commit a job with your business data, then deliver it to Redis.
+  </Card>
+  <Card title="Health checks" icon="gauge" href="/docs/health-checks">
+    See the store's status in your health endpoint.
+  </Card>
+</Cards>

@@ -1,0 +1,9 @@
+```csharp
+app.MapPost("/invoices/{id}/send",
+    async (Guid id, IJobDispatcher jobs) =>
+    {
+        // Returns once the store has confirmed the write.
+        await jobs.DispatchAsync(new SendInvoice(id));
+        return Results.Accepted();
+    });
+```

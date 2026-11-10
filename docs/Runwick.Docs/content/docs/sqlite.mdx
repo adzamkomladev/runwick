@@ -1,0 +1,156 @@
+---
+title: SQLite
+description: Run Runwick on one SQLite file for apps whose workers all live on one machine, with WAL and synchronous=FULL enforced.
+section: Stores
+order: 2
+---
+
+The SQLite store keeps all of Runwick's data in one database file. It behaves like the PostgreSQL store: the same job states, retries, receipts, uniqueness and rate rules. It suits an app that runs on a single machine, in one process or several, and that does not want a database server.
+
+## Requirements
+
+| Item | Requirement |
+|---|---|
+| Engine | SQLite 3.38 or newer. The bundled native library already is. |
+| Topology | One file on a local disk. Every process that uses it runs on the same machine. |
+| Durability | WAL journal mode and `synchronous=FULL`, on every connection |
+| Package | `Runwick.Sqlite` (uses Microsoft.Data.Sqlite) |
+
+## Install and create the file
+
+```bash
+dotnet add package Runwick
+dotnet add package Runwick.Sqlite
+```
+
+Run the migration once before the app starts. It creates the file if needed, creates the tables and switches the file to WAL mode:
+
+<Tabs>
+  <Tab label="C#">
+
+```csharp
+using Runwick;
+
+await RunwickSqliteMigrations.MigrateAsync("Data Source=/var/lib/my-app/runwick.db");
+```
+
+  </Tab>
+  <Tab label="CLI">
+
+```bash
+export RUNWICK_SQLITE="Data Source=/var/lib/my-app/runwick.db"
+runwick migrate --provider sqlite --connection-env RUNWICK_SQLITE
+```
+
+  </Tab>
+</Tabs>
+
+Running it again does nothing if the schema is already current.
+
+## Register the store
+
+```csharp
+builder.Services.AddRunwick(runwick =>
+{
+    runwick.Application("my-app")
+        .UseSqlite("Data Source=/var/lib/my-app/runwick.db", o =>
+        {
+            o.WriterBusyTimeout = TimeSpan.FromSeconds(2);
+            o.ReaderThreads = 2;
+        })
+        .AddJobsFromAssemblyContaining<ResizeImage>();
+    runwick.AddHandler<ResizeImage, ResizeImageHandler>();
+    runwick.AddWorker(w => w.Pool("main", p => p.Queues("default").FixedConcurrency(4)));
+});
+```
+
+The connection string must name a file with `Data Source=<path>`. Runwick opens its own connections from it and never logs it.
+
+| Option | Default | Allowed | What it does |
+|---|---|---|---|
+| `WriterBusyTimeout` | 2 s | 100 ms to 30 s | How long a write waits for another process to release the file's write lock. |
+| `ReaderThreads` | 2 | 1 to 8 | Threads for read-only calls, each with its own connection. |
+
+A value outside its range fails at startup with `invalid_policy`.
+
+### How the store uses threads
+
+The .NET SQLite library runs its "async" methods synchronously. So Runwick runs its database work on a few dedicated threads: one writer and `ReaderThreads` readers. The worker's lease and scheduling loops never wait inside a SQLite call.
+
+## Durability: WAL and synchronous=FULL
+
+Every connection Runwick opens sets `synchronous = FULL` and `foreign_keys = ON`, then reads the settings back. The file must be in WAL mode, which the migration sets once and SQLite remembers. A reply from the store means the commit is on disk, as far as your disk's fsync goes.
+
+If any of these settings does not stick, the store refuses to start with `store_profile_mismatch`. There is no "faster but less safe" mode.
+
+## Setups that are refused
+
+| Setup | What happens |
+|---|---|
+| In-memory database (`:memory:`, `Mode=Memory`), empty `Data Source` | Refused at startup with `invalid_policy` |
+| `Mode=ReadOnly`, `Cache=Shared`, `Foreign Keys=False` | Refused at startup with `invalid_policy` |
+| A file on a network share (a UNC path or network drive on Windows; NFS, SMB/CIFS, 9p, sshfs, Ceph, GlusterFS and similar on Linux) | Refused at startup. The message names the filesystem type. |
+| A file not in WAL mode (for example, never migrated) | Refused with `store_profile_mismatch` |
+| SQLite older than 3.38 | Refused with `engine_version_unsupported` |
+
+On Linux the check reads the mount table. A filesystem Runwick does not recognise as either local or network is accepted, but reported as unverified rather than verified.
+
+<Callout type="warning" title="One machine, really">
+
+SQLite's locking only works between processes on the same machine. A file shared over the network can corrupt silently, which is why Runwick refuses it. A container volume is fine if every container that opens the file runs on the same host and the volume is a local disk.
+
+</Callout>
+
+## One writer at a time
+
+SQLite lets one transaction write to a file at once, across all processes. Every Runwick write takes that lock up front. Workers send routine work in batches (claim and start up to 32 jobs, renew up to 64 leases, finish up to 32 jobs in one transaction), so they wait for the lock and sync to disk once per batch rather than once per job.
+
+This has two practical effects:
+
+- Nothing here says SQLite matches PostgreSQL's throughput. Measure your own load.
+- While any write transaction is open on the file, every Runwick write waits, lease renewals included. A long transaction of your own on the same file can make leases expire. Keep them short.
+
+## Polling
+
+There are no wake-up notifications between processes. Workers find new jobs by polling, which is enough for correctness. Within one process, a commit wakes that process's own workers, scheduler and outbox relay straight away. A job dispatched by another process is picked up on the next poll.
+
+## Your transaction, the same file
+
+If your business tables live in the same SQLite file, you can create a job, or complete one, in your own transaction with `ISqliteJobDispatcher` and `ISqliteJobCompletion`. Your connection must use the same file and have `foreign_keys = 1` and `synchronous = FULL`. Begin the transaction with `BeginTransaction(deferred: false)` so it takes the write lock at the start:
+
+```csharp
+using Microsoft.Data.Sqlite;
+using Runwick.Sqlite;
+
+await using var connection = new SqliteConnection("Data Source=/var/lib/my-app/runwick.db");
+await connection.OpenAsync(ct);
+await using (var pragma = connection.CreateCommand())
+{
+    pragma.CommandText = "PRAGMA foreign_keys = ON; PRAGMA synchronous = FULL;";
+    await pragma.ExecuteNonQueryAsync(ct);
+}
+
+using var tx = connection.BeginTransaction(deferred: false);
+// ... insert your own rows on tx ...
+await jobs.StageAsync(new ResizeImage(imageId), tx, cancellationToken: ct);   // jobs: ISqliteJobDispatcher
+tx.Commit();
+```
+
+A `SQLITE_BUSY` error from your transaction reaches you unchanged; retrying the whole transaction is up to you. See [Transactions](/docs/transactions) for the full rules.
+
+## What SQLite does not promise
+
+- No multi-host support and no high availability.
+- No durability beyond your disk and its fsync behaviour. Restoring the file from a backup is a break in history.
+- A killed process is not a power-loss test. Runwick's tests claim crash consistency, not protection from a disk that lies about fsync.
+
+## Next steps
+
+<Cards>
+  <Card title="Choosing a store" icon="server" href="/docs/choosing-a-store">
+    When SQLite fits, and when to move to PostgreSQL.
+  </Card>
+  <Card title="Transactions" icon="blocks" href="/docs/transactions">
+    Commit jobs with your own rows in the same file.
+  </Card>
+</Cards>

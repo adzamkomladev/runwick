@@ -1,0 +1,119 @@
+---
+title: Dashboard
+description: A web UI for jobs, queues, workers and schedules, served from inside your ASP.NET Core app.
+section: Operations
+order: 3
+---
+
+`Runwick.Dashboard` is a web UI that runs inside your own ASP.NET Core app. It reads and acts through the same layer as the [management API](/docs/management-api), so it has the same permissions, limits and audit trail. Its web files are embedded in the package; you do not need Node or npm.
+
+![Job details](/images/dashboard-job.png)
+
+```bash
+dotnet add package Runwick.Dashboard
+```
+
+## Setting it up
+
+The dashboard needs `AddRunwickManagement`, because it uses its sign-in schemes and grant mapping by default.
+
+```csharp
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(o => o.LoginPath = "/login");
+
+builder.Services.AddRunwickManagement(m => m
+    .AuthenticationSchemes(CookieAuthenticationDefaults.AuthenticationScheme)
+    .MapGrants(GrantsFor));
+
+builder.Services.AddRunwickDashboard("default", d =>
+{
+    d.Title = "Billing jobs";             // default "Runwick"
+    d.SignOutPath = "/account/logout";    // optional: shows a Sign out button
+});
+
+var app = builder.Build();
+app.UseAuthentication();
+app.MapRunwickDashboard("/runwick");
+```
+
+`AddRunwickDashboard` takes a mount ID (1 to 32 characters of `a-z`, `0-9` and `-`). You can register several mounts with different IDs and map each at its own path. `MapRunwickDashboard(path, mountId)` uses `"default"` when you leave out the ID.
+
+You do not have to call `MapRunwickManagement` for the dashboard to work. Map it only if you also want the JSON API or the CLI.
+
+### Options
+
+| `DashboardOptions` | Default | Meaning |
+|---|---|---|
+| `Title` | `"Runwick"` | Page title |
+| `SignOutPath` | `null` | Your own sign-out route, as a path on the same site, including any path base. The button posts an empty form to it. `null` hides the button |
+| `AuthenticationSchemes(...)` | The management schemes | Schemes this mount accepts |
+| `MapGrants(...)` | The management grant map | Grants on this mount |
+| `Actor(...)` | The management actor map | The actor written to audit |
+
+Per-mount schemes are useful when the JSON API uses bearer tokens for machine clients and the dashboard uses cookies for people.
+
+## Order with your own Inertia app
+
+The dashboard is built on Inertia.Net. If your app also uses Inertia, map the dashboard **before** your own `UseInertia()`:
+
+```csharp
+app.UsePathBase("/ops");
+app.UseAuthentication();
+app.MapRunwickDashboard("/runwick");   // first
+app.UseInertia();                      // your app's Inertia
+```
+
+Otherwise your app's Inertia middleware version-checks the dashboard's requests and sends its pages into a reload loop. Runwick cannot detect the wrong order, so this is on you.
+
+<Callout type="warning" title="Do not put your own routes under the dashboard path">
+
+The dashboard owns everything under its path. If one of your endpoints has a route under it, Runwick logs a critical error and stops the application once it has started. Until that check has run, the dashboard answers `503`.
+
+</Callout>
+
+## Permissions
+
+Each page needs the permission behind the data it shows, and each button needs the permission for its action. The navigation lists only the pages the caller may open; other pages answer `403`.
+
+| Page | Needs |
+|---|---|
+| Overview, Jobs, Runs, Run | `Jobs.Read` |
+| Queues, Queue | `Queues.Read` (pause and resume: `Queues.Control`) |
+| Workers, Pools, Scaling | `Capacity.Read` (set capacity: `Capacity.Edit`) |
+| Schedules, Schedule | `Schedules.Read` |
+| Settings | `Settings.Read` |
+| Retention | `Settings.Read` (edit: `Retention.Manage`) |
+| Audit | `Audit.Read` |
+
+A payload or an error detail is hidden until someone with `Jobs.ReadPayload` or `Jobs.ReadError` clicks reveal, and every reveal writes an audit row. Errors show only their code until revealed.
+
+Hiding a button is a convenience, not security: the server checks every request again.
+
+## What you see
+
+- **Overview:** key figures with small trend lines, recent failures, queues and recent scaling events.
+- **Jobs and Runs:** each job type with its numbers, then the individual runs with filters by queue, state, name and time range. Cancel, retry and rerun from the list or the run page.
+- **Run:** a job's status history, its attempts and the resources each attempt used.
+- **Queues, Workers, Pools, Schedules:** each with a detail page. Pause and resume queues and schedules, trigger a schedule, set a concurrency limit.
+- **Retention and Audit:** the cleanup policy with its progress, and the trail of who did what.
+
+Lists show 50 rows a page with a "Next" link. There are no page counts or grand totals. Each list says when it was read ("as of 12:04:31").
+
+## What it is not
+
+<Callout type="info" title="Know these limits">
+
+- **Not live.** Pages poll every few seconds while the tab is visible (5 s at the fastest, and you can pick a slower interval or turn it off). There is no push channel.
+- **No queue-depth totals of its own.** Figures on the Overview are tallies of what one read returned, shown as "50+" when there is more.
+- **"Cancel requested" is not "stopped".** Cancellation is cooperative; a running handler stops only when it honours its token. See [Cancellation](/docs/cancellation).
+- **A revealed payload cannot be taken back** from a browser that has seen it.
+- **Permissions are per application and queue,** not per tenant.
+- **Rate limits are per process.** Several replicas each allow the full rate.
+
+</Callout>
+
+## Running it on its own
+
+The dashboard does not need a worker in the same process. A small internal app with only `AddRunwick`, `AddRunwickManagement` and `AddRunwickDashboard` is a common shape. See [A standalone management host](/docs/management-api#a-standalone-management-host).
+
+The repository's `samples/Runwick.Dashboard.Host` shows a complete host: cookie sign-in, three users with different grants, a path base, and the dashboard mounted before the host's own Inertia pages.

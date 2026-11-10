@@ -1,0 +1,140 @@
+---
+title: Transactions
+description: Create a job, or mark one as succeeded, inside your own PostgreSQL or SQLite transaction so it commits with your data or not at all.
+section: Stores
+order: 4
+---
+
+When your business tables and Runwick's tables live in the same PostgreSQL database or the same SQLite file, one transaction can hold both. Runwick uses that in two places:
+
+- **Staging a job.** Create a job in the same transaction as your own rows. Either both are saved, or neither is.
+- **Completing a job.** A handler marks its job as succeeded in the same transaction as the changes it made. This is Runwick's one exactly-once case.
+
+Redis cannot join a business transaction. With Redis, or with a business database that is not the job store, use the [outbox](/docs/outbox).
+
+| | PostgreSQL | SQLite |
+|---|---|---|
+| Stage a job | `IPostgresJobDispatcher.StageAsync` | `ISqliteJobDispatcher.StageAsync` |
+| Stage a batch | `StageManyAsync` (up to 100 jobs) | `StageManyAsync` (up to 100 jobs) |
+| Complete the current job | `IPostgresJobCompletion.CompleteInTransactionAsync` | `ISqliteJobCompletion.CompleteInTransactionAsync` |
+| Transaction type | `NpgsqlTransaction` | `SqliteTransaction` |
+| Namespace | `Runwick.Postgres` | `Runwick.Sqlite` |
+
+All of these are registered by `UsePostgres` or `UseSqlite`. You do not add anything else.
+
+## Staging a job
+
+```csharp
+await using var connection = await db.OpenConnectionAsync(ct);
+await using var tx = await connection.BeginTransactionAsync(ct);
+
+await orders.InsertAsync(order, connection, tx, ct);
+var staged = await jobs.StageAsync(new ShipOrder(order.Id), tx, cancellationToken: ct);   // IPostgresJobDispatcher
+
+await tx.CommitAsync(ct);   // the order row and the job commit together
+```
+
+`StageAsync` takes the same `DispatchOptions` as `DispatchAsync` (queue, priority, `NotBefore`, uniqueness, metadata). It returns a `StagedDispatch` with the job ID and whether the job was `Created` or `Reused` by a uniqueness key. It is not a `DispatchReceipt`, because nothing is durable until you commit.
+
+Rules:
+
+- Runwick never commits, rolls back, disposes or retries your transaction.
+- A serialization failure or deadlock (PostgreSQL), or `SQLITE_BUSY` (SQLite), reaches you unchanged. Retry the whole transaction. To reuse the same operation on a retry, prepare once with `IPreparedJobDispatcher.Prepare` and pass the `PreparedDispatch` to `StageAsync` each time.
+- On PostgreSQL, a committed staged job wakes idle workers through the same notification as a normal dispatch. A rolled-back one never does.
+
+### Checks on your transaction
+
+Before writing anything, Runwick checks the transaction. A failure throws `TransactionValidationException` and leaves your transaction as it was.
+
+| Code | Cause |
+|---|---|
+| `transaction_invalid` | The transaction is completed, has no connection, or is read-only. |
+| `transaction_store_mismatch` | The connection points at a different database or file from the configured store. |
+| `transaction_profile_mismatch` | SQLite only: the connection does not have `foreign_keys = 1` and `synchronous = FULL`. |
+
+## Completing a job in your transaction
+
+Inject `IPostgresJobCompletion` (or `ISqliteJobCompletion`) into the handler. It only works inside a running attempt.
+
+```csharp
+using Npgsql;
+using Runwick.Postgres;
+
+public sealed class ApplyPaymentHandler(NpgsqlDataSource db, IPostgresJobCompletion completion)
+    : IJobHandler<ApplyPayment>
+{
+    public async Task HandleAsync(ApplyPayment job, CancellationToken ct)
+    {
+        await using var connection = await db.OpenConnectionAsync(ct);
+        await using var tx = await connection.BeginTransactionAsync(ct);
+
+        await using (var credit = new NpgsqlCommand(
+            "UPDATE accounts SET balance = balance + $1 WHERE id = $2", connection, tx))
+        {
+            credit.Parameters.AddWithValue(job.Amount);
+            credit.Parameters.AddWithValue(job.AccountId);
+            await credit.ExecuteNonQueryAsync(ct);
+        }
+
+        await completion.CompleteInTransactionAsync(tx, ct);   // marks this job succeeded, inside tx
+        await tx.CommitAsync(ct);                               // credit and completion commit together
+    }
+}
+```
+
+If the process crashes before the commit, the credit and the "succeeded" mark both vanish, and the job runs again. If it crashes after the commit, both are saved and the job never runs again. Either way, the credit is applied exactly once.
+
+### Rules for completion
+
+<Steps>
+  <Step title="Call it once, inside the attempt">
+
+A second call in the same attempt throws `JobCompletionException` with `completion_already_staged`. A call outside an attempt, or after the handler has returned, throws `no_active_attempt`.
+
+  </Step>
+  <Step title="Roll back when ownership is lost">
+
+If the worker no longer owns the job (its lease expired and another worker may have it), `CompleteInTransactionAsync` throws `JobOwnershipLostException`. Roll back your transaction. Your changes must not commit without the completion.
+
+  </Step>
+  <Step title="Commit before the handler returns">
+
+When the handler returns, Runwick looks for the staged completion. If your transaction is still open, or was rolled back while the handler returned normally, the job fails permanently with `staged_completion_not_committed`. If you rolled back on purpose and want a retry, throw an exception instead of returning.
+
+  </Step>
+  <Step title="Keep the transaction short">
+
+While your transaction holds the staged completion, it also holds a lock on the job's row, so lease renewal for that job pauses. A transaction that stays open too long can outlive the lease (60 seconds by default). On SQLite, every Runwick write on the file waits while your write transaction is open.
+
+  </Step>
+</Steps>
+
+If the commit succeeds and something throws afterwards, the job still counts as succeeded; the exception is kept for diagnostics only. If the reply to your `COMMIT` is lost but the commit went through, Runwick finds the stored outcome and never runs the handler again.
+
+## What this does not cover
+
+<Callout type="warning" title="Exactly-once stops at the database boundary">
+
+Transactional completion covers changes in that one database or file. It does not cover emails, HTTP calls, message brokers, other databases or Redis. A handler that sends an email and then completes in a transaction can still send the email twice. For those, use idempotency keys; see [Delivery guarantees](/docs/delivery-guarantees).
+
+</Callout>
+
+- It does not make the handler run once. A handler can still start more than once; only the committed effects are applied once.
+- Staging is not available on Redis.
+- A restored database is a break in history. Completions and receipts from before the restore are not guaranteed to behave as one continuous record.
+
+For effects outside the database, a common pattern combines both tools: record "already done" in your own table in the same transaction as the completion, and pass an idempotency key to the outside service.
+
+```csharp
+// context: the IJobContext injected into the handler; sentLog: your own table of calls already made
+var alreadySent = await sentLog.ExistsAsync(context.JobId, "receipt-email", connection, tx, ct);
+if (!alreadySent)
+{
+    await email.SendAsync(job.CustomerId, idempotencyKey: $"{context.JobId}:receipt", ct);
+    await sentLog.InsertAsync(context.JobId, "receipt-email", connection, tx, ct);
+}
+await completion.CompleteInTransactionAsync(tx, ct);
+await tx.CommitAsync(ct);
+```
+
+If the process crashes between sending and committing, the next run sends again with the same key, and a provider that honours idempotency keys ignores the duplicate.

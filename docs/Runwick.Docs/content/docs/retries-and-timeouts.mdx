@@ -1,0 +1,203 @@
+---
+title: Retries and timeouts
+description: How many times a job runs, how long Runwick waits between tries, how execution timeouts work, and how failures are recorded.
+section: Jobs
+order: 4
+---
+
+When a handler fails, Runwick waits a little and runs it again, up to a budget. When the budget is spent, the job ends in `failed` and stays there until someone retries it.
+
+| Setting | Default | Where |
+|---|---|---|
+| `MaxExecutions` | 3 (the first run plus up to two retries) | attribute, fluent, `JobDefaults` |
+| Retry delay | 5 s first, doubling, never more than 60 s, half-random | fluent, `JobDefaults` |
+| `ExecutionTimeout` | none | fluent, `JobDefaults` |
+
+These values are copied onto the job when it is dispatched. Changing the configuration later does not change jobs already in the queue.
+
+## MaxExecutions
+
+`MaxExecutions` counts **runs that actually started**: each time a worker is authorized to call your handler. It includes the first run, so `MaxExecutions(3)` means at most two automatic retries. The allowed range is 1 to 100.
+
+<Tabs>
+  <Tab label="Attribute">
+
+```csharp
+[JobName("payments.capture")]
+[MaxExecutions(5)]
+public sealed record CapturePayment(Guid OrderId) : IQueueJob;
+```
+
+  </Tab>
+  <Tab label="Fluent">
+
+```csharp
+runwick.ConfigureJob<CapturePayment>().WithMaxExecutions(5);
+```
+
+  </Tab>
+  <Tab label="Application default">
+
+```csharp
+runwick.JobDefaults(d => d.WithMaxExecutions(5));
+```
+
+  </Tab>
+</Tabs>
+
+Precedence, later wins: library default, then `JobDefaults`, then the attribute, then fluent job configuration.
+
+### Crashes before the handler starts
+
+A worker can claim a job and die before calling the handler, for example during a deploy. No user code ran, so Runwick does not charge `MaxExecutions` for it. It counts these on a separate guard instead: after 5 consecutive claims that never started, the job fails with `reservation_abandonment_exhausted`. The delay between these re-queues starts at 1 second and grows to 30 seconds.
+
+```csharp
+runwick.ConfigureJob<CapturePayment>()
+    .WithMaxUnstartedAbandonments(5)                                         // 1 to 100; cannot be turned off
+    .WithUnstartedRecoveryDelay(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30));
+```
+
+A crash in the tiny window right after a run is authorized but before your method is called still costs one execution.
+
+## Retry delay
+
+After a failed run, the next try waits an exponential delay with "equal jitter": the nominal delay is `initial × 2^(n−1)`, capped at the maximum, and the actual delay is a random value between half the nominal and the full nominal. The randomness spreads out jobs that failed together.
+
+With the defaults (5 s initial, 60 s maximum):
+
+| After run | Waits between |
+|---|---|
+| 1 | 2.5 s and 5 s |
+| 2 | 5 s and 10 s |
+| 3 | 10 s and 20 s |
+| 5 and later | 30 s and 60 s |
+
+```csharp
+runwick.ConfigureJob<CapturePayment>()
+    .WithRetryDelay(initialDelay: TimeSpan.FromSeconds(30), maxDelay: TimeSpan.FromMinutes(10));
+```
+
+Both values must be whole milliseconds, from 1 ms to 24 hours, and the initial delay must not exceed the maximum. There is no attribute for the retry delay.
+
+The chosen delay is stored with the outcome. If the store's reply is lost and the write is repeated, the same delay is reused.
+
+## What counts as a failure
+
+| What the handler does | Outcome |
+|---|---|
+| Returns normally | Succeeded |
+| Throws any exception | Retryable failure |
+| Throws `PermanentJobFailureException` | Permanent failure: no more retries |
+| Runs past `ExecutionTimeout` | Timed out (retryable) |
+| Stops because of a user cancel | Cancelled |
+| Stops because the worker is shutting down | Interrupted (retryable) |
+| Payload cannot be decoded or upgraded | Permanent failure |
+
+A retryable outcome is retried only while the budget lasts. After that the job is `failed`.
+
+### Failing permanently
+
+Throw `PermanentJobFailureException` when retrying cannot help, such as invalid input:
+
+```csharp
+public async Task HandleAsync(CapturePayment job, CancellationToken ct)
+{
+    var order = await orders.FindAsync(job.OrderId, ct)
+        ?? throw new PermanentJobFailureException("order_not_found", $"Order {job.OrderId} does not exist.");
+
+    await gateway.CaptureAsync(order, idempotencyKey: job.OrderId.ToString(), ct);
+}
+```
+
+The code follows the name grammar (`A-Z a-z 0-9 . _ -`, up to 128 characters).
+
+### Deciding in middleware
+
+[Middleware](/docs/job-context#middleware) can turn exceptions into explicit results:
+
+```csharp
+public sealed class HttpRetryMiddleware : IJobMiddleware
+{
+    public async Task<JobExecutionResult> InvokeAsync(IJobContext context, JobExecutionDelegate next, CancellationToken ct)
+    {
+        try
+        {
+            return await next();
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests)
+        {
+            return JobExecutionResult.Retry("rate_limited", TimeSpan.FromMinutes(2));
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.BadRequest)
+        {
+            return JobExecutionResult.Failed("bad_request", "The provider rejected the request.");
+        }
+    }
+}
+
+runwick.UseMiddleware<HttpRetryMiddleware>();   // every job
+```
+
+`Retry(reason, delay)` still uses up one execution. The delay is used as given (no jitter), capped at the job's maximum retry delay. A `null` delay uses the normal policy. A negative delay is a contract fault and fails the job permanently.
+
+## Execution timeout
+
+There is no timeout by default. Set one per job or for the whole application:
+
+```csharp
+runwick.ConfigureJob<BuildReport>().WithExecutionTimeout(TimeSpan.FromMinutes(2));
+runwick.JobDefaults(d => d.WithExecutionTimeout(TimeSpan.FromMinutes(10)));
+
+// Turn an inherited default off for one job:
+runwick.ConfigureJob<ReindexEverything>().WithoutExecutionTimeout();
+```
+
+The timeout must be a whole number of milliseconds, at most 30 days. There is no attribute for it.
+
+When the time is up, Runwick:
+
+1. records the cause `Timeout` and cancels the handler's `CancellationToken`;
+2. waits up to the cancellation grace (10 seconds) for the handler to return;
+3. records the run as **timed out**, even if the handler then returned normally.
+
+A timed-out run is retryable and costs one execution.
+
+The clock measures the local pipeline: from the moment the worker starts the run, including decoding, DI and middleware, until the handler's task completes. It does not measure what happened in the outside world. A payment that went through just before the timeout fired still went through.
+
+<Callout type="warning" title="Timeouts need cooperative handlers">
+
+.NET cannot safely stop running code. If the handler ignores the token, it keeps running after the grace period. The worker then stops renewing the lease and writes no result; the job is recovered after the lease expires and may run again elsewhere. See [Cancellation](/docs/cancellation).
+
+</Callout>
+
+## How failures are recorded
+
+Every run is an **attempt**, and every attempt is kept (until [retention](/docs/retention) removes it) with:
+
+- its outcome (succeeded, retryable failure, permanent failure, timed out, interrupted, cancelled, abandoned);
+- an error code, the exception type and message;
+- the full exception text, capped at 16 KiB with a truncation marker.
+
+A `Failed(code, message)` message longer than 1,024 bytes is truncated.
+
+Exception text can contain sensitive data. The dashboard, API and CLI show it only with a separate permission, and each reveal is audited:
+
+```bash
+runwick jobs get 0193a7c2-5b1e-7c3d-9f00-1a2b3c4d5e6f
+runwick jobs reveal-error <attempt-id>
+```
+
+## Retrying a failed job by hand
+
+A `failed` or `cancelled` job can be retried from the dashboard, the API or the CLI. This starts a new **generation** of the same job ID with a fresh execution budget. The old attempts stay in the history.
+
+```bash
+runwick jobs retry 0193a7c2-5b1e-7c3d-9f00-1a2b3c4d5e6f
+```
+
+In C#, use `IJobControl.RetryAsync` from `Runwick.Management`. See [Management API](/docs/management-api).
+
+## Next
+
+- [Cancellation](/docs/cancellation): how the token works.
+- [Delivery guarantees](/docs/delivery-guarantees): why a run can repeat.

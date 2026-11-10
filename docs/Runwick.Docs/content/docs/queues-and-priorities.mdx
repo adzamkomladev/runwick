@@ -1,0 +1,162 @@
+---
+title: Queues and priorities
+description: Route jobs to queues, use the high, medium and low priority lanes, tune weights and aging, and pause a queue.
+section: Jobs
+order: 3
+---
+
+A **queue** is a named stream of jobs, such as `emails` or `reports`. Workers subscribe to queues. Inside each queue there are three **priority lanes**: `high`, `medium` and `low`. A lane is one queue and priority pair.
+
+Every job has exactly one queue and one priority. The defaults are queue `default` and priority `medium`.
+
+## Putting a job in a queue
+
+<Tabs>
+  <Tab label="Attributes">
+
+```csharp
+[JobName("email.welcome")]
+[Queue("emails")]
+[Priority("high")]
+public sealed record SendWelcomeEmail(Guid UserId) : IQueueJob;
+```
+
+  </Tab>
+  <Tab label="Fluent">
+
+```csharp
+runwick.ConfigureJob<SendWelcomeEmail>()
+    .ToQueue("emails")
+    .WithPriority("high");
+```
+
+  </Tab>
+  <Tab label="Application default">
+
+```csharp
+// Applies to every job that does not set its own queue or priority.
+runwick.JobDefaults(d => d.ToQueue("work").WithPriority("low"));
+```
+
+  </Tab>
+</Tabs>
+
+A single dispatch can override both:
+
+```csharp
+await dispatcher.DispatchAsync(job, new DispatchOptions { Queue = "emails-bulk", Priority = "low" });
+```
+
+## Registering queues
+
+A queue exists once something registers it. A job whose effective queue is `emails` registers `emails`. You can also declare a queue directly, which is also where you give it a [concurrency cap](/docs/rate-limits-and-concurrency):
+
+```csharp
+runwick.Queue("emails-bulk");
+runwick.Queue("pdf", q => q.MaxConcurrent(5));   // at most 5 running at once, across all workers
+```
+
+Dispatching to an unregistered queue fails with `unknown_queue`. Queue names follow the name grammar: 1 to 128 characters of `A-Z a-z 0-9 . _ -`, case-sensitive.
+
+## Subscribing workers
+
+A worker has one or more **pools**. Each pool subscribes to queues and has its own number of slots:
+
+```csharp
+runwick.AddWorker(w => w
+    .Pool("mail", p => p.Queues("emails", "emails-bulk").FixedConcurrency(8))
+    .Pool("heavy", p => p.Queue("reports", weight: 1).Queue("pdf", weight: 3).FixedConcurrency(2)));
+```
+
+`Queues(...)` gives each queue weight 1. `Queue(name, weight)` sets a weight from 1 to 1,000. When several queues in a pool have work, weights decide how often each gets the next free slot. With `reports` at 1 and `pdf` at 3, about three in four claims go to `pdf`.
+
+Subscriptions are explicit. Registering a handler never subscribes a pool to anything. A job in a queue no pool subscribes to simply waits. See [Workers](/docs/workers) for pool sizing.
+
+## Priority lanes
+
+Priority is not a sort order. Each pool picks a lane using **weighted round robin**, with default weights `high` 6, `medium` 3, `low` 1. When all three lanes in a queue have work, roughly 60% of claims come from `high`, 30% from `medium` and 10% from `low`. Low-priority work keeps moving; it just moves more slowly.
+
+You can change the weights per pool. Each must be from 1 to 1,000:
+
+```csharp
+w.Pool("main", p => p
+    .Queues("default")
+    .LaneWeights(high: 10, medium: 3, low: 1));
+```
+
+Weights share out **chances to claim** a job. They do not reserve CPU, they do not interrupt a running job, and a long job holds its slot as long as it runs.
+
+### Aging
+
+In the default mode a lower lane that has waited a long time gets an extra turn. After 8 claims from a queue, if the oldest eligible job in a lower lane has waited at least 60 seconds, the next claim goes to that lane. These two numbers are fixed.
+
+Aging changes the ratios on purpose so that `low` jobs do not wait forever behind a steady stream of `high` jobs. It is not a start-time guarantee, and it never changes a job's stored priority.
+
+### Lane selection modes
+
+```csharp
+p.LaneSelection(LaneSelectionMode.StrictWithAging);
+```
+
+| Mode | Behaviour |
+|---|---|
+| `Weighted` (default) | Weighted round robin, with aging. |
+| `StrictWithAging` | Always the highest lane that has work, with aging as the escape valve. |
+| `Strict` | Always the highest lane that has work. No aging. |
+
+<Callout type="warning" title="Strict mode can starve low lanes">
+
+In `Strict` mode a steady supply of `high` jobs means `low` jobs never run. Use it only when that is what you want.
+
+</Callout>
+
+Between queues, the choice is always weighted, whatever the lane mode.
+
+## Pausing a queue
+
+Pausing a queue stops workers from **claiming** new jobs from it. That is all it does:
+
+- Jobs already running keep running and finish normally.
+- Dispatching into a paused queue still works. Jobs pile up as `pending`.
+- Nothing is cancelled or released.
+
+Resume the queue and workers pick the backlog up again.
+
+<Tabs>
+  <Tab label="CLI">
+
+```bash
+runwick queues list
+runwick queues pause emails
+runwick queues resume emails
+```
+
+  </Tab>
+  <Tab label="C#">
+
+```csharp
+using Runwick.Management;
+
+// IQueueControl comes from DI. The revision is the one you last read for this queue.
+var result = await queueControl.PauseAsync("emails", expectedRevision, new ManagementActor("ops-bot", "Ops bot", "service"), reason: "provider outage");
+if (!result.Succeeded)
+{
+    Console.WriteLine(result.Code);   // for example a revision conflict
+}
+```
+
+  </Tab>
+</Tabs>
+
+Every change carries the queue revision you last saw. If someone else changed the queue in between, you get a conflict instead of a surprise. Pauses and resumes are written to the audit trail. The dashboard has the same buttons; see [Dashboard](/docs/dashboard) and [Management API](/docs/management-api).
+
+<Callout type="info" title="In-process control has no permission check">
+
+`IQueueControl` trusts the actor you pass. The HTTP API, dashboard and CLI check permissions first.
+
+</Callout>
+
+## Next
+
+- [Rate limits and concurrency](/docs/rate-limits-and-concurrency): cap how much runs at once.
+- [Workers](/docs/workers): pools, fixed and automatic concurrency.

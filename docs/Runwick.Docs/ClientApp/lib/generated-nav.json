@@ -1,0 +1,1644 @@
+{
+  "pages": [
+    {
+      "slug": "introduction",
+      "url": "/docs/introduction",
+      "title": "Introduction",
+      "description": "Runwick is a background-job library for .NET 10 that stores jobs in PostgreSQL, SQLite or Redis and runs them on workers you control.",
+      "section": "Get started",
+      "order": 1,
+      "headings": [
+        {
+          "id": "how-it-works",
+          "text": "How it works",
+          "depth": 2
+        },
+        {
+          "id": "what-you-get",
+          "text": "What you get",
+          "depth": 2
+        },
+        {
+          "id": "what-it-promises-and-what-it-does-not",
+          "text": "What it promises, and what it does not",
+          "depth": 2
+        },
+        {
+          "id": "requirements",
+          "text": "Requirements",
+          "depth": 2
+        },
+        {
+          "id": "next-steps",
+          "text": "Next steps",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "installation",
+      "url": "/docs/installation",
+      "title": "Installation",
+      "description": "Install Runwick and one store package, add the optional packages you need, install the CLI and create the store's schema.",
+      "section": "Get started",
+      "order": 2,
+      "headings": [
+        {
+          "id": "packages",
+          "text": "Packages",
+          "depth": 2
+        },
+        {
+          "id": "add-the-packages",
+          "text": "Add the packages",
+          "depth": 2
+        },
+        {
+          "id": "the-command-line-tool",
+          "text": "The command line tool",
+          "depth": 2
+        },
+        {
+          "id": "requirements",
+          "text": "Requirements",
+          "depth": 2
+        },
+        {
+          "id": "create-the-schema",
+          "text": "Create the schema",
+          "depth": 2
+        },
+        {
+          "id": "next-steps",
+          "text": "Next steps",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "quick-start",
+      "url": "/docs/quick-start",
+      "title": "Quick start",
+      "description": "Go from an empty project to a background job that a worker picks up and runs.",
+      "section": "Get started",
+      "order": 3,
+      "headings": [
+        {
+          "id": "what-just-happened",
+          "text": "What just happened",
+          "depth": 2
+        },
+        {
+          "id": "check-it-with-the-sample-host",
+          "text": "Check it with the sample host",
+          "depth": 2
+        },
+        {
+          "id": "add-the-dashboard-optional",
+          "text": "Add the dashboard (optional)",
+          "depth": 2
+        },
+        {
+          "id": "next-steps",
+          "text": "Next steps",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "choosing-a-store",
+      "url": "/docs/choosing-a-store",
+      "title": "Choosing a store",
+      "description": "Compare PostgreSQL, SQLite and Redis as Runwick stores, see where each one stops, and pick a deployment shape.",
+      "section": "Get started",
+      "order": 4,
+      "headings": [
+        {
+          "id": "at-a-glance",
+          "text": "At a glance",
+          "depth": 2
+        },
+        {
+          "id": "which-one-to-pick",
+          "text": "Which one to pick",
+          "depth": 2
+        },
+        {
+          "id": "limits-to-plan-around",
+          "text": "Limits to plan around",
+          "depth": 2
+        },
+        {
+          "id": "postgresql",
+          "text": "PostgreSQL",
+          "depth": 3
+        },
+        {
+          "id": "sqlite",
+          "text": "SQLite",
+          "depth": 3
+        },
+        {
+          "id": "redis",
+          "text": "Redis",
+          "depth": 3
+        },
+        {
+          "id": "roles-are-configuration-not-programs",
+          "text": "Roles are configuration, not programs",
+          "depth": 2
+        },
+        {
+          "id": "deployment-shapes",
+          "text": "Deployment shapes",
+          "depth": 3
+        },
+        {
+          "id": "worth-knowing-before-you-deploy",
+          "text": "Worth knowing before you deploy",
+          "depth": 3
+        },
+        {
+          "id": "next-steps",
+          "text": "Next steps",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "jobs-and-handlers",
+      "url": "/docs/jobs-and-handlers",
+      "title": "Jobs and handlers",
+      "description": "Define a job contract with a stable name, write the handler that runs it, and register both.",
+      "section": "Jobs",
+      "order": 1,
+      "headings": [
+        {
+          "id": "the-job-contract",
+          "text": "The job contract",
+          "depth": 2
+        },
+        {
+          "id": "naming-rules",
+          "text": "Naming rules",
+          "depth": 3
+        },
+        {
+          "id": "the-handler",
+          "text": "The handler",
+          "depth": 2
+        },
+        {
+          "id": "registration",
+          "text": "Registration",
+          "depth": 2
+        },
+        {
+          "id": "payload-serialization",
+          "text": "Payload serialization",
+          "depth": 2
+        },
+        {
+          "id": "payload-limits",
+          "text": "Payload limits",
+          "depth": 3
+        },
+        {
+          "id": "changing-a-payloads-shape",
+          "text": "Changing a payload's shape",
+          "depth": 3
+        },
+        {
+          "id": "runwickcontracts-for-shared-job-types",
+          "text": "Runwick.Contracts for shared job types",
+          "depth": 2
+        },
+        {
+          "id": "next",
+          "text": "Next",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "dispatching",
+      "url": "/docs/dispatching",
+      "title": "Dispatching",
+      "description": "Create jobs with IJobDispatcher, set queue, priority, start time and metadata, dispatch in batches, and handle an unknown outcome.",
+      "section": "Jobs",
+      "order": 2,
+      "headings": [
+        {
+          "id": "the-receipt",
+          "text": "The receipt",
+          "depth": 2
+        },
+        {
+          "id": "dispatch-options",
+          "text": "Dispatch options",
+          "depth": 2
+        },
+        {
+          "id": "delayed-jobs",
+          "text": "Delayed jobs",
+          "depth": 3
+        },
+        {
+          "id": "metadata-rules",
+          "text": "Metadata rules",
+          "depth": 3
+        },
+        {
+          "id": "batch-dispatch",
+          "text": "Batch dispatch",
+          "depth": 2
+        },
+        {
+          "id": "errors",
+          "text": "Errors",
+          "depth": 2
+        },
+        {
+          "id": "when-the-outcome-is-unknown",
+          "text": "When the outcome is unknown",
+          "depth": 3
+        },
+        {
+          "id": "cancellation",
+          "text": "Cancellation",
+          "depth": 3
+        },
+        {
+          "id": "prepared-dispatch",
+          "text": "Prepared dispatch",
+          "depth": 2
+        },
+        {
+          "id": "producer-limits",
+          "text": "Producer limits",
+          "depth": 2
+        },
+        {
+          "id": "next",
+          "text": "Next",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "queues-and-priorities",
+      "url": "/docs/queues-and-priorities",
+      "title": "Queues and priorities",
+      "description": "Route jobs to queues, use the high, medium and low priority lanes, tune weights and aging, and pause a queue.",
+      "section": "Jobs",
+      "order": 3,
+      "headings": [
+        {
+          "id": "putting-a-job-in-a-queue",
+          "text": "Putting a job in a queue",
+          "depth": 2
+        },
+        {
+          "id": "registering-queues",
+          "text": "Registering queues",
+          "depth": 2
+        },
+        {
+          "id": "subscribing-workers",
+          "text": "Subscribing workers",
+          "depth": 2
+        },
+        {
+          "id": "priority-lanes",
+          "text": "Priority lanes",
+          "depth": 2
+        },
+        {
+          "id": "aging",
+          "text": "Aging",
+          "depth": 3
+        },
+        {
+          "id": "lane-selection-modes",
+          "text": "Lane selection modes",
+          "depth": 3
+        },
+        {
+          "id": "pausing-a-queue",
+          "text": "Pausing a queue",
+          "depth": 2
+        },
+        {
+          "id": "next",
+          "text": "Next",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "retries-and-timeouts",
+      "url": "/docs/retries-and-timeouts",
+      "title": "Retries and timeouts",
+      "description": "How many times a job runs, how long Runwick waits between tries, how execution timeouts work, and how failures are recorded.",
+      "section": "Jobs",
+      "order": 4,
+      "headings": [
+        {
+          "id": "maxexecutions",
+          "text": "MaxExecutions",
+          "depth": 2
+        },
+        {
+          "id": "crashes-before-the-handler-starts",
+          "text": "Crashes before the handler starts",
+          "depth": 3
+        },
+        {
+          "id": "retry-delay",
+          "text": "Retry delay",
+          "depth": 2
+        },
+        {
+          "id": "what-counts-as-a-failure",
+          "text": "What counts as a failure",
+          "depth": 2
+        },
+        {
+          "id": "failing-permanently",
+          "text": "Failing permanently",
+          "depth": 3
+        },
+        {
+          "id": "deciding-in-middleware",
+          "text": "Deciding in middleware",
+          "depth": 3
+        },
+        {
+          "id": "execution-timeout",
+          "text": "Execution timeout",
+          "depth": 2
+        },
+        {
+          "id": "how-failures-are-recorded",
+          "text": "How failures are recorded",
+          "depth": 2
+        },
+        {
+          "id": "retrying-a-failed-job-by-hand",
+          "text": "Retrying a failed job by hand",
+          "depth": 2
+        },
+        {
+          "id": "next",
+          "text": "Next",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "uniqueness",
+      "url": "/docs/uniqueness",
+      "title": "Uniqueness",
+      "description": "Stop duplicate jobs from being created with active keys and window keys, and know what uniqueness does not prevent.",
+      "section": "Jobs",
+      "order": 5,
+      "headings": [
+        {
+          "id": "active-keys",
+          "text": "Active keys",
+          "depth": 2
+        },
+        {
+          "id": "window-keys",
+          "text": "Window keys",
+          "depth": 2
+        },
+        {
+          "id": "same-key-different-request",
+          "text": "Same key, different request",
+          "depth": 3
+        },
+        {
+          "id": "using-both",
+          "text": "Using both",
+          "depth": 2
+        },
+        {
+          "id": "declared-keys-are-required",
+          "text": "Declared keys are required",
+          "depth": 2
+        },
+        {
+          "id": "key-rules",
+          "text": "Key rules",
+          "depth": 2
+        },
+        {
+          "id": "in-batches",
+          "text": "In batches",
+          "depth": 2
+        },
+        {
+          "id": "what-uniqueness-does-not-do",
+          "text": "What uniqueness does not do",
+          "depth": 2
+        },
+        {
+          "id": "next",
+          "text": "Next",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "rate-limits-and-concurrency",
+      "url": "/docs/rate-limits-and-concurrency",
+      "title": "Rate limits and concurrency",
+      "description": "Cap how many jobs run at once and how many start per time window, per process or across every worker.",
+      "section": "Jobs",
+      "order": 6,
+      "headings": [
+        {
+          "id": "per-process-or-across-all-workers",
+          "text": "Per process or across all workers",
+          "depth": 2
+        },
+        {
+          "id": "concurrency-caps",
+          "text": "Concurrency caps",
+          "depth": 2
+        },
+        {
+          "id": "the-resource-selector",
+          "text": "The resource selector",
+          "depth": 3
+        },
+        {
+          "id": "changing-a-capacity",
+          "text": "Changing a capacity",
+          "depth": 3
+        },
+        {
+          "id": "fencing-tokens",
+          "text": "Fencing tokens",
+          "depth": 3
+        },
+        {
+          "id": "rate-limits",
+          "text": "Rate limits",
+          "depth": 2
+        },
+        {
+          "id": "what-happens-at-the-limit",
+          "text": "What happens at the limit",
+          "depth": 3
+        },
+        {
+          "id": "what-a-rate-limit-counts",
+          "text": "What a rate limit counts",
+          "depth": 3
+        },
+        {
+          "id": "turn-on-rateadmission-first",
+          "text": "Turn on rateadmission first",
+          "depth": 3
+        },
+        {
+          "id": "next",
+          "text": "Next",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "schedules",
+      "url": "/docs/schedules",
+      "title": "Schedules",
+      "description": "Create jobs on a cron timetable or at one fixed time, handle missed runs and daylight saving, and pause or trigger a schedule.",
+      "section": "Jobs",
+      "order": 7,
+      "headings": [
+        {
+          "id": "turn-on-the-scheduler-capability-first",
+          "text": "Turn on the scheduler capability first",
+          "depth": 2
+        },
+        {
+          "id": "where-the-scheduler-runs",
+          "text": "Where the scheduler runs",
+          "depth": 2
+        },
+        {
+          "id": "defining-a-schedule",
+          "text": "Defining a schedule",
+          "depth": 2
+        },
+        {
+          "id": "cron",
+          "text": "Cron",
+          "depth": 3
+        },
+        {
+          "id": "time-zones",
+          "text": "Time zones",
+          "depth": 3
+        },
+        {
+          "id": "once",
+          "text": "Once",
+          "depth": 3
+        },
+        {
+          "id": "at-most-one-job-per-occurrence",
+          "text": "At most one job per occurrence",
+          "depth": 2
+        },
+        {
+          "id": "missed-occurrences",
+          "text": "Missed occurrences",
+          "depth": 2
+        },
+        {
+          "id": "overlap",
+          "text": "Overlap",
+          "depth": 2
+        },
+        {
+          "id": "options-for-the-created-jobs",
+          "text": "Options for the created jobs",
+          "depth": 2
+        },
+        {
+          "id": "changing-a-schedule-in-code",
+          "text": "Changing a schedule in code",
+          "depth": 2
+        },
+        {
+          "id": "pausing-resuming-and-triggering",
+          "text": "Pausing, resuming and triggering",
+          "depth": 2
+        },
+        {
+          "id": "next",
+          "text": "Next",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "cancellation",
+      "url": "/docs/cancellation",
+      "title": "Cancellation",
+      "description": "Cancelling a job is a request, not a kill. How the token works, how long Runwick waits, and how to write handlers that stop cleanly.",
+      "section": "Jobs",
+      "order": 8,
+      "headings": [
+        {
+          "id": "what-happens-when-you-cancel-a-job",
+          "text": "What happens when you cancel a job",
+          "depth": 2
+        },
+        {
+          "id": "cancelling-from-the-cli-dashboard-or-api",
+          "text": "Cancelling from the CLI, dashboard or API",
+          "depth": 3
+        },
+        {
+          "id": "one-token-four-causes",
+          "text": "One token, four causes",
+          "depth": 2
+        },
+        {
+          "id": "write-handlers-that-cooperate",
+          "text": "Write handlers that cooperate",
+          "depth": 2
+        },
+        {
+          "id": "grace-period",
+          "text": "Grace period",
+          "depth": 2
+        },
+        {
+          "id": "shutdown",
+          "text": "Shutdown",
+          "depth": 2
+        },
+        {
+          "id": "cancelling-a-dispatch-call",
+          "text": "Cancelling a dispatch call",
+          "depth": 2
+        },
+        {
+          "id": "next",
+          "text": "Next",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "job-context",
+      "url": "/docs/job-context",
+      "title": "Job context",
+      "description": "Read facts about the current run with IJobContext, log with them, and wrap runs in middleware.",
+      "section": "Jobs",
+      "order": 9,
+      "headings": [
+        {
+          "id": "what-it-exposes",
+          "text": "What it exposes",
+          "depth": 2
+        },
+        {
+          "id": "identity",
+          "text": "Identity",
+          "depth": 3
+        },
+        {
+          "id": "runs-and-budget",
+          "text": "Runs and budget",
+          "depth": 3
+        },
+        {
+          "id": "routing-and-payload",
+          "text": "Routing and payload",
+          "depth": 3
+        },
+        {
+          "id": "metadata-tracing-and-fences",
+          "text": "Metadata, tracing and fences",
+          "depth": 3
+        },
+        {
+          "id": "scheduled-jobs",
+          "text": "Scheduled jobs",
+          "depth": 3
+        },
+        {
+          "id": "what-it-does-not-expose",
+          "text": "What it does not expose",
+          "depth": 2
+        },
+        {
+          "id": "logging",
+          "text": "Logging",
+          "depth": 2
+        },
+        {
+          "id": "middleware",
+          "text": "Middleware",
+          "depth": 2
+        },
+        {
+          "id": "next",
+          "text": "Next",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "postgresql",
+      "url": "/docs/postgresql",
+      "title": "PostgreSQL",
+      "description": "Run Runwick on PostgreSQL 16, 17 or 18, create its schema with a migration role, and stage jobs in your own transactions.",
+      "section": "Stores",
+      "order": 1,
+      "headings": [
+        {
+          "id": "requirements",
+          "text": "Requirements",
+          "depth": 2
+        },
+        {
+          "id": "install",
+          "text": "Install",
+          "depth": 2
+        },
+        {
+          "id": "create-the-schema",
+          "text": "Create the schema",
+          "depth": 2
+        },
+        {
+          "id": "roles-migration-role-and-runtime-role",
+          "text": "Roles: migration role and runtime role",
+          "depth": 2
+        },
+        {
+          "id": "register-the-store",
+          "text": "Register the store",
+          "depth": 2
+        },
+        {
+          "id": "connections",
+          "text": "Connections",
+          "depth": 3
+        },
+        {
+          "id": "how-workers-notice-new-jobs",
+          "text": "How workers notice new jobs",
+          "depth": 3
+        },
+        {
+          "id": "primary-only",
+          "text": "Primary only",
+          "depth": 2
+        },
+        {
+          "id": "create-a-job-in-your-own-transaction",
+          "text": "Create a job in your own transaction",
+          "depth": 2
+        },
+        {
+          "id": "what-postgresql-does-not-promise",
+          "text": "What PostgreSQL does not promise",
+          "depth": 2
+        },
+        {
+          "id": "next-steps",
+          "text": "Next steps",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "sqlite",
+      "url": "/docs/sqlite",
+      "title": "SQLite",
+      "description": "Run Runwick on one SQLite file for apps whose workers all live on one machine, with WAL and synchronous=FULL enforced.",
+      "section": "Stores",
+      "order": 2,
+      "headings": [
+        {
+          "id": "requirements",
+          "text": "Requirements",
+          "depth": 2
+        },
+        {
+          "id": "install-and-create-the-file",
+          "text": "Install and create the file",
+          "depth": 2
+        },
+        {
+          "id": "register-the-store",
+          "text": "Register the store",
+          "depth": 2
+        },
+        {
+          "id": "how-the-store-uses-threads",
+          "text": "How the store uses threads",
+          "depth": 3
+        },
+        {
+          "id": "durability-wal-and-synchronousfull",
+          "text": "Durability: WAL and synchronous=FULL",
+          "depth": 2
+        },
+        {
+          "id": "setups-that-are-refused",
+          "text": "Setups that are refused",
+          "depth": 2
+        },
+        {
+          "id": "one-writer-at-a-time",
+          "text": "One writer at a time",
+          "depth": 2
+        },
+        {
+          "id": "polling",
+          "text": "Polling",
+          "depth": 2
+        },
+        {
+          "id": "your-transaction-the-same-file",
+          "text": "Your transaction, the same file",
+          "depth": 2
+        },
+        {
+          "id": "what-sqlite-does-not-promise",
+          "text": "What SQLite does not promise",
+          "depth": 2
+        },
+        {
+          "id": "next-steps",
+          "text": "Next steps",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "redis",
+      "url": "/docs/redis",
+      "title": "Redis",
+      "description": "Run Runwick on one durable Redis primary with append-only fsync on every write, and know the limits that come with it.",
+      "section": "Stores",
+      "order": 3,
+      "headings": [
+        {
+          "id": "requirements",
+          "text": "Requirements",
+          "depth": 2
+        },
+        {
+          "id": "server-configuration",
+          "text": "Server configuration",
+          "depth": 2
+        },
+        {
+          "id": "install-and-migrate",
+          "text": "Install and migrate",
+          "depth": 2
+        },
+        {
+          "id": "register-the-store",
+          "text": "Register the store",
+          "depth": 2
+        },
+        {
+          "id": "what-runwick-checks",
+          "text": "What Runwick checks",
+          "depth": 2
+        },
+        {
+          "id": "history-checks",
+          "text": "History checks",
+          "depth": 3
+        },
+        {
+          "id": "one-application-one-hash-slot",
+          "text": "One application, one hash slot",
+          "depth": 2
+        },
+        {
+          "id": "no-transactions-with-your-data",
+          "text": "No transactions with your data",
+          "depth": 2
+        },
+        {
+          "id": "polling",
+          "text": "Polling",
+          "depth": 2
+        },
+        {
+          "id": "what-redis-does-not-promise",
+          "text": "What Redis does not promise",
+          "depth": 2
+        },
+        {
+          "id": "next-steps",
+          "text": "Next steps",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "transactions",
+      "url": "/docs/transactions",
+      "title": "Transactions",
+      "description": "Create a job, or mark one as succeeded, inside your own PostgreSQL or SQLite transaction so it commits with your data or not at all.",
+      "section": "Stores",
+      "order": 4,
+      "headings": [
+        {
+          "id": "staging-a-job",
+          "text": "Staging a job",
+          "depth": 2
+        },
+        {
+          "id": "checks-on-your-transaction",
+          "text": "Checks on your transaction",
+          "depth": 3
+        },
+        {
+          "id": "completing-a-job-in-your-transaction",
+          "text": "Completing a job in your transaction",
+          "depth": 2
+        },
+        {
+          "id": "rules-for-completion",
+          "text": "Rules for completion",
+          "depth": 3
+        },
+        {
+          "id": "what-this-does-not-cover",
+          "text": "What this does not cover",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "outbox",
+      "url": "/docs/outbox",
+      "title": "Outbox",
+      "description": "Commit a job with your business data in a database that is not the job store, then let a relay deliver it at least once.",
+      "section": "Stores",
+      "order": 5,
+      "headings": [
+        {
+          "id": "packages",
+          "text": "Packages",
+          "depth": 2
+        },
+        {
+          "id": "set-it-up",
+          "text": "Set it up",
+          "depth": 2
+        },
+        {
+          "id": "staging-options",
+          "text": "Staging options",
+          "depth": 3
+        },
+        {
+          "id": "processes-that-only-stage",
+          "text": "Processes that only stage",
+          "depth": 3
+        },
+        {
+          "id": "relay-options",
+          "text": "Relay options",
+          "depth": 2
+        },
+        {
+          "id": "the-de-duplication-window",
+          "text": "The de-duplication window",
+          "depth": 2
+        },
+        {
+          "id": "blocked-messages",
+          "text": "Blocked messages",
+          "depth": 2
+        },
+        {
+          "id": "errors-when-staging",
+          "text": "Errors when staging",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "workers",
+      "url": "/docs/workers",
+      "title": "Workers",
+      "description": "Run jobs with AddWorker - pools, queues, concurrency, leases, shutdown and recovery after a crash.",
+      "section": "Operations",
+      "order": 1,
+      "headings": [
+        {
+          "id": "adding-a-worker",
+          "text": "Adding a worker",
+          "depth": 2
+        },
+        {
+          "id": "pools",
+          "text": "Pools",
+          "depth": 2
+        },
+        {
+          "id": "automatic-concurrency",
+          "text": "Automatic concurrency",
+          "depth": 3
+        },
+        {
+          "id": "leases",
+          "text": "Leases",
+          "depth": 2
+        },
+        {
+          "id": "shutdown",
+          "text": "Shutdown",
+          "depth": 2
+        },
+        {
+          "id": "when-a-worker-crashes",
+          "text": "When a worker crashes",
+          "depth": 2
+        },
+        {
+          "id": "resource-usage-per-attempt",
+          "text": "Resource usage per attempt",
+          "depth": 2
+        },
+        {
+          "id": "other-work-a-worker-does",
+          "text": "Other work a worker does",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "management-api",
+      "url": "/docs/management-api",
+      "title": "Management API",
+      "description": "The authenticated HTTP API behind the dashboard and the CLI - sign-in, permissions, antiforgery, limits and audit.",
+      "section": "Operations",
+      "order": 2,
+      "headings": [
+        {
+          "id": "setting-it-up",
+          "text": "Setting it up",
+          "depth": 2
+        },
+        {
+          "id": "permissions",
+          "text": "Permissions",
+          "depth": 2
+        },
+        {
+          "id": "scoping-to-queues",
+          "text": "Scoping to queues",
+          "depth": 3
+        },
+        {
+          "id": "antiforgery",
+          "text": "Antiforgery",
+          "depth": 2
+        },
+        {
+          "id": "machine-clients",
+          "text": "Machine clients",
+          "depth": 2
+        },
+        {
+          "id": "basic-authentication",
+          "text": "Basic authentication",
+          "depth": 2
+        },
+        {
+          "id": "revisions-and-command-ids",
+          "text": "Revisions and command IDs",
+          "depth": 2
+        },
+        {
+          "id": "limits",
+          "text": "Limits",
+          "depth": 2
+        },
+        {
+          "id": "audit",
+          "text": "Audit",
+          "depth": 2
+        },
+        {
+          "id": "a-standalone-management-host",
+          "text": "A standalone management host",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "dashboard",
+      "url": "/docs/dashboard",
+      "title": "Dashboard",
+      "description": "A web UI for jobs, queues, workers and schedules, served from inside your ASP.NET Core app.",
+      "section": "Operations",
+      "order": 3,
+      "headings": [
+        {
+          "id": "setting-it-up",
+          "text": "Setting it up",
+          "depth": 2
+        },
+        {
+          "id": "options",
+          "text": "Options",
+          "depth": 3
+        },
+        {
+          "id": "order-with-your-own-inertia-app",
+          "text": "Order with your own Inertia app",
+          "depth": 2
+        },
+        {
+          "id": "permissions",
+          "text": "Permissions",
+          "depth": 2
+        },
+        {
+          "id": "what-you-see",
+          "text": "What you see",
+          "depth": 2
+        },
+        {
+          "id": "what-it-is-not",
+          "text": "What it is not",
+          "depth": 2
+        },
+        {
+          "id": "running-it-on-its-own",
+          "text": "Running it on its own",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "cli",
+      "url": "/docs/cli",
+      "title": "Command line",
+      "description": "The runwick CLI - contexts, job and queue controls, store administration, and stable output for scripts and agents.",
+      "section": "Operations",
+      "order": 4,
+      "headings": [
+        {
+          "id": "install",
+          "text": "Install",
+          "depth": 2
+        },
+        {
+          "id": "contexts-and-sign-in",
+          "text": "Contexts and sign-in",
+          "depth": 2
+        },
+        {
+          "id": "jobs",
+          "text": "Jobs",
+          "depth": 2
+        },
+        {
+          "id": "queues-schedules-and-capacity",
+          "text": "Queues, schedules and capacity",
+          "depth": 2
+        },
+        {
+          "id": "events-audit-and-settings",
+          "text": "Events, audit and settings",
+          "depth": 2
+        },
+        {
+          "id": "expected-revisions",
+          "text": "Expected revisions",
+          "depth": 2
+        },
+        {
+          "id": "store-commands",
+          "text": "Store commands",
+          "depth": 2
+        },
+        {
+          "id": "doctor",
+          "text": "doctor",
+          "depth": 2
+        },
+        {
+          "id": "output-for-scripts-and-agents",
+          "text": "Output for scripts and agents",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "observability",
+      "url": "/docs/observability",
+      "title": "Observability",
+      "description": "Traces, metrics and logs from Runwick, how to export them with OpenTelemetry, and how to read the numbers.",
+      "section": "Operations",
+      "order": 5,
+      "headings": [
+        {
+          "id": "turning-it-on-with-opentelemetry",
+          "text": "Turning it on with OpenTelemetry",
+          "depth": 2
+        },
+        {
+          "id": "options",
+          "text": "Options",
+          "depth": 2
+        },
+        {
+          "id": "traces",
+          "text": "Traces",
+          "depth": 2
+        },
+        {
+          "id": "metrics",
+          "text": "Metrics",
+          "depth": 2
+        },
+        {
+          "id": "logs",
+          "text": "Logs",
+          "depth": 2
+        },
+        {
+          "id": "reading-the-numbers-honestly",
+          "text": "Reading the numbers honestly",
+          "depth": 2
+        },
+        {
+          "id": "grafana-dashboard-and-prometheus-alerts",
+          "text": "Grafana dashboard and Prometheus alerts",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "health-checks",
+      "url": "/docs/health-checks",
+      "title": "Health checks",
+      "description": "Liveness and per-role readiness checks for ASP.NET Core, and how to map them for your orchestrator.",
+      "section": "Operations",
+      "order": 6,
+      "headings": [
+        {
+          "id": "adding-the-checks",
+          "text": "Adding the checks",
+          "depth": 2
+        },
+        {
+          "id": "mapping-the-endpoints",
+          "text": "Mapping the endpoints",
+          "depth": 2
+        },
+        {
+          "id": "what-each-check-means",
+          "text": "What each check means",
+          "depth": 2
+        },
+        {
+          "id": "reasons-stay-private-by-default",
+          "text": "Reasons stay private by default",
+          "depth": 2
+        },
+        {
+          "id": "without-aspnet-core",
+          "text": "Without ASP.NET Core",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "retention",
+      "url": "/docs/retention",
+      "title": "Retention",
+      "description": "How Runwick deletes old payloads, finished jobs, audit rows and history, and how to tune the cleanup.",
+      "section": "Operations",
+      "order": 7,
+      "headings": [
+        {
+          "id": "what-gets-deleted-and-when",
+          "text": "What gets deleted, and when",
+          "depth": 2
+        },
+        {
+          "id": "changing-the-policy",
+          "text": "Changing the policy",
+          "depth": 2
+        },
+        {
+          "id": "tuning-the-cleanup-loop",
+          "text": "Tuning the cleanup loop",
+          "depth": 2
+        },
+        {
+          "id": "cleanup-is-bounded-work",
+          "text": "Cleanup is bounded work",
+          "depth": 3
+        },
+        {
+          "id": "backups-and-copies",
+          "text": "Backups and copies",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "deployment",
+      "url": "/docs/deployment",
+      "title": "Deployment",
+      "description": "Process shapes, containers, the migration step, shutdown timeouts, capabilities and a checklist for going live.",
+      "section": "Operations",
+      "order": 8,
+      "headings": [
+        {
+          "id": "roles",
+          "text": "Roles",
+          "depth": 2
+        },
+        {
+          "id": "common-shapes",
+          "text": "Common shapes",
+          "depth": 2
+        },
+        {
+          "id": "migrations-are-a-separate-step",
+          "text": "Migrations are a separate step",
+          "depth": 2
+        },
+        {
+          "id": "containers-and-shutdown",
+          "text": "Containers and shutdown",
+          "depth": 2
+        },
+        {
+          "id": "capabilities",
+          "text": "Capabilities",
+          "depth": 2
+        },
+        {
+          "id": "checklist",
+          "text": "Checklist",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "upgrades",
+      "url": "/docs/upgrades",
+      "title": "Upgrades and restores",
+      "description": "How to upgrade Runwick safely, why there is no rolling upgrade, and what a restore from backup does and does not bring back.",
+      "section": "Operations",
+      "order": 9,
+      "headings": [
+        {
+          "id": "before-you-start",
+          "text": "Before you start",
+          "depth": 2
+        },
+        {
+          "id": "upgrade-step-by-step",
+          "text": "Upgrade, step by step",
+          "depth": 2
+        },
+        {
+          "id": "if-migrate-fails",
+          "text": "If migrate fails",
+          "depth": 3
+        },
+        {
+          "id": "if-it-goes-wrong",
+          "text": "If it goes wrong",
+          "depth": 3
+        },
+        {
+          "id": "capabilities-cannot-be-undone",
+          "text": "Capabilities cannot be undone",
+          "depth": 2
+        },
+        {
+          "id": "schedules-after-an-upgrade",
+          "text": "Schedules after an upgrade",
+          "depth": 2
+        },
+        {
+          "id": "restoring-from-a-backup",
+          "text": "Restoring from a backup",
+          "depth": 2
+        },
+        {
+          "id": "replace-or-copy",
+          "text": "Replace, or copy?",
+          "depth": 3
+        },
+        {
+          "id": "what-runwick-does-not-promise",
+          "text": "What Runwick does not promise",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "delivery-guarantees",
+      "url": "/docs/delivery-guarantees",
+      "title": "Delivery guarantees",
+      "description": "What Runwick promises about running your jobs, how to make repeated runs harmless, and the list of things it does not claim.",
+      "section": "Reference",
+      "order": 1,
+      "headings": [
+        {
+          "id": "at-least-once",
+          "text": "At-least-once",
+          "depth": 2
+        },
+        {
+          "id": "when-a-dispatch-is-confirmed",
+          "text": "When a dispatch is confirmed",
+          "depth": 3
+        },
+        {
+          "id": "resolving-an-unknown-outcome",
+          "text": "Resolving an unknown outcome",
+          "depth": 3
+        },
+        {
+          "id": "make-repeats-harmless-idempotency-keys",
+          "text": "Make repeats harmless: idempotency keys",
+          "depth": 2
+        },
+        {
+          "id": "uniqueness-is-not-idempotency",
+          "text": "Uniqueness is not idempotency",
+          "depth": 2
+        },
+        {
+          "id": "the-one-exactly-once-case",
+          "text": "The one exactly-once case",
+          "depth": 2
+        },
+        {
+          "id": "the-outbox",
+          "text": "The outbox",
+          "depth": 2
+        },
+        {
+          "id": "what-runwick-does-not-claim",
+          "text": "What Runwick does not claim",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "configuration",
+      "url": "/docs/configuration",
+      "title": "Configuration",
+      "description": "Every default in one place, for jobs, workers, producers, stores, retention, the scheduler, the outbox relay and the fixed limits.",
+      "section": "Reference",
+      "order": 2,
+      "headings": [
+        {
+          "id": "per-job",
+          "text": "Per job",
+          "depth": 2
+        },
+        {
+          "id": "worker-workeroptions",
+          "text": "Worker: WorkerOptions",
+          "depth": 2
+        },
+        {
+          "id": "pools",
+          "text": "Pools",
+          "depth": 3
+        },
+        {
+          "id": "producer-produceroptions",
+          "text": "Producer: ProducerOptions",
+          "depth": 2
+        },
+        {
+          "id": "stores",
+          "text": "Stores",
+          "depth": 2
+        },
+        {
+          "id": "retention",
+          "text": "Retention",
+          "depth": 2
+        },
+        {
+          "id": "scheduler-scheduleroptions",
+          "text": "Scheduler: SchedulerOptions",
+          "depth": 2
+        },
+        {
+          "id": "outbox-relay-outboxrelayoptions",
+          "text": "Outbox relay: OutboxRelayOptions",
+          "depth": 2
+        },
+        {
+          "id": "telemetry-runwicktelemetryoptions",
+          "text": "Telemetry: RunwickTelemetryOptions",
+          "depth": 2
+        },
+        {
+          "id": "management-and-dashboard",
+          "text": "Management and dashboard",
+          "depth": 2
+        },
+        {
+          "id": "fixed-limits",
+          "text": "Fixed limits",
+          "depth": 2
+        },
+        {
+          "id": "startup-validation",
+          "text": "Startup validation",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "testing",
+      "url": "/docs/testing",
+      "title": "Testing",
+      "description": "Test handlers as plain classes, fake IJobDispatcher in code that dispatches, and run end-to-end tests against a real SQLite file.",
+      "section": "Reference",
+      "order": 3,
+      "headings": [
+        {
+          "id": "testing-a-handler",
+          "text": "Testing a handler",
+          "depth": 2
+        },
+        {
+          "id": "handlers-that-use-ijobcontext",
+          "text": "Handlers that use IJobContext",
+          "depth": 3
+        },
+        {
+          "id": "testing-code-that-dispatches",
+          "text": "Testing code that dispatches",
+          "depth": 2
+        },
+        {
+          "id": "end-to-end-with-a-real-sqlite-file",
+          "text": "End-to-end with a real SQLite file",
+          "depth": 2
+        },
+        {
+          "id": "when-to-test-against-postgresql-or-redis",
+          "text": "When to test against PostgreSQL or Redis",
+          "depth": 3
+        }
+      ]
+    },
+    {
+      "slug": "troubleshooting",
+      "url": "/docs/troubleshooting",
+      "title": "Troubleshooting",
+      "description": "Common startup refusals, error codes and stuck jobs, each with its cause and the fix.",
+      "section": "Reference",
+      "order": 4,
+      "headings": [
+        {
+          "id": "startup-refusals",
+          "text": "Startup refusals",
+          "depth": 2
+        },
+        {
+          "id": "sqlite",
+          "text": "SQLite",
+          "depth": 2
+        },
+        {
+          "id": "redis",
+          "text": "Redis",
+          "depth": 2
+        },
+        {
+          "id": "dispatching",
+          "text": "Dispatching",
+          "depth": 2
+        },
+        {
+          "id": "running-jobs",
+          "text": "Running jobs",
+          "depth": 2
+        },
+        {
+          "id": "management-api-and-cli",
+          "text": "Management API and CLI",
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "slug": "ai-agents",
+      "url": "/docs/ai-agents",
+      "title": "AI agents",
+      "description": "Give coding agents Runwick's docs as plain text, let them drive the runwick CLI in --agent mode, and the conventions worth putting in AGENTS.md.",
+      "section": "Reference",
+      "order": 5,
+      "headings": [
+        {
+          "id": "point-the-agent-at-the-docs",
+          "text": "Point the agent at the docs",
+          "depth": 2
+        },
+        {
+          "id": "add-an-agentsmd-section",
+          "text": "Add an AGENTS.md section",
+          "depth": 2
+        },
+        {
+          "id": "the-cli-in-agent-mode",
+          "text": "The CLI in agent mode",
+          "depth": 2
+        },
+        {
+          "id": "learn-the-tool-runwick---agent-describe",
+          "text": "Learn the tool: runwick --agent describe",
+          "depth": 3
+        },
+        {
+          "id": "exit-codes",
+          "text": "Exit codes",
+          "depth": 3
+        },
+        {
+          "id": "rules-that-differ-in-agent-mode",
+          "text": "Rules that differ in agent mode",
+          "depth": 3
+        },
+        {
+          "id": "tips-for-agents-operating-runwick",
+          "text": "Tips for agents operating Runwick",
+          "depth": 2
+        },
+        {
+          "id": "let-the-agent-check-its-own-work",
+          "text": "Let the agent check its own work",
+          "depth": 2
+        }
+      ]
+    }
+  ]
+}

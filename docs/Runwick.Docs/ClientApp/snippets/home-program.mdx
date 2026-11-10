@@ -1,0 +1,12 @@
+```csharp
+builder.Services.AddRunwick(runwick =>
+{
+    runwick.Application("billing")
+        .UsePostgres(connectionString) // or UseSqlite, UseRedis
+        .AddJobsFromAssemblyContaining<SendInvoice>();
+    runwick.AddHandler<SendInvoice, SendInvoiceHandler>();
+    runwick.AddWorker(w => w.Pool("main", p => p
+        .Queues("default")
+        .FixedConcurrency(4)));
+});
+```

@@ -1,0 +1,158 @@
+---
+title: Choosing a store
+description: Compare PostgreSQL, SQLite and Redis as Runwick stores, see where each one stops, and pick a deployment shape.
+section: Get started
+order: 4
+---
+
+All three stores give the same job behaviour: the same states, retries, receipts, uniqueness and rate rules. Your jobs and handlers do not change between them. The stores differ in where they can run, what they survive, and whether a job can share a transaction with your own data.
+
+## At a glance
+
+| | PostgreSQL | SQLite | Redis |
+|---|---|---|---|
+| Package | `Runwick.Postgres` | `Runwick.Sqlite` | `Runwick.Redis` |
+| Server | PostgreSQL 16, 17 or 18 (18 is the reference) | a local file, SQLite 3.38 or newer (bundled) | Redis 8.2 or newer, one standalone primary |
+| Hosts | many, connected to the primary | one machine only | many, all reaching one primary |
+| Job or completion in the same transaction as your data | yes, same database | yes, same file | no, use the [outbox](/docs/outbox) |
+| How workers notice new jobs | LISTEN/NOTIFY wake-up, with polling as the fallback | polling | polling |
+| Refused at startup | nothing listed; replicas and proxies are simply not certified | a network share, an in-memory database, sync weaker than `FULL` | a replica, Cluster, Sentinel, wrong persistence settings |
+| High availability | not certified | none | none |
+
+Runwick checks each store's durability settings when it starts and again while it runs. It refuses settings that could lose jobs rather than run on them.
+
+## Which one to pick
+
+<Accordion>
+  <AccordionItem title="PostgreSQL: the default choice">
+
+Pick PostgreSQL if you already run it, if your workers run on more than one host, or if you want to commit a job in the same transaction as your business data. It is the reference store: the one the rest of Runwick is measured against.
+
+```csharp
+runwick.Application("my-app").UsePostgres("Host=db;Database=app;Username=app;Password=...");
+```
+
+  </AccordionItem>
+  <AccordionItem title="SQLite: one machine, no server">
+
+Pick SQLite for a single-machine app, a desktop or edge service, or a small internal tool where running a database server is not worth it. Every process that uses the file must be on the same machine.
+
+```csharp
+runwick.Application("my-app").UseSqlite("Data Source=/var/lib/my-app/runwick.db");
+```
+
+  </AccordionItem>
+  <AccordionItem title="Redis: when Redis is what you run">
+
+Pick Redis if you already operate a durable Redis primary and do not need jobs to share a transaction with your business database. If you need that, put the [outbox](/docs/outbox) in your PostgreSQL or SQLite database and let it deliver to Redis.
+
+```csharp
+runwick.Application("my-app").UseRedis("redis:6379");
+```
+
+  </AccordionItem>
+</Accordion>
+
+## Limits to plan around
+
+### PostgreSQL
+
+- Connect to the primary directly. Decisions about who owns a job never read from a replica.
+- High-availability setups and connection poolers (proxies) are not certified. If you use one, you are outside what has been tested.
+- The schema is always named `runwick`. You cannot change it.
+
+### SQLite
+
+- One file on one machine. There is no multi-host support and no high availability.
+- Writes use WAL with `synchronous=FULL`. A weaker setting is refused.
+- Only one write happens at a time across all processes. Nothing here claims SQLite matches PostgreSQL's throughput.
+- Durability is whatever your disk and its fsync give you. Restoring the file from a backup is a break in history: receipts and uniqueness windows from before the restore do not carry over as one continuous record.
+- A test that kills a process is not a power-loss test, and Runwick does not claim it is.
+
+### Redis
+
+- One primary, no high availability. Failover, Sentinel promotion and Cluster are not supported. A promoted replica may have lost jobs that were already acknowledged.
+- The server must run with `appendonly yes`, `appendfsync always`, `no-appendfsync-on-rewrite no`, `maxmemory-policy noeviction` and `aof-load-truncated no`. Redis without `appendfsync always` is not a supported configuration.
+- One application lives in one hash slot. Its throughput is bounded by one server thread, and one very large command can delay everything else for that application.
+- Redis cannot join your business transaction. There is no same-transaction completion.
+- Nothing here says Redis is faster than PostgreSQL. No speed comparison is claimed.
+
+<Callout type="info" title="Switching stores later">
+Your jobs and handlers stay the same, so code written for one store runs on another by changing the `Use...` line. Jobs already in the old store stay there.
+</Callout>
+
+## Roles are configuration, not programs
+
+A Runwick process can take any combination of four roles:
+
+| Role | How you turn it on |
+|---|---|
+| Producer | any code that calls `IJobDispatcher.DispatchAsync`. Every app with `AddRunwick` can dispatch |
+| Worker | `runwick.AddWorker(...)` |
+| Scheduler | `runwick.AddScheduler()` |
+| Management | `app.MapRunwickManagement(...)`, and optionally the dashboard |
+
+There is nothing else to deploy. The store is the only shared piece, and processes never talk to each other directly.
+
+### Deployment shapes
+
+| Shape | What runs where |
+|---|---|
+| One app, embedded worker | your web app dispatches and works in one process |
+| One app, external worker | the web app only dispatches; a separate worker service runs the jobs |
+| Many replicas, embedded workers | every replica both dispatches and works |
+| Replicas plus a worker tier | the web tier only dispatches; a worker tier only works |
+| Mixed | some replicas embed workers, and extra external workers run too |
+
+PostgreSQL and Redis support all five shapes across hosts. SQLite supports all five as long as every process is on the same machine.
+
+A web app that only dispatches registers the store and the jobs, and leaves out `AddWorker`:
+
+```csharp
+// Web app: producer only
+builder.Services.AddRunwick(runwick =>
+{
+    runwick.Application("shop")
+        .UsePostgres(connectionString)
+        .AddJobsFromAssemblyContaining<SendWelcomeEmail>();
+});
+```
+
+The worker service registers the same jobs, plus handlers and a worker:
+
+```csharp
+// Worker service
+builder.Services.AddRunwick(runwick =>
+{
+    runwick.Application("shop")
+        .UsePostgres(connectionString)
+        .AddJobsFromAssemblyContaining<SendWelcomeEmail>();
+    runwick.AddHandlersFromAssemblyContaining<SendWelcomeEmailHandler>();
+    runwick.AddWorker(w => w.Pool("main", p => p.Queues("default").FixedConcurrency(8)));
+});
+```
+
+Put the job records in a shared project that references only `Runwick.Contracts`, so the web app does not need your handler code.
+
+### Worth knowing before you deploy
+
+- **Automatic concurrency.** `AutoConcurrency(min, max)` adjusts a pool inside one process. It does not coordinate across the cluster.
+- **Schedules.** Pausing a schedule stops new jobs from being created. It does not pause jobs the schedule already created.
+- **The scheduler capability.** Before any process can register a schedule, an operator raises the `scheduler` capability once per application with `runwick store activate-capability --name scheduler`. Until then, startup fails with `scheduler_not_active`. See [Schedules](/docs/schedules).
+
+## Next steps
+
+<Cards>
+  <Card title="PostgreSQL" icon="server" href="/docs/postgresql">
+    Connection strings, roles and the same-transaction APIs.
+  </Card>
+  <Card title="SQLite" icon="server" href="/docs/sqlite">
+    File location, durability settings and single-machine limits.
+  </Card>
+  <Card title="Redis" icon="server" href="/docs/redis">
+    Required server settings and what Runwick checks while it runs.
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/docs/deployment">
+    Migrations, shutdown timeouts and running workers in production.
+  </Card>
+</Cards>

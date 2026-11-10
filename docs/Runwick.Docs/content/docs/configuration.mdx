@@ -1,0 +1,208 @@
+---
+title: Configuration
+description: Every default in one place, for jobs, workers, producers, stores, retention, the scheduler, the outbox relay and the fixed limits.
+section: Reference
+order: 2
+---
+
+All configuration goes through `AddRunwick(runwick => ...)` and the store, outbox and management extensions. Times are as written. Runwick checks every value at startup and refuses a configuration it cannot run safely. It never quietly adjusts a value for you.
+
+## Per job
+
+Set per job with an attribute or the fluent builder, or for all jobs with `runwick.JobDefaults(...)`. Later layers win: library default, then `JobDefaults`, then attribute, then fluent.
+
+| Setting | Default | Attribute / fluent |
+|---|---|---|
+| Queue | `default` | `[Queue("emails")]` / `.ToQueue("emails")` |
+| Priority | `medium` (`low`, `medium`, `high`) | `[Priority("high")]` / `.WithPriority("high")` |
+| Maximum executions (counts real starts, so 3 means two automatic retries) | 3 | `[MaxExecutions(5)]` / `.WithMaxExecutions(5)` |
+| Execution timeout | none | `.WithExecutionTimeout(...)` / `.WithoutExecutionTimeout()` |
+| Retry delay (exponential, half random) | 5 s first, never more than 60 s | `.WithRetryDelay(initial, max)` |
+| Re-queue after a worker took a job but never started it | up to 5 times | `.WithMaxUnstartedAbandonments(n)` |
+| Delay between those re-queues | 1 s growing to 30 s | `.WithUnstartedRecoveryDelay(initial, max)` |
+| Uniqueness, rate limits, concurrency limits | off until you declare them | `.UniqueWhileActive(...)`, `.RollingWindow(...)`, `.MaxConcurrent(...)` and others |
+
+With the defaults, the first retry waits between 2.5 and 5 seconds, the second between 5 and 10. See [Retries and timeouts](/docs/retries-and-timeouts).
+
+```csharp
+runwick.JobDefaults(d => d.WithMaxExecutions(5).WithRetryDelay(TimeSpan.FromSeconds(10), TimeSpan.FromMinutes(2)));
+runwick.AddJob<BuildReport>()
+    .ToQueue("reports")
+    .WithPriority("low")
+    .WithExecutionTimeout(TimeSpan.FromMinutes(2));
+```
+
+## Worker: `WorkerOptions`
+
+Set with `runwick.AddWorker(w => w.Configure(o => ...))`. Most apps never touch these. They are tied together; see [Startup validation](#startup-validation).
+
+| Option | Default | What it does |
+|---|---|---|
+| `LeaseDuration` | 60 s | How long a claim on a job lasts before it must be renewed |
+| `LeaseSafetyMargin` | 10 s | The worker treats the lease as expired this much early |
+| `RenewalInterval` / `RenewalJitter` | 15 s / 3 s | Renew every 12 to 18 s |
+| `LeaseWatchdogInterval` | 1 s | How often the safety watchdog checks leases (at most 1 s) |
+| `SchedulerAllowance` | 2 s | Allowance for timer lag |
+| `ControlRequestTimeout` | 5 s | Longest wait for one claim, renew or finish call |
+| `ControlRetryInitialBackoff` / `ControlRetryMaxBackoff` | 100 ms / 1 s | Backoff between retries of those calls |
+| `MinimumInvocationMargin` | 15 s | Lease time that must be left to start a handler |
+| `ClaimResolutionBudget` / `BeginResolutionBudget` | 15 s / 15 s | How long to resolve an uncertain claim or start |
+| `CompletionResolutionBudget` | 30 s | How long to resolve an uncertain finish |
+| `CancellationGrace` | 10 s | Time a cancelled handler gets to exit |
+| `CleanupBudget` | 10 s | Time for the attempt's scope to dispose |
+| `OwnershipCommandLifetime` | 30 s | Deadline of each claim, renew or finish command |
+| `RecoveryScanInterval` / `RecoveryScanJitter` | 5 s / 1 s | Scan for jobs of crashed workers every 4 to 6 s |
+| `ShutdownBudget` | 25 s | Total time for Runwick's shutdown |
+| `ShutdownDrain` / `ShutdownCancellation` / `ShutdownFinalization` | 15 s / 5 s / 5 s | The three shutdown stages; their sum must fit in `ShutdownBudget` |
+| `RecordResourceUsage` | `true` | Store CPU time, allocations and working set per attempt |
+
+Keep the host's shutdown timeout (`HostOptions.ShutdownTimeout`, 30 s by default in .NET) above `ShutdownBudget`. Runwick does not change it for you.
+
+### Pools
+
+| Setting | Default | Notes |
+|---|---|---|
+| Pool size | fixed 4 | `.FixedConcurrency(n)` with n at least 1, or `.AutoConcurrency(min, max)`; not both |
+| Queue weight | 1 | `.Queue(name, weight)`, 1 to 1,000 |
+| Lane selection | `Weighted` | `.LaneSelection(...)`: `Weighted`, `StrictWithAging` or `Strict` |
+| Lane weights high : medium : low | 6 : 3 : 1 | `.LaneWeights(h, m, l)`; a waiting lane ages after 60 s |
+| Most jobs one worker holds at once | 16 | `w.MaxOutstandingAttempts(n)`; the sum of pool maximums must fit |
+
+## Producer: `ProducerOptions`
+
+Set with `runwick.Producer(o => ...)`.
+
+| Option | Default | Notes |
+|---|---|---|
+| `MaxConcurrentCalls` | 8 | Dispatch calls in flight at once; at least 1. On PostgreSQL, raising it adds connections. |
+| `MaxWaitingOperations` | 64 | Callers waiting for a slot; more fail with `local_capacity_exceeded` without sending anything |
+| `AdmissionWait` | 1 s | Longest wait for a slot |
+| `CommandLifetime` | 5 min | How long a prepared dispatch stays valid; also the maximum |
+
+## Stores
+
+| Option | Default | Allowed |
+|---|---|---|
+| `PostgresOptions.Schema` | `runwick` | only `runwick` |
+| `SqliteOptions.WriterBusyTimeout` | 2 s | 100 ms to 30 s |
+| `SqliteOptions.ReaderThreads` | 2 | 1 to 8 |
+| `RedisOptions.ProfileRecheckInterval` | 30 s | 5 s to 5 min |
+
+See [PostgreSQL](/docs/postgresql), [SQLite](/docs/sqlite) and [Redis](/docs/redis).
+
+## Retention
+
+Cleanup runs in worker processes. Its budgets are set with `w.Retention(r => ...)`:
+
+| `RetentionOptions` | Default | Allowed |
+|---|---|---|
+| `Enabled` | `true` | |
+| `BatchRows` | 100 | 1 to 1,000 |
+| `BatchDetailBytes` | 1 MiB | 64 KiB to 16 MiB |
+| `BatchTarget` | 500 ms | 50 ms to 2 s |
+| `BatchPause` | 1 s | 0 to 60 s |
+| `IdlePoll` | 60 s | 1 s to 1 h |
+
+How long records are kept is a stored policy per application, edited through the management API. The defaults:
+
+| Record | Kept for |
+|---|---|
+| Detail of succeeded jobs | 7 days |
+| Detail of failed jobs | 30 days |
+| Job history | 90 days |
+| Audit | 90 days |
+| Scaling events | 7 days |
+| Schedule occurrences | 30 days |
+| Worker presence | 24 hours |
+
+Cleanup is bounded work, not a promise to keep up with any load. Deleting rows does not erase backups or copies. See [Retention](/docs/retention).
+
+## Scheduler: `SchedulerOptions`
+
+Set with `runwick.AddScheduler(o => ...)`. The scheduler needs the `scheduler` capability raised once per application, or startup fails with `scheduler_not_active`.
+
+| Option | Default |
+|---|---|
+| `PollInterval` | 1 s while work is due |
+| `IdlePollInterval` | 5 s when idle (15 s on PostgreSQL while its listener is healthy) |
+| `JobsPerSecond` / `Burst` | 100 / 32 per scheduler process |
+
+Per schedule: misfire policy `RunOnce` with 60 s grace (up to 24 h); catch-up at most 1,000 jobs per episode and 7 days back. See [Schedules](/docs/schedules).
+
+## Outbox relay: `OutboxRelayOptions`
+
+| Option | Default | Allowed |
+|---|---|---|
+| `Enabled` | `true` | |
+| `MaxInFlight` | 4 | 1 to 64 |
+| `LeaseDuration` / `RenewalInterval` | 60 s / 15 s | lease at least 5 s and at least 3 renewals |
+| `ProviderCallTimeout` | 5 s | shorter than `RenewalInterval` |
+| `IdlePoll` | 1 s | positive |
+| `RetryInitial` / `RetryMax` | 1 s / 60 s | |
+| `TransportLifetime` | 30 s | at most 30 s |
+| Acceptance horizon (per message, `OutboxStageOptions`) | 7 days | up to 30 days |
+
+See [Outbox](/docs/outbox).
+
+## Telemetry: `RunwickTelemetryOptions`
+
+Set with `runwick.Telemetry(o => ...)`.
+
+| Option | Default | Allowed |
+|---|---|---|
+| `RecordExceptionDetails` | `false` | Puts a cleaned, bounded exception message on spans and logs |
+| `MaxSeriesPerInstrument` | 1,000 | 100 to 10,000 |
+| `CollectApplicationMetrics` | `false` | Makes this process the application-wide metrics collector |
+| `ApplicationSamplePeriod` | 15 s | 5 s to 5 min |
+| `CollectorName` | `default` | |
+
+## Management and dashboard
+
+Management needs authentication schemes and a grant mapping, or it does not start. There is no anonymous mode. The dashboard title defaults to `Runwick`. See [Management API](/docs/management-api) and [Dashboard](/docs/dashboard).
+
+## Fixed limits
+
+These cannot be configured.
+
+| Limit | Value |
+|---|---|
+| Serialized payload | 1 MiB of JSON, 32 levels deep |
+| Application, queue and pool names | 1 to 128 characters, `[A-Za-z0-9][A-Za-z0-9._-]*` |
+| Job names | 1 to 200 characters, same characters |
+| Uniqueness and resource keys | 1 to 512 bytes of UTF-8 |
+| Business metadata | 16 KiB and 32 entries |
+| Batch dispatch | 100 items or 2 MiB |
+| Rate limit | 1 to 100,000 per window; window 1 s to 24 h; at most 8 rate scopes per job |
+
+## Startup validation
+
+When the host starts, Runwick checks the whole configuration and throws `RunwickConfigurationException` listing every problem at once. Each entry has a code, the setting it is about, and the rule it broke. Timing problems have the code `invalid_timing`:
+
+```text
+Runwick configuration is invalid:
+  [invalid_timing] LeaseDuration: V-04: RenewalIntervalMax + 2·ControlRequestTimeout + ControlRetryMaxBackoff + SchedulerAllowance (31000 ms) must be < LeaseDuration − LeaseSafetyMargin (20000 ms).
+```
+
+The worker timings must satisfy these rules. The defaults pass all of them:
+
+| Rule | With defaults |
+|---|---|
+| Every duration is positive and a whole number of milliseconds (`RenewalJitter` and `RecoveryScanJitter` may be 0) | pass |
+| `LeaseSafetyMargin` is less than `LeaseDuration` | `10 s < 60 s` |
+| `RenewalInterval − RenewalJitter` is above zero | 12 s > 0 |
+| `(RenewalInterval + RenewalJitter) + 2 × ControlRequestTimeout + ControlRetryMaxBackoff + SchedulerAllowance` is less than `LeaseDuration − LeaseSafetyMargin` | `31 s < 50 s` |
+| `MinimumInvocationMargin` is at least `2 × ControlRequestTimeout + ControlRetryMaxBackoff + SchedulerAllowance` | 15 s ≥ 13 s |
+| `LeaseWatchdogInterval` is at most 1 s | 1 s |
+| `ControlRetryInitialBackoff` is at most `ControlRetryMaxBackoff` | 100 ms ≤ 1 s |
+| `ControlRequestTimeout` is less than `OwnershipCommandLifetime` | `5 s < 30 s` |
+| `ShutdownDrain + ShutdownCancellation + ShutdownFinalization` is at most `ShutdownBudget` | 25 s ≤ 25 s |
+| Each resolution budget is at least `ControlRequestTimeout` | 15, 15, 30 s ≥ 5 s |
+| `RecoveryScanJitter` is less than `RecoveryScanInterval` | `1 s < 5 s` |
+
+<Callout type="tip" title="Scale timings together">
+
+Setting `LeaseDuration` to 30 s on its own fails: 31 s of renewal path does not fit in 20 s of usable lease. Raising `ControlRequestTimeout` to 10 s fails too, because the start margin then needs 23 s. If you change one timing, scale the related ones with it, for example a 120 s lease with a 20 s safety margin and a 30 s renewal interval.
+
+</Callout>
+
+Other startup errors you may see: `invalid_pool` (for example a pool that subscribes a queue no job or `Queue(...)` call registers), `pool_without_queue`, `pool_budget_exceeded` (pool maximums add up to more than the worker's limit), `invalid_policy` for store options, and `missing_store` when no store is configured. [Troubleshooting](/docs/troubleshooting) lists the common ones.

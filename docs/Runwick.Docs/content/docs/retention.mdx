@@ -1,0 +1,108 @@
+---
+title: Retention
+description: How Runwick deletes old payloads, finished jobs, audit rows and history, and how to tune the cleanup.
+section: Operations
+order: 7
+---
+
+Without cleanup, payloads, errors, finished jobs, audit rows and history would grow forever. Every worker process runs a background cleanup loop that removes old records in small, resumable batches. It never removes a record that something still depends on, and it never touches a job that is waiting, running or retrying.
+
+## What gets deleted, and when
+
+There is one retention policy per application. Each kind of record has its own age limit:
+
+| Policy value | Default | What it removes |
+|---|---|---|
+| Completed detail | 7 days | Payload and error text of jobs that succeeded or were cancelled |
+| Failed detail | 30 days | Payload and error text of failed jobs |
+| Job history | 90 days | The rest of a finished job (its row, generations, attempts) and its events |
+| Audit | 90 days | Management audit rows |
+| Scaling events | 7 days | Automatic concurrency history |
+| Schedule occurrences | 30 days | Which schedule fires created which jobs |
+| Worker presence | 24 hours after expiry | Heartbeat rows of workers that went away |
+
+Jobs go in two steps. First the **detail** expires: payload and error text are deleted, but the job's identity, state and history stay, and the job is marked "detail expired". Revealing its payload then answers `410 detail_expired`. Later, once job history expires, the whole job goes. After that a lookup by its ID answers `404`, and nothing tells it apart from an ID that never existed.
+
+Some records follow fixed rules that no policy can shorten: command receipts until their replay window ends, uniqueness keys until their window ends, rate-limit grants until they leave the rate window, outbox mappings until 24 hours past their horizon. Concurrency scopes, queue controls and schedules are never deleted.
+
+## Changing the policy
+
+The policy is edited through the [management API](/docs/management-api) or the dashboard's Retention page, with the `Retention.Manage` permission. Every edit is checked against the current revision and audited. There is no CLI command for it.
+
+```bash
+# read the current policy and its revision (needs Settings.Read)
+curl -b jar https://ops.example.com/runwick/api/v1/retention
+```
+
+```json
+{
+  "commandId": "0193c3b2-7f1e-7c4a-9d1e-5b1f0a2c3d4e",
+  "expectedRevision": 0,
+  "completedDetailHours": 72,
+  "failedDetailHours": 720,
+  "jobHistoryHours": 2160,
+  "auditHours": 8760,
+  "scalingEventsHours": 168,
+  "scheduleOccurrencesHours": 720,
+  "workerPresenceHours": 24,
+  "reason": "shorter payload retention for GDPR"
+}
+```
+
+Post that body to `{prefix}/v1/retention/policy` with the antiforgery header. Revision `0` means the defaults are still in force.
+
+Rules:
+
+- Every value is whole hours, from 1 to 87,600 (ten years).
+- Audit is kept at least 7 days.
+- Job history must be at least as long as both detail values.
+- `null` means keep forever, except worker presence, which is required.
+
+<Callout type="warning" title="Send every value">
+
+A value you leave out of the body is read as `null`, which means *keep forever*. Read the current policy first and send all seven values back.
+
+</Callout>
+
+## Tuning the cleanup loop
+
+The loop runs in every process that calls `AddWorker`. Producer-only processes, schedulers and the standalone management host do not run it. Several workers cooperate through a progress row per record class, so only one batch of a class runs at a time and cleanup resumes where it stopped after a crash.
+
+```csharp
+runwick.AddWorker(w => w
+    .Pool("main", p => p.Queues("default"))
+    .Retention(r =>
+    {
+        r.BatchRows = 500;
+        r.BatchPause = TimeSpan.FromMilliseconds(200);
+    }));
+```
+
+| `RetentionOptions` | Default | Allowed |
+|---|---|---|
+| `Enabled` | `true` | |
+| `BatchRows` | 100 | 1 to 1,000 rows per batch |
+| `BatchDetailBytes` | 1 MiB | 64 KiB to 16 MiB of payload and error text per batch |
+| `BatchTarget` | 500 ms | 50 ms to 2 s of database time a batch aims at |
+| `BatchPause` | 1 s | 0 to 60 s between batches of one class |
+| `IdlePoll` | 60 s | 1 s to 1 h after a pass that found nothing |
+
+A failed batch backs off from 5 seconds, doubling up to 5 minutes. Values outside the bounds stop the app at startup.
+
+### Cleanup is bounded work
+
+Each process runs one batch at a time. It skips rows that are locked, so it never waits on live work, and it pauses while the worker is draining or under pressure. At the defaults that is roughly 100 rows a second for one busy class in one process. A store that finishes more than about 5 million jobs a day needs bigger batches, shorter pauses or more worker processes.
+
+Cleanup does not promise to keep up with any load. It tells you when it falls behind:
+
+- the dashboard's Retention page shows each class's progress and marks a class "behind" when no pass caught up in the last 24 hours;
+- the `runwick.retention.caught_up.age` gauge and the `RunwickRetentionFailing` alert (see [Observability](/docs/observability));
+- log events 1501 (batch failed) and 1503 (behind).
+
+Cleanup itself writes one summary audit row per class per day, not one row per deleted record. Those rows do not list which rows were deleted. Cleanup never changes a health check.
+
+## Backups and copies
+
+Deleting a row does not erase it from backups, replicas, exports or log pipelines. If you have a legal reason to remove data, you also need a retention plan for those copies. Runwick has no "delete this job now" request and no legal hold.
+
+Restoring a backup brings old rows back; the cleanup loop removes them again on its next passes. See [Upgrades](/docs/upgrades) for what else a restore changes.

@@ -1,0 +1,190 @@
+---
+title: Jobs and handlers
+description: Define a job contract with a stable name, write the handler that runs it, and register both.
+section: Jobs
+order: 1
+---
+
+A **job** is a small data record that describes work to do. A **handler** is the class that does the work. Runwick stores the job, and a worker later decodes it and calls the handler.
+
+```csharp
+[JobName("email.welcome")]
+public sealed record SendWelcomeEmail(Guid UserId, string Locale) : IQueueJob;
+
+public sealed class SendWelcomeEmailHandler(IEmailSender emails) : IJobHandler<SendWelcomeEmail>
+{
+    public Task HandleAsync(SendWelcomeEmail job, CancellationToken cancellationToken) =>
+        emails.SendWelcomeAsync(job.UserId, job.Locale, cancellationToken);
+}
+```
+
+## The job contract
+
+A job contract is a concrete class or record that implements `IQueueJob`. `IQueueJob` is an empty marker interface. Payloads are data only: they carry no behaviour, and attributes on them cannot resolve services or do I/O.
+
+Every contract needs a **stable name**. The name is what Runwick stores, so you can rename, move or re-namespace the class without breaking queued jobs. The CLR type name is never stored.
+
+<Tabs>
+  <Tab label="Attributes">
+
+```csharp
+[JobName("email.welcome")]
+[Queue("emails")]
+[Priority("medium")]
+[MaxExecutions(3)]
+public sealed record SendWelcomeEmail(Guid UserId, string Locale) : IQueueJob;
+```
+
+  </Tab>
+  <Tab label="Fluent">
+
+```csharp
+// The contract has no attributes; the host names and configures it.
+public sealed record BuildReport(string ReportId, int Rows) : IQueueJob;
+
+runwick.AddJob<BuildReport>()
+    .Named("reports.build")
+    .ToQueue("reports")
+    .WithPriority("low")
+    .WithMaxExecutions(5);
+```
+
+  </Tab>
+</Tabs>
+
+You can use both. Identity settings (`[JobName]` and `Named`, `[PayloadVersion]` and `AtVersion`) must agree if both are present, or startup fails with `identity_conflict`. For queue, priority and `MaxExecutions` the fluent value wins over the attribute. The full order is in [Configuration](/docs/configuration).
+
+| Attribute | Fluent twin | What it sets |
+|---|---|---|
+| `[JobName("x")]` | `.Named("x")` | The stored name. Required. |
+| `[PayloadVersion(n)]` | `.AtVersion(n)` | The payload version. Default 1. |
+| `[Queue("q")]` | `.ToQueue("q")` | Default queue. Default `default`. |
+| `[Priority("p")]` | `.WithPriority("p")` | `low`, `medium` or `high`. Default `medium`. |
+| `[MaxExecutions(n)]` | `.WithMaxExecutions(n)` | Run budget, 1 to 100. Default 3. |
+| `[UseJobMiddleware("alias")]` | `.UseMiddleware("alias")` | Middleware by alias. |
+
+Attributes are not inherited. A derived class never picks up its base class's name.
+
+<Callout type="tip" title="Hangfire in the same file">
+
+Hangfire also has a `QueueAttribute`. If a file imports both, alias Runwick's: `using JobQueue = Runwick.QueueAttribute;` and write `[JobQueue("emails")]`.
+
+</Callout>
+
+### Naming rules
+
+| Name | Rule |
+|---|---|
+| Job name | 1 to 200 characters of `A-Z a-z 0-9 . _ -`, starting with a letter or digit |
+| Application, queue, pool, middleware alias | Same characters, 1 to 128 |
+
+Names are case-sensitive and never trimmed. A dotted style such as `email.welcome` or `billing.invoice.send` reads well in the dashboard. Two contracts with the same name fail startup with `duplicate_job_name`.
+
+## The handler
+
+A handler implements `IJobHandler<TJob>` with one method, `HandleAsync(TJob job, CancellationToken cancellationToken)`.
+
+- Returning normally means success.
+- Throwing an exception means a retryable failure, unless it is a `PermanentJobFailureException`. See [Retries and timeouts](/docs/retries-and-timeouts).
+- The token is cancelled on a user cancel, a timeout, a lost lease or shutdown. Pass it to every awaited call. See [Cancellation](/docs/cancellation).
+
+Handlers are registered as **scoped** services. Runwick creates a fresh DI scope for every attempt, so a scoped `DbContext` belongs to that one attempt and is disposed afterwards. Inject anything you need into the constructor, including `IJobContext` (see [Job context](/docs/job-context)).
+
+<Callout type="warning" title="Handlers can run more than once">
+
+Runwick is at-least-once. A crash after the work but before the result is saved runs the handler again. Make the effects safe to repeat. See [Delivery guarantees](/docs/delivery-guarantees).
+
+</Callout>
+
+There is one handler per job name per worker. Binding two handlers to one job fails with `duplicate_handler`.
+
+## Registration
+
+Registration happens inside `AddRunwick`. Nothing is scanned automatically.
+
+```csharp
+builder.Services.AddRunwick(runwick =>
+{
+    runwick.Application("my-app")
+        .UsePostgres(connectionString)
+        .AddJobsFromAssemblyContaining<SendWelcomeEmail>();      // contracts with [JobName]
+    runwick.AddHandlersFromAssemblyContaining<SendWelcomeEmailHandler>();
+    runwick.AddWorker(w => w.Pool("main", p => p.Queues("default", "emails").FixedConcurrency(4)));
+});
+```
+
+| Call | What it does |
+|---|---|
+| `AddJobsFromAssemblyContaining<T>()` | Registers every non-abstract class in that assembly that implements `IQueueJob` and has `[JobName]`. Classes without `[JobName]` are skipped. |
+| `AddHandlersFromAssemblyContaining<T>()` | Registers every class in that assembly that implements one or more `IJobHandler<TJob>`, and registers each `TJob`. |
+| `AddHandler<TJob, THandler>()` | Binds one handler and registers its job. |
+| `AddJob<TJob>()` | Registers a contract and returns a builder to configure it. |
+| `ConfigureJob<TJob>()` | Configures a contract registered elsewhere. On its own it registers nothing (`job_not_registered`). |
+
+Each scan only looks at the one assembly you point it at, and runs in a fixed order.
+
+Configuration is checked once, at startup. Runwick collects every error and throws one `RunwickConfigurationException` that lists them all, so a typo in a queue name stops the app before it does any work.
+
+## Payload serialization
+
+Payloads are stored as UTF-8 JSON using Runwick's own fixed profile, `runwick.json` version 1. It does not use your ASP.NET JSON settings, so changing those can never change what is in the queue.
+
+The profile is strict:
+
+- Property names are camelCase. Unknown properties and duplicate properties are rejected when reading.
+- Numbers must be real JSON numbers. Enums are written as their member names.
+- `DateTime` values must be UTC. Prefer `DateTimeOffset` for instants.
+- Members typed `object`, `[Flags]` enums, `[JsonConverter]` and attributes that loosen the rules are rejected at startup. Use `JsonElement` for free-form data.
+- Polymorphism works only for closed hierarchies declared with `[JsonPolymorphic]` and `[JsonDerivedType]`.
+
+You can supply source-generated metadata with `runwick.AddJsonTypeInfoResolver(MyJsonContext.Default)`.
+
+### Payload limits
+
+These limits are fixed. Dispatch fails before anything is written if a payload breaks them.
+
+| Limit | Value |
+|---|---|
+| Serialized payload | 1 MiB |
+| Nesting depth | 32 levels |
+| One string value | 256 KiB |
+| Properties per object | 256 |
+| Elements per array | 16,384 |
+
+Keep payloads small. Store a file or a large document elsewhere and put its ID in the job.
+
+### Changing a payload's shape
+
+The worker decodes the stored bytes fresh on every run. If you change the record, raise the version and register an upgrade from the old shape:
+
+```csharp
+[JobName("email.welcome")]
+[PayloadVersion(2)]
+public sealed record SendWelcomeEmail(Guid UserId, string Locale) : IQueueJob;
+
+// The old shape: a plain decoding type, no [JobName], no IQueueJob needed.
+public sealed record SendWelcomeEmailV1(Guid UserId);
+
+runwick.ConfigureJob<SendWelcomeEmail>()
+    .Upgrade<SendWelcomeEmailV1, SendWelcomeEmail>(1, 2, v1 => new SendWelcomeEmail(v1.UserId, "en"));
+```
+
+Each step goes up by exactly one version. Upgrades run on the worker, after the run is authorized, and must be pure functions. A worker only picks up jobs whose version it can decode, so during a rolling deploy old workers leave version 2 jobs alone. More in [Upgrades](/docs/upgrades).
+
+## Runwick.Contracts for shared job types
+
+`Runwick.Contracts` holds `IQueueJob`, the handler interface, the attributes and the dispatch types. It has no dependencies.
+
+Put your job records in a class library that references only `Runwick.Contracts`. Producers and workers both reference that library, and the library never pulls in database drivers or handler code.
+
+```bash
+dotnet add src/MyApp.Jobs package Runwick.Contracts
+```
+
+The app that actually dispatches still needs `Runwick` and a store package, because `IJobDispatcher` is implemented there. A producer-only app simply leaves out `AddWorker` and does not need the handlers.
+
+## Next
+
+- [Dispatching](/docs/dispatching): create jobs.
+- [Queues and priorities](/docs/queues-and-priorities): route them.
+- [Retries and timeouts](/docs/retries-and-timeouts): what happens when they fail.

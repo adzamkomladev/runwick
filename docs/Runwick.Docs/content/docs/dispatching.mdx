@@ -1,0 +1,209 @@
+---
+title: Dispatching
+description: Create jobs with IJobDispatcher, set queue, priority, start time and metadata, dispatch in batches, and handle an unknown outcome.
+section: Jobs
+order: 2
+---
+
+Dispatching writes a job to the store. Inject `IJobDispatcher` (a singleton) anywhere in your app:
+
+```csharp
+app.MapPost("/users", async (CreateUser request, IJobDispatcher dispatcher, CancellationToken ct) =>
+{
+    var userId = Guid.NewGuid();
+    // ... save the user ...
+    var receipt = await dispatcher.DispatchAsync(new SendWelcomeEmail(userId, "en"), cancellationToken: ct);
+    return Results.Accepted(value: new { jobId = receipt.JobId.ToString() });
+});
+```
+
+`DispatchAsync` returns only after the store has confirmed the write. There is no "fire and forget" mode.
+
+The job's type must be registered (see [Jobs and handlers](/docs/jobs-and-handlers)). Runwick looks it up by the object's runtime type.
+
+## The receipt
+
+`DispatchAsync` returns a `DispatchReceipt`:
+
+| Property | Meaning |
+|---|---|
+| `JobId` | The job's permanent ID. It stays the same across retries. |
+| `OperationId` | The ID of this dispatch command. |
+| `Disposition` | `Created` for a new job, or `Reused` when a [uniqueness](/docs/uniqueness) key matched an existing job. |
+| `DuplicateMatch` | Which key matched: `None`, `Active`, `Window` or `ActiveAndWindow`. |
+| `PolicyDrift` | `true` when a reused job was created under a different retry or timeout policy than the current one. |
+| `ConfirmedAcknowledgementProfile` | The durability rule the store confirmed, for example `postgres.synchronous-commit`. |
+
+A receipt tells you which job it is. It is not a status snapshot: a reused job may already have finished.
+
+## Dispatch options
+
+Pass a `DispatchOptions` to change one dispatch. Every property is optional.
+
+```csharp
+await dispatcher.DispatchAsync(
+    new BuildReport("2026-11", Rows: 50_000),
+    new DispatchOptions
+    {
+        Queue = "reports",
+        Priority = "high",
+        NotBefore = DateTimeOffset.UtcNow.AddMinutes(30),
+        Metadata = new Dictionary<string, string> { ["tenant"] = "acme" },
+    },
+    ct);
+```
+
+| Option | What it does |
+|---|---|
+| `Queue` | Sends the job to another registered queue. An unknown queue fails with `unknown_queue`. |
+| `Priority` | `low`, `medium` or `high`. Raises or lowers the job's declared priority. |
+| `NotBefore` | The earliest time the job may start. |
+| `Uniqueness` | Active and window keys. See [Uniqueness](/docs/uniqueness). |
+| `Metadata` | Business metadata such as a tenant. The handler reads it from `IJobContext.Metadata`. |
+
+### Delayed jobs
+
+`NotBefore` is a lower bound, not an exact start time. The job waits in `pending` until that instant and then becomes eligible like any other job. It starts when a worker has a free slot. A time in the past means "eligible now". The value is rounded up to the next millisecond.
+
+There is no separate "schedule" call for one-off delays. For repeating work, use [Schedules](/docs/schedules).
+
+### Metadata rules
+
+- Keys use the name grammar (`A-Z a-z 0-9 . _ -`, up to 128 characters). Values must be valid text without control characters.
+- At most 32 entries and 16 KiB in total.
+- Metadata is part of what a [window key](/docs/uniqueness) compares, so the same key with different metadata is a conflict.
+
+Runwick also captures the current trace context (`traceparent`, `tracestate`) at dispatch, so the run is linked to the request that created it.
+
+## Batch dispatch
+
+`DispatchManyAsync` dispatches up to 100 jobs in **one** store transaction:
+
+```csharp
+var items = invoices
+    .Select(i => new BatchDispatchItem(new SendInvoice(i.Id), new DispatchOptions { Priority = "low" }))
+    .ToList();
+
+var batch = await dispatcher.DispatchManyAsync(items, cancellationToken: ct);
+
+foreach (var item in batch.Items)
+{
+    Console.WriteLine($"{item.Ordinal}: {item.Receipt?.JobId}");
+}
+```
+
+- Every item is created (or reused) or none is.
+- `Items` has one result per input, in input order (`Ordinal` is the 0-based index).
+- The limits are 100 items and 2 MiB for the whole batch. Split larger inputs yourself.
+- If any item is invalid, the whole batch is rejected before anything is written. The `DispatchValidationException` lists every bad ordinal in `ItemFailures`.
+- Duplicates inside one batch resolve as if dispatched one after another: a later item that matches an earlier one is `Reused`.
+
+By default a [uniqueness conflict](/docs/uniqueness) in any item fails the whole batch with `UniquenessConflictException`. Set `ContinueOnConflict` to commit the other items and report the conflicts per item:
+
+```csharp
+var batch = await dispatcher.DispatchManyAsync(items, new BatchDispatchOptions { ContinueOnConflict = true }, ct);
+
+foreach (var failed in batch.Items.Where(i => i.Failure is not null))
+{
+    logger.LogWarning("Item {Ordinal} conflicted: {Code}", failed.Ordinal, failed.Failure!.Code);
+}
+```
+
+## Errors
+
+Every Runwick exception has a stable `Code` and a `Disposition`. The disposition answers "did anything get written?":
+
+| Disposition | Meaning |
+|---|---|
+| `KnownNotApplied` | Nothing was written. It is safe to fix the input and try again. |
+| `OutcomeUnknown` | The write may or may not have happened. |
+
+Common cases:
+
+| Exception | Code | Disposition |
+|---|---|---|
+| `DispatchValidationException` | for example `payload_too_large`, `invalid_key` | known not applied |
+| `UniquenessConflictException` | `uniqueness_conflict`, `uniqueness_composition_conflict` | known not applied |
+| `LocalCapacityExceededException` | `local_capacity_exceeded` | known not applied, never sent |
+| `StoreUnavailableException` | `store_unavailable` | known not applied |
+| `DispatchOutcomeUnknownException` | `outcome_unknown` | **unknown** |
+| `DispatchCanceledAfterSendException` | `cancelled_after_send` | **unknown** |
+
+### When the outcome is unknown
+
+A network failure after the command was sent leaves Runwick unable to say whether the store committed it. It does not guess. It throws an exception with `Disposition == ErrorDisposition.OutcomeUnknown` that carries the `OperationId` and, when available, the prepared request.
+
+You have three honest options:
+
+<Steps>
+  <Step title="Re-send the same prepared request">
+
+The exception's `Prepared` property holds the exact request. Sending it again through `IPreparedJobDispatcher` is safe: the store recognises the operation ID and returns the original receipt instead of creating a second job.
+
+```csharp
+catch (DispatchOutcomeUnknownException ex) when (ex.Prepared is not null)
+{
+    var receipt = await preparedDispatcher.DispatchAsync(ex.Prepared, ct);
+}
+```
+
+  </Step>
+  <Step title="Or ask the store">
+
+`IPreparedJobDispatcher.ResolveAsync(operationId)` returns `Confirmed` (with the receipt), `NotObserved`, `Recovering` or `ExpiredUnknown`. `NotObserved` is **not** proof the write failed: the original command may still be running.
+
+  </Step>
+  <Step title="Or rely on a window key">
+
+If the dispatch had a [window key](/docs/uniqueness), dispatching again with the same key and payload returns the same job.
+
+  </Step>
+</Steps>
+
+<Callout type="warning" title="Do not just call DispatchAsync again">
+
+A plain second `DispatchAsync` is a new operation. Without a uniqueness key it can create a second job.
+
+</Callout>
+
+A prepared request is valid for 5 minutes by default (`ProducerOptions.CommandLifetime`). After that the store guarantees it will never apply it, and re-sending it gives a definite answer (`command_expired`) for 24 hours more.
+
+### Cancellation
+
+The `CancellationToken` only stops **waiting**. It never cancels a job the store has accepted. Cancelled before the command was sent, you get a plain `OperationCanceledException` (nothing written). Cancelled after, you get `DispatchCanceledAfterSendException`, which means the outcome is unknown.
+
+## Prepared dispatch
+
+`IPreparedJobDispatcher` splits dispatch into two steps. `Prepare` validates and serializes the job and fixes its operation ID and deadline without touching the store. `DispatchAsync(prepared)` sends it, as many times as you need.
+
+```csharp
+var prepared = preparedDispatcher.Prepare(new ChargeCard(orderId, amount));
+await SaveOperationIdAsync(orderId, prepared.OperationId);   // survive a crash
+var receipt = await preparedDispatcher.DispatchAsync(prepared, ct);
+```
+
+`Export()` turns a prepared request into bytes you can store and `ImportPrepared(bytes)` reads them back. The bytes contain the payload unencrypted, so keep them out of logs.
+
+## Producer limits
+
+Each process limits how many dispatch calls it sends at once, so a burst cannot exhaust the database connection pool. Configure them with `runwick.Producer(...)`:
+
+```csharp
+runwick.Producer(p =>
+{
+    p.MaxConcurrentCalls = 8;                       // calls in flight at once
+    p.MaxWaitingOperations = 64;                    // callers allowed to wait for a slot
+    p.AdmissionWait = TimeSpan.FromSeconds(1);      // longest wait for a slot
+    p.CommandLifetime = TimeSpan.FromMinutes(5);    // prepared request deadline; 5 min is also the maximum
+});
+```
+
+The values above are the defaults. When all slots are busy and the wait runs out, or too many callers are already waiting, the call fails at once with `LocalCapacityExceededException`. Nothing was sent, so it is safe to retry later. A batch counts as one call.
+
+Dispatch works while a queue is paused. Pausing only stops workers from picking jobs up.
+
+## Next
+
+- [Uniqueness](/docs/uniqueness): stop duplicate jobs.
+- [Transactions](/docs/transactions): create a job in the same transaction as your own data.
+- [Outbox](/docs/outbox): dispatch reliably to a different store.

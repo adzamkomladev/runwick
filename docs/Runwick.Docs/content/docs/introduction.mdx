@@ -1,0 +1,109 @@
+---
+title: Introduction
+description: Runwick is a background-job library for .NET 10 that stores jobs in PostgreSQL, SQLite or Redis and runs them on workers you control.
+section: Get started
+order: 1
+---
+
+Runwick is a background-job library for .NET 10. Your app writes a job to a store (PostgreSQL, SQLite or Redis), and a worker picks it up and runs your handler. The worker can run inside your app or in a separate process.
+
+It is a library, not a service. There is no Runwick server to deploy. The store is the single source of truth, and workers never talk to each other: they talk to the store.
+
+![Runwick dashboard: a job's details, status history and the resources each attempt used](/images/dashboard-job.png)
+
+## How it works
+
+<Steps>
+  <Step title="You describe a job and a handler">
+
+A job is a plain record with a stable name. A handler is a class that knows what to do with it.
+
+```csharp
+[JobName("email.welcome")]   // the stored name; CLR type names are never stored
+public sealed record SendWelcomeEmail(Guid UserId) : IQueueJob;
+
+public sealed class SendWelcomeEmailHandler : IJobHandler<SendWelcomeEmail>
+{
+    public Task HandleAsync(SendWelcomeEmail job, CancellationToken cancellationToken)
+    {
+        // Do the work. This code may run more than once.
+        return Task.CompletedTask;
+    }
+}
+```
+
+  </Step>
+  <Step title="Your app dispatches it">
+
+```csharp
+await dispatcher.DispatchAsync(new SendWelcomeEmail(userId));   // IJobDispatcher from DI
+```
+
+`DispatchAsync` returns only after the store has confirmed the write.
+
+  </Step>
+  <Step title="A worker runs it">
+
+A worker reserves the job from the store, holds a lease on it while it runs, and records the result. If the handler fails and there are attempts left, the job waits for a retry delay and runs again. If it runs out of attempts, it ends up `failed`, where an operator can retry it.
+
+  </Step>
+</Steps>
+
+Producer, worker, scheduler and management are roles, not separate programs. One process can take any combination of them. See [Choosing a store](/docs/choosing-a-store) for the common shapes.
+
+## What you get
+
+- **Three stores, one API.** PostgreSQL is the reference store, for many hosts. SQLite suits a single machine. Redis needs one durable primary. Your jobs and handlers do not change between them.
+- **Retries and timeouts.** Each job has an execution budget (3 by default) and an exponential, partly random retry delay. Timeouts are off unless you set one.
+- **Queues and priorities.** Worker pools read named queues with high, medium and low lanes. Queues can be paused.
+- **Uniqueness, rate limits and concurrency caps.** All off until you declare them.
+- **Schedules.** Cron and one-time schedules that create at most one job per occurrence.
+- **Same-transaction work.** On PostgreSQL and SQLite, you can create a job, or complete one, in the same transaction as your own data.
+- **Transactional outbox.** Commit a message with your business data, then deliver it to any store.
+- **Operations.** A management HTTP API, a web dashboard and the `runwick` command line. All three share the same permissions and audit trail.
+- **Observability.** OpenTelemetry traces and metrics, structured logs and health checks.
+
+## What it promises, and what it does not
+
+Runwick's guarantees are deliberately narrow, and the docs say so plainly.
+
+- **At-least-once delivery.** A handler can run more than once: after a crash, a lost lease or a lost reply. Write handlers that are safe to repeat, and pass an idempotency key to outside systems.
+- **One exactly-once case.** If your handler's effect is a change in the same PostgreSQL or SQLite database as Runwick's tables, the change and the job's completion can commit together. Nothing else is exactly-once: not emails, not HTTP calls, not Redis.
+- **Cooperative cancellation.** Cancelling a job signals its `CancellationToken`. Runwick cannot stop code that ignores the token.
+- **A lease running out does not prove the old handler stopped.** Two copies of a handler can briefly overlap.
+- **Durable settings are checked, not assumed.** Runwick refuses store settings that could lose jobs, such as SQLite without `synchronous=FULL` or Redis without `appendfsync always`.
+
+<Callout type="warning" title="Pre-1.0">
+The API and storage formats can still change before 1.0. The work to certify the stores for 1.0 (Windows and macOS checks, a reference benchmark and a 24-hour soak test) is not finished, so no store is labelled "certified" yet.
+</Callout>
+
+[Delivery guarantees](/docs/delivery-guarantees) has the full list.
+
+## Requirements
+
+- .NET 10. Every package targets `net10.0` only.
+- One store: PostgreSQL 16, 17 or 18; a local SQLite file (the engine is bundled); or Redis 8.2 or newer.
+- No Node or npm. The dashboard's web files are inside its package.
+
+## Next steps
+
+<Cards>
+  <Card title="Installation" icon="terminal" href="/docs/installation">
+    Pick the packages for your store, install the CLI and create the schema.
+  </Card>
+  <Card title="Quick start" icon="rocket" href="/docs/quick-start">
+    Go from an empty project to a job that runs, in five steps.
+  </Card>
+  <Card title="Choosing a store" icon="server" href="/docs/choosing-a-store">
+    PostgreSQL, SQLite or Redis: what each supports and where each stops.
+  </Card>
+  <Card title="Delivery guarantees" icon="shield" href="/docs/delivery-guarantees">
+    What at-least-once means for your handlers, and the one exactly-once case.
+  </Card>
+  <Card title="Jobs and handlers" icon="code" href="/docs/jobs-and-handlers">
+    Job names, attributes, dependency injection and the job context.
+  </Card>
+  <Card title="Dashboard" icon="gauge" href="/docs/dashboard">
+    See queues, jobs and workers, and retry or cancel jobs from the browser.
+  </Card>
+</Cards>

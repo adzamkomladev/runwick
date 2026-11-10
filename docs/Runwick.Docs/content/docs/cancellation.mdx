@@ -1,0 +1,148 @@
+---
+title: Cancellation
+description: Cancelling a job is a request, not a kill. How the token works, how long Runwick waits, and how to write handlers that stop cleanly.
+section: Jobs
+order: 8
+---
+
+Cancellation in Runwick is a **request**, not a kill. .NET has no safe way to stop code that is already running, and Runwick does not try. It cancels the `CancellationToken` your handler received and waits for your code to notice.
+
+## What happens when you cancel a job
+
+| The job is… | What happens |
+|---|---|
+| Waiting (`pending` or `retrying`) | It moves to `cancelled` and never runs. |
+| Running | The store records "cancel requested". The worker cancels the handler's token. Your code must stop. |
+| Already finished | Nothing changes. The answer says the job had already finished; it is not reported as a successful cancel. |
+
+If the handler stops by throwing `OperationCanceledException`, the run ends as **cancelled** and is not retried. If the handler finishes successfully before the cancel reaches it, success wins; the history shows both the request and the success.
+
+### Cancelling from the CLI, dashboard or API
+
+```bash
+runwick jobs cancel 0193a7c2-5b1e-7c3d-9f00-1a2b3c4d5e6f
+```
+
+`runwick jobs cancel-many --file jobs.jsonl` cancels up to 100 jobs at once. In C#, use `IJobControl` from `Runwick.Management`:
+
+```csharp
+using Runwick.Management;
+
+var result = await jobControl.CancelAsync(
+    new JobTarget(jobId, ExpectedGeneration: 1, ExpectedRevision: revision),
+    new ManagementActor("ops-bot", "Ops bot", "service"),
+    reason: "customer asked to stop");
+
+Console.WriteLine($"{result.Succeeded} {result.Code} {result.State}");
+```
+
+The target carries the generation and revision you last saw. If the job changed in between, you get a conflict rather than cancelling something you did not look at. A rejection comes back as a result with a `Code`, not as an exception.
+
+The dashboard, CLI and API show **"cancel requested"** until the worker reports how the run ended. They never claim a cancel "stopped the handler".
+
+## One token, four causes
+
+The same token is cancelled for four different reasons:
+
+| Cause | When |
+|---|---|
+| `UserRequested` | Someone cancelled the job. |
+| `Timeout` | The job's `ExecutionTimeout` ran out. See [Retries and timeouts](/docs/retries-and-timeouts). |
+| `Shutdown` | The worker is stopping. |
+| `LeaseLost` | The worker could not renew its lease in time and no longer owns the job. |
+
+`IJobContext.CancellationCauses` is a flags value that tells you which ones Runwick has seen. More than one can be set.
+
+```csharp
+public sealed class ExportHandler(IJobContext context, ILogger<ExportHandler> logger) : IJobHandler<ExportOrders>
+{
+    public async Task HandleAsync(ExportOrders job, CancellationToken ct)
+    {
+        try
+        {
+            await ExportAsync(job, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            logger.LogInformation("Export {JobId} stopped: {Causes}", context.JobId, context.CancellationCauses);
+            throw;   // let Runwick classify it
+        }
+    }
+}
+```
+
+Rethrow rather than swallow. Runwick classifies the run from the causes:
+
+| Cause | Outcome |
+|---|---|
+| Timeout | Timed out. Retryable. |
+| User request | Cancelled. Not retried. |
+| Shutdown | Interrupted. Retryable, and picked up again after restart. |
+| Lease lost | The worker writes no result. The store's recovery decides once the lease expires. |
+
+An `OperationCanceledException` that is not caused by any of these, for example your own `HttpClient` timeout, is an ordinary retryable failure.
+
+## Write handlers that cooperate
+
+<Steps>
+  <Step title="Pass the token everywhere">
+
+Give `ct` to every database call, HTTP call and `Task.Delay`. Most .NET APIs stop promptly when it is cancelled.
+
+  </Step>
+  <Step title="Check it in loops">
+
+```csharp
+foreach (var chunk in chunks)
+{
+    ct.ThrowIfCancellationRequested();
+    await ProcessAsync(chunk, ct);
+}
+```
+
+  </Step>
+  <Step title="Keep uninterruptible steps short">
+
+If a step cannot be interrupted, keep it well under the grace period.
+
+  </Step>
+  <Step title="Make each step safe to repeat">
+
+A cancelled or interrupted run may have done part of its work. A retried run starts from the top. See [Delivery guarantees](/docs/delivery-guarantees).
+
+  </Step>
+</Steps>
+
+## Grace period
+
+After the first user, timeout or shutdown cancellation, Runwick waits up to `CancellationGrace` (default 10 seconds) for the handler to return. Repeated signals do not restart the clock.
+
+- **Handler returns within grace:** the worker cleans up the DI scope and records the outcome normally.
+- **Handler ignores the token:** after the grace period the worker stops renewing the lease and writes no result. The code keeps running in the process, holding its pool slot and DI scope until it actually returns. When the lease expires, the store's recovery closes the attempt: cancelled if a cancel was requested, otherwise retried or failed by the usual budget. Another worker may then run the job while the old code is still going.
+
+```csharp
+runwick.AddWorker(w => w
+    .Pool("main", p => p.Queues("default"))
+    .Configure(o => o.CancellationGrace = TimeSpan.FromSeconds(20)));
+```
+
+Worker timings are checked against each other at startup; see [Configuration](/docs/configuration).
+
+<Callout type="warning" title="A handler that ignores the token can run twice at once">
+
+Concurrency limits count valid leases, not code that is still physically running. If overlap would be harmful, honour the token and use [fencing tokens](/docs/rate-limits-and-concurrency#fencing-tokens).
+
+</Callout>
+
+## Shutdown
+
+When the host stops, the worker stops claiming new jobs and lets running handlers finish. After the drain phase (15 seconds by default) it cancels the remaining handlers with cause `Shutdown`, gives them a few seconds, then records what it knows. The whole shutdown budget is 25 seconds by default, inside .NET's usual 30-second host shutdown timeout. Keep the host's timeout above Runwick's. See [Workers](/docs/workers) and [Deployment](/docs/deployment).
+
+## Cancelling a dispatch call
+
+The token you pass to `DispatchAsync` is different. It only stops **waiting** for the store; it never cancels a job the store has accepted. See [Dispatching](/docs/dispatching#cancellation).
+
+## Next
+
+- [Job context](/docs/job-context)
+- [Retries and timeouts](/docs/retries-and-timeouts)

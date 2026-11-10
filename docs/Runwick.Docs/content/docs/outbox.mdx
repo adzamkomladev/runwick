@@ -1,0 +1,154 @@
+---
+title: Outbox
+description: Commit a job with your business data in a database that is not the job store, then let a relay deliver it at least once.
+section: Stores
+order: 5
+---
+
+[Staging](/docs/transactions) only works when your business tables and Runwick's tables share one database. When they do not (your data is in one PostgreSQL database and the jobs in another, or the job store is Redis), no single transaction can span both. The outbox closes that gap:
+
+1. Your transaction writes your rows and an outbox message to your own database. They commit together.
+2. A relay reads committed messages and delivers each one to the Runwick store.
+3. The store remembers each delivery, so a message the relay sends twice still creates one job, within a time window.
+
+## Packages
+
+| Package | What it adds |
+|---|---|
+| `Runwick.Outbox` | The relay and the shared types (`OutboxStageOptions`, `OutboxRelayOptions`, `StagedOutboxMessage`) |
+| `Runwick.Outbox.Postgres` | A PostgreSQL source: `IPostgresOutbox`, `PostgresOutboxSchema`, `AddRunwickPostgresOutbox` |
+| `Runwick.Outbox.Sqlite` | A same-machine SQLite source: `ISqliteOutbox`, `SqliteOutboxSchema`, `AddRunwickSqliteOutbox` |
+
+The **source** is your business database. The **destination** is the Runwick store the host is configured with: PostgreSQL, SQLite or Redis. Redis can be a destination but not a source.
+
+```bash
+dotnet add package Runwick.Outbox.Postgres   # brings Runwick.Outbox
+```
+
+## Set it up
+
+<Steps>
+  <Step title="Install the source schema">
+
+Run this once per source database, with a role that may create schemas. It creates a `runwick_outbox` schema (PostgreSQL) or `runwick_outbox_*` tables (SQLite) and returns the source's ID. It is safe to run again.
+
+```csharp
+using Runwick.Outbox.Postgres;
+
+await PostgresOutboxSchema.InstallAsync(businessDbAdminConnectionString);
+```
+
+For SQLite: `await SqliteOutboxSchema.InstallAsync("Data Source=/var/lib/my-app/app.db");` (namespace `Runwick.Outbox.Sqlite`).
+
+  </Step>
+  <Step title="Register Runwick and the outbox">
+
+```csharp
+builder.Services.AddRunwick(runwick =>
+{
+    runwick.Application("billing")
+        .UseRedis(redisConfiguration)                    // the destination store
+        .AddJobsFromAssemblyContaining<SendInvoice>();
+});
+
+builder.Services.AddRunwickPostgresOutbox(
+    businessDbConnectionString,                          // the source
+    relay: o => o.MaxInFlight = 4);                      // optional
+```
+
+`AddRunwickPostgresOutbox` registers `IPostgresOutbox` and the relay, which runs as a hosted service. `AddRunwickSqliteOutbox` does the same for SQLite. Only one source adapter can be registered per host; a second registration throws.
+
+  </Step>
+  <Step title="Stage messages in your transaction">
+
+```csharp
+using Runwick.Outbox;
+using Runwick.Outbox.Postgres;
+
+public sealed class InvoiceService(NpgsqlDataSource businessDb, IPostgresOutbox outbox)
+{
+    public async Task IssueAsync(Invoice invoice, CancellationToken ct)
+    {
+        await using var connection = await businessDb.OpenConnectionAsync(ct);
+        await using var tx = await connection.BeginTransactionAsync(ct);
+
+        await invoices.InsertAsync(invoice, connection, tx, ct);
+        await outbox.StageAsync(new SendInvoice(invoice.Id), tx, new OutboxStageOptions
+        {
+            MessageId = invoice.MessageId,               // optional: a stable ID you keep
+            Dispatch = new DispatchOptions { Priority = "high" },
+        }, ct);
+
+        await tx.CommitAsync(ct);                        // the invoice and the message commit together
+    }
+}
+```
+
+  </Step>
+</Steps>
+
+`StageAsync` writes inside a savepoint on your transaction. It never contacts the destination, and never commits, rolls back or retries your transaction. If it rejects the message, your transaction is left as it was. It returns a `StagedOutboxMessage` with the message ID, the proposed job ID and `AcceptUntil`, the end of the de-duplication window. Nothing is delivered until you commit.
+
+### Staging options
+
+| `OutboxStageOptions` | Default | Notes |
+|---|---|---|
+| `MessageId` | a new UUIDv7 | A stable ID of your own. Staging the same ID with the same content again returns the stored message with `Existing = true`. The same ID with different content throws `OutboxMessageConflictException`. Never reuse an ID for something else. |
+| `Dispatch` | none | Ordinary `DispatchOptions`, frozen at staging time. |
+| `AcceptanceHorizon` | 7 days | How long the destination accepts and de-duplicates this message. Up to 30 days, whole milliseconds. |
+
+### Processes that only stage
+
+A process that stages but should not deliver can turn the relay off: `relay: o => o.Enabled = false`. It still needs `AddRunwick` with the destination store, because staging checks the destination. Before the runtime has connected to the store once, staging fails with `outbox_destination_unknown`. To stage before that, set the destination store's ID: `destination: new OutboxDestination { StoreId = storeId }` (the ID that the migration returned).
+
+## Relay options
+
+| `OutboxRelayOptions` | Default | Allowed |
+|---|---|---|
+| `Enabled` | `true` | |
+| `MaxInFlight` | 4 | 1 to 64 messages |
+| `LeaseDuration` | 60 s | at least 5 s, and at least 3 × `RenewalInterval` |
+| `RenewalInterval` | 15 s | positive |
+| `ProviderCallTimeout` | 5 s | positive, shorter than `RenewalInterval` |
+| `IdlePoll` | 1 s | positive. With a PostgreSQL source, the relay listens for new messages and polls every 5 s while the listener is healthy. |
+| `RetryInitial` / `RetryMax` | 1 s / 60 s | exponential, `RetryMax` at least `RetryInitial` |
+| `TransportLifetime` | 30 s | at most 30 s |
+
+Bad values throw when you register the outbox. The relay opens at most two connections to the source. Several relays can serve one source: each message is leased to one relay at a time. The relay also deletes delivered rows from the source in small batches.
+
+The relay needs a destination store that accepts outbox deliveries; all three Runwick stores do. If the store does not, the relay fails when it starts.
+
+## The de-duplication window
+
+Each message carries `AcceptUntil`: the time it was staged plus its acceptance horizon (7 days by default). Up to that moment, a message the relay delivers twice, after a lost reply or a crash, maps to the same job. The destination keeps that mapping until at least 24 hours after `AcceptUntil`.
+
+After `AcceptUntil`, the destination accepts nothing new for that message. If it was delivered in time, the relay finds the mapping and marks it delivered. If not, the message is **blocked** with `horizon_passed_undelivered`, so a person can decide. Restaging the same ID returns the original cutoff, never a longer one. To try again, stage a new message ID and accept that the work could happen twice.
+
+## Blocked messages
+
+The relay blocks a message, rather than retrying it forever, when it cannot be delivered as written. Examples: the job type is no longer registered (`contract_not_registered`), the message was bound to another store or application (`destination_binding_mismatch`), the window passed (`horizon_passed_undelivered`), or the store rejected it.
+
+Blocked messages are never rewritten or retried automatically. They stay in the source table with state `blocked` and a `blocked_reason` (in PostgreSQL, `runwick_outbox.outbox_messages`). Fix the cause and reset the row to pending, or accept the loss. A destination that is simply down is not a reason to block: the relay retries with backoff.
+
+<Callout type="warning" title="What the outbox does not promise">
+
+- **Not exactly-once.** Delivery is at-least-once with de-duplication inside the window. A delivered message means the store accepted it; the job itself is still at-least-once like any other.
+- **No ordering.** Messages are not delivered in the order they were staged, even from one source.
+- **No de-duplication after the window**, after the destination's mappings are cleaned up, or after the destination is restored from a backup without them.
+- **No safe source restore** beyond the destination's retained window.
+- **SQLite sources are same-machine only.** Every process that uses the SQLite file must run on one machine.
+
+</Callout>
+
+## Errors when staging
+
+| Code | Cause |
+|---|---|
+| `outbox_message_conflict` | The same message ID was staged with different content or destination. |
+| `outbox_destination_unknown` | No `OutboxDestination.StoreId`, and the runtime has not connected to the store yet. |
+| `outbox_horizon_invalid` | The horizon is not positive, exceeds 30 days, or is not whole milliseconds. |
+| `outbox_not_installed` | The source schema is missing. Run `InstallAsync`. |
+| `outbox_schema_incompatible` | The source schema has another version than this package. |
+| `transaction_invalid` | The transaction is completed, has no connection, or is read-only. |
+
+None of these writes anything. A database error such as a deadlock or `SQLITE_BUSY` reaches you unchanged; retry the whole transaction.

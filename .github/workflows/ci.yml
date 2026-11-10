@@ -30,6 +30,19 @@ jobs:
         with:
           name: packages
           path: artifacts/packages
+  # The documentation site (runwick.temtem.dev): build its client and SSR bundle so MDX and the search index cannot break.
+  docs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Build the documentation client and SSR bundle
+        working-directory: docs/Runwick.Docs
+        run: |
+          bun install --frozen-lockfile
+          bun run build
   pg-matrix:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-24.04

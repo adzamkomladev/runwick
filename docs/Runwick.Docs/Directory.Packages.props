@@ -1,0 +1,6 @@
+<Project>
+  <!-- Stops the repository's central package versions from applying; the docs site pins its own. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+</Project>

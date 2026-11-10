@@ -1,0 +1,163 @@
+---
+title: PostgreSQL
+description: Run Runwick on PostgreSQL 16, 17 or 18, create its schema with a migration role, and stage jobs in your own transactions.
+section: Stores
+order: 1
+---
+
+PostgreSQL is Runwick's reference store. The rest of Runwick is measured against it. Producers and workers can run on many hosts, as long as they all connect to the same primary. It is also the store where a job can share a transaction with your own data.
+
+## Requirements
+
+| Item | Requirement |
+|---|---|
+| Server | PostgreSQL 16, 17 or 18 (18 is the reference) |
+| Database | `UTF8` encoding, `standard_conforming_strings = on` (the default) |
+| Extensions | None |
+| Topology | Connect directly to the primary |
+| Package | `Runwick.Postgres` (uses Npgsql) |
+
+The migration checks the server version and encoding before it writes anything, and stops with a clear error if they do not match.
+
+## Install
+
+```bash
+dotnet add package Runwick
+dotnet add package Runwick.Postgres
+```
+
+## Create the schema
+
+Runwick never changes the schema when your application starts. You run the migration as a separate deployment step, from code or from the command line:
+
+<Tabs>
+  <Tab label="C#">
+
+```csharp
+using Runwick.Postgres.Migrations;
+
+var result = await RunwickPostgresMigrations.MigrateAsync(migrationConnectionString);
+Console.WriteLine($"schema revision {result.SchemaRevision}, phases: {string.Join(", ", result.AppliedPhases)}");
+```
+
+  </Tab>
+  <Tab label="CLI">
+
+```bash
+export RUNWICK_MIGRATE_CONN="Host=db;Database=app;Username=runwick_owner;Password=..."
+runwick migrate --provider postgres --connection-env RUNWICK_MIGRATE_CONN
+```
+
+  </Tab>
+</Tabs>
+
+The migration is safe to run again: a fully applied migration is a no-op. Two runners at once do not collide, because the runner holds a PostgreSQL advisory lock for the whole run. It waits up to 60 seconds for that lock. If it fails, it throws `PostgresMigrationException`, whose `Code` says what went wrong (for example `server_version_unsupported` or `migration_lock_unavailable`).
+
+The CLI never takes a connection string as an argument, because command lines are visible to other users of the machine. Pass the name of an environment variable (`--connection-env`) or pipe it in (`--connection-stdin`). Use the CLI version that matches your Runwick packages: it installs the migrations compiled into it.
+
+## Roles: migration role and runtime role
+
+Use two database roles:
+
+- **Migration role.** Creates and owns the `runwick` schema. It runs `MigrateAsync`, and the store administration commands (`runwick store status`, `store admission`, `store activate-capability`, `store reidentify`).
+- **Runtime role.** Used by your application. It needs data access to the tables in the `runwick` schema, and no DDL rights.
+
+Runwick does not create database roles or grant privileges for you. Grant the runtime role access with your usual tooling after the migration has run.
+
+<Callout type="info" title="Capabilities are a one-time step">
+
+Schedules and rate limits need a capability raised once per application, with the migration role: `runwick store activate-capability --name scheduler --application my-app --provider postgres --connection-env RUNWICK_MIGRATE_CONN`. Use `--name rate_admission` for rate limits. See [Schedules](/docs/schedules) and [Upgrades](/docs/upgrades).
+
+</Callout>
+
+## Register the store
+
+```csharp
+builder.Services.AddRunwick(runwick =>
+{
+    runwick.Application("billing")
+        .UsePostgres(builder.Configuration.GetConnectionString("Runwick")!)
+        .AddJobsFromAssemblyContaining<SendInvoice>();
+    runwick.AddHandler<SendInvoice, SendInvoiceHandler>();
+    runwick.AddWorker(w => w.Pool("main", p => p.Queues("default").FixedConcurrency(4)));
+});
+```
+
+`UsePostgres` takes the connection string and an optional `Action<PostgresOptions>`. Runwick creates and owns its own Npgsql data sources, and never logs the connection string.
+
+| Option | Default | Notes |
+|---|---|---|
+| `PostgresOptions.Schema` | `runwick` | Only `runwick` is supported in this release. Any other value is refused at startup. |
+
+An empty connection string fails at startup with `missing_store`.
+
+### Connections
+
+Runwick keeps separate connection pools for lease work (claim, renew, finish) and for everything else, so a burst of dispatches cannot starve lease renewals. With default settings, plan for about 23 connections per worker process: 8 for lease work, 14 for other work and 1 for the listener described below. A process that only dispatches opens no lease-work pool. Raising `ProducerOptions.MaxConcurrentCalls` adds the same number of connections. Add your own business connections on top when you size `max_connections`.
+
+### How workers notice new jobs
+
+Workers poll for due work. On PostgreSQL, a committed dispatch also sends a `NOTIFY` on a dedicated listener connection, so idle workers wake up sooner. The notification is only a hint. If it is lost, polling still finds the job.
+
+## Primary only
+
+Ownership decisions (who holds a job's lease) are never read from a replica. Point every Runwick process at the primary.
+
+<Callout type="warning" title="Poolers and high availability are not certified">
+
+Connection poolers such as PgBouncer, proxies, and failover setups have not been tested with Runwick. If you use one, you are outside what has been tested. In particular, do not route Runwick through anything that could send a query to a replica.
+
+</Callout>
+
+## Create a job in your own transaction
+
+When your business tables and Runwick's tables are in the same database, you can create a job in the same transaction as your own rows. Inject `IPostgresJobDispatcher` and call `StageAsync` with your open `NpgsqlTransaction`:
+
+```csharp
+using Runwick.Postgres;
+
+public sealed class SignupService(NpgsqlDataSource db, IPostgresJobDispatcher jobs)
+{
+    public async Task SignUpAsync(string email, CancellationToken ct)
+    {
+        await using var connection = await db.OpenConnectionAsync(ct);
+        await using var tx = await connection.BeginTransactionAsync(ct);
+
+        var userId = Guid.NewGuid();
+        await using (var insert = new NpgsqlCommand("INSERT INTO users (id, email) VALUES ($1, $2)", connection, tx))
+        {
+            insert.Parameters.AddWithValue(userId);
+            insert.Parameters.AddWithValue(email);
+            await insert.ExecuteNonQueryAsync(ct);
+        }
+
+        StagedDispatch staged = await jobs.StageAsync(new SendWelcomeEmail(userId), tx, cancellationToken: ct);
+
+        await tx.CommitAsync(ct);   // the user row and the job commit together, or neither does
+    }
+}
+```
+
+`StageAsync` returns a `StagedDispatch`, not a `DispatchReceipt`. Nothing is durable until you commit. Runwick never commits, rolls back or retries your transaction. If the transaction fails with a serialization error or a deadlock, retrying the whole transaction is your job. `StageManyAsync` stages a batch of up to 100 jobs the same way.
+
+The other direction works too: a handler can mark its job as succeeded inside your transaction. [Transactions](/docs/transactions) covers both, with their rules and limits.
+
+## What PostgreSQL does not promise
+
+- No high availability. A failover or a restored backup is a break in history: receipts, uniqueness windows and fences from before it are not guaranteed to carry over.
+- Delivery is still at-least-once. A handler can run more than once. See [Delivery guarantees](/docs/delivery-guarantees).
+- Durability is what your server's settings give you. A confirmed dispatch means PostgreSQL committed it. Runwick does not check `synchronous_commit`; keep it `on` (the default), or a crash can lose writes that were already confirmed.
+
+## Next steps
+
+<Cards>
+  <Card title="Transactions" icon="blocks" href="/docs/transactions">
+    Stage jobs and complete them inside your own transaction.
+  </Card>
+  <Card title="Upgrades" icon="rocket" href="/docs/upgrades">
+    Migrate, drain and roll back safely.
+  </Card>
+  <Card title="Deployment" icon="server" href="/docs/deployment">
+    Process shapes, shutdown timing and connection budgets.
+  </Card>
+</Cards>

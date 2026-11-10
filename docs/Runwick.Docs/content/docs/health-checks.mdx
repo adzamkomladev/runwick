@@ -1,0 +1,102 @@
+---
+title: Health checks
+description: Liveness and per-role readiness checks for ASP.NET Core, and how to map them for your orchestrator.
+section: Operations
+order: 6
+---
+
+`Runwick.AspNetCore` plugs Runwick's health into the standard ASP.NET Core health checks. No extra package is needed beyond that.
+
+## Adding the checks
+
+```csharp
+builder.Services.AddRunwick(r => { /* ... */ });
+builder.Services.AddRunwickManagement(m => { /* ... */ });   // if this host serves management
+
+builder.Services.AddHealthChecks().AddRunwick();
+```
+
+Call `AddRunwick()` on the health-check builder **after** `AddRunwick` (and after `AddRunwickManagement`, if you use it). It looks at what the host has registered and adds:
+
+| Check | Tag | Added when |
+|---|---|---|
+| `runwick-live` | `live` | Always |
+| `runwick-producer` | `ready` | Always |
+| `runwick-worker` | `ready` | The host calls `AddWorker` |
+| `runwick-scheduler` | `ready` | The host calls `AddScheduler` |
+| `runwick-management` | `ready` | The host calls `AddRunwickManagement` |
+
+## Mapping the endpoints
+
+Use the tags to split liveness from readiness:
+
+```csharp
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("live"),
+});
+
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+});
+```
+
+Then point your orchestrator at them. For Kubernetes:
+
+```yaml
+livenessProbe:
+  httpGet: { path: /health/live, port: 8080 }
+  periodSeconds: 10
+readinessProbe:
+  httpGet: { path: /health/ready, port: 8080 }
+  periodSeconds: 10
+```
+
+## What each check means
+
+| Check | Healthy | Degraded | Unhealthy |
+|---|---|---|---|
+| Live | The worker's internal timer keeps ticking | | The timer stalled. A store outage alone never makes liveness fail |
+| Producer | The startup compatibility check passed and the last store call worked | The last call failed less than 30 s ago | Incompatible schema, or failing for 30 s or more |
+| Worker | Claiming and finishing work normally | Partly impaired | Draining, store outage, every pool stopped under pressure, or incompatible store |
+| Scheduler | Compatible and recently wrote its progress | A recent write failed | Incompatible, or writes keep failing |
+| Management | Configuration valid and the periodic store read works | A read failed less than 30 s ago | Failing for 30 s or more |
+
+A few details worth knowing:
+
+- **Checks never wait on the store.** They return cached state. Background refreshers update it every 10 seconds with a 1 second budget. A health request never claims a job.
+- **Stale is not healthy.** If a refresher has not succeeded for three periods, the check reports Degraded with reason `stale`.
+- **Draining makes a worker not ready, but still alive.** That is what you want during an [upgrade](/docs/upgrades): the orchestrator stops sending traffic but does not restart the process.
+- **An empty queue, a paused queue or a backlog nobody can run does not change readiness.** Readiness is about whether this process can do its job, not about the work.
+
+## Reasons stay private by default
+
+Each result carries a short reason code (`ok`, `stale`, `store_unavailable`, `incompatible`, ...) in its description. The default response writer prints only the overall status, so public endpoints show `Healthy`, `Degraded` or `Unhealthy` and nothing more.
+
+If you want the reasons, write a detailed response and put it behind your own authorization:
+
+```csharp
+app.MapHealthChecks("/health/details", new HealthCheckOptions
+{
+    ResponseWriter = async (ctx, report) =>
+    {
+        ctx.Response.ContentType = "application/json";
+        await ctx.Response.WriteAsJsonAsync(report.Entries.ToDictionary(
+            e => e.Key,
+            e => new { status = e.Value.Status.ToString(), reason = e.Value.Description }));
+    },
+}).RequireAuthorization("ops");
+```
+
+## Without ASP.NET Core
+
+The same data is available from `IRunwickHealth` in dependency injection: `Liveness()` returns one `RunwickRoleHealth`, `Readiness()` returns one per enabled role, each with `Role`, `Status`, `Reason` and `ObservedAt`. A worker service without a web server can expose it however your platform expects, for example by touching a file.
+
+<Callout type="tip" title="The incompatible-store alert">
+
+The shipped Prometheus rule `RunwickStoreIncompatible` reads a gauge that your host exports, set to 1 while any `runwick-*` readiness check reports reason `incompatible`. See [Observability](/docs/observability#grafana-dashboard-and-prometheus-alerts).
+
+</Callout>

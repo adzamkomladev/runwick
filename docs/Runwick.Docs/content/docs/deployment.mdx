@@ -1,0 +1,182 @@
+---
+title: Deployment
+description: Process shapes, containers, the migration step, shutdown timeouts, capabilities and a checklist for going live.
+section: Operations
+order: 8
+---
+
+Runwick has no server of its own. It runs inside your processes, and the store (PostgreSQL, SQLite or Redis) is the only shared part. What a process does is decided by its configuration, not by which program it is.
+
+## Roles
+
+| Role | Turned on by |
+|---|---|
+| Producer | Always: any process with `AddRunwick` can dispatch |
+| Worker | `AddWorker(...)` |
+| Scheduler | `AddScheduler()` |
+| Management host | `MapRunwickManagement(...)` and/or `MapRunwickDashboard(...)` |
+
+A process can have any combination.
+
+## Common shapes
+
+<Tabs>
+<Tab label="One app">
+
+One web app dispatches, runs workers, runs the scheduler and serves the dashboard. Simplest to run, and fine for many apps.
+
+```csharp
+builder.Services.AddRunwick(r =>
+{
+    r.Application("shop").UsePostgres(cs).AddJobsFromAssemblyContaining<Program>();
+    r.AddHandlersFromAssemblyContaining<Program>();
+    r.AddScheduler();
+    r.AddWorker(w => w.Pool("main", p => p.Queues("default").FixedConcurrency(8)));
+});
+```
+
+The trade-off: a slow job and a web request compete for the same CPU, and every deploy restarts both.
+
+</Tab>
+<Tab label="Web producer + worker service">
+
+The web app only dispatches (no `AddWorker`). A separate worker service, built with `Host.CreateApplicationBuilder`, runs the handlers. The two can share a contracts project with `Runwick.Contracts`, so the web app needs no handler code.
+
+```csharp
+// web app
+builder.Services.AddRunwick(r => r.Application("shop").UsePostgres(cs)
+    .AddJobsFromAssemblyContaining<SendReceipt>());
+
+// worker service
+var builder = Host.CreateApplicationBuilder(args);
+builder.Services.AddRunwick(r =>
+{
+    r.Application("shop").UsePostgres(cs).AddJobsFromAssemblyContaining<SendReceipt>();
+    r.AddHandlersFromAssemblyContaining<SendReceiptHandler>();
+    r.AddScheduler();
+    r.AddWorker(w => w.Pool("main", p => p.Queues("default").FixedConcurrency(16)));
+});
+builder.Build().Run();
+```
+
+You can scale and deploy the two separately.
+
+</Tab>
+<Tab label="Many replicas">
+
+Several identical instances, each dispatching and working. Every replica claims from the same store; leases make sure one job has one owner at a time.
+
+Keep in mind: concurrency limits declared on jobs and queues hold across replicas, because they are kept in the store. But rate limits on the management API, the producer's local limits and the automatic concurrency controller work **per process**. Ten replicas allow ten times the management API rate.
+
+</Tab>
+</Tabs>
+
+SQLite supports all of these only when every process is on the same machine. See [Choosing a store](/docs/choosing-a-store).
+
+## Migrations are a separate step
+
+Runwick does not migrate the store when your app starts. Run migrations as a deploy step, with credentials that may create schemas:
+
+```bash
+runwick migrate --provider postgres --connection-env RUNWICK_MIGRATE_CS
+```
+
+or from code, for example in a one-off job:
+
+```csharp
+await RunwickPostgresMigrations.MigrateAsync(migrationConnectionString);
+```
+
+The running app can then use a role that only reads and writes data. `migrate` is safe to run again: a second run applies nothing.
+
+A binary works with exactly one store revision. A process that meets a store at another revision refuses to run. So on an upgrade the migration step is part of a short stop of new work, not something you can roll out replica by replica. [Upgrades](/docs/upgrades) has the procedure.
+
+## Containers and shutdown
+
+The worker needs up to 25 seconds to stop cleanly (drain, then cancel, then write results). Give it room at every layer:
+
+| Layer | Default | Set it to |
+|---|---|---|
+| Runwick `ShutdownBudget` | 25 s | Leave it, or change the slices in [Workers](/docs/workers#shutdown) |
+| .NET `HostOptions.ShutdownTimeout` | 30 s | Above Runwick's budget |
+| Container grace period (Kubernetes `terminationGracePeriodSeconds`) | 30 s | Above the host's timeout |
+
+```csharp
+builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(35));
+```
+
+```yaml
+spec:
+  terminationGracePeriodSeconds: 45
+```
+
+If a process is killed early, no data is lost, but its running jobs wait for their leases to expire (60 seconds by default) before another worker takes them. Handlers should honour their `CancellationToken` so the cancel step finishes in time.
+
+Map [health checks](/docs/health-checks): liveness on the `live` tag, readiness on `ready`. A draining worker is not ready but still alive, so the orchestrator stops routing to it without restarting it.
+
+## Capabilities
+
+Schedules and rate limits need a capability turned on once per application, by an operator:
+
+| Feature | Capability | Error without it |
+|---|---|---|
+| `AddScheduler`, `AddSchedule` | `scheduler` | Startup fails with `scheduler_not_active` |
+| `RollingWindow(...)` rate limits | `rate_admission` | Dispatching a rate-limited job is refused with `rate_admission_not_active`; nothing is written |
+
+The order is: start the application once so it registers itself, activate, restart.
+
+```bash
+runwick store activate-capability --name scheduler --application shop \
+  --provider postgres --connection-env RUNWICK_MIGRATE_CS
+```
+
+<Callout type="danger" title="Activation cannot be undone">
+
+Once raised, a capability stays. A binary that does not know it can no longer create work for that application. Activate only when every process that uses the store runs a release that supports it.
+
+</Callout>
+
+## Checklist
+
+<Steps>
+<Step title="Pick the store and check its settings">
+
+PostgreSQL 16 to 18 connected directly to the primary; SQLite on a local disk; Redis 8.2 or newer, one primary, with `appendfsync always` and `noeviction`. Runwick refuses unsafe settings at startup.
+
+</Step>
+<Step title="Run migrations as their own step">
+
+`runwick migrate` with the migration role, before the app starts. Use the CLI from the same release.
+
+</Step>
+<Step title="Activate capabilities you need">
+
+`scheduler` and `rate_admission`, once per application, after its first start.
+
+</Step>
+<Step title="Set shutdown timeouts">
+
+Runwick 25 s, host above that, container grace period above the host.
+
+</Step>
+<Step title="Map health checks">
+
+`AddHealthChecks().AddRunwick()`, with `live` and `ready` endpoints wired to your orchestrator.
+
+</Step>
+<Step title="Secure the management API and dashboard">
+
+Real sign-in, a grant mapping you have reviewed, HTTPS. Share the Data Protection key ring across replicas.
+
+</Step>
+<Step title="Export telemetry">
+
+Traces and metrics through OpenTelemetry. Turn on `CollectApplicationMetrics` in one process, import the Grafana dashboard and the alert rules, and tune the thresholds.
+
+</Step>
+<Step title="Plan backups and restores">
+
+Back up the store like any database you depend on, and read [Upgrades](/docs/upgrades) before the first upgrade, not during it.
+
+</Step>
+</Steps>

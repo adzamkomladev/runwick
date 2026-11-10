@@ -1,0 +1,118 @@
+---
+title: Delivery guarantees
+description: What Runwick promises about running your jobs, how to make repeated runs harmless, and the list of things it does not claim.
+section: Reference
+order: 1
+---
+
+Runwick is at-least-once. A confirmed job is not lost, but its handler can run more than once. Exactly-once is available in one case: effects inside the same database as the job store, through [transactional completion](/docs/transactions). For everything else, use idempotency keys.
+
+## At-least-once
+
+A handler can run again when:
+
+- the worker crashes after the work but before it records the result;
+- the worker loses its lease while the handler is still running (for example after a long pause), and another worker takes the job;
+- the reply from the store is lost, and the attempt cannot be settled in time.
+
+In each case Runwick runs the job again rather than risk losing it. So write handlers that are safe to repeat.
+
+### When a dispatch is confirmed
+
+`DispatchAsync` returns a `DispatchReceipt` only after the store has confirmed the write. The receipt's `ConfirmedAcknowledgementProfile` says what "confirmed" means for that store:
+
+| Store | Confirmed means |
+|---|---|
+| PostgreSQL | the transaction committed |
+| SQLite | the commit is on disk, with WAL and `synchronous=FULL` |
+| Redis | the write is in the append-only file and synced, under `appendfsync always` |
+
+If `DispatchAsync` throws an error whose `Disposition` is `KnownNotApplied`, nothing was written. If it throws `DispatchOutcomeUnknownException` (codes `outcome_unknown`, `cancelled_after_send` or `expired_unknown`), the write may or may not have happened.
+
+### Resolving an unknown outcome
+
+Do not simply dispatch again: that may create a second job. The exception carries the operation ID and the prepared request:
+
+```csharp
+try
+{
+    await dispatcher.DispatchAsync(new ChargeCard(orderId), cancellationToken: ct);
+}
+catch (DispatchOutcomeUnknownException ex)
+{
+    // Ask the store what happened to this exact operation...
+    var resolution = await prepared.ResolveAsync(ex.OperationId, ct);   // prepared: IPreparedJobDispatcher
+    if (resolution.Status == DispatchResolutionStatus.Confirmed)
+    {
+        // the job exists: resolution.Receipt
+    }
+    // ...or send the same prepared request again. A replay returns the original result.
+    else if (ex.Prepared is { } same)
+    {
+        await prepared.DispatchAsync(same, ct);
+    }
+}
+```
+
+A prepared dispatch keeps its operation ID, so sending it again replays the same command and never creates a second job. It is valid until its deadline (5 minutes by default). [Dispatching](/docs/dispatching) covers `IPreparedJobDispatcher` in detail.
+
+## Make repeats harmless: idempotency keys
+
+When a handler talks to something outside Runwick's database (an email service, a payment API, another database), pass a key that is the same on every run and let the other side ignore duplicates. A good key is stable and comes from the job, for example the job ID from [`IJobContext.JobId`](/docs/job-context) or a business ID in the payload. Many APIs accept an `Idempotency-Key` header for exactly this.
+
+```csharp
+public sealed class ChargeCardHandler(IJobContext context, IPaymentClient payments) : IJobHandler<ChargeCard>
+{
+    public Task HandleAsync(ChargeCard job, CancellationToken ct) =>
+        payments.ChargeAsync(job.OrderId, job.Amount, idempotencyKey: $"charge:{context.JobId}", ct);
+}
+```
+
+The job ID stays the same across retries of one job. Do not use the attempt ID: it changes on every run.
+
+## Uniqueness is not idempotency
+
+People say "idempotent" for three different problems. Runwick solves two of them.
+
+| You want to avoid | Use |
+|---|---|
+| Two copies of a job queued at once | `UniqueWhileActive` (an active key) |
+| A client retry creating a second job | `UniqueWithinWindow` (a window key) |
+| Two jobs running at the same time for one resource | A concurrency limit, for example `PerResource(..., capacity: 1)` |
+| A repeated run having a visible effect twice | Idempotency keys in your handler, or transactional completion |
+
+Dispatch uniqueness prevents a duplicate **insert**. It never promises that a handler runs once: retries and recovery can still run the one job more than once. See [Uniqueness](/docs/uniqueness) and [Rate limits and concurrency](/docs/rate-limits-and-concurrency).
+
+## The one exactly-once case
+
+If the handler's effect is a change in the same PostgreSQL database or SQLite file as Runwick's tables, the change and the job's completion can commit together:
+
+```csharp
+await using var tx = await connection.BeginTransactionAsync(ct);
+// ... your changes on tx ...
+await completion.CompleteInTransactionAsync(tx, ct);   // IPostgresJobCompletion or ISqliteJobCompletion
+await tx.CommitAsync(ct);
+```
+
+Either both are saved or neither is. This covers effects inside that one database only. Redis has no transactional completion. [Transactions](/docs/transactions) has the rules.
+
+## The outbox
+
+To create a job in a store other than your business database, the [outbox](/docs/outbox) commits a message with your data and a relay delivers it. Delivery is at-least-once, with de-duplication on the receiving side for a limited window (7 days by default). It is not exactly-once dispatch and it does not keep order.
+
+## What Runwick does not claim
+
+<Callout type="warning" title="Read this before you rely on Runwick">
+
+- **No exactly-once in general.** A handler may run more than once.
+- **Cancellation is cooperative.** It cancels a `CancellationToken`. Your code must observe it. See [Cancellation](/docs/cancellation).
+- **A lost lease does not prove the old handler stopped.** Two copies can briefly overlap. Concurrency limits count valid leases, not code that is physically still running. Fencing tokens ([`IJobContext.Fences`](/docs/job-context)) help only if the resource you write to rejects lower values.
+- **"Began" does not prove your code ran.** A crash right after an attempt began is recorded as abandoned.
+- **Timeouts measure the handler pipeline**, not what happened in the outside world. There is no default timeout.
+- **A restored database is a break in history.** Receipts, uniqueness windows and fences from before the restore are not guaranteed to behave as one continuous record.
+- **A schedule creates at most one job per occurrence**, and that job is at-least-once like any other. Pausing a schedule does not pause jobs it already created.
+- **Counts and metrics can be lost on a crash.** They are not for billing or audit.
+- **No high availability claim** for any store. Failover and restored backups are outside what is tested.
+- **No platform claims beyond what is tested**: Linux x64 and Windows x64 on .NET 10. No claim for Native AOT or trimming.
+
+</Callout>

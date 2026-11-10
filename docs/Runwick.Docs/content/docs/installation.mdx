@@ -1,0 +1,167 @@
+---
+title: Installation
+description: Install Runwick and one store package, add the optional packages you need, install the CLI and create the store's schema.
+section: Get started
+order: 2
+---
+
+Runwick is split into small packages. Every app needs `Runwick` and exactly one store package. Everything else is optional.
+
+## Packages
+
+| Package | Install when |
+|---|---|
+| `Runwick` | always, in any process that dispatches or runs jobs |
+| `Runwick.Postgres` | your store is PostgreSQL |
+| `Runwick.Sqlite` | your store is a SQLite file on one machine |
+| `Runwick.Redis` | your store is a single Redis primary |
+| `Runwick.Contracts` | you want to share job types with a project that has no database code. It holds `IQueueJob`, `IJobHandler<T>`, the attributes and `IJobDispatcher` |
+| `Runwick.AspNetCore` | you want the [management HTTP API](/docs/management-api) or the [health checks](/docs/health-checks) |
+| `Runwick.Dashboard` | you want the [web dashboard](/docs/dashboard). It brings in `Runwick.AspNetCore` |
+| `Runwick.OpenTelemetry` | you want [metrics and traces](/docs/observability) |
+| `Runwick.Outbox` | you want the [transactional outbox](/docs/outbox), plus `Runwick.Outbox.Postgres` or `Runwick.Outbox.Sqlite` for the source database |
+| `Runwick.Testing` | reserved for test helpers. It has no public types in this release; see [Testing](/docs/testing) for the patterns to use today |
+| `Runwick.Cli` | a .NET tool, installed with `dotnet tool install`. The command is `runwick` |
+
+Use the same version for every Runwick package.
+
+## Add the packages
+
+<Tabs>
+  <Tab label="PostgreSQL">
+
+```bash
+dotnet add package Runwick
+dotnet add package Runwick.Postgres
+```
+
+  </Tab>
+  <Tab label="SQLite">
+
+```bash
+dotnet add package Runwick
+dotnet add package Runwick.Sqlite
+```
+
+  </Tab>
+  <Tab label="Redis">
+
+```bash
+dotnet add package Runwick
+dotnet add package Runwick.Redis
+```
+
+  </Tab>
+</Tabs>
+
+Add the optional packages the same way, for example:
+
+```bash
+dotnet add package Runwick.Dashboard        # dashboard (includes the management API package)
+dotnet add package Runwick.OpenTelemetry    # metrics and traces
+```
+
+## The command line tool
+
+The `runwick` command migrates stores, raises one-time capabilities, and talks to the management API for jobs, queues and workers.
+
+```bash
+dotnet tool install --global Runwick.Cli
+runwick version
+```
+
+See [CLI](/docs/cli) for the full command list.
+
+## Requirements
+
+- **.NET 10.** Every package targets `net10.0` only. There are no .NET 8, .NET 9, .NET Framework or .NET Standard builds.
+- **No Node or npm.** The dashboard's web files ship inside its package.
+- **One store:**
+  - **PostgreSQL** 16, 17 or 18 (18 is the reference version). Connect to the primary directly.
+  - **SQLite** 3.38 or newer. The engine is bundled with `Microsoft.Data.Sqlite`, so there is nothing to install. The file must be on a local disk.
+  - **Redis** 8.2 or newer, one standalone primary with durable settings (see below).
+
+The tested operating systems are Linux x64 and Windows x64. Runwick makes no claim for Native AOT or trimming.
+
+## Create the schema
+
+Workers never change the schema when they start. You create it once, as a deployment step, before the first app starts. Running the migration again on a store that is already up to date does nothing.
+
+Each store has a `MigrateAsync` method, and the CLI runs the same code.
+
+<Tabs>
+  <Tab label="PostgreSQL">
+
+```csharp
+using Runwick.Postgres.Migrations;
+
+var result = await RunwickPostgresMigrations.MigrateAsync(connectionString);
+Console.WriteLine($"schema revision {result.SchemaRevision}");
+```
+
+```bash
+export MY_CONN="Host=localhost;Database=app;Username=migrator;Password=..."
+runwick migrate --provider postgres --connection-env MY_CONN
+```
+
+Run the migration with a role that may create schemas. Everything goes into one schema, `runwick`, and that name cannot be changed. Your running app can then use a role with data access only.
+
+  </Tab>
+  <Tab label="SQLite">
+
+```csharp
+using Runwick;
+
+await RunwickSqliteMigrations.MigrateAsync("Data Source=/var/lib/my-app/runwick.db");
+```
+
+```bash
+export MY_CONN="Data Source=/var/lib/my-app/runwick.db"
+runwick migrate --provider sqlite --connection-env MY_CONN
+```
+
+Use a file on a local disk. A file on a network share, or an in-memory database, is refused when the app starts.
+
+  </Tab>
+  <Tab label="Redis">
+
+```csharp
+using Runwick;
+
+await RunwickRedisMigrations.MigrateAsync("localhost:6379");
+```
+
+```bash
+export MY_CONN="localhost:6379"
+runwick migrate --provider redis --connection-env MY_CONN
+```
+
+The server must run with these settings, or Runwick refuses to start:
+
+```bash
+redis-server --appendonly yes --appendfsync always --no-appendfsync-on-rewrite no \
+  --maxmemory-policy noeviction --aof-load-truncated no
+```
+
+Replicas, Redis Cluster and Sentinel are refused.
+
+  </Tab>
+</Tabs>
+
+<Callout type="info" title="Connection strings stay out of your shell history">
+The CLI never takes a connection string as an argument. Pass the name of an environment variable with `--connection-env`, or pipe the string in with `--connection-stdin`.
+</Callout>
+
+## Next steps
+
+<Cards>
+  <Card title="Quick start" icon="rocket" href="/docs/quick-start">
+    Define a job, register a worker and watch it run.
+  </Card>
+  <Card title="Choosing a store" icon="server" href="/docs/choosing-a-store">
+    Compare PostgreSQL, SQLite and Redis before you commit to one.
+  </Card>
+  <Card title="Upgrades" icon="blocks" href="/docs/upgrades">
+    Apply new migrations and raise capabilities when you move to a new version.
+  </Card>
+</Cards>
