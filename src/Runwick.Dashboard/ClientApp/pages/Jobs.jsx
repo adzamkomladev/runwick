@@ -1,4 +1,4 @@
-import { IconAlertTriangle, IconCircleCheck, IconClockHour4, IconListDetails, IconPercentage, IconPlayerPlay, IconPlugConnectedX } from '@tabler/icons-react'
+import { IconAlertTriangle, IconCircleCheck, IconListDetails, IconPercentage, IconPlayerPlay, IconPlugConnectedX } from '@tabler/icons-react'
 import { Spark } from '../components/charts'
 import { DateRangePicker } from '../components/date-range'
 import { Kpi, KpiStrip, successRate, sum } from '../components/kpis'
@@ -29,13 +29,11 @@ export default function Jobs({ base, can, types, stats, workers, query }) {
     <Layout heading="Jobs" live={live} description="The job types this application knows: registered here, handled by a worker, seen in runs or used by a schedule."
       actions={<DateRangePicker query={query} fallback="1d" />}>
       <KpiStrip label="Job stats">
-        <Kpi testId="kpi-types" icon={IconListDetails} label="Job types" value={types.length} foot={`${(stats.jobNames ?? []).filter((g) => sum(g.states) > 0).length} ran in the range`} />
-        <Kpi testId="kpi-runs" icon={IconPlayerPlay} label="Runs" value={sum(stats.states)} foot="Created in the range" spark={stats.buckets.map((b) => b.created)} />
+        <Kpi testId="kpi-types" icon={IconListDetails} label="Job types" value={types.length} foot={`${(stats.jobNames ?? []).filter((g) => sum(g.states) > 0).length} ran in the range${missing ? ` · ${missing} without a live handler` : ''}`} />
+        <Kpi testId="kpi-runs" icon={IconPlayerPlay} label="Runs" value={sum(stats.states)} foot={`Created in the range · p95 ${ms(stats.duration.p95Ms)}`} spark={stats.buckets.map((b) => b.created)} />
         <Kpi testId="kpi-success" icon={IconPercentage} label="Success rate" value={rate ?? '—'} suffix={rate == null ? null : '%'} foot="Of runs that ended"
           spark={stats.buckets.map((b) => b.succeeded)} color="text-chart-2" />
         <Kpi testId="kpi-failed" icon={IconAlertTriangle} label="Failed" value={stats.states.failed ?? 0} foot={`${stats.retries} retries`} spark={stats.buckets.map((b) => b.failed)} color="text-chart-3" />
-        <Kpi testId="kpi-p95" icon={IconClockHour4} label="p95 duration" value={ms(stats.duration.p95Ms)} foot={`median ${ms(stats.duration.medianMs)}`} spark={stats.buckets.map((b) => b.p95Ms ?? 0)} color="text-chart-4" />
-        <Kpi testId="kpi-unhandled" icon={IconPlugConnectedX} label="No live handler" value={missing ?? '—'} foot={missing ? 'Runs of these wait for a worker' : 'Every type has a worker'} />
       </KpiStrip>
       <TableCard empty={types.length === 0 && 'No job types are known yet.'}>
         <Table data-testid="job-types">

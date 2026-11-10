@@ -11,7 +11,7 @@ export default function Audit({ audit, stats, query }) {
   const [rows, head] = useSort(audit.items)
   return (
     <Layout heading="Audit" live={live}>
-      <KpiStrip label="Audit stats" className="xl:grid-cols-4">
+      <KpiStrip label="Audit stats">
         <Kpi testId="kpi-actions" icon={IconHistory} label="Actions" value={stats.total} foot={query.range || query.from ? 'In the range' : 'In the last 24 h'} />
         <Kpi testId="kpi-actor" icon={IconUser} label="Top actor" value={stats.actors[0]?.actor ?? '—'} foot={stats.actors[0] ? `${stats.actors[0].count.toLocaleString()} actions` : 'Nobody acted'} />
         <Kpi testId="kpi-operation" icon={IconBolt} label="Top action" value={stats.operations[0]?.operation ?? '—'} foot={stats.operations[0] ? `${stats.operations[0].count.toLocaleString()} times` : 'None'} />

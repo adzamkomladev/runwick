@@ -7,7 +7,7 @@ import { cn } from './ui/utils'
 // friends); nothing here counts a sample.
 
 export function KpiStrip({ label, children, className }) {
-  return <section aria-label={label} data-testid="kpis" className={cn('grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6', className)}>{children}</section>
+  return <section aria-label={label} data-testid="kpis" className={cn('grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4', className)}>{children}</section>
 }
 
 export function Kpi({ label, value, more, suffix, foot, spark, color = 'text-chart-1', icon: Icon, testId }) {

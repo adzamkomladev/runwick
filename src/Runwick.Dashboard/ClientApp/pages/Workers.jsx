@@ -1,5 +1,5 @@
 import { router } from '@inertiajs/react'
-import { IconCpu, IconDeviceFloppy, IconFlame, IconMemory, IconPencil, IconRocket, IconServer2 } from '@tabler/icons-react'
+import { IconCpu, IconDeviceFloppy, IconMemory, IconPencil, IconRocket, IconServer2 } from '@tabler/icons-react'
 import { Kpi, KpiStrip } from '../components/kpis'
 import { percent } from '../components/host'
 import { bytes } from '../components/usage'
@@ -60,11 +60,9 @@ export default function Workers({ base, can, workers, fleet, scopes, query }) {
     <Layout heading="Workers and capacity" live={live}>
       <CapacitySheet key={editing ? `${editing.kind}/${editing.key}` : 'none'} scope={editing} url={editing && capacityUrl(editing)} command={command} onClose={() => setEditing(null)} />
       <KpiStrip label="Fleet stats">
-        <Kpi testId="kpi-live" icon={IconServer2} label="Live workers" value={fleet.live} foot={`on ${fleet.hosts} host${fleet.hosts === 1 ? '' : 's'}`} />
+        <Kpi testId="kpi-live" icon={IconServer2} label="Live workers" value={fleet.live} foot={`on ${fleet.hosts} host${fleet.hosts === 1 ? '' : 's'}${fleet.busiest ? ` · busiest ${fleet.busiest.hostName}` : ''}`} />
         <Kpi testId="kpi-concurrency" icon={IconRocket} label="Concurrency in use" value={fleet.inFlight} suffix={`/ ${fleet.target}`} foot={fleet.target ? `${Math.round((fleet.inFlight / fleet.target) * 100)} % of capacity` : 'No capacity'} />
-        <Kpi testId="kpi-busiest" icon={IconFlame} label="Busiest host" value={fleet.busiest?.hostName ?? '—'} foot={fleet.busiest ? `${fleet.busiest.inFlight} in flight` : 'Nothing running'} />
         <Kpi testId="kpi-cpu" icon={IconCpu} label="Fleet CPU" value={percent(fleet.cpuPercent)} foot="Mean process share of its machine" />
-        <Kpi testId="kpi-working-set" icon={IconMemory} label="Working set" value={bytes(fleet.workingSetBytes)} foot="All worker processes" />
         <Kpi testId="kpi-memory" icon={IconMemory} label="Machine memory" value={fleet.memoryTotalBytes ? `${Math.round((1 - fleet.memoryAvailableBytes / fleet.memoryTotalBytes) * 100)} %` : '—'}
           foot={fleet.memoryTotalBytes ? `${bytes(fleet.memoryAvailableBytes)} free of ${bytes(fleet.memoryTotalBytes)}` : 'Not published'} />
       </KpiStrip>

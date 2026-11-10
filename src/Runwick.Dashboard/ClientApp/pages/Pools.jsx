@@ -9,7 +9,7 @@ export default function Pools({ base, workers }) {
   const pools = poolsFrom(workers)
   return (
     <Layout heading="Pools" live={live} description="Pools across the live workers: their queues, concurrency and what is in flight now.">
-      <KpiStrip label="Pool stats" className="xl:grid-cols-4">
+      <KpiStrip label="Pool stats">
         <Kpi testId="kpi-pools" icon={IconStack3} label="Pools" value={pools.length} foot={`${pools.filter((p) => !p.known).length} without published detail`} />
         <Kpi testId="kpi-modes" icon={IconAdjustments} label="Auto / fixed" value={`${pools.filter((p) => p.mode === 'auto').length} / ${pools.filter((p) => p.mode === 'fixed').length}`} foot="Scaled by Runwick / set in options" />
         <Kpi testId="kpi-slots" icon={IconRocket} label="Slots in use" value={pools.reduce((t, p) => t + p.inFlight, 0)} suffix={`/ ${pools.reduce((t, p) => t + p.target, 0)}`} foot="In flight of the summed targets" />

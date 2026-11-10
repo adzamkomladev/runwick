@@ -120,7 +120,7 @@ export default function Job({ base, can, type, stats, runs, workers, query }) {
       </>}>
       <CommandBar command={command} />
       {can.dispatch && type.registered && <TriggerSheet key={triggering ? 'open' : 'closed'} open={triggering} onClose={() => setTriggering(false)} type={type} url={at + 'dispatch'} command={command} />}
-      <KpiStrip label="Job stats" className="xl:grid-cols-4 2xl:grid-cols-8">
+      <KpiStrip label="Job stats">
         <Kpi testId="kpi-runs" icon={IconRocket} label="Runs" value={sum(s)} foot="Created in the range" spark={stats.buckets.map((b) => b.created)} />
         <Kpi testId="kpi-succeeded" icon={IconCircleCheck} label="Succeeded" value={s.succeeded ?? 0} spark={stats.buckets.map((b) => b.succeeded)} color="text-chart-2" />
         <Kpi testId="kpi-failed" icon={IconAlertTriangle} label="Failed" value={failed} spark={stats.buckets.map((b) => b.failed)} color="text-chart-3" />

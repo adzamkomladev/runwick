@@ -1,4 +1,4 @@
-import { IconAlertTriangle, IconClockHour4, IconFlame, IconHourglass, IconPlayerPause, IconPlayerPlay, IconStack2 } from '@tabler/icons-react'
+import { IconAlertTriangle, IconClockHour4, IconHourglass, IconPlayerPause, IconPlayerPlay, IconStack2 } from '@tabler/icons-react'
 import { DateRangePicker } from '../components/date-range'
 import { Kpi, KpiStrip, sum } from '../components/kpis'
 import { duration } from '../components/timeline'
@@ -8,7 +8,6 @@ import { CommandBar, CommandButton, Copyable, flash, Layout, NameLink, OpenButto
 export default function Queues({ base, can, queues, counts, stats, query }) {
   const live = usePoll(['queues', 'counts', ...(can.jobs ? ['stats'] : [])], 10)
   const groups = Object.fromEntries((stats?.queues ?? []).map((g) => [g.key, g]))
-  const busiest = (stats?.queues ?? []).reduce((b, g) => (sum(g.states) > (b ? sum(b.states) : 0) ? g : b), null)
   const command = useCommand()
   const [rows, head] = useSort(queues.items)
   const changed = useChanged(queues.items, (q) => q.name, (q) => q.paused)
@@ -16,13 +15,10 @@ export default function Queues({ base, can, queues, counts, stats, query }) {
     <Layout heading="Queues" live={live} actions={stats && <DateRangePicker query={query} fallback="1d" />}>
       <CommandBar command={command} />
       <KpiStrip label="Queue stats">
-        <Kpi testId="kpi-queues" icon={IconStack2} label="Queues" value={counts.total} foot={`${counts.total - counts.paused} running`} />
-        <Kpi testId="kpi-paused" icon={IconPlayerPause} label="Paused" value={counts.paused} foot={counts.paused ? 'Not handing out work' : 'None paused'} />
+        <Kpi testId="kpi-queues" icon={IconStack2} label="Queues" value={counts.total} foot={`${counts.total - counts.paused} running · ${counts.paused} paused`} />
         {stats && <>
           <Kpi testId="kpi-pending" icon={IconHourglass} label="Pending now" value={stats.now?.pending ?? 0} foot={`${(stats.now?.scheduled ?? 0).toLocaleString()} scheduled for later`} />
           <Kpi testId="kpi-oldest" icon={IconClockHour4} label="Oldest pending" value={stats.oldestPendingEligibleAt ? duration(Date.now() - Date.parse(stats.oldestPendingEligibleAt)) : 'none'} foot="Waiting since eligible" />
-          <Kpi testId="kpi-busiest" icon={IconFlame} label="Busiest queue" value={busiest?.key ?? '—'} foot={busiest ? `${sum(busiest.states).toLocaleString()} runs in the range` : 'No runs in the range'}
-            spark={busiest?.buckets?.map((b) => b.created)} />
           <Kpi testId="kpi-failed" icon={IconAlertTriangle} label="Failed" value={stats.states.failed ?? 0} foot="Runs created in the range" spark={stats.buckets.map((b) => b.failed)} color="text-chart-3" />
         </>}
       </KpiStrip>
