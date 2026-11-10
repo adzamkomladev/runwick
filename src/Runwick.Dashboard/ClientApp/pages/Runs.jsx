@@ -1,5 +1,5 @@
 import { Link, router, usePage } from '@inertiajs/react'
-import { IconAlertTriangle, IconBan, IconChevronDown, IconClockHour4, IconGauge, IconListDetails, IconLoader2, IconPercentage, IconRepeat } from '@tabler/icons-react'
+import { IconAlertTriangle, IconBan, IconChevronDown, IconClockHour4, IconListDetails, IconLoader2, IconPercentage } from '@tabler/icons-react'
 import { useEffect, useState } from 'react'
 import { DateRangePicker } from '../components/date-range'
 import { Kpi, KpiStrip, perMinute, successRate, sum } from '../components/kpis'
@@ -21,12 +21,10 @@ export function RunStats({ stats }) {
   const rate = successRate(stats.states), spark = (k) => stats.buckets.map((b) => b[k] ?? 0)
   return (
     <KpiStrip label="Run stats">
-      <Kpi testId="kpi-total" icon={IconListDetails} label="Runs" value={sum(stats.states)} foot="Created in the range" spark={spark('created')} />
+      <Kpi testId="kpi-total" icon={IconListDetails} label="Runs" value={sum(stats.states)} foot={`Created in the range · ${stats.retries.toLocaleString()} retries`} spark={spark('created')} />
       <Kpi testId="kpi-success" icon={IconPercentage} label="Success rate" value={rate ?? '—'} suffix={rate == null ? null : '%'} foot="Of runs that ended" spark={spark('succeeded')} color="text-chart-2" />
-      <Kpi testId="kpi-failed" icon={IconAlertTriangle} label="Failed" value={stats.states.failed ?? 0} foot={`${(stats.states.cancelled ?? 0).toLocaleString()} cancelled`} spark={spark('failed')} color="text-chart-3" />
-      <Kpi testId="kpi-retries" icon={IconRepeat} label="Retries" value={stats.retries} foot="Extra executions" />
-      <Kpi testId="kpi-duration" icon={IconClockHour4} label="Duration p95" value={ms(stats.duration.p95Ms)} foot={`median ${ms(stats.duration.medianMs)}`} spark={spark('p95Ms')} color="text-chart-4" />
-      <Kpi testId="kpi-throughput" icon={IconGauge} label="Throughput" value={perMinute(stats)} suffix="/min" foot={`${(stats.now?.pending ?? 0).toLocaleString()} pending now`} />
+      <Kpi testId="kpi-failed" icon={IconAlertTriangle} label="Failed" value={stats.states.failed ?? 0} foot={`${(stats.states.cancelled ?? 0).toLocaleString()} cancelled · ${(stats.now?.pending ?? 0).toLocaleString()} pending now`} spark={spark('failed')} color="text-chart-3" />
+      <Kpi testId="kpi-duration" icon={IconClockHour4} label="Duration p95" value={ms(stats.duration.p95Ms)} foot={`median ${ms(stats.duration.medianMs)} · ${perMinute(stats)}/min`} spark={spark('p95Ms')} color="text-chart-4" />
     </KpiStrip>
   )
 }

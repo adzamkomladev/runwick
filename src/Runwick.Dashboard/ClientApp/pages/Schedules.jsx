@@ -19,8 +19,7 @@ export default function Schedules({ base, can, schedules, stats, query }) {
     <Layout heading="Schedules" live={live} actions={<DateRangePicker query={query} fallback="1d" />}>
       <CommandBar command={command} />
       <KpiStrip label="Schedule stats">
-        <Kpi testId="kpi-schedules" icon={IconCalendarTime} label="Schedules" value={stats.total} foot={stats.needsReview ? `${stats.needsReview} need review` : 'None need review'} />
-        <Kpi testId="kpi-active" icon={IconPlayerPlay} label="Active" value={stats.total - stats.paused} foot={`${stats.paused} paused`} />
+        <Kpi testId="kpi-schedules" icon={IconCalendarTime} label="Schedules" value={stats.total} foot={`${(stats.total - stats.paused).toLocaleString()} active, ${stats.paused} paused${stats.needsReview ? ` · ${stats.needsReview} need review` : ''}`} />
         <Kpi testId="kpi-runs" icon={IconRepeat} label="Runs in range" value={stats.occurrences.created ?? 0} foot={`${sum(stats.occurrences).toLocaleString()} occurrences`} />
         <Kpi testId="kpi-missed" icon={IconAlarm} label="Missed or misfired" value={(stats.occurrences.skipped ?? 0) + (stats.misfires ?? 0)} foot={`${stats.misfires ?? 0} misfires, ${stats.occurrences.skipped ?? 0} skipped`} />
         <Kpi testId="kpi-next" icon={IconCalendarTime} label="Next run" value={stats.nextDueAt ? relative(stats.nextDueAt) : 'none'} foot={stats.nextDueAt ? time(stats.nextDueAt) : 'No active schedule'} />

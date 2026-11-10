@@ -1,4 +1,4 @@
-import { IconAlertTriangle, IconCircleCheck, IconClockHour4, IconHourglass, IconLoader, IconPercentage, IconPlayerPause, IconPlayerPlay } from '@tabler/icons-react'
+import { IconAlertTriangle, IconCircleCheck, IconHourglass, IconLoader, IconPlayerPause, IconPlayerPlay } from '@tabler/icons-react'
 import { DateRangePicker } from '../components/date-range'
 import { modeText, poolsFrom } from '../components/host'
 import { Chart, Legend } from '../components/charts'
@@ -42,15 +42,11 @@ export default function Queue({ base, can, queue: info, stats, jobs, workers, qu
       </>}>
       <CommandBar command={command} />
       {stats && <>
-        <section aria-label="Queue stats" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
-          <StatCard testId="stat-pending" icon={IconHourglass} label="Pending now" value={pending} foot={`${(now.scheduled ?? 0).toLocaleString()} scheduled for later`} />
+        <section aria-label="Queue stats" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard testId="stat-pending" icon={IconHourglass} label="Pending now" value={pending} foot={`${(now.scheduled ?? 0).toLocaleString()} scheduled · oldest ${stats.oldestPendingEligibleAt ? duration(Date.now() - Date.parse(stats.oldestPendingEligibleAt)) : 'none'}`} />
           <StatCard testId="stat-running" icon={IconLoader} label="Running now" value={running} foot="Reserved or running" />
           <StatCard testId="stat-succeeded" icon={IconCircleCheck} label="Succeeded" value={ok} foot={scope} />
-          <StatCard testId="stat-failed" icon={IconAlertTriangle} label="Failed" value={bad} foot={scope} />
-          <StatCard testId="stat-failure-rate" icon={IconPercentage} label="Failure rate" value={rate == null ? '—' : Math.round(rate * 10) / 10} suffix={rate == null ? null : '%'}
-            foot="Failed of the jobs that ended" />
-          <StatCard testId="stat-oldest" icon={IconClockHour4} label="Oldest pending" value={stats.oldestPendingEligibleAt ? duration(Date.now() - Date.parse(stats.oldestPendingEligibleAt)) : 'none'}
-            foot={stats.oldestPendingEligibleAt ? `Eligible ${relative(stats.oldestPendingEligibleAt)} (live)` : 'Nothing waiting (live)'} />
+          <StatCard testId="stat-failed" icon={IconAlertTriangle} label="Failed" value={bad} foot={rate == null ? scope : `${Math.round(rate * 10) / 10} % of runs that ended`} />
         </section>
         <Card className="gap-4">
           <CardHeader><CardTitle className="text-base">Throughput</CardTitle>

@@ -62,10 +62,9 @@ export default function Retention({ base, can, retention }) {
     <Layout heading="Retention" live={live}
       actions={can.retentionManage && <CommandButton command={command} url={url} variant="default" data-testid="edit-policy" icon={IconPencil} onClick={() => setEditing(true)}>Edit policy</CommandButton>}>
       <PolicySheet key={editing ? `open-${retention.revision}` : 'closed'} open={editing} onOpenChange={setEditing} retention={retention} url={url} command={command} />
-      <KpiStrip label="Retention stats" className="xl:grid-cols-5">
+      <KpiStrip label="Retention stats">
         <Kpi testId="kpi-kept" icon={IconDatabase} label="Rows kept" value={retention.classes.reduce((t, c) => t + (c.totalRows ?? 0), 0)} foot={`${retention.classes.length} record classes`} />
-        <Kpi testId="kpi-removed" icon={IconTrash} label="Removed today" value={retention.classes.reduce((t, c) => t + (c.todayRows ?? 0), 0)} foot="Rows past their retention" />
-        <Kpi testId="kpi-batches" label="Batches today" value={retention.classes.reduce((t, c) => t + (c.todayBatches ?? 0), 0)} />
+        <Kpi testId="kpi-removed" icon={IconTrash} label="Removed today" value={retention.classes.reduce((t, c) => t + (c.todayRows ?? 0), 0)} foot={`In ${retention.classes.reduce((t, c) => t + (c.todayBatches ?? 0), 0).toLocaleString()} batches`} />
         <Kpi testId="kpi-failures" icon={IconAlertTriangle} label="Failures today" value={retention.classes.reduce((t, c) => t + (c.todayFailures ?? 0), 0)} />
         <Kpi testId="kpi-behind" icon={IconCheck} label="Behind" value={retention.classes.filter((c) => c.behind).length} foot="Classes not caught up" />
       </KpiStrip>
