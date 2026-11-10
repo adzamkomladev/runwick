@@ -14,4 +14,4 @@ Read these in order the first time:
 
 The numbers in these pages come from `docs/spec/06-defaults.md` and the store specs; a test (`DefaultsMatchCodeTests`) fails if a documented default differs from the code. The spec files in `docs/spec` are the exact rules; this guide is the short version. Release checks and licences: [docs/release](../release/licenses.md).
 
-Status: version 0.1.2. The conformance, performance and soak qualification reports (SP-028, SP-029) are not finished, so no store is yet labelled "certified".
+Status: version 0.1.3. The conformance, performance and soak qualification reports (SP-028, SP-029) are not finished, so no store is yet labelled "certified".

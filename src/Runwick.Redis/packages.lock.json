@@ -62,7 +62,7 @@
           "Microsoft.Extensions.Logging.Abstractions": "[10.0.14, )",
           "Microsoft.Extensions.Options": "[10.0.14, )",
           "NodaTime": "[3.3.7, )",
-          "Runwick.Contracts": "[0.1.2, )"
+          "Runwick.Contracts": "[0.1.3, )"
         }
       },
       "runwick.contracts": {

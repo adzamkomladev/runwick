@@ -17,7 +17,7 @@ Owner decisions and actions before publishing:
 
 1. Licence: MIT, copyright holder Komla Adzam (set 2026-11-09).
 2. Repository URL: https://github.com/adzamkomladev/runwick (set 2026-11-09). Build the release packages in a clone whose origin is that repository, so the SDK's built-in SourceLink links symbols to the commit.
-3. Version: `0.1.2` (set 2026-11-10) in `Directory.Build.props`. Publishing is the `release` workflow: push a tag `v<version>` that equals that version (steps in `.github/workflows/release.yml`).
+3. Version: `0.1.3` (set 2026-11-10) in `Directory.Build.props`. Publishing is the `release` workflow: push a tag `v<version>` that equals that version (steps in `.github/workflows/release.yml`).
 4. Check that the package name `Runwick` is free on NuGet (spec 00 §7 asks for this).
 5. Confirm the SQLite public-domain point in [licenses.md](licenses.md).
 6. Finish the qualification that G-6 depends on: the Windows and Mac checks, the SP-029 reference run and 24-hour soak, the Redis REDIS-01/07 work, and the G-3 and G-5 reviews. The current list is the G-6 table in `docs/reports/sp-030.md`.

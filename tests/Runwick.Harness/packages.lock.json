@@ -413,7 +413,7 @@
           "Microsoft.Extensions.Logging.Abstractions": "[10.0.14, )",
           "Microsoft.Extensions.Options": "[10.0.14, )",
           "NodaTime": "[3.3.7, )",
-          "Runwick.Contracts": "[0.1.2, )"
+          "Runwick.Contracts": "[0.1.3, )"
         }
       },
       "runwick.contracts": {
@@ -423,13 +423,13 @@
         "type": "Project",
         "dependencies": {
           "Npgsql": "[10.0.3, )",
-          "Runwick": "[0.1.2, )"
+          "Runwick": "[0.1.3, )"
         }
       },
       "runwick.redis": {
         "type": "Project",
         "dependencies": {
-          "Runwick": "[0.1.2, )",
+          "Runwick": "[0.1.3, )",
           "StackExchange.Redis": "[3.4.20, )"
         }
       },
@@ -440,7 +440,7 @@
         "type": "Project",
         "dependencies": {
           "Microsoft.Data.Sqlite": "[10.0.14, )",
-          "Runwick": "[0.1.2, )"
+          "Runwick": "[0.1.3, )"
         }
       },
       "Cronos": {
