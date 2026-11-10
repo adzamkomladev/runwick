@@ -87,7 +87,7 @@
           "Microsoft.Extensions.Logging.Abstractions": "[10.0.14, )",
           "Microsoft.Extensions.Options": "[10.0.14, )",
           "NodaTime": "[3.3.7, )",
-          "Runwick.Contracts": "[0.1.1, )"
+          "Runwick.Contracts": "[0.1.2, )"
         }
       },
       "runwick.contracts": {
@@ -96,7 +96,7 @@
       "runwick.outbox": {
         "type": "Project",
         "dependencies": {
-          "Runwick": "[0.1.1, )"
+          "Runwick": "[0.1.2, )"
         }
       },
       "Cronos": {

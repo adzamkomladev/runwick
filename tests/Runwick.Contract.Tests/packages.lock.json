@@ -286,13 +286,13 @@
         "dependencies": {
           "Cronos": "[0.13.0, )",
           "NodaTime": "[3.3.7, )",
-          "Runwick.Contracts": "[0.1.1, )"
+          "Runwick.Contracts": "[0.1.2, )"
         }
       },
       "runwick.aspnetcore": {
         "type": "Project",
         "dependencies": {
-          "Runwick": "[0.1.1, )"
+          "Runwick": "[0.1.2, )"
         }
       },
       "runwick.contracts": {
@@ -302,10 +302,10 @@
         "type": "Project",
         "dependencies": {
           "Microsoft.Extensions.TimeProvider.Testing": "[10.11.0, )",
-          "Runwick.Postgres": "[0.1.1, )",
-          "Runwick.Redis": "[0.1.1, )",
-          "Runwick.ReferenceModel": "[0.1.1, )",
-          "Runwick.Sqlite": "[0.1.1, )",
+          "Runwick.Postgres": "[0.1.2, )",
+          "Runwick.Redis": "[0.1.2, )",
+          "Runwick.ReferenceModel": "[0.1.2, )",
+          "Runwick.Sqlite": "[0.1.2, )",
           "Testcontainers.PostgreSql": "[4.16.0, )",
           "xunit.v3.extensibility.core": "[4.0.2, )"
         }
@@ -314,13 +314,13 @@
         "type": "Project",
         "dependencies": {
           "Npgsql": "[10.0.3, )",
-          "Runwick": "[0.1.1, )"
+          "Runwick": "[0.1.2, )"
         }
       },
       "runwick.redis": {
         "type": "Project",
         "dependencies": {
-          "Runwick": "[0.1.1, )",
+          "Runwick": "[0.1.2, )",
           "StackExchange.Redis": "[3.4.20, )"
         }
       },
@@ -330,14 +330,14 @@
       "runwick.samples.contracts": {
         "type": "Project",
         "dependencies": {
-          "Runwick.Contracts": "[0.1.1, )"
+          "Runwick.Contracts": "[0.1.2, )"
         }
       },
       "runwick.sqlite": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Data.Sqlite": "[10.0.14, )",
-          "Runwick": "[0.1.1, )"
+          "Runwick": "[0.1.2, )"
         }
       },
       "Cronos": {

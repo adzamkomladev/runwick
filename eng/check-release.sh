@@ -78,6 +78,15 @@ for name, spec in graph.items():
 extra = [p.name for p in pathlib.Path("artifacts/packages").glob("*.nupkg")
          if not any(re.fullmatch(re.escape(n) + r"\.\d.*\.nupkg", p.name) for n in graph)]
 errors += [f"{e}: package not in eng/package-graph.json" for e in extra]
+# Every file the dashboard manifest names must be committed: the package embeds dist/** from the checkout,
+# and 0.1.1 shipped a manifest whose app script and stylesheet were never added to git.
+import subprocess
+dist = pathlib.Path("src/Runwick.Dashboard/dist")
+tracked = set(subprocess.run(["git", "ls-files", str(dist)], capture_output=True, text=True, check=True).stdout.split())
+named = {e["file"] for e in json.load(open(dist / "manifest.json")).values()}
+named |= {f for e in json.load(open(dist / "manifest.json")).values() for f in e.get("css", []) + e.get("assets", [])}
+for f in sorted(named):
+    if f"{dist}/{f}" not in tracked: errors.append(f"Runwick.Dashboard: dist/{f} is named in the manifest but not committed")
 if errors:
     print("release check FAILED"); [print("  " + e) for e in errors]; sys.exit(1)
 print("release check passed")
