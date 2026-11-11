@@ -64,4 +64,24 @@ Five 1,000-job, 16-worker drain pairs compared this change on top of the worker 
 
 ## Scheduler
 
-The controlled-clock S0 regression materialized only 32 of 33 simultaneous schedules after 500 ms. With S1 the next page completes without waiting for the poll interval. A bounded keyset scan also reaches later eligible rows past a full page that cannot progress. The Release scheduling suite passed 174/174, and PostgreSQL, Redis and SQLite schedule contracts passed 68/68. The real P-06s comparison is pending.
+The controlled-clock S0 regression materialized only 32 of 33 simultaneous schedules after 500 ms. With S1 the next page completes without waiting for the poll interval. A bounded keyset scan also reaches later eligible rows past a full page that cannot progress. The Release scheduling suite passed 174/174, and PostgreSQL, Redis and SQLite schedule contracts passed 68/68.
+
+A shortened P-06s pair used PostgreSQL 18.6, 1,000 schedules, the default 100 jobs/s scheduler allowance, 2 minutes of warm-up, 2.1 minutes of measurement and a 60-second lag tail. The measured interval crossed three minute boundaries on S0 and two on S1. Both runs materialized every expected occurrence. There were zero censored occurrences and zero correctness violations. Catch-up workload qualification is still pending.
+
+| Scheduled time to durable materialization | S0 | S1 |
+|---|---:|---:|
+| Materialized / expected | 3,000 / 3,000 | 2,000 / 2,000 |
+| p50 | 27.80 s | 15.21 s |
+| p95 | 52.28 s | 25.35 s |
+| p99 | 54.49 s | 26.10 s |
+| Max | 56.34 s | 26.40 s |
+| Productive poll waits, whole scheduler lifetime | 161 / 155.6 s | 6 / 5.2 s |
+
+S1 cut p99 by 52.1% in this pair. The 13 s target remains open. In S1, serial materialization averaged 26.702 ms per command, including 16.184 ms in the database function and 9.798 ms in commit. Mean driver-lane wait was 0.001 ms, evaluation 0.086 ms, and allowance wait 0.003 ms. At those costs 1,000 serial commands take roughly 26.7 s. The next experiment varies bounded materialization concurrency with the allowance held constant.
+
+```sh
+dotnet "$scheduler_workload_dll" run P-06s --out "$output" \
+  --warmup-min 2 --measure-min 2.1 --lag-tail-s 60 --catchup-occurrences 0
+```
+
+Raw results, start/load logs, the baseline instrumentation patch and binary checksums are under `artifacts/perf/round-two/p06s/`.

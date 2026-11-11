@@ -6,11 +6,13 @@
 #   BENCH_TESTS (subset of "enqueue-c1 enqueue-c16 drain-w16 steady-100", default all). a is labelled "main", b "prototype".
 #   BENCH_STORE (postgres or sqlite, default postgres), BENCH_TRACE=1 to capture store phase timings.
 #   BENCH_STEADY_CALLS (default 1, set above 1 for open-loop arrivals).
+#   BENCH_ENQUEUE_N overrides both enqueue sizes (defaults 2000 at one caller and 10000 at 16 callers).
 set -euo pipefail
 a="$1"; b="$2"; out="$3"; mkdir -p "$out"
 export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="${DOTNET_ROOT:-$HOME/.dotnet}" DOTNET_NOLOGO=1
 rounds="${BENCH_ROUNDS:-3}"; n="${BENCH_N:-20000}"; secs="${BENCH_SECONDS:-60}"
 steady_calls="${BENCH_STEADY_CALLS:-1}"
+enqueue_one="${BENCH_ENQUEUE_N:-2000}"; enqueue_many="${BENCH_ENQUEUE_N:-10000}"
 bench_args=(--store "${BENCH_STORE:-postgres}")
 if [[ "${BENCH_TRACE:-0}" == 1 ]]; then bench_args+=(--trace); fi
 snap() { echo "{\"cores\": $(nproc), \"load\": \"$(cut -d' ' -f1-3 /proc/loadavg)\", \"top\": $(ps -eo pcpu=,comm= --sort=-pcpu | head -5 | python3 -c 'import sys,json; print(json.dumps([" ".join(l.split()) for l in sys.stdin]))')}"; }
@@ -22,7 +24,7 @@ one() { # round test variant dll args...
   echo "{\"before\": $before, \"after\": $(snap)}" > "$out/$name.load.json"
 }
 for ((r = 1; r <= rounds; r++)); do
-  for t in "enqueue-c1|--mode enqueue --n 2000 --calls 1" "enqueue-c16|--mode enqueue --n 10000 --calls 16" \
+  for t in "enqueue-c1|--mode enqueue --n $enqueue_one --calls 1" "enqueue-c16|--mode enqueue --n $enqueue_many --calls 16" \
            "drain-w16|--mode drain --n $n --workers 16 --calls 8" "steady-100|--mode steady --rate 100 --seconds $secs --workers 16 --calls $steady_calls"; do
     [[ " ${BENCH_TESTS:-enqueue-c1 enqueue-c16 drain-w16 steady-100} " == *" ${t%%|*} "* ]] || continue
     if ((r % 2)); then order="a b"; else order="b a"; fi
