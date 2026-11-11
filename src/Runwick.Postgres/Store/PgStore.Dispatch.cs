@@ -111,36 +111,46 @@ internal sealed partial class PgStore
     static IEnumerable<(string Name, object? Value, NpgsqlDbType Type)> DispatchArgs(IReadOnlyList<DispatchItem> items)
     {
         const NpgsqlDbType A = NpgsqlDbType.Array;
-        var intents = items.Select(i => i.Intent).ToList();
         yield return ("p_invalid", InvalidDispatch(items), NpgsqlDbType.Text);
-        yield return ("p_job_ids", intents.Select(i => i.ProposedJobId).ToArray(), A | NpgsqlDbType.Uuid);
-        yield return ("p_job_names", intents.Select(i => i.JobName).ToArray(), A | NpgsqlDbType.Text);
-        yield return ("p_payload_versions", intents.Select(i => i.PayloadVersion).ToArray(), A | NpgsqlDbType.Integer);
-        yield return ("p_profile_ids", intents.Select(i => i.SerializerProfileId).ToArray(), A | NpgsqlDbType.Text);
-        yield return ("p_profile_versions", intents.Select(i => i.SerializerProfileVersion).ToArray(), A | NpgsqlDbType.Integer);
-        yield return ("p_queues", intents.Select(i => i.Queue).ToArray(), A | NpgsqlDbType.Text);
-        yield return ("p_priorities", intents.Select(i => i.Priority).ToArray(), A | NpgsqlDbType.Text);
-        yield return ("p_not_before_ms", intents.Select(i => i.NotBeforeMs).ToArray(), A | NpgsqlDbType.Bigint);
-        yield return ("p_active_keys", intents.Select(i => i.ActiveKey).ToArray(), A | NpgsqlDbType.Text);
-        yield return ("p_window_keys", intents.Select(i => i.WindowKey).ToArray(), A | NpgsqlDbType.Text);
-        yield return ("p_window_ms", intents.Select(i => i.WindowMs).ToArray(), A | NpgsqlDbType.Bigint);
-        yield return ("p_business", items.Select(i => i.Digests.Business).ToArray(), A | NpgsqlDbType.Bytea);
-        yield return ("p_policy", items.Select(i => i.Digests.Policy).ToArray(), A | NpgsqlDbType.Bytea);
-        yield return ("p_payloads", intents.Select(i => i.PayloadUtf8).ToArray(), A | NpgsqlDbType.Bytea);
-        yield return ("p_headers", items.Select(Headers).ToArray(), A | NpgsqlDbType.Jsonb);
-        yield return ("p_max_executions", intents.Select(i => i.Policy.MaxExecutions).ToArray(), A | NpgsqlDbType.Integer);
-        yield return ("p_max_unstarted", intents.Select(i => i.Policy.MaxConsecutiveUnstartedAbandonments).ToArray(), A | NpgsqlDbType.Integer);
-        yield return ("p_timeouts", intents.Select(i => i.Policy.ExecutionTimeoutMs).ToArray(), A | NpgsqlDbType.Bigint);
-        yield return ("p_retry", intents.Select(i => PolicyJson(i.Policy.Retry).ToJsonString()).ToArray(), A | NpgsqlDbType.Jsonb);
-        yield return ("p_unstarted", intents.Select(i => PolicyJson(i.Policy.UnstartedRetry).ToJsonString()).ToArray(), A | NpgsqlDbType.Jsonb);
-        yield return ("p_scopes", items.Select(i => new JsonArray([.. i.Scopes.Select(s => (JsonNode)new JsonObject
+        yield return ("p_job_ids", MapItems(items, static i => i.Intent.ProposedJobId), A | NpgsqlDbType.Uuid);
+        yield return ("p_job_names", MapItems(items, static i => i.Intent.JobName), A | NpgsqlDbType.Text);
+        yield return ("p_payload_versions", MapItems(items, static i => i.Intent.PayloadVersion), A | NpgsqlDbType.Integer);
+        yield return ("p_profile_ids", MapItems(items, static i => i.Intent.SerializerProfileId), A | NpgsqlDbType.Text);
+        yield return ("p_profile_versions", MapItems(items, static i => i.Intent.SerializerProfileVersion), A | NpgsqlDbType.Integer);
+        yield return ("p_queues", MapItems(items, static i => i.Intent.Queue), A | NpgsqlDbType.Text);
+        yield return ("p_priorities", MapItems(items, static i => i.Intent.Priority), A | NpgsqlDbType.Text);
+        yield return ("p_not_before_ms", MapItems(items, static i => i.Intent.NotBeforeMs), A | NpgsqlDbType.Bigint);
+        yield return ("p_active_keys", MapItems(items, static i => i.Intent.ActiveKey), A | NpgsqlDbType.Text);
+        yield return ("p_window_keys", MapItems(items, static i => i.Intent.WindowKey), A | NpgsqlDbType.Text);
+        yield return ("p_window_ms", MapItems(items, static i => i.Intent.WindowMs), A | NpgsqlDbType.Bigint);
+        yield return ("p_business", MapItems(items, static i => i.Digests.Business), A | NpgsqlDbType.Bytea);
+        yield return ("p_policy", MapItems(items, static i => i.Digests.Policy), A | NpgsqlDbType.Bytea);
+        yield return ("p_payloads", MapItems(items, static i => i.Intent.PayloadUtf8), A | NpgsqlDbType.Bytea);
+        yield return ("p_headers", MapItems(items, Headers), A | NpgsqlDbType.Jsonb);
+        yield return ("p_max_executions", MapItems(items, static i => i.Intent.Policy.MaxExecutions), A | NpgsqlDbType.Integer);
+        yield return ("p_max_unstarted", MapItems(items, static i => i.Intent.Policy.MaxConsecutiveUnstartedAbandonments), A | NpgsqlDbType.Integer);
+        yield return ("p_timeouts", MapItems(items, static i => i.Intent.Policy.ExecutionTimeoutMs), A | NpgsqlDbType.Bigint);
+        yield return ("p_retry", MapItems(items, static i => PolicyJson(i.Intent.Policy.Retry).ToJsonString()), A | NpgsqlDbType.Jsonb);
+        yield return ("p_unstarted", MapItems(items, static i => PolicyJson(i.Intent.Policy.UnstartedRetry).ToJsonString()), A | NpgsqlDbType.Jsonb);
+        yield return ("p_scopes", MapItems(items, static i => new JsonArray([.. i.Scopes.Select(s => (JsonNode)new JsonObject
             {
                 ["kind"] = s.Kind, ["key"] = s.Key, ["capacity"] = s.Capacity,
-            })]).ToJsonString()).ToArray(), A | NpgsqlDbType.Jsonb);
-        yield return ("p_rates", items.Select(i => new JsonArray([.. i.Rates.Select(r => (JsonNode)new JsonObject
+            })]).ToJsonString()), A | NpgsqlDbType.Jsonb);
+        yield return ("p_rates", MapItems(items, static i => new JsonArray([.. i.Rates.Select(r => (JsonNode)new JsonObject
             {
                 ["kind"] = r.Kind, ["key"] = r.Key, ["limit"] = r.Limit, ["windowMs"] = r.WindowMs,
-            })]).ToJsonString()).ToArray(), A | NpgsqlDbType.Jsonb);
+            })]).ToJsonString()), A | NpgsqlDbType.Jsonb);
+    }
+
+    static T[] MapItems<T>(IReadOnlyList<DispatchItem> items, Func<DispatchItem, T> project)
+    {
+        var result = new T[items.Count];
+        for (var i = 0; i < result.Length; i++)
+        {
+            result[i] = project(items[i]);
+        }
+
+        return result;
     }
 
     /// <summary>

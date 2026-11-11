@@ -12,16 +12,25 @@ namespace Runwick.Postgres.Store;
 /// </summary>
 internal sealed class PgCall(string function)
 {
-    readonly List<NpgsqlParameter> _parameters = [];
+    readonly List<(string Name, object Value, NpgsqlDbType Type)> _parameters = [];
 
     public string Function => function;
 
-    public IReadOnlyList<NpgsqlParameter> Parameters => _parameters;
+    public IReadOnlyList<(string Name, object Value, NpgsqlDbType Type)> Parameters => _parameters;
 
     public PgCall P(string name, object? value, NpgsqlDbType type)
     {
-        _parameters.Add(new NpgsqlParameter(name, type) { Value = value ?? DBNull.Value });
+        _parameters.Add((name, value ?? DBNull.Value, type));
         return this;
+    }
+
+    // A parameter is owned by one batch, so each attempt binds fresh instances.
+    public void Bind(NpgsqlParameterCollection target)
+    {
+        foreach (var (name, value, type) in _parameters)
+        {
+            target.Add(new NpgsqlParameter(name, type) { Value = value });
+        }
     }
 
     public PgCall P(string name, Guid value) => P(name, value, NpgsqlDbType.Uuid);

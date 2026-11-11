@@ -36,11 +36,11 @@ internal sealed partial class PgStore
                 ["p_not_after"] = JsonValue.Create(op.NotAfter),
                 ["p_fingerprint"] = EncodeArgument(op.Fingerprint, NpgsqlDbType.Bytea),
             };
-            foreach (var parameter in prepared.Call.Parameters)
+            foreach (var (name, value, type) in prepared.Call.Parameters)
             {
-                if (parameter.ParameterName is not ("p_scopes" or "p_rates"))
+                if (name is not ("p_scopes" or "p_rates"))
                 {
-                    plan.Add(parameter.ParameterName, EncodeArgument(parameter.Value, parameter.NpgsqlDbType));
+                    plan.Add(name, EncodeArgument(value, type));
                 }
             }
 

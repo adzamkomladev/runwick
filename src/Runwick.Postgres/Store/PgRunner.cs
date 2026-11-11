@@ -525,10 +525,7 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
         p.AddWithValue("p_is_creation", NpgsqlDbType.Boolean, op.IsCreation);
         p.AddWithValue("p_allow_drain", NpgsqlDbType.Boolean, op.AllowedWhileDraining);
         p.AddWithValue("p_staged", NpgsqlDbType.Boolean, staged);
-        foreach (var arg in call.Parameters)
-        {
-            p.Add(arg.Clone());
-        }
+        call.Bind(p);
 
         p.AddWithValue("p_faults", NpgsqlDbType.Jsonb, (object?)session?.Json.ToJsonString() ?? DBNull.Value);
         cmd.CommandText = "SELECT * FROM runwick." + call.Function + "("
