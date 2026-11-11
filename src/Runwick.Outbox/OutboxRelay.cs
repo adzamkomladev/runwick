@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Runwick.Dispatching;
 using Runwick.Hosting;
+using Runwick.Internal;
 using Runwick.Protocol;
 using Runwick.Serialization;
 
@@ -175,7 +176,7 @@ internal sealed class OutboxRelay(
                 try
                 {
                     Interlocked.Increment(ref Claims);
-                    var leases = await Call(c => source.ClaimAsync(_owner, free, options.LeaseDuration, c)).ConfigureAwait(false);
+                    var leases = await Call(c => source.ClaimAsync(_owner, free, options.LeaseDuration, c), "OutboxClaim").ConfigureAwait(false);
                     failures = 0;
                     foreach (var lease in leases)
                     {
@@ -432,7 +433,7 @@ internal sealed class OutboxRelay(
                 commandId = Guid.CreateVersion7();
                 var bound = now + options.TransportLifetime < lease.AcceptUntil ? now + options.TransportLifetime : lease.AcceptUntil;
                 notAfter = DateTimeOffset.FromUnixTimeMilliseconds(Fingerprints.FloorEpochMs(bound));
-                if (entry.Lost || !await Call(c => source.RecordTransportAsync(lease, commandId, notAfter, c)).ConfigureAwait(false))
+                if (entry.Lost || !await Call(c => source.RecordTransportAsync(lease, commandId, notAfter, c), "OutboxRecordTransport").ConfigureAwait(false))
                 {
                     Interlocked.Increment(ref LeaseLosses);
                     return;
@@ -471,7 +472,7 @@ internal sealed class OutboxRelay(
             try
             {
                 Interlocked.Increment(ref Sends);
-                return await Call(c => destination!.ReceiveOutboxAsync(command, c)).ConfigureAwait(false);
+                return await Call(c => destination!.ReceiveOutboxAsync(command, c), "ReceiveOutbox").ConfigureAwait(false);
             }
             catch (StoreOutcomeUnknownException)
             {
@@ -537,7 +538,8 @@ internal sealed class OutboxRelay(
     async Task MarkDeliveredAsync(InFlight entry, OutboxDelivery delivered)
     {
         var marked = await Call(c => source.MarkDeliveredAsync(entry.Lease,
-            new OutboxDelivered(delivered.JobId, delivered.Disposition.ToString(), delivered.ConfirmedProfile, delivered.DeliveredAt), c)).ConfigureAwait(false);
+            new OutboxDelivered(delivered.JobId, delivered.Disposition.ToString(), delivered.ConfirmedProfile, delivered.DeliveredAt), c),
+            "OutboxMarkDelivered").ConfigureAwait(false);
         if (marked)
         {
             Interlocked.Increment(ref Delivered);
@@ -567,11 +569,22 @@ internal sealed class OutboxRelay(
     }
 
     /// <summary>Every source and destination call is bounded by the provider timeout and the abort token.</summary>
-    async Task<T> Call<T>(Func<CancellationToken, Task<T>> call)
+    async Task<T> Call<T>(Func<CancellationToken, Task<T>> call, string? operation = null)
     {
+        var started = operation is null ? 0 : PhaseTimings.Start();
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(_abort.Token);
         cts.CancelAfter(options.ProviderCallTimeout);
-        return await call(cts.Token).ConfigureAwait(false);
+        try
+        {
+            return await call(cts.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (operation is not null)
+            {
+                PhaseTimings.Lap(started, operation, "relayCall");
+            }
+        }
     }
 
     async Task Call(Func<CancellationToken, Task> call)

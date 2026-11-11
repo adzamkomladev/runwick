@@ -94,6 +94,10 @@ internal static class G2Roles
     public static async Task<int> RelayAsync(Args a)
     {
         var sc = new ServiceCollection();
+        var trace = a.Has("trace");
+        var phases = new Metrics();
+        using var listener = trace ? PhaseListener.Attach(phases) : null;
+        JsonObject? measuredPhases = null;
         sc.AddLogging(b => b.AddSimpleConsole(o => o.SingleLine = true).SetMinimumLevel(LogLevel.Error));
         sc.AddRunwick(r =>
         {
@@ -120,6 +124,14 @@ internal static class G2Roles
                 lossy.LossRate = double.Parse(line[5..], CultureInfo.InvariantCulture);
                 Console.WriteLine("loss set");
             }
+            else if (trace && line == "trace-start")
+            {
+                phases.ResetLatencies();
+            }
+            else if (trace && line == "trace-stop")
+            {
+                measuredPhases = phases.LatenciesJson();
+            }
         }).ConfigureAwait(false);
         using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
         {
@@ -141,6 +153,12 @@ internal static class G2Roles
             ["marksLost"] = lossy?.Lost ?? 0,
             ["process"] = WorkerMode.ProcessStats(new TimerLag()),
         };
+        if (trace)
+        {
+            summary["phaseScope"] = measuredPhases is null ? "lifetime" : "measure";
+            summary["phases"] = measuredPhases ?? phases.LatenciesJson();
+        }
+
         await File.WriteAllTextAsync(a.Str("out") + ".summary.json", summary.ToJsonString(Json.Indented)).ConfigureAwait(false);
         Console.WriteLine("stopped");
         return 0;

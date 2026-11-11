@@ -1,6 +1,7 @@
 using System.Reflection;
 using Npgsql;
 using NpgsqlTypes;
+using Runwick.Internal;
 
 namespace Runwick.Outbox.Postgres;
 
@@ -169,7 +170,7 @@ internal sealed class PostgresOutboxSource : IOutboxSource, IOutboxWakeSource, I
     }
 
     public Task<IReadOnlyList<OutboxLease>> ClaimAsync(Guid owner, int max, TimeSpan leaseDuration, CancellationToken ct) =>
-        OnLane(_claimLane, async connection =>
+        OnLane(_claimLane, "OutboxClaim", async connection =>
         {
             using var claim = new NpgsqlCommand("""
                 WITH due AS (
@@ -204,18 +205,18 @@ internal sealed class PostgresOutboxSource : IOutboxSource, IOutboxWakeSource, I
         }, ct);
 
     public Task<bool> RenewAsync(OutboxLease lease, TimeSpan leaseDuration, CancellationToken ct) =>
-        GuardedAsync(lease, "lease_expires_at = clock_timestamp() + @lease", p => p.AddWithValue("lease", NpgsqlDbType.Interval, leaseDuration),
+        GuardedAsync(lease, "OutboxRenew", "lease_expires_at = clock_timestamp() + @lease", p => p.AddWithValue("lease", NpgsqlDbType.Interval, leaseDuration),
             requireLive: true, ct);
 
     public Task<bool> RecordTransportAsync(OutboxLease lease, Guid commandId, DateTimeOffset notAfter, CancellationToken ct) =>
-        GuardedAsync(lease, "transport_command_id = @command, transport_not_after = @not_after, revision = revision + 1", p =>
+        GuardedAsync(lease, "OutboxRecordTransport", "transport_command_id = @command, transport_not_after = @not_after, revision = revision + 1", p =>
         {
             p.AddWithValue("command", NpgsqlDbType.Uuid, commandId);
             p.AddWithValue("not_after", NpgsqlDbType.TimestampTz, notAfter.UtcDateTime);
         }, requireLive: true, ct);
 
     public Task<bool> MarkDeliveredAsync(OutboxLease lease, OutboxDelivered delivered, CancellationToken ct) =>
-        GuardedAsync(lease, """
+        GuardedAsync(lease, "OutboxMarkDelivered", """
             state = 'delivered', delivered_job_id = @job, delivered_disposition = @disposition, confirmed_profile = @profile,
             delivered_at = @delivered_at, lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, last_error = NULL,
             revision = revision + 1
@@ -228,7 +229,7 @@ internal sealed class PostgresOutboxSource : IOutboxSource, IOutboxWakeSource, I
         }, requireLive: false, ct);
 
     public Task<bool> RetryLaterAsync(OutboxLease lease, TimeSpan delay, string error, CancellationToken ct) =>
-        GuardedAsync(lease, """
+        GuardedAsync(lease, "OutboxRetryLater", """
             state = 'pending', next_attempt_at = clock_timestamp() + @delay, last_error = left(@error, 256),
             lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, revision = revision + 1
             """, p =>
@@ -238,14 +239,14 @@ internal sealed class PostgresOutboxSource : IOutboxSource, IOutboxWakeSource, I
         }, requireLive: false, ct);
 
     public Task<bool> BlockAsync(OutboxLease lease, string reason, CancellationToken ct) =>
-        GuardedAsync(lease, """
+        GuardedAsync(lease, "OutboxBlock", """
             state = 'blocked', blocked_reason = left(@reason, 256), lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
             revision = revision + 1
             """, p => p.AddWithValue("reason", NpgsqlDbType.Text, reason), requireLive: false, ct);
 
     // On the claim lane, so a cleanup batch never delays a renewal or a mark.
     public Task<int> PurgeDeliveredAsync(int maxRows, long maxBytes, CancellationToken ct) =>
-        OnLane(_claimLane, async connection =>
+        OnLane(_claimLane, "OutboxPurge", async connection =>
         {
             using var purge = new NpgsqlCommand("""
                 WITH locked AS (
@@ -274,8 +275,8 @@ internal sealed class PostgresOutboxSource : IOutboxSource, IOutboxWakeSource, I
     }
 
     /// <summary>One autocommit statement guarded by the lease token; <paramref name="requireLive"/> also requires an unexpired lease.</summary>
-    Task<bool> GuardedAsync(OutboxLease lease, string set, Action<NpgsqlParameterCollection> parameters, bool requireLive, CancellationToken ct) =>
-        OnLane(_controlLane, async connection =>
+    Task<bool> GuardedAsync(OutboxLease lease, string operation, string set, Action<NpgsqlParameterCollection> parameters, bool requireLive, CancellationToken ct) =>
+        OnLane(_controlLane, operation, async connection =>
         {
             using var update = new NpgsqlCommand($"""
                 UPDATE runwick_outbox.outbox_messages SET {set}
@@ -288,14 +289,24 @@ internal sealed class PostgresOutboxSource : IOutboxSource, IOutboxWakeSource, I
             return await update.ExecuteNonQueryAsync(ct).ConfigureAwait(false) == 1;
         }, ct);
 
-    async Task<T> OnLane<T>(SemaphoreSlim lane, Func<NpgsqlConnection, Task<T>> work, CancellationToken ct)
+    async Task<T> OnLane<T>(SemaphoreSlim lane, string operation, Func<NpgsqlConnection, Task<T>> work, CancellationToken ct)
     {
+        var phase = PhaseTimings.Start();
         await lane.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            phase = PhaseTimings.Lap(phase, operation, "sourceLaneWait");
             var connection = await _data.OpenConnectionAsync(ct).ConfigureAwait(false);
             await using var connectionScope = connection.ConfigureAwait(false);
-            return await work(connection).ConfigureAwait(false);
+            phase = PhaseTimings.Lap(phase, operation, "sourceOpen");
+            try
+            {
+                return await work(connection).ConfigureAwait(false);
+            }
+            finally
+            {
+                PhaseTimings.Lap(phase, operation, "sourceCommand");
+            }
         }
         finally
         {

@@ -743,13 +743,30 @@ internal static class G2Workloads
                 }
             }
 
-            c.Start("relay", "relay", ["--slots", I(a.Int("slots", 4))], TimeSpan.FromMinutes(3), source: true);
+            var trace = a.Has("trace");
+            List<string> relayArgs = ["--slots", I(a.Int("slots", 4))];
+            if (trace)
+            {
+                relayArgs.Add("--trace");
+            }
+
+            c.Start("relay", "relay", [.. relayArgs], TimeSpan.FromMinutes(3), source: true);
             c.Start("writer", "stage", ["--rate", D(a.Double("rate", 100)), "--writers", I(a.Int("writers", 8)), "--payload", I(a.Int("payload", 1024))],
                 TimeSpan.FromMinutes(3), source: true);
             await c.WaitAsync(Min(a, "warmup-min", 1), SampleSessions).ConfigureAwait(false);
+            if (trace)
+            {
+                await c.Children["relay"].SendAsync("trace-start").ConfigureAwait(false);
+            }
+
             c.Mark("measureStart");
             await c.WaitAsync(Min(a, "measure-min", 15), SampleSessions).ConfigureAwait(false);
             c.Mark("measureEnd");
+            if (trace)
+            {
+                await c.Children["relay"].SendAsync("trace-stop").ConfigureAwait(false);
+            }
+
             var loss = a.Double("mark-loss", 0.05);
             if (loss > 0 && a.Double("loss-min", 3) > 0)
             {
