@@ -136,6 +136,17 @@ internal sealed partial class PgStore : IScheduleStore
                 AND s.scan_after_at <= @through
                 AND (s.scan_after_at, s.schedule_id) > (@scan, @id)
                 """;
+            var nextScan = after is null ? """
+                CASE WHEN x.schedule_id IS NULL THEN (
+                    SELECT s.scan_after_at
+                    FROM runwick.schedules AS s
+                    WHERE s.application = @application
+                      AND s.enabled AND NOT s.paused AND NOT s.needs_review AND s.next_due_at IS NOT NULL
+                      AND s.scan_after_at > g.observed_at
+                    ORDER BY s.scan_after_at, s.schedule_id
+                    LIMIT 1
+                ) END
+                """ : "NULL::timestamptz";
             using var cmd = new NpgsqlCommand($"""
                 WITH gate AS (
                     SELECT m.store_id, m.schema_revision, m.protocol_epoch, m.migration_mode, clock_timestamp() AS observed_at
@@ -143,7 +154,7 @@ internal sealed partial class PgStore : IScheduleStore
                     WHERE m.singleton_id = 1
                     FOR SHARE
                 )
-                SELECT g.store_id, g.schema_revision, g.protocol_epoch, g.migration_mode, g.observed_at, x.*
+                SELECT g.store_id, g.schema_revision, g.protocol_epoch, g.migration_mode, g.observed_at, {nextScan}, x.*
                 FROM gate AS g
                 LEFT JOIN LATERAL (
                     SELECT {ScheduleColumns}
@@ -164,6 +175,7 @@ internal sealed partial class PgStore : IScheduleStore
             }
             var list = new List<ScheduleSnapshot>();
             DateTimeOffset observed = default;
+            DateTimeOffset? nextScanAfterAt = null;
             var open = true;
             var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             await using (reader.ConfigureAwait(false))
@@ -172,16 +184,20 @@ internal sealed partial class PgStore : IScheduleStore
                 {
                     open = CheckGate(reader.GetGuid(0), reader.GetInt64(1), reader.GetInt32(2), reader.GetString(3));
                     observed = PgTime.Floor(PgTime.Read(reader, 4));
-                    if (!await reader.IsDBNullAsync(5, ct).ConfigureAwait(false))
+                    if (!await reader.IsDBNullAsync(6, ct).ConfigureAwait(false))
                     {
-                        var snapshot = ReadSnapshot(reader, 5);
+                        var snapshot = ReadSnapshot(reader, 6);
                         RememberDefinition(application, snapshot);
                         list.Add(snapshot);
+                    }
+                    else
+                    {
+                        nextScanAfterAt = PgTime.ReadNullable(reader, 5);
                     }
                 }
             }
 
-            return new DueSchedules(observed, open ? list : []);
+            return new DueSchedules(observed, open ? list : [], open ? nextScanAfterAt : null);
         }, ct);
     }
 

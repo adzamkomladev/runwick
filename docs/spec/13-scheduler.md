@@ -2,6 +2,10 @@
 
 **Sources:** [scheduling-internals.md](../architecture/scheduling-internals.md) §2–§10 (primary); [scheduler-evaluator-and-defaults.md](../architecture/scheduler-evaluator-and-defaults.md) §3, §5; [postgres-schema-and-operations.md](../architecture/postgres-schema-and-operations.md) §4–§6; [storage-command-protocol.md](../architecture/storage-command-protocol.md); [management-retention-defaults.md](../architecture/management-retention-defaults.md) (command lifetimes, schedule retention); [public-api-contract.md](../architecture/public-api-contract.md) §9, §18; 12 (evaluator); 08 (actor, audit, events, receipts); 10 (rate scopes, capability activation pattern); 03 §3, §8.
 
+## Changes (2026-11-11, durable due hints)
+
+An empty read at the head of the due index returns the earliest eligible future `scan_after_at`. The scheduler bounds idle waits by that instant and any next scan times already known from its own commands. Store delays are anchored to the local monotonic clock before the read, so read and materialization time count toward the wait. The poll cap still bounds discovery of changes made after the read.
+
 ## Changes (2026-11-09, P-06 threshold)
 
 - P-06's lag rule is now "p99 ≤ schedules ÷ `JobsPerSecond` + 3 s" (13 s for 1,000 schedules at the default 100/s), by owner decision. All schedules fall due in the same second, and the scheduler's default allowance of 100 jobs per second makes the last one wait schedules ÷ 100 s by design. Defaults are unchanged. See `docs/reports/sp-029.md`.
@@ -208,7 +212,7 @@ All take a command ID and NotAfter, write a receipt, and follow 03 §8 replay ru
 | 6.6 | `ResolveCatchUp/1` | key, episode ID, resolution (`skip`, `extend` + jobs, `run_once`), next due after the cutoff, proposed job ID, actor | episode ID | `skip`: audit range to the cutoff (`catch_up_skipped`), episode closed, next due set. `extend`: limit raised (≤ 10,000 total), review cleared. `run_once`: one job keyed by `next_due_at` covering to the cutoff, episode closed. Event `catch_up_resolved` |
 | 6.7 | `RecordScheduleEvaluationFailure/1` | schedule ID, expected definition revision, code, detail, system actor | definition revision | `needs_review := true`, `review_reason := code`; cursor untouched. Only deterministic evaluator errors (12 §10: invalid definition, range overflow, horizon exhausted) and deterministic dispatch-core rejections (`queue_not_registered`, `uniqueness_conflict`, `invalid_request`). Local incompatibility, pressure and transient errors only back off locally. Event `schedule_needs_review`; audit with the system actor |
 | 6.8 | `RevalidateSchedule/1` | key, expected definition revision, actor | definition revision; no open episode | `needs_review := false`, `scan_after_at := now`; emits no jobs. Event `schedule_revalidated` |
-| 6.9 | Due read (no receipt) | limit ≤ 32, optional exclusive scan position and horizon | gate | Plain read of due schedules with their current definition and the database time |
+| 6.9 | Due read (no receipt) | limit ≤ 32, optional exclusive scan position and horizon | gate | Due schedules, definitions and database time. An empty head read also returns the first eligible future scan time. An empty continuation rechecks the head before idling. |
 
 ## 7. Overlap and uniqueness
 
@@ -238,7 +242,7 @@ Occurrence detail is retained 30 days after materialization (cleanup is SP-021).
 | Name | Value |
 |---|---|
 | Due read | ≤ 32 schedules per pass, ordered `(scan_after_at, schedule_id)` |
-| Polling | Continue promptly after a full productive page. Base poll 1 s after a short productive page. Unproductive pages and failures back off to 5 s (15 s with a healthy schedule listener), × (1 ± 0.10). Idle waits respect the earliest recorded due instant. |
+| Polling | Continue promptly after a full productive page. Base poll 1 s after a short productive page. Unproductive pages and failures back off to 5 s (15 s with a healthy schedule listener), × (1 ± 0.10). Idle waits respect the earliest known durable scan time. |
 | Materializations in flight | 1 per scheduler/store group |
 | Local allowance | 100 jobs/s, burst 32 per scheduler/store group |
 | Request / resolution budget | 5 s / 30 s |

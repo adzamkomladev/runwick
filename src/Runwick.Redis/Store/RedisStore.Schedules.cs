@@ -179,19 +179,19 @@ internal sealed partial class RedisStore : IScheduleStore
         var a = await runner.ReadAsync(application, RxScript.Read("sched_due"), RxLane.Background,
             after is { } cursor ? [limit, Ms(cursor.ScanAfterAt), Hex(cursor.ScheduleId), Ms(cursor.ScanThrough)] : [limit], ct)
             .ConfigureAwait(false);
-        if ((string)a[0]! != "OK" || a.Length < 3)
+        if ((string)a[0]! != "OK" || a.Length < 4)
         {
             return new DueSchedules(time.GetUtcNow(), []);
         }
 
         Seen(application, (string)a[1]!);
         var list = new List<ScheduleSnapshot>();
-        for (var i = 3; i + 1 < a.Length; i += 2)
+        for (var i = 4; i + 1 < a.Length; i += 2)
         {
             list.Add(SchSnapshot((string)a[i]!, (string)a[i + 1]!));
         }
 
-        return new DueSchedules(At(a[2]), list);
+        return new DueSchedules(At(a[2]), list, (string)a[3]! == "" ? null : At(a[3]));
     }
 
     public Task<ScheduleSnapshot?> ReadScheduleAsync(string application, string key, CancellationToken ct) => SchReadAsync(application, key, false, ct);

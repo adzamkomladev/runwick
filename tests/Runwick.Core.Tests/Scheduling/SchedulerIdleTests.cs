@@ -29,18 +29,28 @@ public sealed class SchedulerIdleTests
 
         public HashSet<Guid> Conflicts { get; } = [];
 
+        public Action? BeforeContinuation { get; set; }
+
+        public TimeSpan ClockOffset { get; set; }
+
         public Task<DueSchedules> ReadDueSchedulesAsync(string application, int limit, CancellationToken ct, DueSchedulePageCursor? after = null)
         {
-            var now = time.GetUtcNow();
-            Reads.Enqueue(now);
+            var localNow = time.GetUtcNow();
+            var now = localNow + ClockOffset;
+            Reads.Enqueue(localNow);
             var page = Due.Where(s => s.ScanAfterAt <= now);
             if (after is { } cursor)
             {
+                BeforeContinuation?.Invoke();
                 page = page.Where(s => s.ScanAfterAt <= cursor.ScanThrough && (s.ScanAfterAt > cursor.ScanAfterAt
                     || (s.ScanAfterAt == cursor.ScanAfterAt && s.ScheduleId.CompareTo(cursor.ScheduleId) > 0)));
             }
 
-            return Task.FromResult(new DueSchedules(now, page.OrderBy(s => s.ScanAfterAt).ThenBy(s => s.ScheduleId).Take(limit).ToArray()));
+            var rows = page.OrderBy(s => s.ScanAfterAt).ThenBy(s => s.ScheduleId).Take(limit).ToArray();
+            var next = after is null && rows.Length == 0
+                ? Due.Where(s => s.ScanAfterAt > now).Min(s => (DateTimeOffset?)s.ScanAfterAt)
+                : null;
+            return Task.FromResult(new DueSchedules(now, rows, next));
         }
 
         public Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, Action onLost, CancellationToken ct) =>
@@ -48,7 +58,7 @@ public sealed class SchedulerIdleTests
 
         public Task<ScheduleSnapshot?> ReadScheduleAsync(string application, string key, CancellationToken ct) => throw new NotSupportedException();
 
-        public Task<DateTimeOffset> StoreNowAsync(CancellationToken ct) => Task.FromResult(time.GetUtcNow());
+        public Task<DateTimeOffset> StoreNowAsync(CancellationToken ct) => Task.FromResult(time.GetUtcNow() + ClockOffset);
 
         public Task<StoreReply<ScheduleRegistration>> RegisterScheduleAsync(StoreCommand<RegisterScheduleRequest> command, CancellationToken ct) => throw new NotSupportedException();
 
@@ -81,23 +91,86 @@ public sealed class SchedulerIdleTests
 
     static int ReadsBetween(IdleScheduleStore store, DateTimeOffset from, DateTimeOffset to) => store.Reads.Count(r => r >= from && r < to);
 
-    static (EngineFixture Fixture, IdleScheduleStore Store, SchedulerService Scheduler) DueFixture(int count)
+    static (EngineFixture Fixture, IdleScheduleStore Store, SchedulerService Scheduler) DueFixture(int count,
+        TimeSpan dueIn = default, TimeSpan storeClockOffset = default)
     {
         var e = EngineFixture.Create(
             configure: r => r.AddScheduler(),
             services: sc => sc.AddSingleton<IScheduleStore>(sp => new IdleScheduleStore(sp.GetRequiredService<TimeProvider>())));
         var store = (IdleScheduleStore)e.Services.GetRequiredService<IScheduleStore>();
-        var now = e.Time.GetUtcNow();
-        var declaration = new ScheduleDeclaration("once", new WorkJob("once")) { DueAt = now };
+        store.ClockOffset = storeClockOffset;
+        var dueAt = e.Time.GetUtcNow() + storeClockOffset + dueIn;
+        var declaration = new ScheduleDeclaration("once", new WorkJob("once")) { DueAt = dueAt };
         var definition = ScheduleCompiler.Compile(declaration, e.Services.GetRequiredService<DispatchPreparer>(), TzdbArtifact.Pinned);
         for (var i = 0; i < count; i++)
         {
             var id = new Guid(i, 0, 0, new byte[8]);
             store.Due.Add(new ScheduleSnapshot(id, $"once-{i}", 1, 1, 1, true, false, false, null,
-                now, now, null, null, null, null, definition));
+                dueAt, dueAt, null, null, null, null, definition));
         }
 
         return (e, store, e.Services.GetRequiredService<SchedulerService>());
+    }
+
+    [Theory]
+    [InlineData(-10)]
+    [InlineData(10)]
+    [Trait("Case", "S4")]
+    public async Task The_persisted_deadline_wakes_a_first_run_without_a_notification(int clockSkewHours)
+    {
+        var delay = TimeSpan.FromSeconds(3);
+        var (fixture, store, scheduler) = DueFixture(1, delay, TimeSpan.FromHours(clockSkewHours));
+        await using var e = fixture;
+        var dueAt = e.Time.GetUtcNow() + delay;
+        var step = TimeSpan.FromMilliseconds(20);
+
+        await e.StartAsync();
+        await e.AdvanceAsync(dueAt - e.Time.GetUtcNow() - step, step);
+        Assert.Equal(0, Interlocked.Read(ref scheduler.Materializations));
+        await e.AdvanceAsync(step * 4, step);
+
+        Assert.Equal(1, Interlocked.Read(ref scheduler.Materializations));
+        Assert.Contains(store.Reads, read => read >= dueAt && read <= dueAt + step * 3);
+        Assert.Equal(0, Interlocked.Read(ref scheduler.Notifications));
+        await e.StopAsync();
+    }
+
+    [Fact]
+    [Trait("Case", "S4")]
+    public async Task A_materialization_does_not_add_its_elapsed_time_to_the_next_scan()
+    {
+        var (fixture, _, scheduler) = DueFixture(0);
+        await using var e = fixture;
+        var readStarted = e.Time.GetTimestamp();
+        var cutoff = e.Time.GetUtcNow();
+        e.Time.Advance(TimeSpan.FromMilliseconds(300));
+        scheduler.NoteNextScan(Guid.NewGuid(), cutoff + ScheduleBounds.CatchUpPacing, cutoff, readStarted);
+
+        Assert.Equal(TimeSpan.Zero, scheduler.UntilKnownDue(readStarted));
+        Assert.Null(scheduler.UntilKnownDue(readStarted));
+    }
+
+    [Fact]
+    [Trait("Case", "S4")]
+    public async Task An_empty_continuation_rechecks_the_head_before_idling()
+    {
+        var count = ScheduleBounds.DueReadLimit;
+        var (fixture, store, scheduler) = DueFixture(count);
+        await using var e = fixture;
+        var earlier = store.Due[0] with { ScheduleId = Guid.NewGuid(), Key = "new-head", ScanAfterAt = e.Time.GetUtcNow().AddMilliseconds(-1) };
+        store.BeforeContinuation = () =>
+        {
+            store.BeforeContinuation = null;
+            store.Due.Add(earlier);
+        };
+
+        await e.StartAsync();
+        await e.RunUntilAsync(() => Interlocked.Read(ref scheduler.Materializations) >= count, TimeSpan.FromSeconds(5), "the full due page");
+        await e.AdvanceAsync(TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(10));
+
+        Assert.Equal(count + 1, Interlocked.Read(ref scheduler.Materializations));
+        Assert.Equal(3, store.Reads.Count);
+        await e.StopAsync();
     }
 
     [Fact]
@@ -191,7 +264,7 @@ public sealed class SchedulerIdleTests
 
         // A known due instant bounds the long wait: it is read within one step of becoming due.
         var dueAt = e.Time.GetUtcNow() + TimeSpan.FromSeconds(20);
-        scheduler.NoteNextScan(Guid.NewGuid(), dueAt, e.Time.GetUtcNow());
+        scheduler.NoteNextScan(Guid.NewGuid(), dueAt, e.Time.GetUtcNow(), e.Time.GetTimestamp());
         await e.AdvanceAsync(TimeSpan.FromSeconds(21));
         Assert.Contains(store.Reads, r => r >= dueAt && r <= dueAt + TimeSpan.FromMilliseconds(100));
         Assert.Null(scheduler.UntilKnownDue());

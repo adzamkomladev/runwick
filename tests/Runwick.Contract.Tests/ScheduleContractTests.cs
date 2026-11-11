@@ -607,6 +607,44 @@ public sealed class ScheduleContractTests
 
     [Theory]
     [MemberData(nameof(CoreContractTests.Kinds), MemberType = typeof(CoreContractTests))]
+    [Trait("Case", "S4")]
+    public async Task An_empty_head_read_reports_the_first_eligible_persisted_scan(StoreKind kind)
+    {
+        var (f, c) = await OpenAsync(kind, "schnext");
+        await using var _ = f;
+        var store = Store(c);
+        var now = await store.StoreNowAsync(Ct);
+        var early = now.AddHours(1);
+        var late = now.AddHours(2);
+        foreach (var (key, dueAt) in new[] { ("early", early), ("late", late) })
+        {
+            var definition = Definition(c, key, d =>
+            {
+                d.Cron = null;
+                d.DueAt = dueAt;
+            });
+            Assert.Equal(StoreStatus.Applied, (await store.RegisterScheduleAsync(
+                c.Command(new RegisterScheduleRequest(key, definition, now, dueAt)), Ct)).Status);
+        }
+
+        var head = await store.ReadDueSchedulesAsync(c.Application, ScheduleBounds.DueReadLimit, Ct);
+        Assert.Empty(head.Schedules);
+        Assert.Equal(early, head.NextScanAfterAt);
+
+        var continuation = new DueSchedulePageCursor(now, Guid.Empty, now);
+        var tail = await store.ReadDueSchedulesAsync(c.Application, ScheduleBounds.DueReadLimit, Ct, continuation);
+        Assert.Empty(tail.Schedules);
+        Assert.Null(tail.NextScanAfterAt);
+
+        var pause = c.Command(new ScheduleStateRequest("early", true, null, 1, Actor));
+        Assert.Equal(StoreStatus.Applied, (await store.SetScheduleStateAsync(pause, Ct)).Status);
+        var afterPause = await store.ReadDueSchedulesAsync(c.Application, ScheduleBounds.DueReadLimit, Ct);
+        Assert.Empty(afterPause.Schedules);
+        Assert.Equal(late, afterPause.NextScanAfterAt);
+    }
+
+    [Theory]
+    [MemberData(nameof(CoreContractTests.Kinds), MemberType = typeof(CoreContractTests))]
     [Trait("Case", "P-06s")]
     public async Task A_due_page_cursor_reaches_tied_rows_after_its_anchor_is_removed(StoreKind kind)
     {
@@ -719,13 +757,15 @@ public sealed class ScheduleContractTests
         Assert.True(seeded.NextDueAt > seeded.EvaluatedThrough);
 
         // Ten missed minutes (run-once default) become one job covering through the cutoff, and its handler sees it.
+        static bool CoversMissedRange((string Name, JobScheduleInfo? Schedule) seen) =>
+            seen.Schedule is { } info && info.CoveredUntil - info.ScheduledAt >= TimeSpan.FromMinutes(9);
+
         await RewindAsync(f, "tick", 10);
-        await WorkerHost.WaitUntil(() => !probe.Seen.IsEmpty, TimeSpan.FromSeconds(60), "the loop materializes and the job runs");
-        var (name, info) = probe.Seen.First();
+        await WorkerHost.WaitUntil(() => probe.Seen.Any(CoversMissedRange), TimeSpan.FromSeconds(60), "the run-once job covers the missed range");
+        var (name, info) = probe.Seen.First(CoversMissedRange);
         Assert.Equal("tick", name);
         Assert.NotNull(info);
         Assert.Equal("tick", info.ScheduleName);
-        Assert.True(info.CoveredUntil - info.ScheduledAt >= TimeSpan.FromMinutes(9), "run-once covers the missed range");
         Assert.True(Interlocked.Read(ref w.Services.GetRequiredService<SchedulerService>().Materializations) >= 1);
         await w.StopAsync(Ct);
         Assert.Equal(1, await Count(f, "SELECT count(*) FROM runwick.queue_events WHERE event_kind = 'schedule_registered'"));

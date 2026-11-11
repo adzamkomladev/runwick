@@ -162,7 +162,8 @@ internal sealed record ScheduleSnapshot(
     DateTimeOffset? ResumeCutoff,
     ScheduleDefinitionRecord Definition);
 
-internal sealed record DueSchedules(DateTimeOffset ObservedAt, IReadOnlyList<ScheduleSnapshot> Schedules);
+/// <summary>The next eligible scan time is reported only for an empty read at the head of the due index.</summary>
+internal sealed record DueSchedules(DateTimeOffset ObservedAt, IReadOnlyList<ScheduleSnapshot> Schedules, DateTimeOffset? NextScanAfterAt = null);
 
 /// <summary>A local due scan continues strictly after the last row and up to the first page's observation time.</summary>
 internal readonly record struct DueSchedulePageCursor(DateTimeOffset ScanAfterAt, Guid ScheduleId, DateTimeOffset ScanThrough);

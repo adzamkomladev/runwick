@@ -100,9 +100,8 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
     /// <summary>The idle back-off cap now: 3 × IdlePollInterval while the listener is healthy, IdlePollInterval otherwise.</summary>
     internal TimeSpan IdleCap => _listenerHealthy ? _declarations.Options.IdlePollInterval * ListeningIdleFactor : _declarations.Options.IdlePollInterval;
 
-    // Local instant at which each schedule this process last materialized becomes due again (its new scan_after_at,
-    // carried over from store time through the plan's cutoff). An idle wait never runs past the earliest of them.
-    readonly Dictionary<Guid, DateTimeOffset> _nextScan = [];
+    // Local monotonic anchor for each schedule this process last materialized, with its new scan delay in store time.
+    readonly Dictionary<Guid, (long ReadStarted, TimeSpan Delay)> _nextScan = [];
 
     string Application => _runtime.Registry.Application;
 
@@ -172,34 +171,44 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
     }
 
     /// <summary>Time until the earliest known next due instant, or null when none is known (passed ones are dropped).</summary>
-    internal TimeSpan? UntilKnownDue()
+    internal TimeSpan? UntilKnownDue(long? latestRead = null)
     {
         lock (_nextScan)
         {
-            var now = _time.GetUtcNow();
-            DateTimeOffset? earliest = null;
-            foreach (var (id, at) in _nextScan.ToList())
+            var now = _time.GetTimestamp();
+            TimeSpan? earliest = null;
+            foreach (var (id, deadline) in _nextScan.ToList())
             {
-                if (at <= now)
+                var remaining = deadline.Delay - _time.GetElapsedTime(deadline.ReadStarted, now);
+                if (remaining <= TimeSpan.Zero)
                 {
                     _nextScan.Remove(id);
+                    if (latestRead is not { } last || (deadline.ReadStarted != last
+                        && deadline.Delay <= _time.GetElapsedTime(deadline.ReadStarted, last)))
+                    {
+                        continue;
+                    }
+
+                    // The last read may have preceded the due instant, or this page just made the schedule due.
+                    remaining = TimeSpan.Zero;
                 }
-                else if (earliest is null || at < earliest)
+
+                if (earliest is null || remaining < earliest)
                 {
-                    earliest = at;
+                    earliest = remaining;
                 }
             }
 
-            return earliest - now;
+            return earliest;
         }
     }
 
-    /// <summary>Records a materialized schedule's next scan instant, mapped from store time to local time through the cutoff.</summary>
-    internal void NoteNextScan(Guid scheduleId, DateTimeOffset scanAfterAt, DateTimeOffset cutoff)
+    /// <summary>Anchors the scan delay before reading store time so command latency cannot postpone the wake.</summary>
+    internal void NoteNextScan(Guid scheduleId, DateTimeOffset scanAfterAt, DateTimeOffset cutoff, long readStarted)
     {
         lock (_nextScan)
         {
-            _nextScan[scheduleId] = _time.GetUtcNow() + (scanAfterAt - cutoff);
+            _nextScan[scheduleId] = (readStarted, scanAfterAt - cutoff);
         }
     }
 
@@ -287,18 +296,21 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         {
             var worked = false;
             var failed = false;
+            var readStarted = _time.GetTimestamp();
+            TimeSpan? durableDelay = null;
             try
             {
                 Interlocked.Increment(ref Passes);
                 var read = PhaseTimings.Start();
                 var due = await store.ReadDueSchedulesAsync(Application, ScheduleBounds.DueReadLimit, ct, cursor).ConfigureAwait(false);
                 PhaseTimings.Lap(read, PhaseOperation, "dueRead");
+                durableDelay = due.NextScanAfterAt - due.ObservedAt;
                 Interlocked.Increment(ref DuePagesRead);
                 Interlocked.Add(ref DueSchedulesRead, due.Schedules.Count);
                 foreach (var schedule in due.Schedules)
                 {
                     ct.ThrowIfCancellationRequested();
-                    worked |= await MaterializeOneAsync(store, schedule, due.ObservedAt, ct).ConfigureAwait(false);
+                    worked |= await MaterializeOneAsync(store, schedule, due.ObservedAt, readStarted, ct).ConfigureAwait(false);
                 }
 
                 Health.Ok();
@@ -315,7 +327,12 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
                 }
                 else
                 {
+                    var recheckHead = cursor is not null && due.Schedules.Count == 0;
                     cursor = null;
+                    if (recheckHead)
+                    {
+                        continue;
+                    }
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -335,9 +352,20 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
             idle = worked && !failed ? options.PollInterval : TimeSpan.FromTicks(Math.Min(idle.Ticks * 2, IdleCap.Ticks));
             var jitter = 1 + ((Random.Shared.NextDouble() * 0.2) - 0.1);
             var wait = TimeSpan.FromTicks((long)(idle.Ticks * jitter));
-            if (!failed && UntilKnownDue() is { } untilDue && untilDue < wait)
+            if (!failed)
             {
-                wait = untilDue;
+                var untilDue = UntilKnownDue(readStarted);
+                var untilDurableDue = durableDelay - _time.GetElapsedTime(readStarted);
+                if (untilDurableDue is { } durable && (untilDue is null || durable < untilDue))
+                {
+                    untilDue = durable;
+                }
+
+                if (untilDue is { } due && due < wait)
+                {
+                    // A conservative deadline can fire just ahead of store time. Let the clock advance on each retry.
+                    wait = TimeSpan.FromTicks(Math.Min(wait.Ticks, Math.Max(TimeSpan.TicksPerMillisecond, due.Ticks)));
+                }
             }
 
             try
@@ -361,7 +389,8 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
     }
 
     /// <summary>Plans and sends one schedule's materialization. Returns true when the store applied a change.</summary>
-    internal async Task<bool> MaterializeOneAsync(IScheduleStore store, ScheduleSnapshot schedule, DateTimeOffset cutoff, CancellationToken ct)
+    internal async Task<bool> MaterializeOneAsync(IScheduleStore store, ScheduleSnapshot schedule, DateTimeOffset cutoff,
+        long readStarted, CancellationToken ct)
     {
         MaterializeRequest? plan;
         var evaluation = PhaseTimings.Start();
@@ -433,7 +462,11 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         {
             case StoreStatus.Applied:
                 Interlocked.Increment(ref Materializations);
-                NoteNextScan(plan.ScheduleId, plan.After.ScanAfterAt, cutoff);
+                if (plan.After is { NextDueAt: not null, ReviewReason: null })
+                {
+                    NoteNextScan(plan.ScheduleId, plan.After.ScanAfterAt, cutoff, readStarted);
+                }
+
                 return true;
             case StoreStatus.InvalidRequest or StoreStatus.UniquenessConflict when reply.Error?.Code is "queue_not_registered" or "uniqueness_conflict"
                 or "uniqueness_composition_conflict" or "window_fingerprint_mismatch":

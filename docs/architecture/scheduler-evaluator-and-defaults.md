@@ -95,7 +95,7 @@ A UTC cursor inside a fold must be able to find later matches whose local label 
 | Resume | skip-paused by default, with an audited cutoff; run-once/catch-up are explicit alternatives |
 | Definition preview | Next 10 occurrences, with UTC/local instant, offset and adjustment/fold labels |
 | Jobs per materialization transaction | At most 32, also subject to a 4 MiB total encoded plan budget |
-| Due-schedule probe | At most 32 definitions per page, ordered by `scan_after_at` and stable ID, with a local scan position |
+| Due-schedule probe | At most 32 definitions per page, ordered by `scan_after_at` and stable ID, with a local scan position. An empty head read provides the earliest future scan time. |
 | Due/idle polling | Full productive pages continue promptly. Base poll 1 s after a short productive page. Unproductive pages and failures back off to 5 s (15 s with a healthy schedule listener), with ±10% jitter. |
 | Catch-up pacing | At least 250 ms persisted scan delay after a partial catch-up batch; yield to other due schedules |
 | Local materialization allowance | 100 new jobs/s with burst 32 per scheduler/store group; one materialization command in flight |

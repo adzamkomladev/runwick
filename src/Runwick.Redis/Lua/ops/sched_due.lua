@@ -1,11 +1,11 @@
 -- Due read (13 §6.9). ARGS: 1 limit, optional 2 cursor score, 3 cursor id, 4 scan-through ms.
--- Reply: OK, rev, observed ms, then (row, definition) per schedule.
+-- Reply: OK, rev, observed ms, next eligible scan ms or '', then (row, definition) per schedule.
 local g, m = U.read_gate()
 if g then
   if g[1] == 'CLOSED' then return { 'OK', g[2] } end
   return g
 end
-local out = { 'OK', m.rev or '0', NOWS }
+local out = { 'OK', m.rev or '0', NOWS, '' }
 local key, limit, score = P .. 'sched:due', tonumber(ARGS(1)), ARGS(2)
 local ids, through
 if score then
@@ -24,6 +24,9 @@ if score then
 else
   through = NOW
   ids = redis.call('ZRANGE', key, '-inf', NOWS, 'BYSCORE', 'LIMIT', 0, limit, 'WITHSCORES')
+  if #ids == 0 then
+    out[4] = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')[2] or ''
+  end
 end
 for i = 1, #ids, 2 do
   if tonumber(ids[i + 1]) > through then break end

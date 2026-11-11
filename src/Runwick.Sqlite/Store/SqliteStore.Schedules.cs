@@ -177,7 +177,23 @@ internal sealed partial class SqliteStore : IScheduleStore
                 cmd.P("scan", position.ScanAfterAt).P("id", position.ScheduleId);
             }
 
-            return new DueSchedules(observed, Rows(cmd, ReadSnapshot));
+            var schedules = Rows(cmd, ReadSnapshot);
+            if (after is not null || schedules.Count != 0)
+            {
+                return new DueSchedules(observed, schedules);
+            }
+
+            using var nextScan = Cmd(conn, application, """
+                SELECT s.scan_after_at
+                FROM runwick_schedules AS s
+                WHERE s.application = @application
+                  AND s.enabled = 1 AND s.paused = 0 AND s.needs_review = 0 AND s.next_due_at IS NOT NULL
+                  AND s.scan_after_at > @observed
+                ORDER BY s.scan_after_at, s.schedule_id
+                LIMIT 1
+                """).P("observed", observed);
+            var nextScanAfterAt = nextScan.ExecuteScalar() is long next ? SqTime.FromMs(next) : (DateTimeOffset?)null;
+            return new DueSchedules(observed, schedules, nextScanAfterAt);
         }, ct);
     }
 
