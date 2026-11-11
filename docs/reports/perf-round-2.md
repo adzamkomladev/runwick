@@ -447,6 +447,8 @@ The D3 slot diagnostic kept the production D1 path, source lanes, eight staging 
 
 Every staged message reached one destination mapping and job. No run left a blocked, pending or leased message after drain. The eight- and sixteen-slot runs met the rate target and missed the 2 s p99 gate. Mean source claim lane wait was below 0.02 ms in every run. At sixteen slots, mean destination commit and delivered-mark calls increased to 32.3 and 56.8 ms from 17.9 and 15.0 ms at eight slots. This directional sweep keeps the default relay settings and points to settlement contention as slot count increases. Raw results and runner are under `artifacts/perf/round-two/p09-d3-slots/`.
 
+A sixteen-slot D2 pair used the same 100/s offered rate and windows. The isolated mark-batching candidate reduced applied mark commits from one per message to 6,042 for 8,982 deliveries, a 32.7% reduction. It grouped 4,922 marks into 1,982 commits. Confirmed rate moved from 95.20 to 99.99/s and ready-to-confirm p99 from 7.22 to 1.60 s. Every message reconciled to one destination job. Lease losses moved from 76 to 54. The candidate met the p99 gate and fell just short of the 100/s gate. Starting load was 7.17 on the baseline and 3.04 on the candidate, so this pair is directional. Raw results are under `artifacts/perf/round-two/p09-d2/slots-16-pair/`.
+
 ## Worker payload decoding
 
 E1 uses the strict payload scanner without constructing canonical values before worker deserialization. The same scanner still builds the canonical form for fingerprints. All 102 focused boundary, serialization and wire tests passed, including rejection-code parity and the existing canonical vectors.
