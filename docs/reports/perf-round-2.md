@@ -250,6 +250,10 @@ The hardened build ran the full 15-minute steady window with 1,000 schedules on 
 
 After 1,000 seconds of downtime, the restart materialized all 1,000 catch-up occurrences within 65.3 s of restart, with at most 32 occurrences in a command and no review state. Across the complete run, 21,359 created occurrences mapped to 21,359 scheduled jobs with zero duplicate instants, orphan occurrences, shared jobs or lease losses. The catch-up correctness check passed. Steady-state qualification and a matched full control remain open. Raw acknowledgments, marks, load and results are under `artifacts/perf/round-two/p06s-s3-production/`.
 
+One matched short pair at `e1cb660` compared the existing four-plan group with an isolated eight-plan group. Both used two groups in flight, the 2 MiB group payload cap, and the existing 100 jobs/s allowance. Each arm used a fresh PostgreSQL 18.6 fixture, two minutes of warm-up and three minutes of measurement. The eight-plan arm ran first. Each acknowledged all 3,000 measured occurrences, with no duplicate instants, orphan or shared jobs, or lease losses.
+
+Post-commit p50/p95/p99 was 8.12/13.12/13.99 s with four plans and 6.52/10.99/11.61 s with eight. Mean function and commit time per group was 56.1/25.6 ms and 95.3/27.4 ms, respectively. The eight-plan arm met the 13 s target in this short comparison. Longer steady-state and catch-up qualification for the larger groups remain open. Patch, acknowledgment identities and results are under `artifacts/perf/round-two/p06s-s3-group-size/`.
+
 ## PostgreSQL post-commit wake
 
 Migration 0021 adds a versioned direct-dispatch path at schema revision 21. Direct dispatch now queues a best-effort wake after durable commit for newly created jobs due at the database decision time. Staged dispatch, scheduler, outbox and management writes retain their transactional notification paths. The 79 targeted wake, migration and upgrade tests passed, including a forced wake failure followed by resolving the accepted dispatch.
