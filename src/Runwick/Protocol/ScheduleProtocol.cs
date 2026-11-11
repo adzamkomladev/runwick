@@ -70,6 +70,13 @@ internal static class ScheduleBounds
     public static readonly TimeSpan MaxCatchUpAge = TimeSpan.FromDays(31);
     public static readonly TimeSpan CatchUpPacing = TimeSpan.FromMilliseconds(250);
     public const int DueReadLimit = 32;
+    public const int MaxGroupPlans = 4;
+
+    public static bool CanGroup(ScheduleDefinitionRecord definition, MaterializeRequest plan) =>
+        !definition.Serialize && definition.Template.ActiveKey is null && definition.Template.Scopes.Count == 0
+        && definition.Template.Rates.Count == 0 && plan.Occurrences is [{ CoveredFrom: null, CoveredThrough: null, Coalesced: false }]
+        && plan.ExpectedEpisodeId is null && plan.After is { Episode: null, ReviewReason: null }
+        && !plan.ClearsPendingPolicy && plan.AuditRanges.Count == 0;
 }
 
 /// <summary>The frozen job template of a definition (13 §3.2). Rates are aligned with the normalized rate scope order.</summary>
@@ -211,6 +218,14 @@ internal sealed record MaterializeRequest(
 internal sealed record MaterializedOccurrence(string Kind, string Key, Guid? JobId, string Disposition);
 
 internal sealed record ScheduleMaterialization(Guid ScheduleId, long CursorRevision, IReadOnlyList<MaterializedOccurrence> Occurrences);
+
+internal sealed record ScheduleGroupMaterialization(IReadOnlyList<StoreReply<ScheduleMaterialization>> Outcomes, bool Grouped);
+
+internal interface IScheduleGroupStore
+{
+    Task<StoreReply<ScheduleGroupMaterialization>> MaterializeGroupAsync(
+        IReadOnlyList<StoreCommand<MaterializeRequest>> commands, CancellationToken ct);
+}
 
 // ---- 6.3 SetScheduleState / 6.5 TriggerSchedule / 6.6 ResolveCatchUp / 6.7 failure / 6.8 Revalidate
 

@@ -491,6 +491,57 @@ internal static class G2Workloads
     /// <c>SchedulerOptions.JobsPerSecond</c> (100), so the last one waits schedules ÷ 100 s by design; 3 s is the allowance on top.</summary>
     static double LagBoundS(int schedules) => (schedules / 100.0) + 3;
 
+    static JsonObject ScheduleAcknowledgmentLag(string directory, DateTimeOffset start, DateTimeOffset end,
+        DateTimeOffset stopped, long expected, double targetSeconds)
+    {
+        var acknowledged = new Dictionary<(Guid Schedule, long Scheduled), long>();
+        var path = Path.Combine(directory, "scheduler.ack.csv");
+        var startMs = start.ToUnixTimeMilliseconds();
+        var endMs = end.ToUnixTimeMilliseconds();
+        foreach (var line in File.Exists(path) ? File.ReadLines(path) : [])
+        {
+            var fields = line.Split(',');
+            var scheduled = long.Parse(fields[1], CultureInfo.InvariantCulture);
+            if (scheduled >= startMs && scheduled <= endMs)
+            {
+                var key = (Guid.Parse(fields[0]), scheduled);
+                var ack = long.Parse(fields[2], CultureInfo.InvariantCulture);
+                acknowledged[key] = Math.Min(acknowledged.GetValueOrDefault(key, ack), ack);
+            }
+        }
+
+        var lags = acknowledged.Select(x => Math.Max(0, (x.Value - x.Key.Scheduled) / 1000.0)).Order().ToArray();
+        double? Quantile(double fraction)
+        {
+            if (lags.Length == 0)
+            {
+                return null;
+            }
+
+            var rank = fraction * (lags.Length - 1);
+            var index = (int)rank;
+            return Math.Round(lags[index] + (lags[(int)Math.Ceiling(rank)] - lags[index]) * (rank - index), 3);
+        }
+
+        var missing = Math.Max(0, expected - lags.Length);
+        var censored = missing > 0 && missing >= expected * 0.01;
+        var p99 = Quantile(0.99);
+        return new JsonObject
+        {
+            ["clock"] = "co-located scheduler process, after database commit acknowledgment",
+            ["occurrencesExpected"] = expected,
+            ["occurrencesAcknowledged"] = lags.Length,
+            ["occurrencesNotAcknowledgedByStop"] = missing,
+            ["p50S"] = Quantile(0.5),
+            ["p95S"] = Quantile(0.95),
+            ["p99S"] = censored ? Math.Max(p99 ?? 0, (stopped - end).TotalSeconds) : p99,
+            ["maxS"] = Quantile(1),
+            ["p99IsCensoredLowerBound"] = censored,
+            ["targetS"] = targetSeconds,
+            ["targetResult"] = missing == 0 && p99 is { } p && p <= targetSeconds ? "pass" : "miss",
+        };
+    }
+
     /// <summary>
     /// P-06 scheduler half (SP-016). Phase 1: a scheduler process with <c>--schedules</c> (1,000) minute schedules and
     /// <c>--workers</c> (2) worker processes running the occurrences; materialization lag (scheduled instant →
@@ -504,7 +555,9 @@ internal static class G2Workloads
         var occurrences = a.Int("catchup-occurrences", 1000);
         var workerArgs = Enumerable.Range(0, a.Int("workers", 2)).Select(_ => (string[])["--queues", "ps:1", "--concurrency", I(a.Int("concurrency", 16)),
             "--handler-ms", I(a.Int("handler-ms", 0)), "--handlers", "tick"]).ToList();
-        var spec = new G2Spec("P-06s", "steady-catchup", [], workerArgs, null, a.Int("concurrency", 16), a.Int("handler-ms", 0),
+        string[] scheduler = ["--scheduler-group-size", I(a.Int("scheduler-group-size", 1)),
+            "--scheduler-groups", I(a.Int("scheduler-groups", 1)), "--scheduler-ack-lag"];
+        var spec = new G2Spec("P-06s", "steady-catchup", scheduler, workerArgs, null, a.Int("concurrency", 16), a.Int("handler-ms", 0),
             Drain: false, Capabilities: ["scheduler"]);
         string[] catchupArgs = ["--catchup", "--catchup-grace-s", I(a.Int("catchup-grace-s", 30)), "--catchup-limit", I(a.Int("catchup-limit", 10_000))];
         var seedTimeout = Min(a, "seed-timeout-min", 60);
@@ -585,6 +638,8 @@ internal static class G2Workloads
                 ["p99IsCensoredLowerBound"] = missing > 0 && missing >= 0.01 * expected,
                 ["threshold"] = new JsonObject { ["rule"] = $"p99 ≤ schedules ÷ JobsPerSecond + 3 s = {LagBoundS(schedules)} s", ["boundS"] = LagBoundS(schedules), ["result"] = p99 is { } x && x <= LagBoundS(schedules) && missing == 0 ? "pass" : "miss" },
             };
+            c.Extra["acknowledgmentLag"] = ScheduleAcknowledgmentLag(c.Dir, Mark(c, "measureStart"), Mark(c, "measureEnd"),
+                Mark(c, "schedulerStopped"), expected, LagBoundS(schedules));
 
             // Distinct occurrence identities: one row per (schedule, instant), one job per created occurrence, no extra scheduled jobs.
             var dupInstants = await ScalarAsync(store, """
@@ -695,6 +750,8 @@ internal static class G2Workloads
         }).ConfigureAwait(false);
         runs.Add(run);
         summary["lagP99S"] = run["extra"]?["materializationLag"]?["p99S"]?.DeepClone();
+        summary["ackLagP99S"] = run["extra"]?["acknowledgmentLag"]?["p99S"]?.DeepClone();
+        summary["ackLagThreshold"] = run["extra"]?["acknowledgmentLag"]?["targetResult"]?.DeepClone();
         summary["lagThreshold"] = run["extra"]?["materializationLag"]?["threshold"]?["result"]?.DeepClone();
         summary["lagBoundS"] = run["extra"]?["materializationLag"]?["threshold"]?["boundS"]?.DeepClone();
         summary["catchUp"] = run["extra"]?["catchUp"]?.DeepClone();

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json.Nodes;
@@ -9,6 +10,7 @@ using Npgsql;
 using Runwick.Hosting;
 using Runwick.Outbox;
 using Runwick.Outbox.Postgres;
+using Runwick.Protocol;
 using Runwick.Scheduling;
 
 namespace Runwick.Workloads;
@@ -29,11 +31,17 @@ internal static class G2Roles
         var sc = new ServiceCollection();
         sc.AddLogging(b => b.AddSimpleConsole(o => o.SingleLine = true).SetMinimumLevel(LogLevel.Warning));
         var count = a.Int("schedules", 1000);
+        var groupSize = a.Int("scheduler-group-size", 1);
+        var groupsInFlight = a.Int("scheduler-groups", 1);
+        if ((groupSize, groupsInFlight) is not ((1, 1) or (ScheduleBounds.MaxGroupPlans, 2)))
+        {
+            throw new ArgumentException("Use scheduler group size 1 and one group, or size 4 and two groups.");
+        }
         sc.AddRunwick(r =>
         {
             r.Application(a.Str("app")).UsePostgres(a.Str("conn"));
             G2Jobs.Register(r, a);
-            r.AddScheduler();
+            r.AddScheduler(options => options.GroupMaterializations = groupSize > 1);
             for (var i = 0; i < count; i++)
             {
                 var key = "s" + i.ToString("D4", CultureInfo.InvariantCulture);
@@ -48,6 +56,20 @@ internal static class G2Roles
             }
         });
         await using var provider = sc.BuildServiceProvider();
+        var scheduler = provider.GetRequiredService<SchedulerService>();
+        var acknowledgments = new ConcurrentQueue<(Guid ScheduleId, long ScheduledMs, long AckMs)>();
+        var acknowledgmentCount = 0;
+        if (a.Has("scheduler-ack-lag"))
+        {
+            scheduler.AcknowledgedOccurrence = (id, scheduled, ack) =>
+            {
+                if (Interlocked.Increment(ref acknowledgmentCount) <= 100_000)
+                {
+                    acknowledgments.Enqueue((id, scheduled.ToUnixTimeMilliseconds(), ack.ToUnixTimeMilliseconds()));
+                }
+            };
+        }
+
         var phases = new Metrics();
         using var phaseListener = PhaseListener.Attach(phases);
         var hosted = provider.GetServices<IHostedService>().ToList();
@@ -65,7 +87,12 @@ internal static class G2Roles
             await h.StopAsync(CancellationToken.None).ConfigureAwait(false);
         }
 
-        var scheduler = provider.GetRequiredService<SchedulerService>();
+        if (a.Has("scheduler-ack-lag"))
+        {
+            await File.WriteAllLinesAsync(a.Str("out") + ".ack.csv",
+                acknowledgments.Select(entry => FormattableString.Invariant($"{entry.ScheduleId:D},{entry.ScheduledMs},{entry.AckMs}"))).ConfigureAwait(false);
+        }
+
         var summary = new JsonObject
         {
             ["schedules"] = count + (a.Has("catchup") ? 1 : 0),
@@ -76,6 +103,11 @@ internal static class G2Roles
             ["materializationCommands"] = Interlocked.Read(ref scheduler.MaterializationCommands),
             ["plannedOccurrences"] = Interlocked.Read(ref scheduler.PlannedOccurrences),
             ["revisionConflicts"] = Interlocked.Read(ref scheduler.RevisionConflicts),
+            ["groupSize"] = groupSize,
+            ["groupsInFlight"] = groupsInFlight,
+            ["groupedCommits"] = Interlocked.Read(ref scheduler.GroupedCommits),
+            ["groupedCommands"] = Interlocked.Read(ref scheduler.GroupedCommands),
+            ["acknowledgmentsDropped"] = Math.Max(0, acknowledgmentCount - 100_000),
             ["phases"] = phases.LatenciesJson(),
             ["localDiagnostics"] = scheduler.LocalDiagnostics.Count,
             ["process"] = WorkerMode.ProcessStats(new TimerLag()),

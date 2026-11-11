@@ -61,6 +61,8 @@ public sealed class ScheduleContractTests
     /// <summary>Cases that arm store fault points or barriers (PostgreSQL and SQLite); Redis covers them with the write-prefix cases (REDIS-01).</summary>
     public static TheoryData<StoreKind> FaultKinds => [.. CoreContractTests.Kinds.Select(k => (StoreKind)k.Data).Where(k => k != StoreKind.Redis)];
 
+    public static TheoryData<StoreKind> PostgresKind => [.. CoreContractTests.Kinds.Select(row => row.Data).Where(k => k == StoreKind.Postgres)];
+
     static Task<long> Jobs(DriverFixture f, string? application = null) =>
         Count(f, "SELECT count(*) FROM runwick.jobs WHERE application = @a", ("a", application ?? f.Application));
 
@@ -117,6 +119,101 @@ public sealed class ScheduleContractTests
 
     static async Task<ScheduleSnapshot> ReadAsync(TestClient c, string key) =>
         await Store(c).ReadScheduleAsync(c.Application, key, Ct) ?? throw new InvalidOperationException("no schedule");
+
+    [Theory(SkipTestWithoutData = true)]
+    [MemberData(nameof(PostgresKind))]
+    [Trait("Case", "S3")]
+    public async Task A_schedule_group_rolls_back_one_item_after_mutation_and_replays_another_after_lost_commit_reply(StoreKind kind)
+    {
+        var (f, c) = await OpenAsync(kind, "schgroup");
+        await using var _ = f;
+        var store = Store(c);
+        var grouped = Assert.IsAssignableFrom<IScheduleGroupStore>(store);
+        var due = (await store.StoreNowAsync(Ct)).AddSeconds(-1);
+        foreach (var key in new[] { "fresh", "occupied" })
+        {
+            Assert.Equal(StoreStatus.Applied, (await RegisterAsync(c, key, declaration =>
+            {
+                declaration.Cron = null;
+                declaration.DueAt = due;
+            })).Status);
+        }
+
+        var (occupied, _, occupiedPlan) = await PlanAsync(c, "occupied");
+        Assert.NotNull(occupiedPlan);
+        Assert.Equal(StoreStatus.Applied, (await store.MaterializeOccurrencesAsync(c.Command(occupiedPlan), Ct)).Status);
+        // Restore the old cursor but leave the existing occurrence. The second insert fails after dispatch writes.
+        await Exec(f, """
+            UPDATE runwick.schedules
+            SET cursor_revision = @revision, evaluated_through = NULL, next_due_at = @due, scan_after_at = @due
+            WHERE schedule_id = @id
+            """, ("revision", occupied.CursorRevision), ("due", due), ("id", occupied.ScheduleId));
+
+        var (_, _, freshPlan) = await PlanAsync(c, "fresh");
+        Assert.NotNull(freshPlan);
+        Assert.True(ScheduleBounds.CanGroup(occupied.Definition, occupiedPlan));
+        var fresh = c.Command(freshPlan);
+        var conflicting = c.Command(occupiedPlan with
+        {
+            Occurrences = [occupiedPlan.Occurrences[0] with { ProposedJobId = Guid.CreateVersion7() }],
+        });
+        f.ArmFault(FaultPoint.AfterCommitBeforeReply, FaultSpec.DropReply, FaultTarget.Command(fresh.CommandId));
+        await Assert.ThrowsAsync<StoreOutcomeUnknownException>(() => grouped.MaterializeGroupAsync([fresh, conflicting], Ct));
+
+        var replay = await grouped.MaterializeGroupAsync([fresh, conflicting], Ct);
+        Assert.True(replay.Value!.Grouped);
+        Assert.True(replay.Value.Outcomes[0].Replayed);
+        Assert.Equal(freshPlan.Occurrences[0].ProposedJobId, Assert.Single(replay.Value.Outcomes[0].Value!.Occurrences).JobId);
+        Assert.Equal("occurrence_exists", replay.Value.Outcomes[1].Error?.Code);
+        Assert.Equal(2, await Jobs(f));
+        Assert.Equal(2, await Occurrences(f));
+        Assert.Equal(0, await Count(f, "SELECT count(*) FROM runwick.storage_commands WHERE command_id = @id", ("id", conflicting.CommandId)));
+    }
+
+    [Theory(SkipTestWithoutData = true)]
+    [MemberData(nameof(PostgresKind))]
+    [Trait("Case", "S3")]
+    public async Task Overlapping_schedule_groups_preserve_each_commands_identity_and_deadline(StoreKind kind)
+    {
+        var (f, c) = await OpenAsync(kind, "schgroupoverlap");
+        await using var _ = f;
+        var store = Store(c);
+        var grouped = Assert.IsAssignableFrom<IScheduleGroupStore>(store);
+        var now = await store.StoreNowAsync(Ct);
+        foreach (var key in new[] { "left", "shared", "right", "expired" })
+        {
+            Assert.Equal(StoreStatus.Applied, (await RegisterAsync(c, key, declaration =>
+            {
+                declaration.Cron = null;
+                declaration.DueAt = now.AddSeconds(-1);
+            })).Status);
+        }
+
+        var left = c.Command((await PlanAsync(c, "left")).Plan!);
+        var shared = c.Command((await PlanAsync(c, "shared")).Plan!);
+        var right = c.Command((await PlanAsync(c, "right")).Plan!);
+        var expired = c.Command((await PlanAsync(c, "expired")).Plan!) with { NotAfter = now.AddSeconds(-1) };
+        var replies = await Task.WhenAll(
+            grouped.MaterializeGroupAsync([left, shared, expired], Ct),
+            grouped.MaterializeGroupAsync([shared, right], Ct));
+
+        Assert.All(replies, reply => Assert.True(reply.Value!.Grouped));
+        var leftReply = replies[0].Value!.Outcomes;
+        var rightReply = replies[1].Value!.Outcomes;
+        Assert.Equal(StoreStatus.Applied, leftReply[0].Status);
+        Assert.Equal(StoreStatus.Applied, rightReply[1].Status);
+        Assert.Equal(StoreStatus.CommandExpired, leftReply[2].Status);
+        Assert.Equal(StoreStatus.Applied, leftReply[1].Status);
+        Assert.Equal(StoreStatus.Applied, rightReply[0].Status);
+        Assert.Equal(Assert.Single(leftReply[1].Value!.Occurrences), Assert.Single(rightReply[0].Value!.Occurrences));
+        Assert.NotEqual(leftReply[1].Replayed, rightReply[0].Replayed);
+        var singleReplay = await store.MaterializeOccurrencesAsync(shared, Ct);
+        Assert.True(singleReplay.Replayed);
+        Assert.Equal(shared.Body.Occurrences[0].ProposedJobId, Assert.Single(singleReplay.Value!.Occurrences).JobId);
+        Assert.Equal(3, await Jobs(f));
+        Assert.Equal(3, await Occurrences(f));
+        Assert.Equal(0, await Count(f, "SELECT count(*) FROM runwick.storage_commands WHERE command_id = @id", ("id", expired.CommandId)));
+    }
 
     static async Task<(ScheduleSnapshot Snapshot, DateTimeOffset Cutoff, MaterializeRequest? Plan)> PlanAsync(TestClient c, string key)
     {

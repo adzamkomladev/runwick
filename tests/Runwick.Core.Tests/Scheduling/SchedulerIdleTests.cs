@@ -19,7 +19,7 @@ public sealed class SchedulerIdleTests
     static readonly TimeSpan Long = TimeSpan.FromMinutes(5);
 
     /// <summary>Records due reads and offers a scripted schedule listener. Only the scheduler loop accesses the due rows.</summary>
-    sealed class IdleScheduleStore(TimeProvider time) : IScheduleStore, IWakeNotificationSource
+    sealed class IdleScheduleStore(TimeProvider time) : IScheduleStore, IScheduleGroupStore, IWakeNotificationSource
     {
         public ScriptedListener Listener { get; } = new();
 
@@ -32,6 +32,8 @@ public sealed class SchedulerIdleTests
         public Action? BeforeContinuation { get; set; }
 
         public TimeSpan ClockOffset { get; set; }
+        public ConcurrentQueue<int> GroupSizes { get; } = new();
+        public Task? GroupBarrier { get; set; }
 
         public Task<DueSchedules> ReadDueSchedulesAsync(string application, int limit, CancellationToken ct, DueSchedulePageCursor? after = null)
         {
@@ -46,11 +48,14 @@ public sealed class SchedulerIdleTests
                     || (s.ScanAfterAt == cursor.ScanAfterAt && s.ScheduleId.CompareTo(cursor.ScheduleId) > 0)));
             }
 
-            var rows = page.OrderBy(s => s.ScanAfterAt).ThenBy(s => s.ScheduleId).Take(limit).ToArray();
-            var next = after is null && rows.Length == 0
-                ? Due.Where(s => s.ScanAfterAt > now).Min(s => (DateTimeOffset?)s.ScanAfterAt)
-                : null;
-            return Task.FromResult(new DueSchedules(now, rows, next));
+            lock (Due)
+            {
+                var rows = page.OrderBy(s => s.ScanAfterAt).ThenBy(s => s.ScheduleId).Take(limit).ToArray();
+                var next = after is null && rows.Length == 0
+                    ? Due.Where(s => s.ScanAfterAt > now).Min(s => (DateTimeOffset?)s.ScanAfterAt)
+                    : null;
+                return Task.FromResult(new DueSchedules(now, rows, next));
+            }
         }
 
         public Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, Action onLost, CancellationToken ct) =>
@@ -72,8 +77,30 @@ public sealed class SchedulerIdleTests
                     new StoreError("revision_conflict"), time.GetUtcNow()));
             }
 
-            Assert.Equal(1, Due.RemoveAll(s => s.ScheduleId == plan.ScheduleId));
+            lock (Due)
+            {
+                Assert.Equal(1, Due.RemoveAll(s => s.ScheduleId == plan.ScheduleId));
+            }
+
             return Task.FromResult(StoreReply<ScheduleMaterialization>.Applied(new ScheduleMaterialization(plan.ScheduleId, 2, []), time.GetUtcNow()));
+        }
+
+        public async Task<StoreReply<ScheduleGroupMaterialization>> MaterializeGroupAsync(
+            IReadOnlyList<StoreCommand<MaterializeRequest>> commands, CancellationToken ct)
+        {
+            GroupSizes.Enqueue(commands.Count);
+            if (GroupBarrier is { } barrier)
+            {
+                await barrier.WaitAsync(ct);
+            }
+
+            var replies = new List<StoreReply<ScheduleMaterialization>>();
+            foreach (var command in commands)
+            {
+                replies.Add(await MaterializeOccurrencesAsync(command, ct));
+            }
+
+            return StoreReply<ScheduleGroupMaterialization>.Applied(new ScheduleGroupMaterialization(replies, Grouped: true), time.GetUtcNow());
         }
 
         public Task<StoreReply<ScheduleState>> SetScheduleStateAsync(StoreCommand<ScheduleStateRequest> command, CancellationToken ct) => throw new NotSupportedException();
@@ -92,10 +119,10 @@ public sealed class SchedulerIdleTests
     static int ReadsBetween(IdleScheduleStore store, DateTimeOffset from, DateTimeOffset to) => store.Reads.Count(r => r >= from && r < to);
 
     static (EngineFixture Fixture, IdleScheduleStore Store, SchedulerService Scheduler) DueFixture(int count,
-        TimeSpan dueIn = default, TimeSpan storeClockOffset = default)
+        TimeSpan dueIn = default, TimeSpan storeClockOffset = default, Action<SchedulerOptions>? configure = null)
     {
         var e = EngineFixture.Create(
-            configure: r => r.AddScheduler(),
+            configure: r => r.AddScheduler(configure),
             services: sc => sc.AddSingleton<IScheduleStore>(sp => new IdleScheduleStore(sp.GetRequiredService<TimeProvider>())));
         var store = (IdleScheduleStore)e.Services.GetRequiredService<IScheduleStore>();
         store.ClockOffset = storeClockOffset;
@@ -110,6 +137,53 @@ public sealed class SchedulerIdleTests
         }
 
         return (e, store, e.Services.GetRequiredService<SchedulerService>());
+    }
+
+    [Fact]
+    [Trait("Case", "S3")]
+    public async Task The_loop_limits_groups_and_sends_unsupported_plans_separately()
+    {
+        var count = ScheduleBounds.DueReadLimit + 2;
+        var (fixture, store, scheduler) = DueFixture(count, configure: options => options.GroupMaterializations = true);
+        await using var e = fixture;
+        store.Due[^1] = store.Due[^1] with { Definition = store.Due[^1].Definition with { OverlapPolicy = ScheduleOperations.OverlapSerialize } };
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        store.GroupBarrier = release.Task;
+        await e.StartAsync();
+        try
+        {
+            await e.RunUntilAsync(() => store.GroupSizes.Count >= 2, TimeSpan.FromSeconds(5), "two materialization groups entered");
+            await e.AdvanceAsync(TimeSpan.FromMilliseconds(100));
+            Assert.Equal(2, store.GroupSizes.Count);
+            Assert.Equal(0, Interlocked.Read(ref scheduler.Materializations));
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+
+        await e.RunUntilAsync(() => Interlocked.Read(ref scheduler.Materializations) == count,
+            TimeSpan.FromSeconds(5), "all grouped and individual schedules materialized");
+        Assert.Equal(8, store.GroupSizes.Count);
+        Assert.All(store.GroupSizes, size => Assert.Equal(4, size));
+        Assert.Equal(count - 2, Interlocked.Read(ref scheduler.GroupedCommands));
+        await e.StopAsync();
+    }
+
+    [Fact]
+    [Trait("Case", "S3")]
+    public async Task Shutdown_cancels_both_in_flight_schedule_groups()
+    {
+        var (fixture, store, scheduler) = DueFixture(12, configure: options => options.GroupMaterializations = true);
+        await using var e = fixture;
+        store.GroupBarrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task;
+        await e.StartAsync();
+        await e.RunUntilAsync(() => store.GroupSizes.Count >= 2, TimeSpan.FromSeconds(5), "two materialization groups entered");
+
+        await e.StopAsync(maxFake: TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, store.GroupSizes.Count);
+        Assert.Equal(0, Interlocked.Read(ref scheduler.Materializations));
     }
 
     [Theory]

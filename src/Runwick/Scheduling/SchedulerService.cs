@@ -82,6 +82,9 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
     internal long MaterializationCommands;
     internal long PlannedOccurrences;
     internal long RevisionConflicts;
+    internal long GroupedCommands;
+    internal long GroupedCommits;
+    internal Action<Guid, DateTimeOffset, DateTimeOffset>? AcknowledgedOccurrence { get; set; }
 
     /// <summary>Listener sessions lost or refused after a subscription (tests and diagnostics).</summary>
     internal long ListenerLosses;
@@ -264,7 +267,7 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         var firstDue = definition.Kind == ScheduleOperations.OneTime ? definition.DueAt : next?.At;
         var command = new StoreCommand<RegisterScheduleRequest>(Application, Guid.CreateVersion7(), _time.GetUtcNow() + ScheduleOperations.RegisterLifetime,
             new RegisterScheduleRequest(declaration.Key, definition, cutoff, firstDue));
-        var reply = await SendAsync(() => store.RegisterScheduleAsync(command, ct), command.CommandId, ct).ConfigureAwait(false);
+        var reply = await SendAsync(token => store.RegisterScheduleAsync(command, token), command.CommandId, ct).ConfigureAwait(false);
         if (reply.Status == StoreStatus.UnsupportedVersion)
         {
             throw new StoreIncompatibleException(
@@ -307,10 +310,17 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
                 durableDelay = due.NextScanAfterAt - due.ObservedAt;
                 Interlocked.Increment(ref DuePagesRead);
                 Interlocked.Add(ref DueSchedulesRead, due.Schedules.Count);
-                foreach (var schedule in due.Schedules)
+                if (options.GroupMaterializations && store is IScheduleGroupStore grouped)
                 {
-                    ct.ThrowIfCancellationRequested();
-                    worked |= await MaterializeOneAsync(store, schedule, due.ObservedAt, readStarted, ct).ConfigureAwait(false);
+                    worked = await MaterializePageAsync(store, grouped, due, readStarted, ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    foreach (var schedule in due.Schedules)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        worked |= await MaterializeOneAsync(store, schedule, due.ObservedAt, readStarted, ct).ConfigureAwait(false);
+                    }
                 }
 
                 Health.Ok();
@@ -392,6 +402,132 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
     internal async Task<bool> MaterializeOneAsync(IScheduleStore store, ScheduleSnapshot schedule, DateTimeOffset cutoff,
         long readStarted, CancellationToken ct)
     {
+        var (command, worked) = await PrepareAsync(store, schedule, cutoff, ct).ConfigureAwait(false);
+        return command is null ? worked : await SendOneAsync(store, new(schedule, command), readStarted, ct).ConfigureAwait(false);
+    }
+
+    readonly record struct PreparedMaterialization(ScheduleSnapshot Schedule, StoreCommand<MaterializeRequest> Command);
+
+    async Task<bool> MaterializePageAsync(IScheduleStore store, IScheduleGroupStore grouped, DueSchedules due, long readStarted,
+        CancellationToken ct)
+    {
+        const int groupsInFlight = 2;
+        const int groupSize = ScheduleBounds.MaxGroupPlans;
+        var pending = new List<Task<bool>>(groupsInFlight);
+        var buffer = new List<PreparedMaterialization>(groupSize);
+        long payloadBytes = 0;
+        var worked = false;
+
+        async Task CollectAsync()
+        {
+            var done = await Task.WhenAny(pending).ConfigureAwait(false);
+            pending.Remove(done);
+            worked |= await done.ConfigureAwait(false);
+        }
+
+        void Flush()
+        {
+            if (buffer.Count == 0)
+            {
+                return;
+            }
+
+            pending.Add(buffer.Count == 1
+                ? SendOneAsync(store, buffer[0], readStarted, ct)
+                : SendGroupAsync(store, grouped, buffer.ToArray(), readStarted, ct));
+            buffer.Clear();
+            payloadBytes = 0;
+        }
+
+        try
+        {
+            foreach (var schedule in due.Schedules)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (pending.Count == groupsInFlight)
+                {
+                    await CollectAsync().ConfigureAwait(false);
+                }
+
+                var (command, preparedWork) = await PrepareAsync(store, schedule, due.ObservedAt, ct).ConfigureAwait(false);
+                worked |= preparedWork;
+                if (command is null)
+                {
+                    continue;
+                }
+
+                var item = new PreparedMaterialization(schedule, command);
+                if (!ScheduleBounds.CanGroup(schedule.Definition, command.Body))
+                {
+                    Flush();
+                    while (pending.Count > 0)
+                    {
+                        await CollectAsync().ConfigureAwait(false);
+                    }
+
+                    worked |= await SendOneAsync(store, item, readStarted, ct).ConfigureAwait(false);
+                    continue;
+                }
+
+                var bytes = schedule.Definition.Template.PayloadUtf8.Length;
+                if (payloadBytes + bytes > ScheduleBounds.MaxPlanPayloadBytes)
+                {
+                    Flush();
+                    if (pending.Count == groupsInFlight)
+                    {
+                        await CollectAsync().ConfigureAwait(false);
+                    }
+                }
+
+                buffer.Add(item);
+                payloadBytes += bytes;
+                if (buffer.Count == groupSize)
+                {
+                    Flush();
+                }
+            }
+
+            Flush();
+            while (pending.Count > 0)
+            {
+                await CollectAsync().ConfigureAwait(false);
+            }
+
+            return worked;
+        }
+        finally
+        {
+            await ((Task)Task.WhenAll(pending)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+    }
+
+    async Task<bool> SendGroupAsync(IScheduleStore store, IScheduleGroupStore grouped, PreparedMaterialization[] items,
+        long readStarted, CancellationToken ct)
+    {
+        StoreCommand<MaterializeRequest>[] commands = [.. items.Select(item => item.Command)];
+        var reply = await SendAsync(token => grouped.MaterializeGroupAsync(commands, token), commands[0].CommandId, ct,
+            timeMaterialization: true).ConfigureAwait(false);
+        var acknowledgedAt = _time.GetUtcNow();
+        if (reply.Value is { Grouped: true })
+        {
+            Interlocked.Increment(ref GroupedCommits);
+            Interlocked.Add(ref GroupedCommands, commands.Length);
+        }
+
+        var worked = false;
+        for (var i = 0; i < items.Length; i++)
+        {
+            var outcome = reply.Value is { } group ? group.Outcomes[i]
+                : StoreReply<ScheduleMaterialization>.NoEffect(reply.Status, reply.Error!, reply.DecidedAt);
+            worked |= await ObserveMaterializationAsync(store, items[i], outcome, readStarted, acknowledgedAt, ct).ConfigureAwait(false);
+        }
+
+        return worked;
+    }
+
+    async ValueTask<(StoreCommand<MaterializeRequest>? Command, bool Worked)> PrepareAsync(
+        IScheduleStore store, ScheduleSnapshot schedule, DateTimeOffset cutoff, CancellationToken ct)
+    {
         MaterializeRequest? plan;
         var evaluation = PhaseTimings.Start();
         try
@@ -403,7 +539,7 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         catch (ScheduleEvaluationException ex) when (ex.Class == EvaluationErrorClass.Deterministic)
         {
             PhaseTimings.Lap(evaluation, PhaseOperation, "evaluation");
-            return await RecordFailureAsync(store, schedule, ex.WireName, ex.Message, ct).ConfigureAwait(false);
+            return (null, await RecordFailureAsync(store, schedule, ex.WireName, ex.Message, ct).ConfigureAwait(false));
         }
         catch (ScheduleEvaluationException ex)
         {
@@ -415,13 +551,13 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
             }
 
             Telemetry.RunwickLog.ScheduleMaterializationFailed(_logger, schedule.Key, ex.WireName);
-            return false;
+            return (null, false);
         }
 
         PhaseTimings.Lap(evaluation, PhaseOperation, "evaluation");
         if (plan is null)
         {
-            return false;
+            return (null, false);
         }
 
         var allowance = PhaseTimings.Start();
@@ -430,20 +566,34 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         var command = new StoreCommand<MaterializeRequest>(Application, Guid.CreateVersion7(), _time.GetUtcNow() + ScheduleOperations.SchedulerLifetime, plan);
         Interlocked.Increment(ref MaterializationCommands);
         Interlocked.Add(ref PlannedOccurrences, plan.Occurrences.Count);
+        return (command, false);
+    }
+
+    async Task<bool> SendOneAsync(IScheduleStore store, PreparedMaterialization item, long readStarted, CancellationToken ct)
+    {
+        var command = item.Command;
         System.Diagnostics.Activity.Current = null;
         using var span = Telemetry.Telemetry.Span("runwick.schedule.materialize");
-        var reply = await SendAsync(() => store.MaterializeOccurrencesAsync(command, ct), command.CommandId, ct, timeMaterialization: true).ConfigureAwait(false);
+        var reply = await SendAsync(token => store.MaterializeOccurrencesAsync(command, token), command.CommandId, ct, timeMaterialization: true).ConfigureAwait(false);
+        span.Activity?.SetTag("runwick.schedule.result", Worker.WorkerEngine.Snake(reply.Status.ToString())).SetTag("runwick.schedule.occurrences", command.Body.Occurrences.Count);
+        return await ObserveMaterializationAsync(store, item, reply, readStarted, _time.GetUtcNow(), ct).ConfigureAwait(false);
+    }
+
+    async ValueTask<bool> ObserveMaterializationAsync(IScheduleStore store, PreparedMaterialization item,
+        StoreReply<ScheduleMaterialization> reply, long readStarted, DateTimeOffset acknowledgedAt, CancellationToken ct)
+    {
+        var plan = item.Command.Body;
+        var schedule = item.Schedule;
         if (reply.Error?.Code == "revision_conflict")
         {
             Interlocked.Increment(ref RevisionConflicts);
         }
-        span.Activity?.SetTag("runwick.schedule.result", Worker.WorkerEngine.Snake(reply.Status.ToString())).SetTag("runwick.schedule.occurrences", plan.Occurrences.Count);
         if (reply is { Status: StoreStatus.Applied, Value: { } materialized })
         {
-            var now = _time.GetUtcNow();
             foreach (var due in plan.Occurrences)
             {
-                Telemetry.Telemetry.ScheduleMaterializationDelay.Record(Math.Max(0, (now - due.ScheduledAt).TotalSeconds));
+                Telemetry.Telemetry.ScheduleMaterializationDelay.Record(Math.Max(0, (acknowledgedAt - due.ScheduledAt).TotalSeconds));
+                AcknowledgedOccurrence?.Invoke(plan.ScheduleId, due.ScheduledAt, acknowledgedAt);
             }
 
             foreach (var occurrence in materialized.Occurrences)
@@ -464,7 +614,7 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
                 Interlocked.Increment(ref Materializations);
                 if (plan.After is { NextDueAt: not null, ReviewReason: null })
                 {
-                    NoteNextScan(plan.ScheduleId, plan.After.ScanAfterAt, cutoff, readStarted);
+                    NoteNextScan(plan.ScheduleId, plan.After.ScanAfterAt, plan.Cutoff, readStarted);
                 }
 
                 return true;
@@ -484,7 +634,7 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         var trimmed = detail is { Length: > 512 } ? detail[..512] : detail;
         var command = new StoreCommand<EvaluationFailureRequest>(Application, Guid.CreateVersion7(), _time.GetUtcNow() + ScheduleOperations.SchedulerLifetime,
             new EvaluationFailureRequest(schedule.ScheduleId, schedule.DefinitionRevision, code, trimmed, actor));
-        var reply = await SendAsync(() => store.RecordEvaluationFailureAsync(command, ct), command.CommandId, ct).ConfigureAwait(false);
+        var reply = await SendAsync(token => store.RecordEvaluationFailureAsync(command, token), command.CommandId, ct).ConfigureAwait(false);
         if (reply.Status == StoreStatus.Applied)
         {
             Telemetry.RunwickLog.ScheduleNeedsReview(_logger, schedule.Key, code);
@@ -498,9 +648,9 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
     /// Sends one command; an unknown outcome re-sends the same command (same ID and body, so a committed effect replays)
     /// until the resolution budget ends. A new command is never minted for the same plan (13 §4.1).
     /// </summary>
-    async Task<StoreReply<T>> SendAsync<T>(Func<Task<StoreReply<T>>> send, Guid commandId, CancellationToken ct, bool timeMaterialization = false) where T : class
+    async Task<StoreReply<T>> SendAsync<T>(Func<CancellationToken, Task<StoreReply<T>>> send, Guid commandId, CancellationToken ct, bool timeMaterialization = false) where T : class
     {
-        var deadline = _time.GetUtcNow() + ResolutionBudget;
+        var started = _time.GetTimestamp();
         var delay = TimeSpan.FromMilliseconds(100);
         var materialization = timeMaterialization ? PhaseTimings.Start() : 0;
         long resolution = 0;
@@ -509,21 +659,23 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
             try
             {
                 using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                budget.CancelAfter(RequestBudget);
-                var reply = await send().WaitAsync(budget.Token).ConfigureAwait(false);
+                var remaining = ResolutionBudget - _time.GetElapsedTime(started);
+                budget.CancelAfter(remaining <= TimeSpan.Zero ? TimeSpan.Zero : remaining < RequestBudget ? remaining : RequestBudget);
+                var reply = await send(budget.Token).ConfigureAwait(false);
                 PhaseTimings.Lap(materialization, PhaseOperation, "materialization");
                 PhaseTimings.Lap(resolution, PhaseOperation, "outcomeResolution");
                 return reply;
             }
-            catch (Exception ex) when (ex is StoreOutcomeUnknownException or StoreUnavailableException or TimeoutException
-                || (ex is OperationCanceledException && !ct.IsCancellationRequested))
+            catch (Exception ex) when (ex is StoreOutcomeUnknownException or StoreNotAppliedException or StoreUnavailableException or TimeoutException or OperationCanceledException)
             {
+                ct.ThrowIfCancellationRequested();
                 if (resolution == 0 && timeMaterialization)
                 {
                     resolution = PhaseTimings.Start();
                 }
 
-                if (_time.GetUtcNow() >= deadline)
+                var remaining = ResolutionBudget - _time.GetElapsedTime(started);
+                if (remaining <= delay)
                 {
                     PhaseTimings.Lap(materialization, PhaseOperation, "materialization");
                     PhaseTimings.Lap(resolution, PhaseOperation, "outcomeResolution");

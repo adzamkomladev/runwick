@@ -6,6 +6,11 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-11, grouped schedule materialization)
+
+- Migration `0022_schedule_groups`, schema revision 22, adds a shared materialization body for the driver-owned single and grouped entry points. Each item uses the existing `MaterializeOccurrences/1` fingerprint, receipt, deadline and decision time. The group takes its application gate once, then locks receipts by command ID and schedules by schedule ID, and inserts jobs by job ID. A refused item rolls back to its savepoint. A transaction failure rolls back the group and the caller can resend the same commands, including after a lost reply.
+- Set `SchedulerOptions.GroupMaterializations` to enable grouping on PostgreSQL. The scheduler sends at most two batches concurrently, with up to four independent single-occurrence plans and 2 MiB of combined job payload per batch. Serialized or keyed schedules, schedules with scopes or rates, and plans that change catch-up, review or resume state use the single path.
+
 ## Changes (2026-11-11, direct dispatch wakes)
 
 - Migration `0021_client_wake`, schema revision 21, adds `dispatch_v4` and `rw_dispatch_core_v4` for driver-owned `Dispatch/1` and `DispatchMany/1`. Version 4 preserves the writes, receipts and decision time of version 3. The manifest changes only its schema revision. Staging, outbox delivery, scheduling and management dispatch use the version 3 core and its transactional wake.

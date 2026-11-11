@@ -65,6 +65,9 @@ public sealed class SchedulerOptions
     public int JobsPerSecond { get; set; } = 100;
 
     public int Burst { get; set; } = 32;
+
+    /// <summary>Group independent single-occurrence plans on stores that support it. Defaults to disabled.</summary>
+    public bool GroupMaterializations { get; set; }
 }
 
 /// <summary>Registration of the scheduler role and of schedules (13 §2). Preview in M3.</summary>

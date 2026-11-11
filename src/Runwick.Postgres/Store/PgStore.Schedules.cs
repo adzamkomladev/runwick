@@ -11,7 +11,7 @@ namespace Runwick.Postgres.Store;
 /// catch-up resolution, evaluation failures and revalidation. The store never runs the evaluator; every cursor move
 /// is the caller's plan, checked against the locked row's revisions, the high-water mark and fresh time (13 [choice] 1).
 /// </summary>
-internal sealed partial class PgStore : IScheduleStore
+internal sealed partial class PgStore : IScheduleStore, IScheduleGroupStore
 {
     /// <summary>The actor of system schedule commands (13 C-6).</summary>
     internal static readonly ControlActor SchedulerActor = new("svc:scheduler", "Runwick scheduler", "runwick", null);
@@ -483,6 +483,15 @@ internal sealed partial class PgStore : IScheduleStore
 
     public async Task<StoreReply<ScheduleMaterialization>> MaterializeOccurrencesAsync(StoreCommand<MaterializeRequest> command, CancellationToken ct)
     {
+        var (prepared, rejected) = await PrepareMaterializationAsync(command, ct).ConfigureAwait(false);
+        return prepared is null ? rejected! : await runner.CallAsync(prepared.Operation, prepared.Call, MapMaterialization, ct).ConfigureAwait(false);
+    }
+
+    sealed record MaterializationCall(PgOp Operation, PgCall Call, int? GroupPayloadBytes);
+
+    async ValueTask<(MaterializationCall? Prepared, StoreReply<ScheduleMaterialization>? Rejected)> PrepareMaterializationAsync(
+        StoreCommand<MaterializeRequest> command, CancellationToken ct)
+    {
         var r = command.Body;
         var ascending = r.Occurrences.Zip(r.Occurrences.Skip(1)).All(p => p.First.ScheduledAt < p.Second.ScheduledAt);
         var invalid = (r.Occurrences.Count > ScheduleBounds.MaxBatch ? "occurrences" : null)
@@ -492,7 +501,7 @@ internal sealed partial class PgStore : IScheduleStore
             ?? (r.AuditRanges.Any(a => a.Reason is not ("misfire_skip" or "run_once_covered" or "skipped_paused" or "catch_up_skipped")) ? "auditRanges" : null);
         if (invalid is not null)
         {
-            return Invalid<ScheduleMaterialization>(StoreStatus.InvalidRequest, "invalid_request", invalid);
+            return (null, Invalid<ScheduleMaterialization>(StoreStatus.InvalidRequest, "invalid_request", invalid));
         }
 
         var fp = await FingerprintAsync(command, ScheduleOperations.MaterializeOccurrences, ScheduleEnvelopes.Materialize(r), ct).ConfigureAwait(false);
@@ -501,9 +510,15 @@ internal sealed partial class PgStore : IScheduleStore
         // The jobs are built here from the definition at the expected revision (immutable per revision); the function
         // checks the plan against the locked row before it uses them, so items from a stale revision are never used.
         var items = new List<DispatchItem>();
+        int? groupPayloadBytes = null;
         if (r.Occurrences.Count > 0 && await DefinitionAtAsync(command.Application, r.ScheduleId, r.ExpectedDefinitionRevision, ct).ConfigureAwait(false)
                 is { } d)
         {
+            if (ScheduleBounds.CanGroup(d.Definition, r))
+            {
+                groupPayloadBytes = d.Definition.Template.PayloadUtf8.Length;
+            }
+
             var storeId = runner.StoreId ?? throw new InvalidOperationException("Describe has not run yet.");
             var notAfterMs = PgTime.Ms(op.NotAfter);
             items.AddRange(r.Occurrences.Select(o => d.Definition.Template.ToItem(storeId, command.Application, command.CommandId, notAfterMs,
@@ -514,7 +529,7 @@ internal sealed partial class PgStore : IScheduleStore
         static DateTime? T(DateTimeOffset? t) => t?.UtcDateTime;
         const NpgsqlDbType A = NpgsqlDbType.Array;
         var a = r.After;
-        var call = new PgCall("materialize_occurrences_v3")
+        var call = new PgCall("materialize_occurrences_v4")
             .P("p_schedule_id", r.ScheduleId).P("p_expected_definition", r.ExpectedDefinitionRevision)
             .P("p_expected_control", r.ExpectedControlRevision).P("p_expected_cursor", r.ExpectedCursorRevision)
             .P("p_expected_episode", r.ExpectedEpisodeId).P("p_cutoff", r.Cutoff).P("p_max_plan_bytes", (long)ScheduleBounds.MaxPlanPayloadBytes)
@@ -535,7 +550,7 @@ internal sealed partial class PgStore : IScheduleStore
             call.P(name, value, type);
         }
 
-        return await runner.CallAsync(op, call, MapMaterialization, ct).ConfigureAwait(false);
+        return (new MaterializationCall(op, call, groupPayloadBytes), null);
     }
 
     /// <summary>The refusals the statement path reported at the client's clock (no decision time from the store).</summary>
