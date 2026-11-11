@@ -418,7 +418,17 @@ The isolated D2 candidate batches ready PostgreSQL delivered marks behind the cu
 
 One pair used 30 seconds of warm-up, 60 seconds of measurement, four relay slots and 100 offered messages/s. Confirmed deliveries rose from 42.75 to 50.04/s during measurement, and ready-to-confirm p99 moved from 86.71 to 69.81 s. The candidate grouped 624 of 8,984 marks into 302 commits. It used 8,662 applied mark commits, 3.6% fewer than a commit per delivered message. Both arms eventually delivered every staged message with one destination mapping, zero blocked messages and no remaining backlog. The baseline and candidate recorded 12 and 15 relay lease losses. The candidate shared the host with the Contract suite. This is a directional pair, both P-09 gates remain open, and the candidate stays isolated. Raw results and the runner are under `artifacts/perf/round-two/p09-d2/`.
 
-The source already claims up to the relay's free slots. During the D2 pair's measurement windows, 2,029 and 2,318 claim calls averaged 25.4 and 22.4 ms. Source claim lane wait averaged 0.021 and 0.003 ms. Destination function and commit together averaged 43.6 and 35.1 ms. The next D3 comparison varies relay slots on the existing batched claim path and holds source lanes constant. Runner is under `artifacts/perf/round-two/p09-d3-slots/`.
+The source already claims up to the relay's free slots. During the D2 pair's measurement windows, 2,029 and 2,318 claim calls averaged 25.4 and 22.4 ms. Source claim lane wait averaged 0.021 and 0.003 ms. Destination function and commit together averaged 43.6 and 35.1 ms.
+
+The D3 slot diagnostic kept the production D1 path, source lanes, eight staging callers, 100 offers/s, 30 seconds of warm-up and 60 seconds of measurement. It used PostgreSQL 18.6 and one run per slot count.
+
+| Relay slots | Staged/s | Confirmed deliveries/s | Ready-to-confirm p95 / p99 | Relay lease losses |
+|---:|---:|---:|---:|---:|
+| 4 | 100.55 | 49.25 | 64.98 / 65.51 s | 12 |
+| 8 | 100.53 | 101.20 | 3.85 / 4.09 s | 22 |
+| 16 | 100.49 | 100.49 | 3.16 / 3.33 s | 54 |
+
+Every staged message reached one destination mapping and job. No run left a blocked, pending or leased message after drain. The eight- and sixteen-slot runs met the rate target and missed the 2 s p99 gate. Mean source claim lane wait was below 0.02 ms in every run. At sixteen slots, mean destination commit and delivered-mark calls increased to 32.3 and 56.8 ms from 17.9 and 15.0 ms at eight slots. This directional sweep keeps the default relay settings and points to settlement contention as slot count increases. Raw results and runner are under `artifacts/perf/round-two/p09-d3-slots/`.
 
 ## Worker payload decoding
 
