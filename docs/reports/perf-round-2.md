@@ -102,7 +102,7 @@ The controlled-clock S0 regression materialized only 32 of 33 simultaneous sched
 
 A shortened P-06s pair used PostgreSQL 18.6, 1,000 schedules, the default 100 jobs/s scheduler allowance, 2 minutes of warm-up, 2.1 minutes of measurement and a 60-second lag tail. The measured interval crossed three minute boundaries on S0 and two on S1. Both runs materialized every expected occurrence. There were zero censored occurrences and zero correctness violations. Catch-up workload qualification is still pending.
 
-| Scheduled time to durable materialization | S0 | S1 |
+| Scheduled time to recorded materialization | S0 | S1 |
 |---|---:|---:|
 | Materialized / expected | 3,000 / 3,000 | 2,000 / 2,000 |
 | p50 | 27.80 s | 15.21 s |
@@ -118,7 +118,7 @@ dotnet "$scheduler_workload_dll" run P-06s --out "$output" \
   --warmup-min 2 --measure-min 2.1 --lag-tail-s 60 --catchup-occurrences 0
 ```
 
-Raw results, start/load logs, the baseline instrumentation patch and binary checksums are under `artifacts/perf/round-two/p06s/`.
+The fixture reconciles committed occurrence rows after the run. Its lag uses `materialized_at`, assigned inside the transaction before COMMIT. A post-commit measurement is needed to qualify a run close to the 13 s gate. Raw results, start/load logs, the baseline instrumentation patch and binary checksums are under `artifacts/perf/round-two/p06s/`.
 
 An isolated S2 prototype retained one evaluator and one 100 jobs/s allowance, with at most one pending command per schedule. A single 1/2/4 sweep used the same Release binary, 1,000 schedules, 2 minutes of warm-up, 2 minutes of measurement and a 60-second tail. Each run materialized all 2,000 expected occurrences with zero censoring, duplicates, lease losses or correctness violations.
 
