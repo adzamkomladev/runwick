@@ -190,6 +190,12 @@ Five alternating pairs offered three jobs/s for 15 seconds with 16 worker slots.
 
 An isolated build used one completion consumer to give ready finishes time to collect behind the previous call. Five paired 1,000-job drains with 16 workers reduced median committed settlement calls from 289 to 183 and total writer commits from 442 to 376. Median throughput was 101.6 jobs/s with four consumers and 104.4 with one. The median paired gain was 3.9%, and individual pairs varied from a 16.6% drop to a 39.9% gain. Production uses four completion consumers. The next finish experiment should account for transaction body cost and protect unrelated finishes during receipt resolution.
 
+A follow-up left the completion consumers in place and grouped adjacent standalone SQLite `Finish` calls on the existing writer. Each command retained its own deadline, receipt and savepoint and completed after the shared commit. The queue still gave renewal priority, and staged finishes and `FinishMany` used their existing paths. Five focused Release tests passed, including scoped jobs, stale and expired items, rollback, cancellation and replay after a lost reply.
+
+Five alternating 60-second pairs used 100 offers/s, 16 caller and worker slots, and copies of the same 5,000-terminal-job fixture. All accepted jobs settled once in every arm, and the writer reported zero exhausted busy waits. Median settlement commits fell from 489 to 348 per 1,000 completions, with reductions in all pairs. The paired median reduction was 30.1%. Median settlement statement and commit time fell from 3.84 to 3.25 ms per completed job.
+
+The median paired completion-rate change during offers was −1.18/s, ranging from −37.10 to +2.83/s. The paired median due-to-handler p99 change was +255 ms. In the slowest candidate arm, dispatch and finish commits both slowed and 2,204 of 6,000 offers were refused. The sampler saw no overlapping test, build or benchmark. The runtime change stays isolated because the throughput and tails cross the acceptance band. Raw data and the patch are under `artifacts/perf/round-two/sqlite-finish-group/`.
+
 ## Scheduler
 
 The controlled-clock S0 regression materialized only 32 of 33 simultaneous schedules after 500 ms. With S1 the next page completes without waiting for the poll interval. A bounded keyset scan also reaches later eligible rows past a full page that cannot progress. The Release scheduling suite passed 174/174, and PostgreSQL, Redis and SQLite schedule contracts passed 68/68.
