@@ -295,6 +295,8 @@ A separate PostgreSQL 18.6 diagnostic used sampled nested `auto_explain` with bu
 
 The rerun retained the full log. It settled all 5,000 jobs once and recorded 2.88 million entries returned by `jobs_name_list`. Of 21 sampled uses of that index, nine came from the plain finish function, nine from the combined claim's payload fetch, and three from the finish batch's dispatch-key classification query. They used bitmap scans keyed only by application, despite the small sets of requested job IDs. This points to keyed joins in those paths before changing the dashboard index. The full log and per-plan attribution are under `artifacts/perf/round-two/postgres-nested-full/`.
 
+An isolated C1 candidate binds only the claim payload's job-row lookup to each returned job ID, preserving the batched payload scan. A PostgreSQL 18.6 fixture reproduced the stale-statistics plan. For 11 requested IDs, it moved from scanning 4,813 job entries to 11 keyed lookups and from 4,831 to 56 shared buffer hits. The healthy generic 32-item plan stayed at 139 hits. A 12-item replay moved from 72 to 59. All 15 focused PostgreSQL claim and migration tests and 12 claim and worker-batch contracts passed. A paired drain comparator is prepared under `artifacts/perf/round-two/postgres-c1-payload/`.
+
 ## Redis Phase 0
 
 A dedicated Redis 8.2.11 server used `appendonly yes`, `appendfsync always` and `noeviction`. A healthy store published both test batches, but each went through intent recovery. The probe measured intent shape with a separate injected interruption after intent storage. The traces shown here came from fault-free submissions.
