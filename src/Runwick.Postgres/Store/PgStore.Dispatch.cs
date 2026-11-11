@@ -8,22 +8,56 @@ namespace Runwick.Postgres.Store;
 
 internal sealed partial class PgStore
 {
-    // Dispatch/1 and DispatchMany/1, direct or staged, run in runwick.dispatch_v2 (04 §7.2): steps 2-10 are the shared
-    // runwick.rw_dispatch_core_v3, which ReceiveOutbox/1 and the schedule operations reach as well.
+    // Direct calls use dispatch_v4 and can publish a wake after commit. Staged calls use dispatch_v3 and its
+    // transactional wake, as do the outbox, management and schedule paths through rw_dispatch_core_v3 (04 §7.2).
 
-    public Task<StoreReply<DispatchResult>> DispatchAsync(StoreCommand<DispatchRequest> command, CancellationToken ct) =>
-        runner.CallAsync(DispatchOp(command), DispatchCall([command.Body.Item], many: false, continueOnConflict: false), MapDispatch, ct);
+    public async Task<StoreReply<DispatchResult>> DispatchAsync(StoreCommand<DispatchRequest> command, CancellationToken ct)
+    {
+        var reply = await runner.CallAsync(DispatchOp(command), DispatchCall([command.Body.Item], many: false, continueOnConflict: false),
+            MapDispatch, ct).ConfigureAwait(false);
+        var item = command.Body.Item;
+        if (reply.Status == StoreStatus.Applied && !reply.Replayed && IsDueCreated(item, reply.Value, PgTime.Ms(reply.DecidedAt)))
+        {
+            sources.WakeDispatch(command.Application, item.Intent.Queue);
+        }
 
-    public Task<StoreReply<DispatchBatchResult>> DispatchManyAsync(StoreCommand<DispatchBatchRequest> command, CancellationToken ct) =>
-        runner.CallAsync(DispatchManyOp(command), DispatchCall(command.Body.Items, many: true, command.Body.ContinueOnConflict), MapDispatchMany, ct);
+        return reply;
+    }
+
+    public async Task<StoreReply<DispatchBatchResult>> DispatchManyAsync(StoreCommand<DispatchBatchRequest> command, CancellationToken ct)
+    {
+        var items = command.Body.Items;
+        var reply = await runner.CallAsync(DispatchManyOp(command), DispatchCall(items, many: true, command.Body.ContinueOnConflict),
+            MapDispatchMany, ct).ConfigureAwait(false);
+        if (reply.Status == StoreStatus.Applied && !reply.Replayed && reply.Value is { } value)
+        {
+            var decidedMs = PgTime.Ms(reply.DecidedAt);
+            HashSet<string>? queues = null;
+            foreach (var outcome in value.Items)
+            {
+                var item = items[outcome.Ordinal];
+                if (IsDueCreated(item, outcome.Result, decidedMs) && (queues ??= new(StringComparer.Ordinal)).Add(item.Intent.Queue))
+                {
+                    sources.WakeDispatch(command.Application, item.Intent.Queue);
+                }
+            }
+        }
+
+        return reply;
+    }
+
+    static bool IsDueCreated(DispatchItem item, DispatchResult? result, long decidedMs) =>
+        result?.Disposition == DispatchDisposition.Created && (item.Intent.NotBeforeMs is not { } notBefore || notBefore <= decidedMs);
 
     /// <summary>Dispatch/1 on a caller-owned transaction (01 §15, 04 §6.1).</summary>
     public Task<StoreReply<DispatchResult>> StageDispatchAsync(NpgsqlTransaction transaction, StoreCommand<DispatchRequest> command, CancellationToken ct) =>
-        runner.StageCallAsync(transaction, DispatchOp(command), DispatchCall([command.Body.Item], many: false, continueOnConflict: false), MapDispatch, ct);
+        runner.StageCallAsync(transaction, DispatchOp(command), DispatchCall([command.Body.Item], many: false, continueOnConflict: false, staged: true),
+            MapDispatch, ct);
 
     /// <summary>DispatchMany/1 on a caller-owned transaction.</summary>
     public Task<StoreReply<DispatchBatchResult>> StageDispatchManyAsync(NpgsqlTransaction transaction, StoreCommand<DispatchBatchRequest> command, CancellationToken ct) =>
-        runner.StageCallAsync(transaction, DispatchManyOp(command), DispatchCall(command.Body.Items, many: true, command.Body.ContinueOnConflict), MapDispatchMany, ct);
+        runner.StageCallAsync(transaction, DispatchManyOp(command), DispatchCall(command.Body.Items, many: true, command.Body.ContinueOnConflict, staged: true),
+            MapDispatchMany, ct);
 
     PgOp DispatchOp(StoreCommand<DispatchRequest> command) =>
         Op(command.Application, command.CommandId, Operations.Dispatch, command.NotAfter, command.Body.CommandFingerprint, PgLane.Producer, command.Body.StoreId);
@@ -31,9 +65,9 @@ internal sealed partial class PgStore
     PgOp DispatchManyOp(StoreCommand<DispatchBatchRequest> command) =>
         Op(command.Application, command.CommandId, Operations.DispatchMany, command.NotAfter, command.Body.CommandFingerprint, PgLane.Producer, command.Body.StoreId);
 
-    static PgCall DispatchCall(IReadOnlyList<DispatchItem> items, bool many, bool continueOnConflict)
+    static PgCall DispatchCall(IReadOnlyList<DispatchItem> items, bool many, bool continueOnConflict, bool staged = false)
     {
-        var call = new PgCall("dispatch_v3").P("p_many", many).P("p_continue", continueOnConflict);
+        var call = new PgCall(staged ? "dispatch_v3" : "dispatch_v4").P("p_many", many).P("p_continue", continueOnConflict);
         foreach (var (name, value, type) in DispatchArgs(items))
         {
             call.P(name, value, type);
@@ -73,7 +107,7 @@ internal sealed partial class PgStore
         return null;
     }
 
-    /// <summary>The items of runwick.rw_dispatch_core_v3 as parallel arrays, one element per item in ordinal order.</summary>
+    /// <summary>The items of rw_dispatch_core_v3 and rw_dispatch_core_v4 as parallel arrays in ordinal order.</summary>
     static IEnumerable<(string Name, object? Value, NpgsqlDbType Type)> DispatchArgs(IReadOnlyList<DispatchItem> items)
     {
         const NpgsqlDbType A = NpgsqlDbType.Array;
@@ -111,8 +145,8 @@ internal sealed partial class PgStore
 
     /// <summary>
     /// Steps 2-10 of 04 §7.2 inside a statement-path transaction (the schedule operations that stay on statements): one
-    /// statement that runs runwick.rw_dispatch_core_v3, so there is one dispatch implementation. Its writes count as one
-    /// mutation step; the decision time it read becomes this transaction's.
+    /// statement that runs runwick.rw_dispatch_core_v3 with a transactional wake. Its writes count as one mutation step,
+    /// and the decision time it read becomes this transaction's.
     /// </summary>
     async Task<DispatchOutcome> DispatchCoreAsync(PgTx tx, IReadOnlyList<DispatchItem> items, bool continueOnConflict,
         string createdReason = "initial")

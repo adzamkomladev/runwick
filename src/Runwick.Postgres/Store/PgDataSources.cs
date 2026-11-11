@@ -16,7 +16,7 @@ internal enum PgLane
 /// Runwick-owned data sources and their call-class gates (04 §9): control 8; work = admission 4 + producer/admin
 /// (<c>ProducerOptions.MaxConcurrentCalls</c>, default 8) + background 2, so V-16 holds by construction.
 /// </summary>
-internal sealed class PgDataSources : IAsyncDisposable
+internal sealed partial class PgDataSources : IAsyncDisposable
 {
     /// <summary>Idle connections the control pool keeps open (04 §9.2, PF-03); half the settlement lane since 2026-11-07.</summary>
     internal const int ControlWarm = 2;
@@ -161,6 +161,7 @@ internal sealed class PgDataSources : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         Live.TryRemove(this, out _);
+        await StopDispatchWakesAsync().ConfigureAwait(false);
         if (_control.IsValueCreated)
         {
             await _control.Value.DisposeAsync().ConfigureAwait(false);

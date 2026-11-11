@@ -6,6 +6,11 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-11, direct dispatch wakes)
+
+- Migration `0021_client_wake`, schema revision 21, adds `dispatch_v4` and `rw_dispatch_core_v4` for driver-owned `Dispatch/1` and `DispatchMany/1`. Version 4 preserves the writes, receipts and decision time of version 3. The manifest changes only its schema revision. Staging, outbox delivery, scheduling and management dispatch use the version 3 core and its transactional wake.
+- After a confirmed commit, the driver offers one wake hint for each queue with a newly created job due at the original database decision time. Each data source keeps up to 100 distinct pending application/queue hints and one send in flight, with at least 100 ms between sends. A send uses one available background slot and a one-second I/O budget. Saturation, a failed send, shutdown or a lost commit reply can drop the hint. The dispatch receipt and worker polling provide the durable result and discovery, respectively.
+
 ## Changes (2026-11-10, exact stats)
 
 - Migration `0020_stats_indexes`, schema revision 20: two plain indexes, no function and no data change (`lock_timeout` 5 s, as the other index migrations).
@@ -138,7 +143,7 @@ Server functions (docs/proposals/pf-05-server-functions.md, decisions §11). Sto
 
 Replaces §5 "Notification: … LISTEN/NOTIFY is not in M2". Polling remains sufficient for correctness; notifications are an optional wake hint (05 Changes 2026-11-02, PF-07). No migration, no new operation, no new round trip.
 
-- **Work channel `runwick_wake`.** The Dispatch core (driver-owned Dispatch/DispatchMany, staged dispatch, `ReceiveOutbox/1` and schedule materialization all share it) appends `pg_notify('runwick_wake', application || '/' || queue)` for each distinct queue with a created job eligible now (no `NotBefore`, or one at or before the decision time). It rides in the step-9 events statement as a CTE, so PERF-01 counts are unchanged. PostgreSQL delivers it only when the transaction commits (a staged dispatch: the caller's COMMIT), and folds identical payloads of one transaction. A rolled-back or delayed dispatch never notifies.
+- **Work channel `runwick_wake`.** A wake names the application and queue as `application || '/' || queue`. Staging, `ReceiveOutbox/1`, schedule materialization and management dispatch notify transactionally for distinct queues with newly created jobs eligible at the decision time. PostgreSQL delivers these hints on the corresponding commit and folds identical payloads in the same transaction. Driver-owned `Dispatch/1` and `DispatchMany/1` offer best-effort hints after their commit, as described in Changes 2026-11-11.
 - **Schedule channel `runwick_schedule`.** A newly inserted schedule row (RegisterSchedule `created`), UpdateSchedule and SetScheduleState notify `application || '/' || schedule_key`, inside their existing statements (13 Changes 2026-11-02, PF-07).
 - **Session.** One dedicated unpooled connection per listening component (worker, scheduler), application name `<prefix>:listen`, `KeepAlive` 15 s, no auto-prepare. It is the 05 §18 / 06 "Optional listener" session: per worker process the budget becomes control 8 + work 10 + 1 listener (06 F-13).
 - **Cost under load.** A committing transaction that notified takes PostgreSQL's notify-queue lock briefly at commit, so notifying commits serialize on it. Dispatches that create no eligible-now job (delayed, deduplicated, rejected) do not notify and pay nothing.

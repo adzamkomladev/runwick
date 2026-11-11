@@ -22,6 +22,11 @@ public sealed class WakeNotificationTests
 
     static readonly TimeSpan Wait = TimeSpan.FromSeconds(90);
 
+    sealed class AheadOfDatabaseClock : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow.AddMinutes(2);
+    }
+
     sealed class Listener : IAsyncDisposable
     {
         readonly NpgsqlConnection _conn;
@@ -60,7 +65,7 @@ public sealed class WakeNotificationTests
     public async Task A_committed_dispatch_notifies_its_queue_and_a_rolled_back_or_delayed_one_does_not()
     {
         await using var f = await DriverFixture.StartAsync(Ns("wake01"));
-        var c = await f.OpenClient(configure: r => TestJobs.Register(r));
+        var c = await f.OpenClient(configure: r => TestJobs.Register(r), time: new AheadOfDatabaseClock());
         await using var listener = await Listener.StartAsync(f);
         var prefix = f.Application + "/";
 
@@ -72,17 +77,28 @@ public sealed class WakeNotificationTests
             await tx.RollbackAsync();
         }
 
-        // Delayed: nothing is eligible now, so nothing is notified (polling finds it when due).
-        await c.Dispatcher.DispatchAsync(new PingJob("later"), new DispatchOptions { NotBefore = DateTimeOffset.UtcNow.AddHours(1) });
+        // The job appears due on the client clock, but is still in the future at the database decision time.
+        var delayed = new DispatchOptions { NotBefore = DateTimeOffset.UtcNow.AddMinutes(1) };
+        await c.Dispatcher.DispatchAsync(new KeyedJob("later", "future"), delayed);
+        var batch = await c.Dispatcher.DispatchManyAsync([
+            new BatchDispatchItem(new KeyedJob("reused", "future")),
+            new BatchDispatchItem(new PingJob("later-in-batch"), delayed),
+        ]);
+        Assert.Equal(DispatchDisposition.Reused, batch.Items[0].Receipt!.Disposition);
+        Assert.Equal(DispatchDisposition.Created, batch.Items[1].Receipt!.Disposition);
         await listener.PumpAsync(TimeSpan.FromSeconds(2));
         Assert.DoesNotContain(listener.Payloads, p => p.StartsWith(prefix, StringComparison.Ordinal));
 
         // Committed, driver-owned: one notification naming the job's queue.
-        var now = await c.Dispatcher.DispatchAsync(new PingJob("now"));
+        var prepared = c.Prepared.Prepare(new PingJob("now"));
+        var now = await c.Prepared.DispatchAsync(prepared);
         const string queue = "default";
         Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE job_id = @j AND queue = @q", ("j", now.JobId.Value), ("q", queue)));
         await listener.PumpAsync(TimeSpan.FromSeconds(10), () => listener.Payloads.Any(p => p.StartsWith(prefix, StringComparison.Ordinal)));
         Assert.Equal([prefix + queue], listener.Payloads.Where(p => p.StartsWith(prefix, StringComparison.Ordinal)));
+
+        // Replaying the immediate creation keeps its original receipt. The next listener pump must still see one wake.
+        Assert.Equal(now.JobId, (await c.Prepared.DispatchAsync(prepared)).JobId);
 
         // Committed, staged: notified by the caller's COMMIT, not before.
         await using (var conn = await OpenBusinessAsync(f))
@@ -97,6 +113,40 @@ public sealed class WakeNotificationTests
 
         await listener.PumpAsync(TimeSpan.FromSeconds(10), () => listener.Payloads.Count(p => p.StartsWith(prefix, StringComparison.Ordinal)) >= 2);
         Assert.Equal(2, listener.Payloads.Count(p => p == prefix + queue));
+
+        await c.Dispatcher.DispatchManyAsync([
+            new BatchDispatchItem(new PingJob("first-due")),
+            new BatchDispatchItem(new PingJob("second-due")),
+            new BatchDispatchItem(new PingJob("future"), delayed),
+        ]);
+        await listener.PumpAsync(TimeSpan.FromSeconds(10), () => listener.Payloads.Count(p => p == prefix + queue) >= 3);
+        await listener.PumpAsync(TimeSpan.FromMilliseconds(500));
+        Assert.Equal(3, listener.Payloads.Count(p => p == prefix + queue));
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    [Trait("Case", "WAKE-01")]
+    public async Task A_failed_post_commit_wake_leaves_the_dispatch_and_receipt_durable()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var f = await DriverFixture.StartAsync(Ns("wake_failed"));
+        var c = await f.OpenClient(configure: r => TestJobs.Register(r));
+        var attempted = new TaskCompletionSource<string[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        c.Store.Sources.SendDispatchWakesOverride = (payloads, _) =>
+        {
+            attempted.TrySetResult(payloads);
+            return Task.FromException(new IOException("Wake send failed."));
+        };
+
+        var prepared = c.Prepared.Prepare(new PingJob("committed"));
+        var accepted = await c.Prepared.DispatchAsync(prepared, ct);
+        Assert.Equal(DispatchDisposition.Created, accepted.Disposition);
+        Assert.Equal([f.Application + "/default"], await attempted.Task.WaitAsync(TimeSpan.FromSeconds(10), ct));
+        Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE job_id = @j", ("j", accepted.JobId.Value)));
+        var resolution = await c.Prepared.ResolveAsync(prepared.OperationId, ct);
+        Assert.Equal(DispatchResolutionStatus.Confirmed, resolution.Status);
+        Assert.Equal(accepted.JobId, resolution.Receipt!.JobId);
     }
 
     [Fact]
