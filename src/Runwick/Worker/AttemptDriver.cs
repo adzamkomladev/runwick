@@ -539,17 +539,7 @@ internal sealed partial class WorkerEngine
             }
 
             var wait = next == TimeSpan.MaxValue ? TimeSpan.FromSeconds(1) : Min(TimeSpan.FromSeconds(1), next - now);
-            using var cts = new CancellationTokenSource();
-            var changed = entry.Changed.WaitAsync(Clock, wait, cts.Token);
-            await Task.WhenAny(ended.Task, changed).ConfigureAwait(false);
-            await cts.CancelAsync().ConfigureAwait(false);
-            try
-            {
-                await changed.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-            }
+            await entry.Changed.WaitAsync(Clock, wait, completion: ended.Task).ConfigureAwait(false);
         }
 
         var observation = await ended.Task.ConfigureAwait(false);
@@ -561,14 +551,15 @@ internal sealed partial class WorkerEngine
         }
 
         entry.TryMove(AttemptPhase.CleaningUp);
-        var cleanupEnd = Clock.Now + Options.CleanupBudget;
-        if (Draining)
+        if (!cleaned.Task.IsCompleted)
         {
-            cleanupEnd = Min(cleanupEnd, ControlStopCutoff);
-        }
+            var cleanupEnd = Clock.Now + Options.CleanupBudget;
+            if (Draining)
+            {
+                cleanupEnd = Min(cleanupEnd, ControlStopCutoff);
+            }
 
-        using (var budget = new CancellationTokenSource())
-        {
+            using var budget = new CancellationTokenSource();
             var delay = Clock.Delay(cleanupEnd - Clock.Now, budget.Token);
             await Task.WhenAny(cleaned.Task, delay).ConfigureAwait(false);
             await budget.CancelAsync().ConfigureAwait(false);
