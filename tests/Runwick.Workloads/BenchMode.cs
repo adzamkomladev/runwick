@@ -37,6 +37,7 @@ namespace Runwick.Workloads;
 /// <c>--sqlite-profile-statements</c> groups native writer time by statement prefix for diagnosis.
 /// <c>--sqlite-hold-read</c> pins a read snapshot during a traced drain and measures checkpoint progress after releasing it.
 /// <c>--store-viewers</c> enables the co-hosted management sampler and polls the cached Store snapshot every five seconds per viewer during steady mode.
+/// <c>--store-warmup-seconds</c> lets the host sample before timing steady mode and primes snapshot serialization when viewers are enabled.
 /// Trace adds per-job stage gaps, held-job and settlement-queue samples, and store call phases. Writes the same JSON shape as the River and pg-boss
 /// benches: <c>system</c>, <c>mode</c>, <c>completionsPerSec</c>, <c>latencyMs {p50, p95, p99, max}</c> (steady).
 /// </summary>
@@ -102,9 +103,10 @@ internal static class BenchMode
         }
 
         var storeViewers = a.Int("store-viewers", 0);
-        if (storeViewers < 0 || (storeViewers > 0 && mode != "steady"))
+        var storeWarmupSeconds = a.Int("store-warmup-seconds", 0);
+        if (storeViewers < 0 || storeWarmupSeconds < 0 || ((storeViewers > 0 || storeWarmupSeconds > 0) && mode != "steady"))
         {
-            Console.Error.WriteLine("--store-viewers must be nonnegative and needs --mode steady");
+            Console.Error.WriteLine("--store-viewers and --store-warmup-seconds must be nonnegative and need --mode steady");
             return 2;
         }
 
@@ -545,6 +547,18 @@ internal static class BenchMode
         else
         {
             await hosted.StartAsync(CancellationToken.None).ConfigureAwait(false);
+            var session = storeViewers > 0 ? provider.GetRequiredService<IManagementSession>() : null;
+            var caller = storeViewers > 0 ? new ManagementCaller(new ManagementActor("svc:bench-store", null, "host"),
+                [new(ManagementPermissions.SettingsRead), new(ManagementPermissions.StoreDiagnosticsRead)]) : null;
+            if (storeWarmupSeconds > 0)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(storeWarmupSeconds)).ConfigureAwait(false);
+                if (session is not null)
+                {
+                    _ = await SerializeStoreSnapshotAsync().ConfigureAwait(false);
+                }
+            }
+
             var interval = TimeSpan.FromSeconds(1 / rate);
             var startTicks = clock.ElapsedTicks;
             var stopAt = clock.Elapsed + TimeSpan.FromSeconds(seconds);
@@ -619,6 +633,7 @@ internal static class BenchMode
             var elapsed = Ms(clock.ElapsedTicks - startTicks) / 1000;
             await viewers.ConfigureAwait(false);
             result["storeViewers"] = storeViewers;
+            result["storeWarmupSeconds"] = storeWarmupSeconds;
             result["storeSnapshotPolls"] = snapshots;
             result["storeSnapshotPollsWithDiagnostics"] = snapshotsWithDiagnostics;
             var s = latency.Summarize();
@@ -642,16 +657,12 @@ internal static class BenchMode
 
             async Task PollStoreAsync(int index)
             {
-                var session = provider.GetRequiredService<IManagementSession>();
-                var caller = new ManagementCaller(new ManagementActor("svc:bench-store", null, "host"),
-                    [new(ManagementPermissions.SettingsRead), new(ManagementPermissions.StoreDiagnosticsRead)]);
                 var interval = TimeSpan.FromSeconds(5);
                 await Task.Delay(interval * (index / (double)storeViewers)).ConfigureAwait(false);
                 while (clock.Elapsed < stopAt)
                 {
                     var started = Stopwatch.GetTimestamp();
-                    var snapshot = await session.GetStoreSnapshotAsync(caller).ConfigureAwait(false);
-                    _ = JsonSerializer.SerializeToUtf8Bytes(snapshot, JsonSerializerOptions.Web);
+                    var snapshot = await SerializeStoreSnapshotAsync().ConfigureAwait(false);
                     stages.Observe("management:storeSnapshot", Stopwatch.GetElapsedTime(started).TotalMilliseconds);
                     Interlocked.Increment(ref snapshots);
                     if (snapshot.Sqlite?.DatabaseFile.Status == StoreSnapshotStatus.Available ||
@@ -668,6 +679,13 @@ internal static class BenchMode
 
                     await Task.Delay(interval).ConfigureAwait(false);
                 }
+            }
+
+            async Task<ManagementStoreSnapshot> SerializeStoreSnapshotAsync()
+            {
+                var snapshot = await session!.GetStoreSnapshotAsync(caller!).ConfigureAwait(false);
+                _ = JsonSerializer.SerializeToUtf8Bytes(snapshot, JsonSerializerOptions.Web);
+                return snapshot;
             }
             result["latencySamples"] = s.Count;
         }

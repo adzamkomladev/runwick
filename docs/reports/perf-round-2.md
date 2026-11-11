@@ -373,6 +373,10 @@ One short P-09 pair used four relay slots at 100 offered messages/s, six seconds
 
 The baseline transport-record call averaged 20.14 ms, including 9.02 ms waiting for the source control lane. Starting host load averaged over one minute was 12.57 on the baseline and 7.71 on the candidate, so the throughput and latency effects are directional. The 100/s and 2 s p99 targets remain open. This pair disabled injected mark loss and used two relay source sessions in both runs. Raw results and the runner are under `artifacts/perf/round-two/p09-d1/`.
 
+The isolated D2 candidate batches ready PostgreSQL delivered marks behind the current mark. It locks rows in message-ID order, keeps each lease token and confirms applied IDs after the implicit transaction finishes. All 23 relay tests and four final targeted cases passed, including mixed lease tokens, deferred commit rejection, lost reply and queued-mark abort.
+
+One pair used 30 seconds of warm-up, 60 seconds of measurement, four relay slots and 100 offered messages/s. Confirmed deliveries rose from 42.75 to 50.04/s during measurement, and ready-to-confirm p99 moved from 86.71 to 69.81 s. The candidate grouped 624 of 8,984 marks into 302 commits. It used 8,662 applied mark commits, 3.6% fewer than a commit per delivered message. Both arms eventually delivered every staged message with one destination mapping, zero blocked messages and no remaining backlog. The baseline and candidate recorded 12 and 15 relay lease losses. The candidate shared the host with the Contract suite. This is a directional pair, both P-09 gates remain open, and the candidate stays isolated. Raw results and the runner are under `artifacts/perf/round-two/p09-d2/`.
+
 ## Worker payload decoding
 
 E1 uses the strict payload scanner without constructing canonical values before worker deserialization. The same scanner still builds the canonical form for fingerprints. All 102 focused boundary, serialization and wire tests passed, including rejection-code parity and the existing canonical vectors.
