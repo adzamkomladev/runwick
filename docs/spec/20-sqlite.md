@@ -182,9 +182,13 @@ Microsoft.Data.Sqlite runs its `…Async` methods synchronously. Each store inst
 | none (caller's thread) | caller's connection | Staging and transactional completion (§8) |
 | migration (§9) | 1 separate connection, opened and closed by the runner | Migrations only |
 
-Batches are single writes: `RenewMany/1` (renewal class), `FinishMany/1` (settlement class) and `ReserveAndBegin/1` (admission class) each run as **one** `BEGIN IMMEDIATE … COMMIT` on the writer thread, with one decision time read after the lock for every member, and one WAL sync at commit. The engine's batching (05, PF-06: which leases go into one `RenewMany`, which completions into one `FinishMany`, when a pool claims with `ReserveAndBegin`) is unchanged; the writer thread does not merge separate calls into one transaction.
+Batches are single writes: `RenewMany/1` (renewal class), `FinishMany/1` (settlement class) and `ReserveAndBegin/1` (admission class) each run as **one** `BEGIN IMMEDIATE … COMMIT` on the writer thread, with one decision time read after the lock for every member, and one WAL sync at commit.
 
 The call classes and ceilings of 04 §9.1 apply unchanged as admission limits (renewal 4, settlement 4, admission 4, producer/admin `MaxConcurrentCalls`, background 2), so `local_capacity_exceeded` and slot waits behave as on PostgreSQL. The writer thread takes queued writes highest class first: renewal → settlement → admission → producer/admin → background; first come first served within a class. A write is never interrupted once its `BEGIN IMMEDIATE` succeeded.
+
+When the writer takes a driver-owned `Dispatch/1`, it can include consecutive compatible calls already at the front of its queue. A group shares one application, expected store identity, and durable transaction. Collection waits zero time and stops at 8 calls or a 1 MiB conservative bound on their prepared envelopes. Larger calls run individually. `DispatchMany/1` and caller-owned transactions use their own transaction rules.
+
+Each grouped command reads its decision time after the lock and applies its own deadline, gates, fingerprint and receipt. A savepoint isolates each command's effects and is rolled back on rejection, replay or precommit failure. Releasing a successful command's savepoint hands it to the enclosing commit. Replies go out only after the enclosing commit or rollback, and an unknown commit outcome is resolved under each caller's original command ID. Group selection obeys the writer's existing priority order and a selected group runs as one write. The diagnostics meter records the number of dispatch commands committed per durable transaction.
 
 Awaiting callers get a `TaskCompletionSource` completed with `RunContinuationsAsynchronously`, so no caller continuation runs on a store thread. The lease watchdog (05) keeps its own timer; a writer stuck behind another process's lock delays a Renew reply, never the watchdog's local expiry.
 

@@ -102,7 +102,10 @@ internal static partial class PreparedEnvelopeCodec
 
     /// <summary>At least the byte length of <see cref="Write(PreparedDispatch)"/>.</summary>
     public static long UpperBound(PreparedDispatch prepared) =>
-        HeaderBound + Text(prepared.Application) + ItemUpperBound(prepared.Intent);
+        UpperBound(prepared.Application, prepared.Intent);
+
+    internal static long UpperBound(string application, DispatchIntent intent) =>
+        HeaderBound + Text(application) + ItemUpperBound(intent);
 
     /// <summary>At least the byte length of <see cref="Write(PreparedBatch)"/>.</summary>
     public static long UpperBound(PreparedBatch prepared) =>

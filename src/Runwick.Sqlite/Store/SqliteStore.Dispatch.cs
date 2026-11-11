@@ -21,7 +21,8 @@ internal sealed partial class SqliteStore
     internal static int ParameterLimit { get; set; } = MaxParameters;
 
     public Task<StoreReply<DispatchResult>> DispatchAsync(StoreCommand<DispatchRequest> command, CancellationToken ct) =>
-        runner.CallAsync(DispatchOp(command), tx => DispatchBody(tx, [command.Body.Item], many: false, continueOnConflict: false), MapDispatch, ct);
+        runner.DispatchAsync(DispatchOp(command), tx => DispatchBody(tx, [command.Body.Item], many: false, continueOnConflict: false),
+            MapDispatch, PreparedEnvelopeCodec.UpperBound(command.Application, command.Body.Item.Intent), ct);
 
     public Task<StoreReply<DispatchBatchResult>> DispatchManyAsync(StoreCommand<DispatchBatchRequest> command, CancellationToken ct) =>
         runner.CallAsync(DispatchManyOp(command), tx => DispatchBody(tx, command.Body.Items, many: true, command.Body.ContinueOnConflict), MapDispatchMany, ct);

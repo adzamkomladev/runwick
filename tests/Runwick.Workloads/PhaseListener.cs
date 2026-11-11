@@ -17,8 +17,14 @@ internal static class PhaseListener
                 }
             },
         };
-        listener.SetMeasurementEventCallback<double>((_, value, tags, _) =>
+        listener.SetMeasurementEventCallback<double>((instrument, value, tags, _) =>
         {
+            if (instrument.Name == "runwick.sqlite.dispatch.commit_size")
+            {
+                metrics.Count($"sqlite:dispatch:commitSize:{(int)value}");
+                return;
+            }
+
             string? op = null, phase = null;
             foreach (var t in tags)
             {

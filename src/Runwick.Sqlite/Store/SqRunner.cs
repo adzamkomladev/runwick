@@ -39,12 +39,17 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
     /// <summary>An operation ported from a PostgreSQL server function: the body returns the reply row.</summary>
     public Task<StoreReply<T>> CallAsync<T>(SqOp op, Func<SqTx, SqRow> body, Func<SqRow, StoreReply<T>> map, CancellationToken ct,
         Func<SqTx, SqRow, SqRow>? onReplay = null) where T : class =>
-        WithRetriesAsync(op, conn => RunOnce(conn, op, tx => Protocol(tx, body, onReplay), ct), map, ct);
+        WithRetriesAsync(op, () => executor.WriteAsync(op.Lane, conn => RunOnce(conn, op, tx => Protocol(tx, body, onReplay), ct), ct, op.Operation),
+            map, ct);
+
+    public Task<StoreReply<DispatchResult>> DispatchAsync(SqOp op, Func<SqTx, SqRow> body, Func<SqRow, StoreReply<DispatchResult>> map,
+        long bytes, CancellationToken ct) =>
+        WithRetriesAsync(op, () => executor.DispatchAsync(this, op, body, bytes, ct), map, ct);
 
     /// <summary>A C#-bodied operation (as PgRunner.ExecuteAsync).</summary>
     public Task<StoreReply<T>> ExecuteAsync<T>(SqOp op, Func<SqTx, SqOutcome<T>> body, Func<SqTx, SqReceiptRow, StoreReply<T>>? replay,
         CancellationToken ct) where T : class =>
-        WithRetriesAsync(op, conn => RunOnceOutcome(conn, op, body, replay, ct), r => r, ct);
+        WithRetriesAsync(op, () => executor.WriteAsync(op.Lane, conn => RunOnceOutcome(conn, op, body, replay, ct), ct, op.Operation), r => r, ct);
 
     /// <summary>A read (20 §4.2): deferred BEGIN … COMMIT on a reader thread, one snapshot, interrupted at the budget (§5.3).</summary>
     public async Task<T> ReadAsync<T>(Func<SqliteConnection, T> read, TimeSpan budget, CancellationToken ct)
@@ -87,11 +92,11 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
 
     // ------------------------------------------------------------------ retry and slot
 
-    Task<StoreReply<T>> WithRetriesAsync<T, TRaw>(SqOp op, Func<SqliteConnection, TRaw> once, Func<TRaw, StoreReply<T>> map,
+    Task<StoreReply<T>> WithRetriesAsync<T, TRaw>(SqOp op, Func<Task<TRaw>> submit, Func<TRaw, StoreReply<T>> map,
         CancellationToken ct) where T : class =>
-        Telemetry.Telemetry.MeasureStorage(op.Operation, (int)op.Lane, () => WithRetriesCoreAsync(op, once, map, ct)); // 18 §3.1
+        Telemetry.Telemetry.MeasureStorage(op.Operation, (int)op.Lane, () => WithRetriesCoreAsync(op, submit, map, ct)); // 18 §3.1
 
-    async Task<StoreReply<T>> WithRetriesCoreAsync<T, TRaw>(SqOp op, Func<SqliteConnection, TRaw> once, Func<TRaw, StoreReply<T>> map,
+    async Task<StoreReply<T>> WithRetriesCoreAsync<T, TRaw>(SqOp op, Func<Task<TRaw>> submit, Func<TRaw, StoreReply<T>> map,
         CancellationToken ct) where T : class
     {
         var gate = executor.Gate(op.Lane);
@@ -104,7 +109,7 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
             {
                 try
                 {
-                    var raw = await executor.WriteAsync(op.Lane, once, ct, op.Operation).ConfigureAwait(false);
+                    var raw = await submit().ConfigureAwait(false);
                     return map(raw);
                 }
                 catch (SqBusyException) when (attempt < MaxTransientRetries && time.GetUtcNow() < op.NotAfter && !ct.IsCancellationRequested)
@@ -139,6 +144,135 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
     sealed class RunState
     {
         public bool CommitSent;
+    }
+
+    internal SqRow RunDispatchOnce(SqliteConnection conn, SqOp op, Func<SqTx, SqRow> body, CancellationToken ct) =>
+        RunOnce(conn, op, tx => Protocol(tx, body, null), ct);
+
+    internal void RunDispatchGroup(SqliteConnection conn, List<SqExecutor.DispatchWork> group)
+    {
+        var state = new RunState();
+        var first = group[0].Op;
+        var results = new (SqRow? Row, SqTx? Ready, Exception? Error)[group.Count];
+        try
+        {
+            // A busy BEGIN or COMMIT follows the ordinary per-command retry path with the original IDs.
+            var lockDeadline = group.Min(item => item.Op.NotAfter);
+            var rejected = Guard(conn, first, state, () =>
+            {
+                BeginWrite(conn, first.Operation, lockDeadline);
+                var statementsStarted = PhaseTimings.Start();
+                var committedCount = 0;
+                var commitDeadline = DateTimeOffset.MaxValue;
+                for (var i = 0; i < group.Count; i++)
+                {
+                    results[i] = RunDispatchSavepoint(conn, group[i]);
+                    if (results[i].Ready is { } ready)
+                    {
+                        committedCount++;
+                        commitDeadline = ready.Op.NotAfter < commitDeadline ? ready.Op.NotAfter : commitDeadline;
+                    }
+                }
+
+                if (committedCount == 0)
+                {
+                    PhaseTimings.Lap(statementsStarted, first.Operation, "statements");
+                    Rollback(conn);
+                }
+                else
+                {
+                    CommitWrite(conn, first.Operation, commitDeadline, state, statementsStarted);
+                    PhaseTimings.DispatchCommit(committedCount);
+                }
+
+                return null!;
+            });
+
+            for (var i = 0; i < group.Count; i++)
+            {
+                var item = group[i];
+                var (row, ready, error) = results[i];
+                item.Registration.Dispose();
+                if (rejected is not null)
+                {
+                    item.Complete(rejected);
+                }
+                else if (error is not null)
+                {
+                    item.Fail(error);
+                }
+                else
+                {
+                    try
+                    {
+                        ready?.Fault(FaultPoint.AfterCommitBeforeReply);
+                        item.Complete(row!);
+                    }
+                    catch (Exception ex)
+                    {
+                        item.Fail(new StoreOutcomeUnknownException("commit_outcome_unknown", item.Op.CommandId, item.Op.Operation, ex));
+                    }
+                }
+            }
+        }
+        catch (Exception ex) when (state.CommitSent)
+        {
+            // Any result that depended on the shared transaction must be resolved using its own command identity.
+            foreach (var item in group)
+            {
+                Exception error = new StoreOutcomeUnknownException("commit_outcome_unknown", item.Op.CommandId, item.Op.Operation, ex);
+                item.Fail(ex is SqBrokenConnectionException ? new SqBrokenConnectionException(error) : error);
+            }
+        }
+        catch (SqBrokenConnectionException ex)
+        {
+            throw new SqBrokenConnectionException(new StoreNotAppliedException("store_unavailable", ex.InnerException ?? ex));
+        }
+    }
+
+    (SqRow? Row, SqTx? Ready, Exception? Error) RunDispatchSavepoint(SqliteConnection conn, SqExecutor.DispatchWork item)
+    {
+        var tx = new SqTx(conn, null, item.Op, faults, item.Ct);
+        SqFile.Exec(conn, "SAVEPOINT runwick_dispatch");
+        try
+        {
+            SqTx? ready = null;
+            var row = Guard(conn, item.Op, state: null, () =>
+            {
+                item.Ct.ThrowIfCancellationRequested();
+                ReadDecisionTime(tx);
+                var result = Protocol(tx, item.Body, null);
+                if (!result.Commits)
+                {
+                    RollbackDispatchSavepoint(conn);
+                    return result;
+                }
+
+                Finalize(tx, result.Status, result.Result ?? [], result.Decided);
+                CheckBeforeCommit(tx);
+                item.Ct.ThrowIfCancellationRequested();
+                SqFile.Exec(conn, "RELEASE runwick_dispatch");
+                ready = tx;
+                return result;
+            }, () => RollbackDispatchSavepoint(conn));
+            return (row, ready, null);
+        }
+        catch (Exception ex) when (ex is not SqBrokenConnectionException)
+        {
+            return (null, null, ex);
+        }
+    }
+
+    static void RollbackDispatchSavepoint(SqliteConnection conn)
+    {
+        try
+        {
+            SqFile.Exec(conn, "ROLLBACK TO runwick_dispatch; RELEASE runwick_dispatch");
+        }
+        catch (Exception ex) when (ex is SqliteException or InvalidOperationException)
+        {
+            throw new SqBrokenConnectionException(ex);
+        }
     }
 
     SqRow RunOnce(SqliteConnection conn, SqOp op, Func<SqTx, SqRow> protocol, CancellationToken ct)
@@ -193,19 +327,31 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         }, (status, code) => StoreReply<T>.NoEffect(status, new StoreError(code), SqTime.Floor(time.GetUtcNow())));
     }
 
-    SqRow Guard(SqliteConnection conn, SqOp op, RunState state, Func<SqRow> run) =>
-        Guard<SqRow>(conn, op, state, run, (status, code) => SqRow.NoEffect(status.ToString(), code, SqTime.Floor(time.GetUtcNow())));
+    SqRow Guard(SqliteConnection conn, SqOp op, RunState? state, Func<SqRow> run, Action? rollback = null) =>
+        Guard<SqRow>(conn, op, state, run, (status, code) => SqRow.NoEffect(status.ToString(), code, SqTime.Floor(time.GetUtcNow())), rollback);
 
     /// <summary>The 20 §4.3 mapping around one transaction; a failed ROLLBACK replaces the writer connection.</summary>
-    T Guard<T>(SqliteConnection conn, SqOp op, RunState state, Func<T> run, Func<StoreStatus, string, T> noEffect)
+    T Guard<T>(SqliteConnection conn, SqOp op, RunState? state, Func<T> run, Func<StoreStatus, string, T> noEffect, Action? rollback = null)
     {
+        void Revert()
+        {
+            if (rollback is null)
+            {
+                SafeRollback(conn);
+            }
+            else
+            {
+                rollback();
+            }
+        }
+
         try
         {
             return run();
         }
-        catch (Exception ex) when (state.CommitSent)
+        catch (Exception ex) when (state?.CommitSent == true)
         {
-            SafeRollback(conn);
+            Revert();
             if (ex is StoreOutcomeUnknownException)
             {
                 throw;
@@ -215,29 +361,29 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         }
         catch (SqBusyException)
         {
-            SafeRollback(conn);
+            Revert();
             Interlocked.Increment(ref _busy);
             throw;
         }
         catch (SqInvariantException ex)
         {
-            SafeRollback(conn);
+            Revert();
             return noEffect(StoreStatus.InvariantFault, ex.Code);
         }
         catch (SqliteException ex)
         {
-            SafeRollback(conn);
+            Revert();
             var (status, code) = Classify(ex);
             return noEffect(status, code);
         }
         catch (Exception ex) when (ex is InjectedFaultException or IOException or OperationCanceledException)
         {
-            SafeRollback(conn);
+            Revert();
             throw new StoreNotAppliedException("store_unavailable", ex);
         }
         catch
         {
-            SafeRollback(conn);
+            Revert();
             throw;
         }
     }
@@ -272,7 +418,15 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
     SqTx Begin(SqliteConnection conn, SqOp op, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        var remaining = op.NotAfter == DateTimeOffset.MaxValue ? DefaultBudget : op.NotAfter - time.GetUtcNow();
+        BeginWrite(conn, op.Operation, op.NotAfter);
+        var tx = new SqTx(conn, null, op, faults, ct);
+        ReadDecisionTime(tx);
+        return tx;
+    }
+
+    void BeginWrite(SqliteConnection conn, string operation, DateTimeOffset notAfter)
+    {
+        var remaining = notAfter == DateTimeOffset.MaxValue ? DefaultBudget : notAfter - time.GetUtcNow();
         var wait = Math.Clamp((long)Math.Min(options.WriterBusyTimeout.TotalMilliseconds, remaining.TotalMilliseconds), 0, 30_000);
         SqFile.SetBusyTimeout(conn, wait);
         var beginStarted = PhaseTimings.Start();
@@ -286,17 +440,30 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         }
         finally
         {
-            PhaseTimings.Lap(beginStarted, op.Operation, "beginImmediate");
+            PhaseTimings.Lap(beginStarted, operation, "beginImmediate");
         }
+    }
 
-        var tx = new SqTx(conn, null, op, faults, ct);
+    void ReadDecisionTime(SqTx tx)
+    {
         tx.Fault(FaultPoint.AfterLocksBeforeFreshTime);
         tx.Clock = time.GetUtcNow();
         tx.Now = SqTime.Floor(tx.Clock);
-        return tx;
     }
 
     void Commit(SqTx tx, RunState state, long statementsStarted)
+    {
+        CheckBeforeCommit(tx);
+        CommitWrite(tx.Connection, tx.Op.Operation, tx.Op.NotAfter, state, statementsStarted);
+        if (tx.Op.Operation == Operations.Dispatch)
+        {
+            PhaseTimings.DispatchCommit(1);
+        }
+
+        tx.Fault(FaultPoint.AfterCommitBeforeReply);
+    }
+
+    static void CheckBeforeCommit(SqTx tx)
     {
         tx.Fault(FaultPoint.BeforeCommit);
         if (tx.Op.HasReceipt)
@@ -311,17 +478,20 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
                 throw new SqInvariantException("receipt_incomplete");
             }
         }
+    }
 
-        var commitStarted = PhaseTimings.Lap(statementsStarted, tx.Op.Operation, "statements");
+    void CommitWrite(SqliteConnection conn, string operation, DateTimeOffset notAfter, RunState state, long statementsStarted)
+    {
+        var commitStarted = PhaseTimings.Lap(statementsStarted, operation, "statements");
         state.CommitSent = true;
         for (var tries = 0; ; tries++)
         {
             try
             {
-                SqFile.Exec(tx.Connection, "COMMIT");
+                SqFile.Exec(conn, "COMMIT");
                 break;
             }
-            catch (SqliteException ex) when (ex.SqliteErrorCode == 5 && tries < 5 && time.GetUtcNow() < tx.Op.NotAfter)
+            catch (SqliteException ex) when (ex.SqliteErrorCode == 5 && tries < 5 && time.GetUtcNow() < notAfter)
             {
                 // COMMIT busy leaves the transaction open: retry while the budget remains (20 §4.3).
                 Thread.Sleep(20);
@@ -334,8 +504,7 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         }
 
         Interlocked.Increment(ref _commits);
-        PhaseTimings.Lap(commitStarted, tx.Op.Operation, "commit");
-        tx.Fault(FaultPoint.AfterCommitBeforeReply);
+        PhaseTimings.Lap(commitStarted, operation, "commit");
     }
 
     static void Rollback(SqliteConnection conn)

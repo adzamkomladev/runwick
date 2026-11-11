@@ -11,6 +11,9 @@ namespace Runwick.Sqlite.Store;
 /// </summary>
 internal sealed class SqExecutor : IDisposable
 {
+    const int MaxDispatchGroupCount = 8;
+    const long MaxDispatchGroupBytes = 1024 * 1024;
+
     readonly string _connectionString;
     readonly SqliteOptions _options;
     readonly object _gate = new();
@@ -64,9 +67,32 @@ internal sealed class SqExecutor : IDisposable
             Operation = operation,
             QueuedAt = operation is null ? 0 : PhaseTimings.Start(),
         };
+        Enqueue(item, priority, write, ct);
+        return item.Task;
+    }
+
+    public Task<SqRow> DispatchAsync(SqRunner runner, SqOp op, Func<SqTx, SqRow> body, long bytes, CancellationToken ct)
+    {
+        var item = new DispatchWork(runner, op, body, bytes, ct) { Operation = op.Operation, QueuedAt = PhaseTimings.Start() };
+        Enqueue(item, (int)SqLane.Producer, write: true, ct);
+        return item.Task;
+    }
+
+    void Enqueue(Work item, int priority, bool write, CancellationToken ct)
+    {
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_stopped, this);
+            if (ct.CanBeCanceled)
+            {
+                item.Registration = ct.Register(() => CancelQueued(item, write));
+            }
+
+            if (!item.IsQueued)
+            {
+                return;
+            }
+
             if (write)
             {
                 _writes.Enqueue(item, (priority, _sequence++));
@@ -78,14 +104,49 @@ internal sealed class SqExecutor : IDisposable
 
             Monitor.PulseAll(_gate);
         }
+    }
 
-        // A call cancelled while queued is removed: not applied (20 §5.2). Once started it runs to its end.
-        if (ct.CanBeCanceled)
+    void CancelQueued(Work item, bool write)
+    {
+        lock (_gate)
         {
-            item.Registration = ct.Register(() => item.TryCancelQueued());
+            if (item.TryCancelQueued() && write)
+            {
+                // A cancelled call releases its lane slot. Remove it so new callers cannot grow a backlog
+                // of cancelled entries while the writer is held in a transaction.
+                _writes.Remove(item, out _, out _);
+            }
+        }
+    }
+
+    List<DispatchWork>? CollectDispatchGroup(Work first)
+    {
+        if (first is not DispatchWork head || head.Bytes > MaxDispatchGroupBytes)
+        {
+            return null;
         }
 
-        return item.Task;
+        List<DispatchWork>? group = null;
+        var bytes = head.Bytes;
+        lock (_gate)
+        {
+            // The next queue entry must be compatible. Higher priorities and other producer calls keep their
+            // position. There is no coalescing timer or wait for another command.
+            while ((group?.Count ?? 1) < MaxDispatchGroupCount
+                   && _writes.TryPeek(out var next, out _)
+                   && next is DispatchWork candidate
+                   && ReferenceEquals(head.Runner, candidate.Runner)
+                   && head.Op.Application == candidate.Op.Application && head.Op.ExpectedStoreId == candidate.Op.ExpectedStoreId
+                   && candidate.Bytes <= MaxDispatchGroupBytes - bytes)
+            {
+                _writes.Dequeue();
+                candidate.TryStart(); // The queue lock excludes cancellation of this entry.
+                (group ??= [head]).Add(candidate);
+                bytes += candidate.Bytes;
+            }
+        }
+
+        return group;
     }
 
     void WriterLoop()
@@ -98,6 +159,7 @@ internal sealed class SqExecutor : IDisposable
                 continue;
             }
 
+            var group = CollectDispatchGroup(work);
             try
             {
                 if (work.Operation is { } operation)
@@ -111,11 +173,33 @@ internal sealed class SqExecutor : IDisposable
                     WriterConnectionsOpened++;
                 }
 
-                work.Run(conn);
+                if (group is null)
+                {
+                    work.Run(conn);
+                }
+                else
+                {
+                    for (var i = 1; i < group.Count; i++)
+                    {
+                        PhaseTimings.Lap(group[i].QueuedAt, group[i].Op.Operation, "writerQueue");
+                    }
+
+                    group[0].Runner.RunDispatchGroup(conn, group);
+                }
             }
             catch (Exception ex)
             {
-                work.Fail(ex);
+                if (group is null)
+                {
+                    work.Fail(ex);
+                }
+                else
+                {
+                    foreach (var item in group)
+                    {
+                        item.Fail(ex);
+                    }
+                }
             }
 
             // A connection left inside a transaction (a failed ROLLBACK) is replaced (20 §4.3).
@@ -206,7 +290,7 @@ internal sealed class SqExecutor : IDisposable
         }
     }
 
-    abstract class Work
+    internal abstract class Work
     {
         int _state; // 0 queued, 1 running, 2 cancelled
 
@@ -219,14 +303,19 @@ internal sealed class SqExecutor : IDisposable
         /// <summary>The work asks for its connection to be replaced.</summary>
         public bool Broken { get; set; }
 
+        public bool IsQueued => Volatile.Read(ref _state) == 0;
+
         public bool TryStart() => Interlocked.CompareExchange(ref _state, 1, 0) == 0;
 
-        public void TryCancelQueued()
+        public bool TryCancelQueued()
         {
             if (Interlocked.CompareExchange(ref _state, 2, 0) == 0)
             {
                 Cancel();
+                return true;
             }
+
+            return false;
         }
 
         public abstract void Run(SqliteConnection conn);
@@ -236,7 +325,7 @@ internal sealed class SqExecutor : IDisposable
         protected abstract void Cancel();
     }
 
-    sealed class Work<T>(Func<SqliteConnection, T> work, CancellationToken ct) : Work
+    internal class Work<T>(Func<SqliteConnection, T> work, CancellationToken ct) : Work
     {
         readonly TaskCompletionSource<T> _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -245,20 +334,34 @@ internal sealed class SqExecutor : IDisposable
         public override void Run(SqliteConnection conn)
         {
             Registration.Dispose();
-            try
-            {
-                _tcs.TrySetResult(work(conn));
-            }
-            catch (SqBrokenConnectionException ex)
-            {
-                Broken = true;
-                _tcs.TrySetException(ex.InnerException ?? ex);
-            }
+            Complete(work(conn));
         }
 
-        public override void Fail(Exception ex) => _tcs.TrySetException(ex);
+        public void Complete(T result) => _tcs.TrySetResult(result);
+
+        public override void Fail(Exception ex)
+        {
+            Registration.Dispose();
+            if (ex is SqBrokenConnectionException broken)
+            {
+                Broken = true;
+                ex = broken.InnerException ?? broken;
+            }
+
+            _tcs.TrySetException(ex);
+        }
 
         protected override void Cancel() => _tcs.TrySetCanceled(ct);
+    }
+
+    internal sealed class DispatchWork(SqRunner runner, SqOp op, Func<SqTx, SqRow> body, long bytes, CancellationToken ct)
+        : Work<SqRow>(conn => runner.RunDispatchOnce(conn, op, body, ct), ct)
+    {
+        public SqRunner Runner { get; } = runner;
+        public SqOp Op { get; } = op;
+        public Func<SqTx, SqRow> Body { get; } = body;
+        public long Bytes { get; } = bytes;
+        public CancellationToken Ct { get; } = ct;
     }
 }
 

@@ -11,8 +11,11 @@ internal static class PhaseTimings
 {
     static readonly Meter Meter = new("Runwick.Diagnostics");
     static readonly Histogram<double> Phase = Meter.CreateHistogram<double>("runwick.store.phase", "ms");
+    static readonly Histogram<double> DispatchGroup = Meter.CreateHistogram<double>("runwick.sqlite.dispatch.commit_size", "{command}");
 
     public static bool Enabled => Phase.Enabled;
+
+    public static void DispatchCommit(int count) => DispatchGroup.Record(count);
 
     public static long Start() => Phase.Enabled ? Stopwatch.GetTimestamp() : 0;
 
