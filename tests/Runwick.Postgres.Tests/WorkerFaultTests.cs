@@ -180,14 +180,15 @@ public sealed class WorkerFaultTests
     [Trait("Case", "TIME-09")]
     public async Task Unknown_reserve_begin_and_finish_exhaust_their_budgets_on_the_real_store()
     {
-        // (a) Reserve: the claim stays unresolved past ClaimResolutionBudget; pool admission is suspended. One slot, so
-        // the claim is Reserve then Begin (05 §9.6); (a2) below is the same with the batched claim.
+        // (a) Reserve: the claim stays unresolved past ClaimResolutionBudget and pool admission is suspended.
+        // Force a separate Reserve and Begin here. Part (a2) covers the batched claim.
         await using (var f = await DriverFixture.StartAsync(Ns("time09r")))
         await using (var w = Host(f, concurrency: 1))
         {
-            var r1 = await Dispatch(w, "r1");
-            LoseReplyThenFailResolution(f, Operations.Reserve);
             await w.StartAsync();
+            await f.HidePostgresBatchClaimAsync();
+            LoseReplyThenFailResolution(f, Operations.Reserve);
+            var r1 = await Dispatch(w, "r1");
             await WaitDiagnosed(w, "unresolved claim");
             Assert.True(w.Engine.Pools[0].Suspended);
             var r2 = await Dispatch(w, "r2");
@@ -231,13 +232,14 @@ public sealed class WorkerFaultTests
         }
 
         // (b) Begin: unresolved past BeginResolutionBudget; never invoked; renewal stops; recovered and run once later.
-        // One slot, so Begin is its own command (a batched claim has no separate Begin).
+        // Force a separate Begin so its receipt can be faulted independently.
         await using (var f = await DriverFixture.StartAsync(Ns("time09b")))
         await using (var w = Host(f, concurrency: 1))
         {
-            var b1 = await Dispatch(w, "b1");
-            LoseReplyThenFailResolution(f, Operations.Begin);
             await w.StartAsync();
+            await f.HidePostgresBatchClaimAsync();
+            LoseReplyThenFailResolution(f, Operations.Begin);
+            var b1 = await Dispatch(w, "b1");
             await WaitDiagnosed(w, "unresolved Begin");
             Assert.Equal(0, w.Script.InvocationsOf("b1"));
             Assert.Contains("lost:BeginUnresolved", w.Events.Select(e => e.Name));

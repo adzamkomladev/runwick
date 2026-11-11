@@ -111,10 +111,11 @@ public sealed class WorkerTests
     {
         await using var f = await DriverFixture.StartAsync(Ns("wrk03"));
         await using var w = Host(f, concurrency: 1);
-        var job = await Dispatch(w, "j");
+        await w.StartAsync();
+        await f.HidePostgresBatchClaimAsync();
         var reserve = f.ArmFault(FaultPoint.AfterCommitBeforeReply, FaultSpec.DropReply, FaultTarget.Op(Operations.Reserve));
         var begin = f.ArmFault(FaultPoint.AfterCommitBeforeReply, FaultSpec.DropReply, FaultTarget.Op(Operations.Begin));
-        await w.StartAsync();
+        var job = await Dispatch(w, "j");
         await WaitState(f, job, JobStates.Succeeded);
         Assert.Equal((1, 1), (reserve.Fired, begin.Fired));
         Assert.Equal(1, w.Script.InvocationsOf("j"));
@@ -131,9 +132,10 @@ public sealed class WorkerTests
     {
         await using var f = await DriverFixture.StartAsync(Ns("wrk04"));
         await using var w = Host(f, concurrency: 1);
-        var job = await Dispatch(w, "j");
-        var h = f.ArmFault(FaultPoint.BeforeCommit, FaultSpec.Barrier, FaultTarget.Op(Operations.Reserve));
         await w.StartAsync();
+        await f.HidePostgresBatchClaimAsync();
+        var h = f.ArmFault(FaultPoint.BeforeCommit, FaultSpec.Barrier, FaultTarget.Op(Operations.Reserve));
+        var job = await Dispatch(w, "j");
         await DriverFixture.WaitAtBarrier(h, Wait);
         var stop = w.StopAsync();
         await WorkerHost.WaitUntil(() => w.Engine.Draining, Wait, "drain");
@@ -232,7 +234,8 @@ public sealed class WorkerTests
             await peer.SendAsync("startWorker", new JsonObject { ["cs"] = f.ClientConnectionString("w-" + phase), ["app"] = f.Application, ["concurrency"] = 3 });
             await WorkerHost.WaitUntil(() => f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE state = 'running'").Result == 2, Wait, "two begun attempts");
 
-            // Unbegun: its Begin waits in the store.
+            // Unbegun: fall back to separate Reserve and Begin so its Begin can wait in the store.
+            await f.HidePostgresBatchClaimAsync();
             await peer.SendAsync("armFault", new JsonObject { ["point"] = "BeforeGateLock", ["action"] = "Delay", ["operation"] = Operations.Begin, ["delayMs"] = 60_000, ["times"] = 100 });
             var unbegun = (await local.Dispatcher.DispatchAsync(new WorkJob("unbegun"))).JobId.Value;
             await WorkerHost.WaitUntil(() => State(f, unbegun).GetAwaiter().GetResult() == JobStates.Reserved, Wait, "reserved, not begun");

@@ -26,8 +26,8 @@ public sealed class ReadinessTests
     static Task<ReadySnapshot> ProbeAsync(WorkerHost w) =>
         w.Engine.Store.ProbeAsync(w.Engine.Application, w.Engine.Readiness.Lanes, w.Engine.Contracts, TestContext.Current.CancellationToken);
 
-    static async Task<long> ReserveReceiptsAsync(DriverFixture f) =>
-        await f.CountAsync("SELECT count(*) FROM runwick.storage_commands WHERE operation = 'Reserve'");
+    static async Task<long> ClaimReceiptsAsync(DriverFixture f) =>
+        await f.CountAsync("SELECT count(*) FROM runwick.storage_commands WHERE operation IN ('Reserve', 'ReserveAndBegin')");
 
     static async Task AssertInvariants(DriverFixture f) =>
         Assert.Empty(SnapshotInvariants.Violations((await f.ReadCommittedSnapshot()).Model));
@@ -58,14 +58,14 @@ public sealed class ReadinessTests
         await Task.Delay(TimeSpan.FromSeconds(3));
         var pool = w.Engine.Pools.Single();
         var reserves = Interlocked.Read(ref pool.ReservesSent);
-        var receipts = await ReserveReceiptsAsync(f);
+        var receipts = await ClaimReceiptsAsync(f);
         var probes = Interlocked.Read(ref w.Engine.Readiness.Probes);
         var events = await f.CountAsync("SELECT count(*) FROM runwick.queue_events");
         var window = TimeSpan.FromSeconds(10);
         await Task.Delay(window);
 
         Assert.Equal(reserves, Interlocked.Read(ref pool.ReservesSent));
-        Assert.Equal(receipts, await ReserveReceiptsAsync(f));
+        Assert.Equal(receipts, await ClaimReceiptsAsync(f));
         Assert.Equal(events, await f.CountAsync("SELECT count(*) FROM runwick.queue_events"));
         Assert.True(Interlocked.Read(ref pool.SaturationSkips) > 0);
 
@@ -116,7 +116,7 @@ public sealed class ReadinessTests
         const string rows = "SELECT md5(string_agg(job_id::text || ':' || xmin::text, ',' ORDER BY job_id)) FROM runwick.jobs WHERE state = 'pending'";
         var pool = typed.Engine.Pools.Single();
         var reserves = Interlocked.Read(ref pool.ReservesSent);
-        var receipts = await ReserveReceiptsAsync(f);
+        var receipts = await ClaimReceiptsAsync(f);
         var events = await f.CountAsync("SELECT count(*) FROM runwick.queue_events");
         var attempts = await f.CountAsync("SELECT count(*) FROM runwick.job_attempts");
         var before = (await DispatchSupport.TextAsync(f, rows)).Single();
@@ -127,7 +127,7 @@ public sealed class ReadinessTests
         // backlog: no pending job row version changes, no receipt, no event, no attempt.
         var sent = Interlocked.Read(ref pool.ReservesSent) - reserves;
         Assert.InRange(sent, 0, (long)(window.TotalSeconds / 1.6) + 4);
-        Assert.Equal(receipts, await ReserveReceiptsAsync(f));
+        Assert.Equal(receipts, await ClaimReceiptsAsync(f));
         Assert.Equal(events, await f.CountAsync("SELECT count(*) FROM runwick.queue_events"));
         Assert.Equal(attempts, await f.CountAsync("SELECT count(*) FROM runwick.job_attempts"));
         Assert.Equal(before, (await DispatchSupport.TextAsync(f, rows)).Single());

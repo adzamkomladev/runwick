@@ -42,6 +42,145 @@ public sealed class WorkerEngineTests
         Assert.Empty(e.Engine.Entries);
     }
 
+    [Fact]
+    [Trait("Category", "Pure")]
+    public async Task A_single_free_slot_uses_reserve_and_begin()
+    {
+        await using var e = EngineFixture.Create(concurrency: 1, batch: true);
+        var id = e.Add("single");
+        await e.StartAsync();
+        await e.RunUntilAsync(() => e.Store.JobOf(id).State == JobStates.Succeeded, Long, "single job succeeded");
+
+        var claim = e.Store.Calls.First(c => c.Operation is Operations.ReserveAndBegin or Operations.Reserve);
+        Assert.Equal(1, Assert.IsType<ReserveAndBeginRequest>(claim.Body).MaxJobs);
+        Assert.Equal(0, e.Store.Count(Operations.Begin));
+        Assert.Equal(1, e.Script.InvocationsOf("single"));
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    public async Task A_batch_in_flight_resolves_after_admission_closes_without_sending_a_fresh_claim()
+    {
+        await using var e = EngineFixture.Create(concurrency: 2, batch: true);
+        var ids = new[] { e.Add("first"), e.Add("second"), e.Add("pending") };
+        var batch = new TaskBarrier("ReserveAndBegin");
+        e.Store.Before = async call =>
+        {
+            if (call.Operation == Operations.ReserveAndBegin)
+            {
+                await batch.ArriveAndWaitAsync(call.Token);
+            }
+
+            return CallEffect.Proceed;
+        };
+        e.Store.DropReply = call => call.Operation == Operations.ReserveAndBegin && call.Submission == 1;
+
+        await e.StartAsync();
+        await e.RunUntilAsync(() => batch.Reached.IsCompleted, Long, "batch reached the store");
+        e.Engine.CloseAdmission("test closed admission during claim");
+        batch.Release();
+
+        var pool = Assert.Single(e.Engine.Pools);
+        await e.RunUntilAsync(() => e.EventCount("retired") == 2 && pool.Gate.Outstanding == 0, Long, "both tickets retired");
+        var claims = e.Store.Calls.Where(c => c.Operation == Operations.ReserveAndBegin).ToArray();
+        Assert.Equal(2, claims.Length);
+        Assert.Equal(claims[0].CommandId, claims[1].CommandId);
+        Assert.Equal(claims[0].Body, claims[1].Body);
+        Assert.Equal(2, Assert.IsType<ReserveAndBeginRequest>(claims[0].Body).MaxJobs);
+        Assert.Equal(0, e.Store.Count(Operations.Reserve));
+        Assert.Equal(0, e.Store.Count(Operations.Begin));
+        Assert.All(ids.Take(2), id =>
+        {
+            var job = e.Store.JobOf(id);
+            Assert.Equal(JobStates.Succeeded, job.State);
+            Assert.Equal(1, job.Executions);
+            Assert.Single(job.Finishes);
+        });
+        Assert.Equal(JobStates.Pending, e.Store.JobOf(ids[2]).State);
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    public async Task A_refused_batch_does_not_fall_back_after_admission_closes()
+    {
+        await using var e = EngineFixture.Create(concurrency: 2, batch: true);
+        var stale = e.Add("stale");
+        var batch = new TaskBarrier("ReserveAndBegin");
+        e.Store.Before = async call =>
+        {
+            if (call.Operation == Operations.ReserveAndBegin)
+            {
+                e.Store.JobOf(stale).State = JobStates.Cancelled;
+                await batch.ArriveAndWaitAsync(call.Token);
+            }
+
+            return CallEffect.Proceed;
+        };
+        e.Store.Rewrite = (call, reply) => call.Operation == Operations.ReserveAndBegin
+            && reply is StoreReply<ClaimedJobs> { Status: StoreStatus.NoWork } r
+            ? StoreReply<ClaimedJobs>.NoEffect(StoreStatus.UnsupportedVersion, new StoreError("unsupported_version"), r.DecidedAt)
+            : reply;
+
+        await e.StartAsync();
+        await e.RunUntilAsync(() => batch.Reached.IsCompleted, Long, "batch reached the store");
+        e.Engine.CloseAdmission("test closed admission before a batch refusal");
+        batch.Release();
+
+        await e.RunUntilAsync(() => e.Engine.Pools.Single().Gate.Outstanding == 0, Long, "all tickets returned");
+        Assert.Equal(1, e.Store.Count(Operations.ReserveAndBegin));
+        Assert.Equal(0, e.Store.Count(Operations.Reserve));
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    public async Task A_probe_returning_ready_work_does_not_start_a_claim_after_admission_closes()
+    {
+        await using var e = EngineFixture.Create(concurrency: 1, batch: true);
+        var listener = new ScriptedListener();
+        e.Store.Listener = listener;
+        await e.StartAsync();
+        await e.RunUntilAsync(() => listener.Running.IsCompleted && e.Engine.Readiness.Probes > 0, Long, "initial empty probe");
+
+        var background = e.Engine.BackgroundIo;
+        using var first = await background.AcquireAsync(0, CancellationToken.None);
+        using var second = await background.AcquireAsync(0, CancellationToken.None);
+        var probes = Interlocked.Read(ref e.Engine.Readiness.Probes);
+        var id = e.Add("waiting");
+        listener.Notify("default");
+        await e.RunUntilAsync(() => e.Engine.Readiness.Probes > probes && background.Waiting > 0, Long, "next probe blocked on I/O");
+        e.Engine.CloseAdmission("test closed admission while readiness was being fetched");
+        first.Dispose();
+        second.Dispose();
+
+        await e.RunUntilAsync(() => e.Engine.Pools.Single().Gate.Outstanding == 0, Long, "the opportunity ticket returned");
+        Assert.Equal(0, e.Store.Count(Operations.ReserveAndBegin));
+        Assert.Equal(0, e.Store.Count(Operations.Reserve));
+        Assert.Equal(JobStates.Pending, e.Store.JobOf(id).State);
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    public async Task A_claim_waiting_for_admission_io_is_not_sent_after_admission_closes()
+    {
+        await using var e = EngineFixture.Create(concurrency: 1, batch: true);
+        var id = e.Add("waiting");
+        var admission = e.Engine.AdmissionIo;
+        using var first = await admission.AcquireAsync(0, CancellationToken.None);
+        using var second = await admission.AcquireAsync(0, CancellationToken.None);
+        using var third = await admission.AcquireAsync(0, CancellationToken.None);
+        using var fourth = await admission.AcquireAsync(0, CancellationToken.None);
+        await e.StartAsync();
+        await e.RunUntilAsync(() => admission.Waiting == 1, Long, "claim waiting for its I/O slot");
+
+        e.Engine.CloseAdmission("test closed admission while the claim was queued");
+        first.Dispose();
+
+        await e.RunUntilAsync(() => e.Engine.Pools.Single().Gate.Outstanding == 0, Long, "the opportunity ticket returned");
+        Assert.Equal(0, e.Store.Count(Operations.ReserveAndBegin));
+        Assert.Equal(0, e.Store.Count(Operations.Reserve));
+        Assert.Equal(JobStates.Pending, e.Store.JobOf(id).State);
+    }
+
     // ------------------------------------------------------------------ TIME
 
     static List<ConfigurationError> Validate(Action<WorkerOptions> configure)
@@ -207,38 +346,57 @@ public sealed class WorkerEngineTests
         }
     }
 
-    [Fact]
+    [Theory]
+    [InlineData(1000, 0, true)]
+    [InlineData(999, 0, false)]
+    [InlineData(100, 3000, false)]
     [Trait("Category", "Pure")]
     [Trait("Item", "SP-009")]
     [Trait("Case", "TIME-04")]
-    public async Task Classification_at_the_timeout_boundary()
+    public async Task Classification_at_the_timeout_boundary(int elapsedMs, int finishDelayMs, bool timedOut)
     {
         await using var e = EngineFixture.Create(jobs: j => j.WithExecutionTimeout(TimeSpan.FromSeconds(1)));
-        e.Step = TimeSpan.FromMilliseconds(1);
-        var exact = e.Add("exact");
-        var early = e.Add("early");
-        var slowFinish = e.Add("slow");
-        e.Script.On("exact", (_, _, _) => Ignoring(e, TimeSpan.FromSeconds(1)));
-        e.Script.On("early", (_, _, _) => Ignoring(e, TimeSpan.FromMilliseconds(999)));
-        e.Script.On("slow", (_, _, _) => Ignoring(e, TimeSpan.FromMilliseconds(100)));
+        var id = e.Add("boundary");
+        var handler = new TaskBarrier("handler entered");
+        var finish = new TaskBarrier("Finish sent");
+        e.Script.On("boundary", (_, _, _) => handler.ArriveAndWaitAsync(CancellationToken.None));
         e.Store.Before = async call =>
         {
-            if (call.Operation == Operations.Finish && call.JobId == slowFinish)
+            if (call.Operation == Operations.Finish && call.JobId == id)
             {
-                await Task.Delay(TimeSpan.FromSeconds(3), e.Time);
+                await finish.ArriveAndWaitAsync(call.Token);
             }
 
             return CallEffect.Proceed;
         };
 
-        await e.StartAsync();
-        await e.RunUntilAsync(() => e.Store.Jobs.All(j => j.Finishes.Count == 1), Long, "three finishes", TimeSpan.FromMilliseconds(1));
+        try
+        {
+            await e.StartAsync();
+            await handler.WaitReachedAsync();
+            var elapsed = TimeSpan.FromMilliseconds(elapsedMs);
+            e.Time.Advance(elapsed);
+            handler.Release();
 
-        // (a) elapsed = timeout → TimedOut; (b) recorded completion 1 ms before → Succeeded; (c) slow Finish → Succeeded.
-        Assert.Equal(AttemptOutcome.TimedOut, e.Store.JobOf(exact).Finishes[0].Outcome);
-        Assert.Equal(AttemptOutcome.Succeeded, e.Store.JobOf(early).Finishes[0].Outcome);
-        Assert.Equal(TimeSpan.FromMilliseconds(999), e.Store.JobOf(early).Finishes[0].ExecutionElapsed);
-        Assert.Equal(AttemptOutcome.Succeeded, e.Store.JobOf(slowFinish).Finishes[0].Outcome);
+            // Freeze time at the intended boundary until the pipeline has recorded its observation.
+            await finish.WaitReachedAsync();
+            if (finishDelayMs > 0)
+            {
+                await e.AdvanceAsync(TimeSpan.FromMilliseconds(finishDelayMs), TimeSpan.FromSeconds(1));
+                Assert.Empty(e.Store.JobOf(id).Finishes);
+            }
+
+            finish.Release();
+            await e.RunUntilAsync(() => e.Store.JobOf(id).Finishes.Count == 1, Long, "finish settled");
+            var settled = Assert.Single(e.Store.JobOf(id).Finishes);
+            Assert.Equal(timedOut ? AttemptOutcome.TimedOut : AttemptOutcome.Succeeded, settled.Outcome);
+            Assert.Equal(elapsed, settled.ExecutionElapsed);
+        }
+        finally
+        {
+            handler.Release();
+            finish.Release();
+        }
     }
 
     [Fact]
@@ -866,6 +1024,76 @@ public sealed class WorkerEngineTests
             $"discovered after {reserved - added}");
         await e.RunUntilAsync(() => e.Store.JobOf(id).State == JobStates.Succeeded, Long, "success");
         Assert.Equal(1, e.Script.InvocationsOf("late"));
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    public async Task A_notification_reactivates_an_excluded_lane_while_another_queue_is_cooling()
+    {
+        await using var e = EngineFixture.Create(configure: r => r.Queue("other"), pool: p => p.Queue("other", 1));
+        var listener = new ScriptedListener();
+        e.Store.Listener = listener;
+        var wake = Assert.Single(e.Engine.Pools).Wake;
+        wake.Suppressed = true;
+        var stale = new Dictionary<string, Guid>
+        {
+            ["default"] = e.Add("stale"),
+            ["other"] = e.AddTo("other", "paused"),
+        };
+        var firstClaim = new TaskBarrier("first stale claim");
+        var secondClaim = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var notifiedClaim = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Both jobs are visible in the probe and are gone when their Reserve runs.
+        e.Store.Before = async call =>
+        {
+            if (call.Body is ReserveRequest reserve)
+            {
+                if (stale.Count == 2)
+                {
+                    await firstClaim.ArriveAndWaitAsync(call.Token);
+                }
+
+                if (stale.Remove(reserve.Queue, out var staleId))
+                {
+                    e.Store.JobOf(staleId).State = JobStates.Cancelled;
+                    if (stale.Count == 0)
+                    {
+                        secondClaim.TrySetResult();
+                    }
+                }
+                else if (reserve.Queue == "default")
+                {
+                    notifiedClaim.TrySetResult();
+                }
+            }
+
+            return CallEffect.Proceed;
+        };
+        e.Store.Rewrite = (call, reply) => call.Body is ReserveRequest { Queue: "other" }
+            && reply is StoreReply<ReservedJob> { Status: StoreStatus.NoWork } r
+            ? StoreReply<ReservedJob>.NoEffect(StoreStatus.QueuePaused, new StoreError("queue_paused"), r.DecidedAt)
+            : reply;
+
+        try
+        {
+            await e.StartAsync();
+            await e.RunUntilAsync(() => listener.Running.IsCompleted && firstClaim.Reached.IsCompleted, Long, "stale probe consumed");
+            e.Time.Advance(WorkerSettings.ProbeSpacing);
+            firstClaim.Release();
+            await secondClaim.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            // A new probe is allowed now. Keep fake time frozen so only the notification can end the idle wait.
+            wake.Suppressed = false;
+            var id = e.Add("notified");
+            listener.Notify("default");
+            await notifiedClaim.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await e.RunUntilAsync(() => e.Store.JobOf(id).State == JobStates.Succeeded, Long, "notified job settled");
+        }
+        finally
+        {
+            firstClaim.Release();
+        }
     }
 
     [Fact]

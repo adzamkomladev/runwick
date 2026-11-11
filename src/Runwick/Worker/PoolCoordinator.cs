@@ -92,16 +92,13 @@ internal sealed class PoolCoordinator
         var stop = _engine.LoopStop;
         while (!stop.IsCancellationRequested && !_engine.Draining)
         {
-            if (!_engine.AdmissionOpen || Suspended)
+            if (!_engine.AdmissionOpen || Suspended || Gate.TryAcquire() is not { } ticket)
             {
-                await Wake.WaitAsync(_engine.Clock, TimeSpan.FromSeconds(1), stop).ConfigureAwait(false);
-                continue;
-            }
+                if (await Wake.WaitAsync(_engine.Clock, TimeSpan.FromSeconds(1), stop).ConfigureAwait(false))
+                {
+                    _idleStep = 0;
+                }
 
-            var ticket = Gate.TryAcquire();
-            if (ticket is null)
-            {
-                await Wake.WaitAsync(_engine.Clock, TimeSpan.FromSeconds(1), stop).ConfigureAwait(false);
                 continue;
             }
 
@@ -110,11 +107,22 @@ internal sealed class PoolCoordinator
             {
                 view = await _engine.Readiness.GetAsync(stop).ConfigureAwait(false);
             }
-            catch (Exception ex) when (!stop.IsCancellationRequested)
+            catch (Exception ex)
             {
                 ticket.Return();
+                if (stop.IsCancellationRequested)
+                {
+                    throw;
+                }
+
                 _engine.Logger.LogDebug(ex, "Runwick readiness probe failed.");
                 await IdleAsync(stop).ConfigureAwait(false);
+                continue;
+            }
+
+            if (!_engine.AdmissionOpen || Suspended)
+            {
+                ticket.Return();
                 continue;
             }
 
@@ -204,7 +212,13 @@ internal sealed class PoolCoordinator
     {
         var nominal = TimeSpan.FromTicks(Math.Min(_engine.IdleBackoffCap.Ticks, WorkerSettings.IdleBackoffBase.Ticks << Math.Min(_idleStep, 10)));
         _idleStep++;
-        await Wake.WaitAsync(_engine.Clock, EngineClock.Jitter(nominal), stop).ConfigureAwait(false);
+        if (await Wake.WaitAsync(_engine.Clock, EngineClock.Jitter(nominal), stop).ConfigureAwait(false))
+        {
+            _idleStep = 0;
+            // A cached lane can have been set aside after NoWork while another lane is cooling. A fresh
+            // snapshot clears the exclusions before selection; the group's probe spacing still applies.
+            _engine.Readiness.Invalidate();
+        }
     }
 
     /// <summary>
@@ -221,7 +235,7 @@ internal sealed class PoolCoordinator
             StoreReply<ReservedJob>? reply = null;
             TimeSpan sentAt = default;
 
-            // More than one free slot: claim them in one ReserveAndBegin command (05 §9.6). The batch settles its own
+            // Claim the free slots in one ReserveAndBegin command (05 §9.6). The batch settles its own
             // Applied reply; a reply like a single Reserve's (no work, paused, all blocked, expired) continues below as
             // one; any other non-Applied reply falls back to Reserve then Begin for this ticket.
             if (BatchTickets(ticket, choice) is { } tickets)
@@ -244,6 +258,12 @@ internal sealed class PoolCoordinator
 
             if (reply is null)
             {
+                if (!_engine.AdmissionOpen || Suspended)
+                {
+                    ticket.Return();
+                    return false;
+                }
+
                 var claim = ClaimAsync(ticket, lane, _cursors.GetValueOrDefault(lane));
                 ClaimTask = claim;
                 (reply, sentAt) = await claim.ConfigureAwait(false);
@@ -252,8 +272,6 @@ internal sealed class PoolCoordinator
             var now = _engine.Clock.Now;
             if (reply is null)
             {
-                // Control stop with the claim unresolved: recorded; any reservation is left to recovery.
-                _engine.Diagnose($"unresolved claim at control stop in pool {Settings.Name}");
                 ticket.Return();
                 return false;
             }
@@ -340,7 +358,7 @@ internal sealed class PoolCoordinator
     /// <summary>
     /// The tickets for one ReserveAndBegin command: the given one plus every other free slot, at most
     /// <see cref="IReserveAndBeginStore.MaxJobs"/>. Null (and nothing more acquired) when the store has no batched
-    /// claim, the batch is off for this pool, or there is only one free slot: a single slot keeps Reserve then Begin.
+    /// claim or the batch is off for this pool.
     /// Also null unless the selection had exactly one candidate lane and was not an aging pick: queue and lane shares
     /// divide admissions (05 §8.4), so with several ready lanes every admission is its own selection.
     /// </summary>
@@ -358,7 +376,7 @@ internal sealed class PoolCoordinator
             tickets.Add(extra);
         }
 
-        return tickets.Count > 1 ? tickets : null;
+        return tickets;
     }
 
     /// <summary>
@@ -371,7 +389,6 @@ internal sealed class PoolCoordinator
     {
         if (reply is null)
         {
-            _engine.Diagnose($"unresolved claim at control stop in pool {Settings.Name}");
             tickets.ForEach(t => t.Return());
             return BatchResult.Stopped;
         }
@@ -520,6 +537,7 @@ internal sealed class PoolCoordinator
         where T : class
     {
         var first = _engine.Clock.Now;
+        var submitted = false;
         try
         {
             for (var attempt = 0; !_engine.ControlStop.IsCancellationRequested; attempt++)
@@ -528,14 +546,25 @@ internal sealed class PoolCoordinator
                 try
                 {
                     Interlocked.Increment(ref ReservesSent);
-                    var reply = await _engine.CallAsync(_engine.AdmissionIo, attempt == 0 ? ControlPriority.Begin : ControlPriority.Resolution,
-                        _engine.Options.ControlRequestTimeout, send).ConfigureAwait(false);
+                    var reply = await _engine.CallAsync<StoreReply<T>?>(_engine.AdmissionIo,
+                        submitted ? ControlPriority.Resolution : ControlPriority.Begin, _engine.Options.ControlRequestTimeout, t =>
+                        {
+                            // Waiting for an I/O slot may have crossed a stop. Resolve commands already submitted
+                            // with the same identity even while fresh admission is closed.
+                            if (!submitted && (!_engine.AdmissionOpen || Suspended))
+                            {
+                                return Task.FromResult<StoreReply<T>?>(null);
+                            }
+
+                            submitted = true;
+                            return send(t)!;
+                        }).ConfigureAwait(false);
                     return (reply, sentAt);
                 }
                 catch (Exception ex) when (!_engine.ControlStop.IsCancellationRequested)
                 {
                     _engine.Logger.LogDebug(ex, "Runwick {Operation} {Command} unresolved; resubmitting the same command.", operation, commandId);
-                    if (!_claimUnresolved && _engine.Clock.Now - first >= _engine.Options.ClaimResolutionBudget)
+                    if (submitted && !_claimUnresolved && _engine.Clock.Now - first >= _engine.Options.ClaimResolutionBudget)
                     {
                         _claimUnresolved = true;
                         _engine.Diagnose($"unresolved claim {commandId} in pool {Settings.Name}: admission suspended until it resolves");
@@ -555,6 +584,11 @@ internal sealed class PoolCoordinator
                 _claimUnresolved = false;
                 Wake.Set();
             }
+        }
+
+        if (submitted)
+        {
+            _engine.Diagnose($"unresolved claim at control stop in pool {Settings.Name}");
         }
 
         return (null, TimeSpan.Zero);

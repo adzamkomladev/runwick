@@ -332,8 +332,8 @@ internal sealed class WakeSignal
         }
     }
 
-    /// <summary>Waits for a signal or the delay, then consumes any pending signal.</summary>
-    public async Task WaitAsync(EngineClock clock, TimeSpan timeout, CancellationToken ct)
+    /// <summary>Waits for a signal or the delay. Returns whether a pending signal was consumed.</summary>
+    public async Task<bool> WaitAsync(EngineClock clock, TimeSpan timeout, CancellationToken ct)
     {
         Task signal;
         lock (_lock)
@@ -349,14 +349,17 @@ internal sealed class WakeSignal
             await cts.CancelAsync().ConfigureAwait(false);
         }
 
+        bool signalled;
         lock (_lock)
         {
-            if (_tcs.Task.IsCompleted)
+            signalled = _tcs.Task.IsCompleted;
+            if (signalled)
             {
                 _tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             }
         }
 
         ct.ThrowIfCancellationRequested();
+        return signalled;
     }
 }

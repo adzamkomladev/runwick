@@ -289,12 +289,10 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
             return;
         }
 
-        if (Readiness.OnWake(queue))
+        Readiness.OnWake(queue);
+        foreach (var pool in pools)
         {
-            foreach (var pool in pools)
-            {
-                pool.Wake.Set();
-            }
+            pool.Wake.Set();
         }
     }
 
