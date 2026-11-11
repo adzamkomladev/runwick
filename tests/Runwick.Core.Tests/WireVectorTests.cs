@@ -134,8 +134,10 @@ public sealed class WireVectorTests
         var input = Convert.FromBase64String(c.GetProperty("inputBase64").GetString()!);
 
         var ex = Assert.Throws<PayloadValidationException>(() => JsonPayloadScanner.ScanPayload(input));
+        var validation = Assert.Throws<PayloadValidationException>(() => JsonPayloadScanner.ValidatePayload(input));
 
         Assert.Equal(c.GetProperty("code").GetString(), ex.Code);
+        Assert.Equal((ex.Code, ex.Message), (validation.Code, validation.Message));
     }
 
     [Theory]
@@ -148,6 +150,7 @@ public sealed class WireVectorTests
         var input = Convert.FromBase64String(c.GetProperty("inputBase64").GetString()!);
 
         var canonical = CanonicalEncoder.Encode(JsonPayloadScanner.ScanPayload(input));
+        JsonPayloadScanner.ValidatePayload(input);
 
         Assert.Equal(c.GetProperty("canonicalHex").GetString(), TestHost.Hex(canonical));
     }

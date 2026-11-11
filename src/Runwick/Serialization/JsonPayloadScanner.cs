@@ -3,51 +3,66 @@ using System.Text;
 namespace Runwick.Serialization;
 
 /// <summary>
-/// Single-pass strict validator of payload bytes (spec 02 §4.2) that also yields the canonical
-/// value used for hashing. Input is at most 1 MiB, so the produced tree is bounded by the input.
+/// Single-pass strict validator of payload bytes (spec 02 §4.2), with optional canonical values for hashing.
 /// </summary>
 internal ref struct JsonPayloadScanner
 {
     readonly ReadOnlySpan<byte> _bytes;
     readonly ScannerLimits _limits;
+    readonly bool _buildCanonical;
     int _pos;
 
-    JsonPayloadScanner(ReadOnlySpan<byte> bytes, ScannerLimits limits)
+    JsonPayloadScanner(ReadOnlySpan<byte> bytes, ScannerLimits limits, bool buildCanonical)
     {
         _bytes = bytes;
         _limits = limits;
+        _buildCanonical = buildCanonical;
         _pos = 0;
     }
 
     /// <summary>Validates a job payload (root must be an object) and returns its canonical value.</summary>
-    public static CanonicalValue ScanPayload(ReadOnlySpan<byte> bytes)
+    public static CanonicalValue ScanPayload(ReadOnlySpan<byte> bytes) => ScanPayload(bytes, buildCanonical: true)!;
+
+    /// <summary>Validates a stored job payload before decoding it into the job type.</summary>
+    public static void ValidatePayload(ReadOnlySpan<byte> bytes) => ScanPayload(bytes, buildCanonical: false);
+
+    static CanonicalValue? ScanPayload(ReadOnlySpan<byte> bytes, bool buildCanonical)
     {
         if (bytes.Length > PayloadBounds.MaxPayloadBytes)
         {
             throw Fail("payload_too_large", $"Payload is {bytes.Length} bytes; the limit is {PayloadBounds.MaxPayloadBytes}.");
         }
 
-        var value = Scan(bytes);
-        return value is CanonicalObject ? value : throw Fail("payload_root_not_object", "The payload root must be a JSON object.");
+        return ScanDocument(bytes, ScannerLimits.Payload, buildCanonical, requireObject: true);
     }
 
     /// <summary>Validates any JSON document (any root) under the payload rules and bounds.</summary>
     public static CanonicalValue Scan(ReadOnlySpan<byte> bytes) => Scan(bytes, ScannerLimits.Payload);
 
     /// <summary>Validates any JSON document under the §4.2 rules with the given structural bounds.</summary>
-    public static CanonicalValue Scan(ReadOnlySpan<byte> bytes, ScannerLimits limits)
+    public static CanonicalValue Scan(ReadOnlySpan<byte> bytes, ScannerLimits limits) =>
+        ScanDocument(bytes, limits, buildCanonical: true, requireObject: false)!;
+
+    static CanonicalValue? ScanDocument(ReadOnlySpan<byte> bytes, ScannerLimits limits, bool buildCanonical, bool requireObject)
     {
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
         {
             throw Fail("payload_invalid_json", "A byte order mark is not allowed.");
         }
 
-        var scanner = new JsonPayloadScanner(bytes, limits);
+        var scanner = new JsonPayloadScanner(bytes, limits, buildCanonical);
+        scanner.SkipWhitespace();
+        var root = scanner._pos;
         var value = scanner.ReadValue(0);
         scanner.SkipWhitespace();
         if (scanner._pos != bytes.Length)
         {
             throw Fail("payload_invalid_json", "Content after the root value.");
+        }
+
+        if (requireObject && bytes[root] != (byte)'{')
+        {
+            throw Fail("payload_root_not_object", "The payload root must be a JSON object.");
         }
 
         return value;
@@ -67,7 +82,7 @@ internal ref struct JsonPayloadScanner
 
     byte Peek() => _pos < _bytes.Length ? _bytes[_pos] : throw Grammar("Unexpected end");
 
-    CanonicalValue ReadValue(int depth)
+    CanonicalValue? ReadValue(int depth)
     {
         SkipWhitespace();
         var b = Peek();
@@ -88,13 +103,13 @@ internal ref struct JsonPayloadScanner
 
                 return ReadArray(depth + 1);
             case (byte)'"':
-                var s = ReadString(out var byteLength);
+                var s = ReadString(_buildCanonical, out var byteLength);
                 if (byteLength > _limits.MaxStringBytes)
                 {
                     throw Fail("payload_string_too_long", $"String value of {byteLength} bytes exceeds {_limits.MaxStringBytes}.");
                 }
 
-                return CanonicalValue.Str(s);
+                return _buildCanonical ? CanonicalValue.Str(s!) : null;
             case (byte)'t':
                 Expect("true"u8);
                 return CanonicalValue.True;
@@ -122,16 +137,16 @@ internal ref struct JsonPayloadScanner
         _pos += literal.Length;
     }
 
-    CanonicalValue ReadObject(int depth)
+    CanonicalValue? ReadObject(int depth)
     {
         _pos++;
-        var properties = new List<KeyValuePair<string, CanonicalValue>>();
+        var properties = _buildCanonical ? new List<KeyValuePair<string, CanonicalValue>>() : null;
         var names = new HashSet<string>(StringComparer.Ordinal);
         SkipWhitespace();
         if (Peek() == (byte)'}')
         {
             _pos++;
-            return new CanonicalObject(properties);
+            return properties is null ? null : new CanonicalObject(properties);
         }
 
         while (true)
@@ -142,7 +157,7 @@ internal ref struct JsonPayloadScanner
                 throw Grammar("Expected a property name");
             }
 
-            var name = ReadString(out var nameBytes);
+            var name = ReadString(capture: true, out var nameBytes)!;
             if (nameBytes > _limits.MaxPropertyNameBytes)
             {
                 throw Fail("payload_property_name_too_long", $"Property name of {nameBytes} bytes exceeds {_limits.MaxPropertyNameBytes}.");
@@ -160,8 +175,9 @@ internal ref struct JsonPayloadScanner
                 throw Fail("payload_duplicate_property", $"Duplicate decoded property name before byte {_pos}.");
             }
 
-            properties.Add(new(name, ReadValue(depth)));
-            if (properties.Count > _limits.MaxProperties)
+            var value = ReadValue(depth);
+            properties?.Add(new(name, value!));
+            if (names.Count > _limits.MaxProperties)
             {
                 throw Fail("payload_too_many_properties", $"More than {_limits.MaxProperties} properties in one object.");
             }
@@ -176,7 +192,7 @@ internal ref struct JsonPayloadScanner
 
             if (next == (byte)'}')
             {
-                return new CanonicalObject(properties);
+                return properties is null ? null : new CanonicalObject(properties);
             }
 
             _pos--;
@@ -184,21 +200,23 @@ internal ref struct JsonPayloadScanner
         }
     }
 
-    CanonicalValue ReadArray(int depth)
+    CanonicalValue? ReadArray(int depth)
     {
         _pos++;
-        var items = new List<CanonicalValue>();
+        var items = _buildCanonical ? new List<CanonicalValue>() : null;
+        var count = 0;
         SkipWhitespace();
         if (Peek() == (byte)']')
         {
             _pos++;
-            return new CanonicalArray(items);
+            return items is null ? null : new CanonicalArray(items);
         }
 
         while (true)
         {
-            items.Add(ReadValue(depth));
-            if (items.Count > _limits.MaxArrayElements)
+            var item = ReadValue(depth);
+            items?.Add(item!);
+            if (++count > _limits.MaxArrayElements)
             {
                 throw Fail("payload_array_too_long", $"More than {_limits.MaxArrayElements} array elements.");
             }
@@ -213,7 +231,7 @@ internal ref struct JsonPayloadScanner
 
             if (next == (byte)']')
             {
-                return new CanonicalArray(items);
+                return items is null ? null : new CanonicalArray(items);
             }
 
             _pos--;
@@ -221,7 +239,7 @@ internal ref struct JsonPayloadScanner
         }
     }
 
-    CanonicalValue ReadNumber()
+    CanonicalValue? ReadNumber()
     {
         var start = _pos;
         while (_pos < _bytes.Length && _bytes[_pos] is (byte)'-' or (byte)'+' or (byte)'.' or (byte)'e' or (byte)'E' or >= (byte)'0' and <= (byte)'9')
@@ -229,7 +247,7 @@ internal ref struct JsonPayloadScanner
             _pos++;
         }
 
-        var lexeme = Encoding.ASCII.GetString(_bytes[start.._pos]);
+        var lexeme = _bytes[start.._pos];
         if (!IsNumberLexeme(lexeme))
         {
             throw Fail("payload_invalid_number", $"Invalid number lexeme at byte {start}.");
@@ -240,10 +258,10 @@ internal ref struct JsonPayloadScanner
             throw Fail("payload_number_too_long", $"Number lexeme of {lexeme.Length} bytes exceeds {_limits.MaxNumberBytes}.");
         }
 
-        return CanonicalValue.Number(lexeme);
+        return _buildCanonical ? CanonicalValue.Number(Encoding.ASCII.GetString(lexeme)) : null;
     }
 
-    internal static bool IsNumberLexeme(string s)
+    static bool IsNumberLexeme(ReadOnlySpan<byte> s)
     {
         var i = 0;
         if (i < s.Length && s[i] == '-')
@@ -260,9 +278,9 @@ internal ref struct JsonPayloadScanner
         {
             i++;
         }
-        else if (s[i] is >= '1' and <= '9')
+        else if (s[i] is >= (byte)'1' and <= (byte)'9')
         {
-            while (i < s.Length && char.IsAsciiDigit(s[i]))
+            while (i < s.Length && s[i] is >= (byte)'0' and <= (byte)'9')
             {
                 i++;
             }
@@ -276,7 +294,7 @@ internal ref struct JsonPayloadScanner
         {
             i++;
             var digits = i;
-            while (i < s.Length && char.IsAsciiDigit(s[i]))
+            while (i < s.Length && s[i] is >= (byte)'0' and <= (byte)'9')
             {
                 i++;
             }
@@ -287,16 +305,16 @@ internal ref struct JsonPayloadScanner
             }
         }
 
-        if (i < s.Length && s[i] is 'e' or 'E')
+        if (i < s.Length && s[i] is (byte)'e' or (byte)'E')
         {
             i++;
-            if (i < s.Length && s[i] is '+' or '-')
+            if (i < s.Length && s[i] is (byte)'+' or (byte)'-')
             {
                 i++;
             }
 
             var digits = i;
-            while (i < s.Length && char.IsAsciiDigit(s[i]))
+            while (i < s.Length && s[i] is >= (byte)'0' and <= (byte)'9')
             {
                 i++;
             }
@@ -310,10 +328,10 @@ internal ref struct JsonPayloadScanner
         return i == s.Length;
     }
 
-    string ReadString(out int utf8Length)
+    string? ReadString(bool capture, out int utf8Length)
     {
         _pos++;
-        var builder = new StringBuilder();
+        var builder = capture ? new StringBuilder() : null;
         utf8Length = 0;
         while (true)
         {
@@ -326,7 +344,7 @@ internal ref struct JsonPayloadScanner
             if (b == (byte)'"')
             {
                 _pos++;
-                return builder.ToString();
+                return builder?.ToString();
             }
 
             if (b < 0x20)
@@ -342,7 +360,7 @@ internal ref struct JsonPayloadScanner
 
             if (b < 0x80)
             {
-                builder.Append((char)b);
+                builder?.Append((char)b);
                 utf8Length++;
                 _pos++;
                 continue;
@@ -354,13 +372,13 @@ internal ref struct JsonPayloadScanner
                 throw Fail("payload_invalid_utf8", $"Malformed UTF-8 at byte {_pos}.");
             }
 
-            builder.Append(Encoding.UTF8.GetString(_bytes.Slice(_pos, length)));
+            builder?.Append(Encoding.UTF8.GetString(_bytes.Slice(_pos, length)));
             utf8Length += length;
             _pos += length;
         }
     }
 
-    int ReadEscape(StringBuilder builder)
+    int ReadEscape(StringBuilder? builder)
     {
         if (_pos + 1 >= _bytes.Length)
         {
@@ -383,7 +401,7 @@ internal ref struct JsonPayloadScanner
         };
         if (simple is { } c)
         {
-            builder.Append(c);
+            builder?.Append(c);
             return 1;
         }
 
@@ -412,11 +430,11 @@ internal ref struct JsonPayloadScanner
                 throw Fail("payload_invalid_utf8", "Unpaired high surrogate escape.");
             }
 
-            builder.Append((char)unit).Append((char)low);
+            builder?.Append((char)unit).Append((char)low);
             return 4;
         }
 
-        builder.Append((char)unit);
+        builder?.Append((char)unit);
         return unit < 0x80 ? 1 : unit < 0x800 ? 2 : 3;
     }
 

@@ -106,7 +106,7 @@ internal sealed partial class RunwickJsonProfile
     /// <summary>Decodes stored bytes into <paramref name="type"/> after re-validating them.</summary>
     public object Deserialize(ReadOnlySpan<byte> utf8, Type type)
     {
-        JsonPayloadScanner.ScanPayload(utf8);
+        JsonPayloadScanner.ValidatePayload(utf8);
         try
         {
             return JsonSerializer.Deserialize(utf8, type, Options)

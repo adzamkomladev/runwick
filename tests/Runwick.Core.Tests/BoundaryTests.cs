@@ -75,6 +75,7 @@ public sealed class BoundaryTests
         Assert.Equal(code, ImportPayload(over).Code);
 
         // Worker decode.
+        JsonPayloadScanner.ValidatePayload(limit);
         Assert.Equal(code, Assert.Throws<PayloadValidationException>(() => RunwickJsonProfile.V1.Deserialize(over, typeof(BoundsJob))).Code);
     }
 

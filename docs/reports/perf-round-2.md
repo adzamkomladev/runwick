@@ -142,3 +142,17 @@ Five alternating bulk-add pairs submitted 2,000 jobs per run in batches of 100 w
 The workload runner can count Redis script names and reply statuses with `--trace`. `LATENCY HISTOGRAM evalsha eval` gives server-side distributions by Redis command. Combine the histogram with the client counters to identify the workload mix. `INFO commandstats` supplies cumulative execution time and call totals, and `INFO persistence` supplies AOF size and rewrite state. These server counters cover the dedicated benchmark instance. [Redis latency histograms](https://redis.io/docs/latest/commands/latency-histogram/), [Redis INFO](https://redis.io/docs/latest/commands/info/).
 
 R0 documents the promotion, acknowledgement and old-primary fencing decisions for Sentinel and Cluster. [Redis failover contract proposal](redis-ha-contract.md).
+
+## Worker payload decoding
+
+E1 uses the strict payload scanner without constructing canonical values before worker deserialization. The same scanner still builds the canonical form for fingerprints. All 102 focused boundary, serialization and wire tests passed, including rejection-code parity and the existing canonical vectors.
+
+Five alternating Release builds ran a synchronous decode probe with warm-up and four equally sized ASCII string properties. The table reports median bytes allocated on the calling thread per decode, including deserialization.
+
+| Payload bytes | Baseline | Validation only | Reduction |
+|---:|---:|---:|---:|
+| 1,021 | 8,984 | 3,176 | 65% |
+| 65,533 | 460,536 | 132,200 | 71% |
+| 1,048,029 | 6,322,143 | 2,098,112 | 67% |
+
+The probe excludes receipt parsing, store reads and handler execution. The allocation probe source and per-run outputs are under `artifacts/perf/round-two/`.
