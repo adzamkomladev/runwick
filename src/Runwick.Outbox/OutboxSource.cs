@@ -50,6 +50,13 @@ internal interface IOutboxSource
 
     Task<IReadOnlyList<OutboxLease>> ClaimAsync(Guid owner, int max, TimeSpan leaseDuration, CancellationToken ct);
 
+    /// <summary>
+    /// Claims and can persist a new transport identity atomically, using the relay's clock for transport expiry.
+    /// Older sources return their usual claim and let the relay record a transport before sending.
+    /// </summary>
+    Task<IReadOnlyList<OutboxLease>> ClaimWithTransportAsync(Guid owner, int max, TimeSpan leaseDuration, DateTimeOffset transportAsOf,
+        DateTimeOffset transportBound, CancellationToken ct) => ClaimAsync(owner, max, leaseDuration, ct);
+
     Task<bool> RenewAsync(OutboxLease lease, TimeSpan leaseDuration, CancellationToken ct);
 
     /// <summary>Persists the transport command ID and NotAfter before the request is sent (14 §6.2).</summary>

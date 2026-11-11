@@ -170,27 +170,52 @@ internal sealed class PostgresOutboxSource : IOutboxSource, IOutboxWakeSource, I
     }
 
     public Task<IReadOnlyList<OutboxLease>> ClaimAsync(Guid owner, int max, TimeSpan leaseDuration, CancellationToken ct) =>
+        ClaimCoreAsync(owner, max, leaseDuration, null, null, ct);
+
+    public Task<IReadOnlyList<OutboxLease>> ClaimWithTransportAsync(Guid owner, int max, TimeSpan leaseDuration, DateTimeOffset transportAsOf,
+        DateTimeOffset transportBound, CancellationToken ct) => ClaimCoreAsync(owner, max, leaseDuration, transportAsOf, transportBound, ct);
+
+    Task<IReadOnlyList<OutboxLease>> ClaimCoreAsync(Guid owner, int max, TimeSpan leaseDuration, DateTimeOffset? transportAsOf,
+        DateTimeOffset? transportBound, CancellationToken ct) =>
         OnLane(_claimLane, "OutboxClaim", async connection =>
         {
             using var claim = new NpgsqlCommand("""
                 WITH due AS (
-                    SELECT message_id FROM runwick_outbox.outbox_messages
+                    SELECT message_id, LEAST(@transport_bound, accept_until) AS new_not_after,
+                           LEAST(@transport_bound, accept_until) > @transport_as_of
+                           AND (transport_command_id IS NULL OR transport_not_after IS NULL OR transport_not_after <= @transport_as_of) AS replace_transport
+                    FROM runwick_outbox.outbox_messages
                     WHERE (state = 'pending' AND next_attempt_at <= clock_timestamp())
                        OR (state = 'leased' AND lease_expires_at <= clock_timestamp())
                     ORDER BY next_attempt_at
                     LIMIT @max
-                    FOR UPDATE SKIP LOCKED)
+                    FOR UPDATE SKIP LOCKED),
+                assigned AS (
+                    SELECT due.*, (@transport_ids)[(row_number() OVER ())::int] AS new_command_id
+                    FROM due)
                 UPDATE runwick_outbox.outbox_messages AS m
                 SET state = 'leased', lease_owner = @owner, lease_token = gen_random_uuid(),
-                    lease_expires_at = clock_timestamp() + @lease, attempts = m.attempts + 1, revision = m.revision + 1
-                FROM due
-                WHERE m.message_id = due.message_id
+                    lease_expires_at = clock_timestamp() + @lease, attempts = m.attempts + 1, revision = m.revision + 1,
+                    transport_command_id = CASE WHEN assigned.replace_transport THEN assigned.new_command_id ELSE m.transport_command_id END,
+                    transport_not_after = CASE WHEN assigned.replace_transport THEN assigned.new_not_after ELSE m.transport_not_after END
+                FROM assigned
+                WHERE m.message_id = assigned.message_id
                 RETURNING m.message_id, m.lease_token, m.destination_store_id, m.destination_application, m.intent,
                           m.delivery_fingerprint, m.staged_at, m.accept_until, m.attempts, m.transport_command_id, m.transport_not_after
                 """, connection);
             claim.Parameters.AddWithValue("max", NpgsqlDbType.Integer, max);
             claim.Parameters.AddWithValue("owner", NpgsqlDbType.Uuid, owner);
             claim.Parameters.AddWithValue("lease", NpgsqlDbType.Interval, leaseDuration);
+            claim.Parameters.AddWithValue("transport_as_of", NpgsqlDbType.TimestampTz, (object?)transportAsOf?.UtcDateTime ?? DBNull.Value);
+            claim.Parameters.AddWithValue("transport_bound", NpgsqlDbType.TimestampTz, (object?)transportBound?.UtcDateTime ?? DBNull.Value);
+            // Keep transport command IDs UUIDv7 even on PostgreSQL 16–17, where uuidv7() does not exist.
+            var ids = new Guid[transportAsOf is null ? 0 : max];
+            for (var i = 0; i < ids.Length; i++)
+            {
+                ids[i] = Guid.CreateVersion7();
+            }
+
+            claim.Parameters.AddWithValue("transport_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, ids);
             var leases = new List<OutboxLease>();
             var r = await claim.ExecuteReaderAsync(ct).ConfigureAwait(false);
             await using var rScope = r.ConfigureAwait(false);
@@ -201,6 +226,8 @@ internal sealed class PostgresOutboxSource : IOutboxSource, IOutboxWakeSource, I
                     await r.IsDBNullAsync(9, ct).ConfigureAwait(false) ? null : r.GetGuid(9), await r.IsDBNullAsync(10, ct).ConfigureAwait(false) ? null : Utc(r.GetDateTime(10))));
             }
 
+            // ReadAsync(false) ends the rowset. Consume ReadyForQuery so a failed autocommit cannot return usable leases.
+            await r.NextResultAsync(ct).ConfigureAwait(false);
             return (IReadOnlyList<OutboxLease>)leases;
         }, ct);
 

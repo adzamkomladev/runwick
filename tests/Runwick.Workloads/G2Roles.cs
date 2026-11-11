@@ -357,6 +357,10 @@ internal sealed class LossySource(IOutboxSource inner, MarkLog log) : IOutboxSou
     public Task<IReadOnlyList<OutboxLease>> ClaimAsync(Guid owner, int max, TimeSpan leaseDuration, CancellationToken ct) =>
         inner.ClaimAsync(owner, max, leaseDuration, ct);
 
+    public Task<IReadOnlyList<OutboxLease>> ClaimWithTransportAsync(Guid owner, int max, TimeSpan leaseDuration, DateTimeOffset transportAsOf,
+        DateTimeOffset transportBound, CancellationToken ct) =>
+        inner.ClaimWithTransportAsync(owner, max, leaseDuration, transportAsOf, transportBound, ct);
+
     public Task<bool> RenewAsync(OutboxLease lease, TimeSpan leaseDuration, CancellationToken ct) => inner.RenewAsync(lease, leaseDuration, ct);
 
     public Task<bool> RecordTransportAsync(OutboxLease lease, Guid commandId, DateTimeOffset notAfter, CancellationToken ct) =>

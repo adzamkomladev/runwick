@@ -476,10 +476,27 @@ internal sealed class FaultySource(IOutboxSource inner) : IOutboxSource, IAsyncD
 
     public Task InitializeAsync(CancellationToken ct) => inner.InitializeAsync(ct);
 
-    public async Task<IReadOnlyList<OutboxLease>> ClaimAsync(Guid owner, int max, TimeSpan leaseDuration, CancellationToken ct)
+    readonly TaskCompletionSource<OutboxLease> _lostClaim = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public bool LoseFirstClaimReply { get; set; }
+
+    public Task<OutboxLease> LostClaim => _lostClaim.Task;
+
+    public async Task<IReadOnlyList<OutboxLease>> ClaimAsync(Guid owner, int max, TimeSpan leaseDuration, CancellationToken ct) =>
+        ObserveClaim(await inner.ClaimAsync(owner, max, leaseDuration, ct));
+
+    public async Task<IReadOnlyList<OutboxLease>> ClaimWithTransportAsync(Guid owner, int max, TimeSpan leaseDuration, DateTimeOffset transportAsOf,
+        DateTimeOffset transportBound, CancellationToken ct) =>
+        ObserveClaim(await inner.ClaimWithTransportAsync(owner, max, leaseDuration, transportAsOf, transportBound, ct));
+
+    IReadOnlyList<OutboxLease> ObserveClaim(IReadOnlyList<OutboxLease> leases)
     {
-        var leases = await inner.ClaimAsync(owner, max, leaseDuration, ct);
         Interlocked.Increment(ref _claims);
+        if (LoseFirstClaimReply && leases.Count > 0 && _lostClaim.TrySetResult(leases[0]))
+        {
+            throw new IOException("Injected loss of the committed claim reply.");
+        }
+
         int seen;
         while ((seen = Volatile.Read(ref _maxClaimBatch)) < leases.Count && Interlocked.CompareExchange(ref _maxClaimBatch, leases.Count, seen) != seen)
         {

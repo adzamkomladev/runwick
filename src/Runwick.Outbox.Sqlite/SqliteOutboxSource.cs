@@ -47,7 +47,14 @@ internal sealed class SqliteOutboxSource(string connectionString) : IOutboxSourc
         _sourceStoreId = id;
     }
 
-    public async Task<IReadOnlyList<OutboxLease>> ClaimAsync(Guid owner, int max, TimeSpan leaseDuration, CancellationToken ct)
+    public Task<IReadOnlyList<OutboxLease>> ClaimAsync(Guid owner, int max, TimeSpan leaseDuration, CancellationToken ct) =>
+        ClaimCoreAsync(owner, max, leaseDuration, null, null, ct);
+
+    public Task<IReadOnlyList<OutboxLease>> ClaimWithTransportAsync(Guid owner, int max, TimeSpan leaseDuration, DateTimeOffset transportAsOf,
+        DateTimeOffset transportBound, CancellationToken ct) => ClaimCoreAsync(owner, max, leaseDuration, transportAsOf, transportBound, ct);
+
+    async Task<IReadOnlyList<OutboxLease>> ClaimCoreAsync(Guid owner, int max, TimeSpan leaseDuration, DateTimeOffset? transportAsOf,
+        DateTimeOffset? transportBound, CancellationToken ct)
     {
         await _claimLane.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -82,7 +89,15 @@ internal sealed class SqliteOutboxSource(string connectionString) : IOutboxSourc
                 using var claim = new SqliteCommand("""
                     UPDATE runwick_outbox_messages
                     SET state = 'leased', lease_owner = $owner, lease_token = $token, lease_expires_at = $expires,
-                        attempts = attempts + 1, revision = revision + 1
+                        attempts = attempts + 1, revision = revision + 1,
+                        transport_command_id = CASE
+                          WHEN min($transport_bound, accept_until) > $transport_as_of
+                           AND (transport_command_id IS NULL OR transport_not_after IS NULL OR transport_not_after <= $transport_as_of)
+                          THEN $transport_command ELSE transport_command_id END,
+                        transport_not_after = CASE
+                          WHEN min($transport_bound, accept_until) > $transport_as_of
+                           AND (transport_command_id IS NULL OR transport_not_after IS NULL OR transport_not_after <= $transport_as_of)
+                          THEN min($transport_bound, accept_until) ELSE transport_not_after END
                     WHERE message_id = $m
                     RETURNING message_id, destination_store_id, destination_application, intent, delivery_fingerprint, staged_at,
                               accept_until, attempts, transport_command_id, transport_not_after
@@ -91,6 +106,9 @@ internal sealed class SqliteOutboxSource(string connectionString) : IOutboxSourc
                 claim.Parameters.AddWithValue("$token", Text(token));
                 claim.Parameters.AddWithValue("$expires", now + (long)leaseDuration.TotalMilliseconds);
                 claim.Parameters.AddWithValue("$m", id);
+                claim.Parameters.AddWithValue("$transport_as_of", (object?)transportAsOf?.ToUnixTimeMilliseconds() ?? DBNull.Value);
+                claim.Parameters.AddWithValue("$transport_bound", (object?)transportBound?.ToUnixTimeMilliseconds() ?? DBNull.Value);
+                claim.Parameters.AddWithValue("$transport_command", Text(Guid.CreateVersion7()));
                 var r = await claim.ExecuteReaderAsync(ct).ConfigureAwait(false);
                 await using var rScope = r.ConfigureAwait(false);
                 if (await r.ReadAsync(ct).ConfigureAwait(false))

@@ -12,6 +12,77 @@ public sealed class RelayTests
 
     [Theory]
     [MemberData(nameof(OutboxData.Sources), MemberType = typeof(OutboxData))]
+    [Trait("Category", "Contract")]
+    public async Task A_transport_claim_keeps_the_legacy_identity_until_expiry_and_caps_replacement_at_the_horizon(SourceKind kind)
+    {
+        await using var o = await OutboxFixture.StartAsync("transportclaim", kind);
+        var stager = await o.OpenHost(identity: "stager", start: false);
+        var staged = await o.StageAsync(stager, new PingJob("legacy"));
+        await using var a = await o.NewSourceAsync();
+        await using var b = await o.NewSourceAsync();
+        var ct = TestContext.Current.CancellationToken;
+        var leaseTime = TimeSpan.FromSeconds(30);
+        var legacy = Assert.Single(await a.ClaimAsync(Guid.CreateVersion7(), 1, leaseTime, ct));
+        Assert.Null(legacy.TransportCommandId);
+        var originalId = Guid.CreateVersion7();
+        var now = Transport.Ms(DateTimeOffset.UtcNow);
+        var originalExpiry = now + TimeSpan.FromSeconds(30);
+        Assert.True(await a.RecordTransportAsync(legacy, originalId, originalExpiry, ct));
+
+        await ExpireSourceLeaseAsync(o, kind, staged.MessageId);
+        var reused = Assert.Single(await b.ClaimWithTransportAsync(Guid.CreateVersion7(), 1, leaseTime, now, originalExpiry, ct));
+        Assert.Equal(originalId, reused.TransportCommandId);
+        Assert.Equal(originalExpiry, reused.TransportNotAfter);
+        Assert.NotEqual(legacy.Token, reused.Token);
+        Assert.False(await a.RecordTransportAsync(legacy, Guid.CreateVersion7(), originalExpiry, ct));
+
+        await ExpireSourceLeaseAsync(o, kind, staged.MessageId);
+        var beforeHorizon = staged.AcceptUntil.AddMilliseconds(-1);
+        var replaced = Assert.Single(await a.ClaimWithTransportAsync(Guid.CreateVersion7(), 1, leaseTime,
+            beforeHorizon, beforeHorizon.AddSeconds(30), ct));
+        Assert.Equal(7, replaced.TransportCommandId?.Version);
+        Assert.NotEqual(originalId, replaced.TransportCommandId);
+        Assert.Equal(staged.AcceptUntil, replaced.TransportNotAfter);
+
+        await ExpireSourceLeaseAsync(o, kind, staged.MessageId);
+        var past = Assert.Single(await b.ClaimWithTransportAsync(Guid.CreateVersion7(), 1, leaseTime,
+            staged.AcceptUntil, staged.AcceptUntil.AddSeconds(30), ct));
+        Assert.Equal((replaced.TransportCommandId, replaced.TransportNotAfter), (past.TransportCommandId, past.TransportNotAfter));
+    }
+
+    [Theory]
+    [MemberData(nameof(OutboxData.Sources), MemberType = typeof(OutboxData))]
+    [Trait("Category", "Fault")]
+    public async Task A_lost_transport_claim_reply_publishes_no_send_and_the_next_owner_reuses_the_committed_identity(SourceKind kind)
+    {
+        await using var o = await OutboxFixture.StartAsync("transportclaimlost", kind);
+        var stager = await o.OpenHost(identity: "stager", start: false);
+        var staged = await o.StageAsync(stager, new PingJob("lost"));
+        FaultySource? source = null;
+        var first = await o.OpenHost(identity: "first", wrapSource: inner => source = new FaultySource(inner) { LoseFirstClaimReply = true });
+        var committed = await source!.LostClaim.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        Assert.NotNull(committed.TransportCommandId);
+        Assert.NotNull(committed.TransportNotAfter);
+        Assert.Equal(0, await o.MappingsFor(staged.MessageId));
+        await first.DisposeAsync();
+
+        await ExpireSourceLeaseAsync(o, kind, staged.MessageId);
+        await using var second = await o.OpenHost(identity: "second");
+        await o.WaitStateAsync(staged.MessageId, "delivered");
+        Assert.Equal(1, await o.MappingsFor(staged.MessageId));
+        Assert.Equal(staged.ProposedJobId.Value, await o.DeliveredJobAsync(staged.MessageId));
+        Assert.Equal(1, await o.Destination.CountAsync(
+            "SELECT count(*) FROM runwick.outbox_deliveries WHERE message_id = @m AND first_command_id = @command",
+            ("m", staged.MessageId), ("command", committed.TransportCommandId!.Value)));
+    }
+
+    static Task ExpireSourceLeaseAsync(OutboxFixture fixture, SourceKind kind, Guid messageId) =>
+        fixture.SourceExecAsync(fixture.Sql(kind == SourceKind.Postgres
+            ? "UPDATE {messages} SET lease_expires_at = 'epoch'::timestamptz WHERE message_id = {m}"
+            : "UPDATE {messages} SET lease_expires_at = 0 WHERE message_id = {m}"), messageId);
+
+    [Theory]
+    [MemberData(nameof(OutboxData.Sources), MemberType = typeof(OutboxData))]
     [Trait("Category", "Fault")]
     [Trait("Item", "SP-017")]
     [Trait("Case", "OUTBOX-02")]

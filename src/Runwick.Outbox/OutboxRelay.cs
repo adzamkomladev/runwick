@@ -46,10 +46,11 @@ internal sealed class OutboxRelay(
 
     public int InFlightCount => _inFlight.Count;
 
-    sealed class InFlight(OutboxLease lease)
+    sealed class InFlight(OutboxLease lease, long claimSentAt)
     {
         public OutboxLease Lease { get; } = lease;
 
+        public long LeaseSentAt = claimSentAt;
         public volatile bool Lost;
     }
 
@@ -176,11 +177,15 @@ internal sealed class OutboxRelay(
                 try
                 {
                     Interlocked.Increment(ref Claims);
-                    var leases = await Call(c => source.ClaimAsync(_owner, free, options.LeaseDuration, c), "OutboxClaim").ConfigureAwait(false);
+                    var claimSentAt = time.GetTimestamp();
+                    var now = time.GetUtcNow();
+                    var bound = DateTimeOffset.FromUnixTimeMilliseconds(Fingerprints.FloorEpochMs(now + options.TransportLifetime));
+                    var leases = await Call(c => source.ClaimWithTransportAsync(_owner, free, options.LeaseDuration, now, bound, c),
+                        "OutboxClaim").ConfigureAwait(false);
                     failures = 0;
                     foreach (var lease in leases)
                     {
-                        var entry = new InFlight(lease);
+                        var entry = new InFlight(lease, claimSentAt);
                         if (_inFlight.TryAdd(lease.MessageId, entry))
                         {
                             claimed++;
@@ -357,7 +362,12 @@ internal sealed class OutboxRelay(
 
                 try
                 {
-                    if (!await Call(c => source.RenewAsync(entry.Lease, options.LeaseDuration, c)).ConfigureAwait(false))
+                    var sentAt = time.GetTimestamp();
+                    if (await Call(c => source.RenewAsync(entry.Lease, options.LeaseDuration, c)).ConfigureAwait(false))
+                    {
+                        Volatile.Write(ref entry.LeaseSentAt, sentAt);
+                    }
+                    else
                     {
                         entry.Lost = true;
                         Interlocked.Increment(ref LeaseLosses);
@@ -438,6 +448,13 @@ internal sealed class OutboxRelay(
                     Interlocked.Increment(ref LeaseLosses);
                     return;
                 }
+            }
+
+            // Measure the lease from the claim or renewal's send time. A queued or delayed claim reply cannot
+            // authorize a first send after its conservatively measured lease lifetime.
+            if (entry.Lost || time.GetElapsedTime(Volatile.Read(ref entry.LeaseSentAt)) >= options.LeaseDuration)
+            {
+                return;
             }
 
             var command = new StoreCommand<ReceiveOutboxRequest>(prepared.Application, commandId, notAfter,

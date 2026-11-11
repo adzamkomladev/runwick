@@ -156,13 +156,13 @@ Every transition after staging is one short source transaction guarded by `lease
 ### 4.1 Sequence
 
 1. **Initialize** (retried with backoff): destination handshake (`EnsureReadyAsync`), then read the source UUID and check the schema version.
-2. **Claim** at most the free slots in one short source transaction (PostgreSQL: `FOR UPDATE SKIP LOCKED`; SQLite: `BEGIN IMMEDIATE`), commit.
+2. **Claim** at most the free slots in one short source transaction (PostgreSQL: `FOR UPDATE SKIP LOCKED`. SQLite: `BEGIN IMMEDIATE`). A source may assign transport identity in that same update. It preserves a complete pair that is valid at the relay's supplied time and caps any new deadline at AcceptUntil. It assigns no new identity at or beyond that cutoff. The relay receives the claimed rows only after commit.
 3. Per message, outside any source transaction:
    1. Import the intent (02 §9.3). Malformed, unknown format/profile, digest mismatch → **block** with the codec's code.
    2. Check the destination binding (store, application) → `destination_binding_mismatch`; the registered contract → `contract_not_registered`; the delivery fingerprint recomputed from the row → `delivery_fingerprint_mismatch`. Each **blocks**.
    3. If relay time ≥ AcceptUntil: resolve after the horizon (§6.3).
-   4. Reuse the persisted transport command while relay time < its NotAfter. Otherwise create a new command ID with `NotAfter = floor_ms(min(now + TransportLifetime, AcceptUntil))` and **persist it on the row (token-guarded, live lease) before sending**. A failed persist means the lease is lost: stop.
-   5. Send. On outcome-unknown or a provider timeout, resend the **same** command until its NotAfter. Not applied (connection never opened) → retry later.
+   4. Reuse the persisted transport command while relay time < its NotAfter. If the source left no usable identity or the claim-time identity expired before delivery, create a new command ID with `NotAfter = floor_ms(min(now + TransportLifetime, AcceptUntil))` and **persist it on the row (token-guarded, live lease) before sending**. A failed persist means the lease is lost: stop.
+   5. Before the first send, check for known lease loss and the local monotonic lease lifetime measured from the last confirmed claim or renewal's send time. Send outside the source transaction. On outcome-unknown or a provider timeout, resend the **same** command until its NotAfter. Not applied (connection never opened) → retry later.
    6. Handle the reply (§4.4).
 4. **Mark delivered** only from an `Applied` reply (or a matching retained mapping, §6.3), in its own source transaction guarded by the token. A mark that fails or whose reply is lost leaves the lease to expire; the next owner's request returns the same mapping.
 
