@@ -255,7 +255,7 @@ internal sealed partial class SqliteStore : IRetentionStore
               AND j.terminal_at < @cutoff
               AND j.detail_expired_at IS NOT NULL
               {(cursor is null ? "" : "AND (j.terminal_at, j.job_id) > (@cursor_at, @cursor_id)")}
-              AND NOT EXISTS (SELECT 1 FROM runwick_dispatch_keys AS d
+              AND NOT EXISTS (SELECT 1 FROM runwick_dispatch_keys AS d INDEXED BY runwick_dispatch_keys_bound_job
                               WHERE d.application = j.application AND d.bound_job_id = j.job_id
                                 AND (d.key_kind = 'active' OR d.expires_at > @now))
               AND NOT EXISTS (SELECT 1 FROM runwick_concurrency_permits AS pm
