@@ -1,0 +1,2 @@
+{ "name": "bench-bullmq", "version": "1.0.0", "private": true, "type": "module",
+  "dependencies": { "bullmq": "6.7.2", "ioredis": "6.0.0" } }

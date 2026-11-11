@@ -45,7 +45,8 @@ func main() {
 	pad := flag.Int("payload", 1024, "payload bytes")
 	out := flag.String("out", "", "result JSON file")
 	cooldown := flag.Int("cooldown-ms", 100, "River FetchCooldown (default 100 ms)")
-	calls := flag.Int("calls", 1, "enqueue: concurrent single-job inserters")
+	calls := flag.Int("calls", 1, "enqueue: concurrent single-job inserters; steady: max inserts in flight (open loop)")
+	maxSeconds := flag.Int("max-seconds", 1800, "drain: give up after this many seconds")
 	flag.Parse()
 	ctx := context.Background()
 
@@ -112,6 +113,19 @@ func main() {
 		result["calls"] = *calls
 		result["insertsPerSec"] = float64(*n) / elapsed
 		result["insertLatencyMs"] = map[string]float64{"p50": pct(all, 0.5), "p99": pct(all, 0.99)}
+	case "bulk":
+		// -n jobs with InsertMany (COPY) in chunks of 1000 from one caller; no worker started.
+		params := make([]river.InsertManyParams, 0, *n)
+		for i := 0; i < *n; i++ {
+			params = append(params, river.InsertManyParams{Args: payload})
+		}
+		start := time.Now()
+		for i := 0; i < len(params); i += 1000 {
+			_, err = client.InsertMany(ctx, params[i:min(i+1000, len(params))])
+			must(err)
+		}
+		result["jobs"] = *n
+		result["insertsPerSec"] = float64(*n) / time.Since(start).Seconds()
 	case "drain":
 		params := make([]river.InsertManyParams, 0, *n)
 		for i := 0; i < *n; i++ {
@@ -126,12 +140,18 @@ func main() {
 		start := time.Now()
 		must(client.Start(ctx))
 		done, failed := 0, 0
+		limit := time.After(time.Duration(*maxSeconds) * time.Second)
+	drain:
 		for done+failed < *n {
-			e := <-events
-			if e.Kind == river.EventKindJobCompleted {
-				done++
-			} else {
-				failed++
+			select {
+			case e := <-events:
+				if e.Kind == river.EventKindJobCompleted {
+					done++
+				} else {
+					failed++
+				}
+			case <-limit:
+				break drain
 			}
 		}
 		elapsed := time.Since(start).Seconds()
@@ -147,11 +167,20 @@ func main() {
 		go func() {
 			interval := time.Duration(float64(time.Second) / *rate)
 			next := time.Now()
+			sem := make(chan struct{}, *calls) // open loop: up to -calls inserts in flight
 			for time.Now().Before(stop) {
-				if _, err := client.Insert(ctx, payload, nil); err != nil {
-					fmt.Fprintln(os.Stderr, "insert:", err)
+				select {
+				case sem <- struct{}{}:
+					go func() {
+						defer func() { <-sem }()
+						if _, err := client.Insert(ctx, payload, nil); err != nil {
+							fmt.Fprintln(os.Stderr, "insert:", err)
+							return
+						}
+						inserted.Add(1)
+					}()
+				default:
 				}
-				inserted.Add(1)
 				next = next.Add(interval)
 				if d := time.Until(next); d > 0 {
 					time.Sleep(d)
