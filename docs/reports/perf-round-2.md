@@ -129,6 +129,30 @@ The contention sweep ran three trials per setting with four processes and 16 slo
 
 The native path reduced long writer waits. Throughput remained within 36–42 jobs/s at the medians. The prototype remains isolated while the retry budget under an externally held write lock is evaluated. Raw runs and the summarizer are under `artifacts/perf/round-two/sqlite-q3-busy/`.
 
+### Q5 SQLite receipt lookups with retained history
+
+SQLite 3.53.3 chose the primary key for the replay lookup and the undecided-receipt check. The primary key orders by retention class before command ID, so both plans searched only on application and visited unrelated receipts. Both queries now use the existing `runwick_command_by_id` index to seek by application and command ID. Replay still examines both retention classes and prefers the command's own class. All 15 focused receipt, finish and transaction tests passed.
+
+Five alternating 1,000-job drain pairs used copies of the same 5,000-terminal-job fixture, one process with 16 worker slots, 1 KiB payloads and WAL with synchronous FULL. All ten runs accepted, invoked and durably settled 1,000 jobs each. The full Redis test suite shared the host during part of the comparison.
+
+| Retained SQLite drain | Primary key search | Command ID seek |
+|---|---:|---:|
+| Median durable completions/s (min–max) | 68.1 (60.4–70.7) | 145.2 (99.9–159.1) |
+| Median writer time in the two receipt queries | 8,002 ms | 35 ms |
+| Median writer commits | 476 | 478 |
+
+The median paired throughput ratio was 2.05×, with a range of 1.65–2.56×. A separate 30-second open-loop pair used 16 callers, 16 worker slots and 100 offers/s on the same retained fixture.
+
+| SQLite steady at 100 offers/s | Primary key search | Command ID seek |
+|---|---:|---:|
+| Offered | 3,001 | 3,001 |
+| Accepted and eventually completed | 844 | 3,001 |
+| Completed before offers stopped | 434 | 2,990 |
+| Local admission refusals | 2,157 | 0 |
+| Due-to-handler p99 among accepted jobs | 12.88 s | 0.80 s |
+
+The candidate kept pace in this short run. Sustained capacity with larger retained history, maintenance and readers is still open. Query plans, provider binary checksums and raw results are under `artifacts/perf/round-two/sqlite-q5-receipt-index/`.
+
 ### B4 SQLite settlement experiment
 
 An isolated build used one completion consumer to give ready finishes time to collect behind the previous call. Five paired 1,000-job drains with 16 workers reduced median committed settlement calls from 289 to 183 and total writer commits from 442 to 376. Median throughput was 101.6 jobs/s with four consumers and 104.4 with one. The median paired gain was 3.9%, and individual pairs varied from a 16.6% drop to a 39.9% gain. Production uses four completion consumers. The next finish experiment should account for transaction body cost and protect unrelated finishes during receipt resolution.
@@ -170,6 +194,16 @@ Two pending commands reduced p99 by 33% in this sweep. All settings exceeded the
 S4 returns the next eligible scan time on an empty head read. It subtracts read and materialization time from the local wait using a monotonic anchor. Notifications and bounded polls cover edits the host has yet to observe. The eight scheduler-loop tests and all 71 shared scheduler contracts passed on PostgreSQL, Redis and SQLite, including cold starts with clock skew and the cursor head recheck.
 
 The measured two-slot mean would have to drop from 34.4 ms to below 26 ms per command before due-read overhead to reach 1,000 schedules in 13 s. The next experiment groups independent plans under shared commits while preserving per-plan decisions and original receipt identities. The design notes are under `artifacts/perf/round-two/p06s-s3/`.
+
+The isolated S3 prototype ran a shortened P-06s pair with two groups in flight and either one or four independent plans per group. Both runs used 1,000 schedules, the same 100 jobs/s allowance, two minutes of warm-up, two minutes of measurement and a 60-second tail. Each acknowledged all 2,000 expected occurrences with zero revision conflicts, lease losses or correctness violations. The Redis crash suite shared the host.
+
+| Post-commit scheduler acknowledgment | One plan | Four plans |
+|---|---:|---:|
+| p50 | 14.58 s | 6.11 s |
+| p95 | 25.88 s | 11.05 s |
+| p99 | 27.29 s | 11.38 s |
+
+The candidate processed 5,647 plans in 1,412 grouped commits over the scheduler lifetime and met the 13 s target in this pair. A focused PostgreSQL test exercised per-item rollback and same-ID replay after a lost group commit reply. The prototype is isolated while the grouped path and longer workloads are qualified. Both commit-acknowledgment logs are under `artifacts/perf/round-two/p06s-s3/`.
 
 ## PostgreSQL post-commit wake
 
@@ -237,6 +271,8 @@ The workload runner can count Redis script names and reply statuses with `--trac
 
 R0 documents the promotion, acknowledgement and old-primary fencing decisions for Sentinel and Cluster. [Redis failover contract proposal](redis-ha-contract.md).
 
+An isolated Sentinel fixture used Redis 8.2.11, one primary, two replicas and three Sentinels. The primary confirmed the seed with `WAITAOF 1 2`. After disconnecting it from the fixture network, Sentinel promoted a replica that retained the seed. Both nodes reported the primary role. A client on the isolated node wrote a new key and received `WAITAOF 1 0`. The promoted history had no such key. This reproduced the need to revoke the former primary's write authority independently of primary discovery and local persistence. The initial hostname-based attempt stalled on DNS resolution after network detachment. The successful run used numeric fixture addresses to isolate failover behavior. Runner, server logs and acknowledgement counts are under `artifacts/perf/round-two/redis-sentinel-observation/`.
+
 ## Outbox relay
 
 Phase 0.6 traces claim, transport record, destination receive and delivered mark separately. D1 assigns the UUIDv7 transport identity and deadline in the claim transaction for PostgreSQL and SQLite. A reclaim preserves the pair while its deadline remains live. Replacements respect the acceptance horizon. The relay checks lease authority before the first send, and subsequent source writes stay token-guarded. The eight focused tests passed, including a lost reply to a committed claim and later reuse of its transport identity.
@@ -275,4 +311,4 @@ The first M2 collector samples SQLite database and WAL file sizes and process wr
 
 ## Full-suite verification
 
-The worker checkpoint at `6011483` passed 426 Core and 475 shared contract tests. The SQLite provider suite passed 53 tests on the snapshot through `c48a8d4`. The integrated snapshot at `d0efb88` passed all 383 PostgreSQL tests with zero skips on a Docker-managed server, including CAP-10, TIME-09, TXC-05 and the store-outage cases. The same snapshot passed all 48 outbox tests with zero skips. Earlier and integrated logs are under `artifacts/perf/round-two/suites/` and `suites-integrated/`.
+The worker checkpoint at `6011483` passed 426 Core and 475 shared contract tests. The SQLite provider suite passed 53 tests on the snapshot through `c48a8d4`. The integrated snapshot at `d0efb88` passed all 383 PostgreSQL tests with zero skips on a Docker-managed server, including CAP-10, TIME-09, TXC-05 and the store-outage cases. The same snapshot passed all 48 outbox and 70 Redis tests with zero skips, including the Redis AOF kill-and-restart sweep. Earlier and integrated logs are under `artifacts/perf/round-two/suites/` and `suites-integrated/`.
