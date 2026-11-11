@@ -487,6 +487,15 @@ Job context allocates its items dictionary on first access. The same probe measu
 
 The attempt supervisor now waits for pipeline completion, the wake signal or the timeout in one operation. It removes the outer cancellation source and skips the cleanup delay when disposal already completed. Each pending wait still owns one cancellable delay. Five alternating allocation probes measured 2,795 → 1,176 bytes per wait when pipeline completion won and 1,680 → 1,264 bytes when a wake signal won. Each sample measured 30,000 synthetic waits in a warmed process. All 15 focused worker cases passed, including timeout boundaries, grace, hung disposal, shutdown and polling. End-to-end allocation qualification remains open. Source and results are under `artifacts/perf/round-two/e5-attempt-wait/`.
 
+The short P-03 diagnostic at `e1cb660` used PostgreSQL 18.6, one minute of warm-up and three minutes of measurement per payload size. Each fixture ran a 16-slot worker and 100 ms handlers. The two arms sustained about 1 MB/s of accepted payload ingress. Every accepted job settled once with no dispatch failures or correctness violations.
+
+| Nominal payload | Offers / durable finishes per second | Dispatch / pipeline-to-finish p99 | Producer / worker allocation per job |
+|---|---:|---:|---:|
+| 64 KiB | 15.70 / 15.63 | 195 / 147 ms | 1.36 / 0.40 MB |
+| Near 1 MiB | 0.97 / 0.97 | 414 / 573 ms | 17.39 / 3.91 MB |
+
+Peak worker RSS was 214 and 209 MB respectively. WAL per completed job was 13.5 and 30.3 kB with synthetic repeated-character payloads. The workload rejected an oversized payload with `payload_too_large` and stored zero jobs for that check. This was a diagnostic on the shared host with one repetition per size. Raw results are under `artifacts/perf/round-two/p03-payload/`.
+
 ## Store dashboard
 
 M1 adds a Store page and read-only snapshot for callers with `Settings.Read`. It reuses the process health probe for store and admission metadata, retains the last descriptor for up to five minutes, and labels stale and unavailable facts. Browser refreshes read the cached snapshot. Chromium checked the page at desktop and mobile widths. A follow-up uses the same probe to show PostgreSQL server and SQLite library versions with their respective node and process scope. All seven focused dashboard tests passed, including the real PostgreSQL outage, version expiry and generated asset checks. Provider collectors, topology observations and paired dashboard overhead measurements are still pending.
