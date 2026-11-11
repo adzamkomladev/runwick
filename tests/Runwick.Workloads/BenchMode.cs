@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using Runwick.Postgres.Migrations;
 using Runwick.Protocol;
+using Runwick.Redis.Store;
 using Runwick.Serialization;
 using Runwick.Sqlite.Migrations;
 using Runwick.Sqlite.Store;
@@ -17,7 +18,7 @@ namespace Runwick.Workloads;
 
 /// <summary>
 /// <c>bench</c>: Runwick's row in the comparison benchmark (<c>eng/bench-compare/run.sh</c>, next to River and pg-boss).
-/// One process, one worker pool on queue <c>load</c>, a no-op handler and a 1 KiB payload, against a fresh store.
+/// One process, one worker pool on queue <c>load</c>, a no-op handler and a 1 KiB payload by default.
 /// <list type="bullet">
 /// <item><c>drain</c>: dispatch <c>--n</c> jobs first (DispatchMany, up to 100 per call within the payload budget), then start the worker and time the
 /// first claim to the last confirmed finish.</item>
@@ -29,6 +30,7 @@ namespace Runwick.Workloads;
 /// </list>
 /// Usage: <c>bench --mode drain|enqueue|bulk|steady [--no-usage] [--n 20000] [--rate 100] [--seconds 120] [--workers 16]
 /// [--payload 1024] [--job-ms 0] [--calls 1] [--store postgres|sqlite|redis] [--out file.json] [--trace] [--sqlite-count-statements]</c>.
+/// SQLite uses a fresh file. <c>--sqlite-keep</c> keeps it, and <c>--sqlite-seed path</c> copies a drained fixture before the run.
 /// Trace adds per-job stage gaps, held-job and settlement-queue samples, and store call phases. Writes the same JSON shape as the River and pg-boss
 /// benches: <c>system</c>, <c>mode</c>, <c>completionsPerSec</c>, <c>latencyMs {p50, p95, p99, max}</c> (steady).
 /// </summary>
@@ -38,13 +40,18 @@ internal static class BenchMode
     // Leave space in the 2 MiB envelope for base64 expansion and per-item metadata.
     const int BatchPayloadBudget = 1024 * 1024;
 
-    sealed class SqliteBenchDirectory(string parent) : IDisposable
+    sealed class SqliteBenchDirectory(string parent, bool keep) : IDisposable
     {
         public string FullName { get; } = Directory.CreateDirectory(Path.Combine(parent, "bench-runwick-" + Guid.NewGuid().ToString("N"))).FullName;
 
+        public string DatabasePath => Path.Combine(FullName, "runwick.db");
+
         public void Dispose()
         {
-            try { Directory.Delete(FullName, recursive: true); } catch (IOException) { }
+            if (!keep)
+            {
+                try { Directory.Delete(FullName, recursive: true); } catch (IOException) { }
+            }
         }
     }
 
@@ -82,11 +89,40 @@ internal static class BenchMode
         }
 
         Action<RunwickBuilder> useStore;
-        using var sqliteDirectory = store == "sqlite" ? new SqliteBenchDirectory(a.OptStr("sqlite-dir") ?? Path.GetTempPath()) : null;
+        var keepSqlite = a.Has("sqlite-keep");
+        using var sqliteDirectory = store == "sqlite" ? new SqliteBenchDirectory(a.OptStr("sqlite-dir") ?? Path.GetTempPath(), keepSqlite) : null;
         if (sqliteDirectory is not null)
         {
-            var sqliteCs = new SqliteConnectionStringBuilder { DataSource = Path.Combine(sqliteDirectory.FullName, "runwick.db") }.ConnectionString;
+            var sqliteCs = new SqliteConnectionStringBuilder { DataSource = sqliteDirectory.DatabasePath, Pooling = false }.ConnectionString;
+            var seed = a.OptStr("sqlite-seed");
+            if (seed is not null)
+            {
+                using var source = new SqliteConnection(new SqliteConnectionStringBuilder
+                {
+                    DataSource = seed,
+                    Mode = SqliteOpenMode.ReadOnly,
+                    Pooling = false,
+                }.ConnectionString);
+                using var destination = new SqliteConnection(sqliteCs);
+                source.Open();
+                destination.Open();
+                source.BackupDatabase(destination);
+            }
+
             await RunwickSqliteMigrations.MigrateAsync(sqliteCs).ConfigureAwait(false);
+            if (seed is not null)
+            {
+                using var copy = new SqliteConnection(sqliteCs);
+                copy.Open();
+                using var checkSeed = copy.CreateCommand();
+                checkSeed.CommandText = "SELECT EXISTS (SELECT 1 FROM runwick_jobs WHERE application = 'bench' AND terminal_at IS NULL)";
+                if ((long)checkSeed.ExecuteScalar()! != 0)
+                {
+                    Console.Error.WriteLine("--sqlite-seed needs a drained bench fixture with only terminal jobs");
+                    return 2;
+                }
+            }
+
             useStore = r => r.UseSqlite(sqliteCs);
         }
         else if (store == "redis")
@@ -135,7 +171,8 @@ internal static class BenchMode
         var engine = provider.GetRequiredService<WorkerEngine>();
         var hosted = provider.GetServices<IHostedService>().Single();
         var dispatcher = provider.GetRequiredService<IJobDispatcher>();
-        var sqlite = provider.GetRequiredService<IRunwickStore>() as SqliteStore;
+        var driver = provider.GetRequiredService<IRunwickStore>();
+        var sqlite = driver as SqliteStore;
         long sqliteStatements = 0;
         var countSqliteStatements = a.Has("sqlite-count-statements") && sqlite is not null;
         if (countSqliteStatements)
@@ -158,6 +195,12 @@ internal static class BenchMode
         var trace = a.Has("trace");
         var stages = new Metrics();
         using var phases = trace ? PhaseListener.Attach(stages) : null;
+        if (trace && driver is RedisStore redis)
+        {
+            redis.Runner.Client.Traced = (script, _, reply) =>
+                stages.Count($"redis:{script.Name}:{(string?)reply.FirstOrDefault()}");
+        }
+
         var reservedAt = new ConcurrentDictionary<Guid, long>();
         var invokedAt = new ConcurrentDictionary<Guid, long>();
         long reservedCount = 0;
@@ -211,7 +254,6 @@ internal static class BenchMode
                     }
                 }
 
-                Interlocked.Increment(ref finished);
                 if (mode == "steady" && entry is not null)
                 {
                     var id = entry.Reserved.Position.JobId;
@@ -224,6 +266,8 @@ internal static class BenchMode
                         finishedAt[id] = now;
                     }
                 }
+
+                Interlocked.Increment(ref finished);
             }
         };
 
@@ -510,6 +554,11 @@ internal static class BenchMode
                 ["writerConnectionsOpened"] = sqlite.Executor.WriterConnectionsOpened,
                 ["writerStatements"] = countSqliteStatements ? Interlocked.Read(ref sqliteStatements) : null,
             };
+
+            if (keepSqlite)
+            {
+                result["sqlite"]!["databasePath"] = Path.GetFullPath(sqliteDirectory!.DatabasePath);
+            }
         }
 
         using (var process = Process.GetCurrentProcess())
@@ -531,6 +580,32 @@ internal static class BenchMode
         {
             using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             await hosted.StopAsync(stop.Token).ConfigureAwait(false);
+        }
+
+        if (trace && sqlite is not null && sqliteDirectory is not null)
+        {
+            var wal = new FileInfo(sqliteDirectory.DatabasePath + "-wal");
+            result["sqlite"]!["walBytesAfterRun"] = wal.Exists ? wal.Length : 0;
+            if (Version.TryParse(sqlite.EngineFacts.GetValueOrDefault("sqlite_version"), out var version) && version >= new Version(3, 51))
+            {
+                result["sqlite"]!["walAfterRun"] = await sqlite.Executor.WriteAsync(SqLane.Background, conn =>
+                {
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = "PRAGMA wal_autocheckpoint; PRAGMA wal_checkpoint(NOOP)";
+                    using var rows = cmd.ExecuteReader();
+                    rows.Read();
+                    var checkpointPages = rows.GetInt32(0);
+                    rows.NextResult();
+                    rows.Read();
+                    return new JsonObject
+                    {
+                        ["autoCheckpointPages"] = checkpointPages,
+                        ["busy"] = rows.GetInt32(0) != 0,
+                        ["logFrames"] = rows.GetInt32(1),
+                        ["checkpointedFrames"] = rows.GetInt32(2),
+                    };
+                }, CancellationToken.None).ConfigureAwait(false);
+            }
         }
 
         var json = result.ToJsonString(Json.Indented);
