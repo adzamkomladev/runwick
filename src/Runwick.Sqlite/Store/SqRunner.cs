@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Data.Sqlite;
+using Runwick.Internal;
 using Runwick.Protocol;
 
 namespace Runwick.Sqlite.Store;
@@ -94,14 +95,16 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         CancellationToken ct) where T : class
     {
         var gate = executor.Gate(op.Lane);
+        var laneStarted = PhaseTimings.Start();
         await gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            PhaseTimings.Lap(laneStarted, op.Operation, "driverLane");
             for (var attempt = 0; ; attempt++)
             {
                 try
                 {
-                    var raw = await executor.WriteAsync(op.Lane, once, ct).ConfigureAwait(false);
+                    var raw = await executor.WriteAsync(op.Lane, once, ct, op.Operation).ConfigureAwait(false);
                     return map(raw);
                 }
                 catch (SqBusyException) when (attempt < MaxTransientRetries && time.GetUtcNow() < op.NotAfter && !ct.IsCancellationRequested)
@@ -144,9 +147,11 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         return Guard(conn, op, state, () =>
         {
             var tx = Begin(conn, op, ct);
+            var statementsStarted = PhaseTimings.Start();
             var row = protocol(tx);
             if (!row.Commits)
             {
+                PhaseTimings.Lap(statementsStarted, op.Operation, "statements");
                 Rollback(conn);
                 return row;
             }
@@ -156,7 +161,7 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
                 Finalize(tx, row.Status, row.Result ?? [], row.Decided);
             }
 
-            Commit(tx, state);
+            Commit(tx, state, statementsStarted);
             return row;
         });
     }
@@ -168,9 +173,11 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         return Guard(conn, op, state, () =>
         {
             var tx = Begin(conn, op, ct);
+            var statementsStarted = PhaseTimings.Start();
             var outcome = OutcomeProtocol(tx, body, replay);
             if (outcome is SqOutcome<T>.Rollback rollback)
             {
+                PhaseTimings.Lap(statementsStarted, op.Operation, "statements");
                 Rollback(conn);
                 return rollback.Reply;
             }
@@ -181,7 +188,7 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
                 Finalize(tx, commit.Reply.Status.ToString(), commit.Result ?? [], commit.Reply.DecidedAt);
             }
 
-            Commit(tx, state);
+            Commit(tx, state, statementsStarted);
             return commit.Reply;
         }, (status, code) => StoreReply<T>.NoEffect(status, new StoreError(code), SqTime.Floor(time.GetUtcNow())));
     }
@@ -268,6 +275,7 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         var remaining = op.NotAfter == DateTimeOffset.MaxValue ? DefaultBudget : op.NotAfter - time.GetUtcNow();
         var wait = Math.Clamp((long)Math.Min(options.WriterBusyTimeout.TotalMilliseconds, remaining.TotalMilliseconds), 0, 30_000);
         SqFile.SetBusyTimeout(conn, wait);
+        var beginStarted = PhaseTimings.Start();
         try
         {
             SqFile.Exec(conn, "BEGIN IMMEDIATE");
@@ -275,6 +283,10 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         catch (SqliteException ex) when (ex.SqliteErrorCode == 5)
         {
             throw new SqBusyException(ex);
+        }
+        finally
+        {
+            PhaseTimings.Lap(beginStarted, op.Operation, "beginImmediate");
         }
 
         var tx = new SqTx(conn, null, op, faults, ct);
@@ -284,7 +296,7 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         return tx;
     }
 
-    void Commit(SqTx tx, RunState state)
+    void Commit(SqTx tx, RunState state, long statementsStarted)
     {
         tx.Fault(FaultPoint.BeforeCommit);
         if (tx.Op.HasReceipt)
@@ -300,6 +312,7 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
             }
         }
 
+        var commitStarted = PhaseTimings.Lap(statementsStarted, tx.Op.Operation, "statements");
         state.CommitSent = true;
         for (var tries = 0; ; tries++)
         {
@@ -321,6 +334,7 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         }
 
         Interlocked.Increment(ref _commits);
+        PhaseTimings.Lap(commitStarted, tx.Op.Operation, "commit");
         tx.Fault(FaultPoint.AfterCommitBeforeReply);
     }
 

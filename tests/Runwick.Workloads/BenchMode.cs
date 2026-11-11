@@ -7,16 +7,16 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Runwick.Postgres.Migrations;
+using Runwick.Protocol;
 using Runwick.Sqlite.Migrations;
+using Runwick.Sqlite.Store;
 using Runwick.Worker;
 
 namespace Runwick.Workloads;
 
 /// <summary>
 /// <c>bench</c>: Runwick's row in the comparison benchmark (<c>eng/bench-compare/run.sh</c>, next to River and pg-boss).
-/// One process, one worker pool on queue <c>load</c>, a no-op handler and a 1 KiB payload, against a database that is
-/// dropped and recreated for every run (so leftovers from earlier runs never count). The worker uses the shipped
-/// PostgreSQL store directly, so it claims with the batched ReserveAndBegin command whenever several slots are free.
+/// One process, one worker pool on queue <c>load</c>, a no-op handler and a 1 KiB payload, against a fresh store.
 /// <list type="bullet">
 /// <item><c>drain</c>: dispatch <c>--n</c> jobs first (DispatchMany, 100 per call, <c>--calls n</c> callers side by side), then start the worker and time the
 /// first claim to the last confirmed finish.</item>
@@ -117,6 +117,7 @@ internal static class BenchMode
         var engine = provider.GetRequiredService<WorkerEngine>();
         var hosted = provider.GetServices<IHostedService>().Single();
         var dispatcher = provider.GetRequiredService<IJobDispatcher>();
+        var sqlite = provider.GetRequiredService<IRunwickStore>() as SqliteStore;
 
         // Event hook: first claim, finish count, last finish, per-job dispatch-to-finish latency (steady).
         var clock = Stopwatch.StartNew();
@@ -146,6 +147,7 @@ internal static class BenchMode
                 {
                     invokedAt[id] = now;
                     stages.Observe("stage:reserved->handlerInvoked", Ms(now - r));
+                    stages.Observe("stage:due->handlerInvoked", (DateTimeOffset.UtcNow - entry.Reserved.CreatedAt).TotalMilliseconds);
                 }
                 else if (name is "finished" or "finishReplayed")
                 {
@@ -314,6 +316,7 @@ internal static class BenchMode
 
             result["insertSeconds"] = Math.Round(insertWatch.Elapsed.TotalSeconds, 3);
             result["insertCalls"] = calls;
+            var commitsBeforeDrain = sqlite?.Runner.Commits;
             var expected = check ? Interlocked.Read(ref acceptedItems) : n - failedDispatch;
             var startTicks = clock.ElapsedTicks;
             await hosted.StartAsync(CancellationToken.None).ConfigureAwait(false);
@@ -347,8 +350,11 @@ internal static class BenchMode
             var first = Interlocked.Read(ref firstClaimTicks);
             var elapsed = Ms(Interlocked.Read(ref lastFinishTicks) - (first < 0 ? startTicks : first)) / 1000;
             result["jobs"] = n;
+            result["accepted"] = expected;
             result["failedDispatch"] = failedDispatch;
             result["finished"] = done;
+            result["drained"] = done == expected;
+            result["drainWriteCommits"] = sqlite?.Runner.Commits - commitsBeforeDrain;
             result["startToFirstClaimMs"] = first < 0 ? null : Math.Round(Ms(first - startTicks), 1);
             result["drainSeconds"] = Math.Round(elapsed, 3);
             result["completionsPerSec"] = elapsed > 0 ? Math.Round(done / elapsed, 1) : 0;
@@ -389,6 +395,7 @@ internal static class BenchMode
                 }
             }
 
+            var completedByEndOfOffers = Interlocked.Read(ref finished);
             await Task.WhenAll(pending).ConfigureAwait(false);
 
             async Task DispatchOneAsync(LoadJob job)
@@ -427,12 +434,14 @@ internal static class BenchMode
             var elapsed = Ms(clock.ElapsedTicks - startTicks) / 1000;
             var s = latency.Summarize();
             result["offeredPerSec"] = rate;
+            result["offered"] = sequence;
             result["seconds"] = seconds;
             result["inserted"] = dispatched;
             result["dispatchCalls"] = calls;
             result["failedDispatch"] = failedDispatch;
             result["failedDispatchByCode"] = new JsonObject([.. failures.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)kv.Value))]);
             result["completed"] = Interlocked.Read(ref finished);
+            result["completedByEndOfOffers"] = completedByEndOfOffers;
             result["completionsPerSec"] = Math.Round(Interlocked.Read(ref finished) / elapsed, 1);
             result["latencyMs"] = new JsonObject
             {
@@ -448,6 +457,22 @@ internal static class BenchMode
         result["batchClaims"] = engine.Pools.Sum(p => Interlocked.Read(ref p.BatchClaims));
         result["reservesSent"] = engine.Pools.Sum(p => Interlocked.Read(ref p.ReservesSent));
         result["invocations"] = Interlocked.Read(ref engine.Invocations);
+        if (sqlite is not null)
+        {
+            result["sqlite"] = new JsonObject
+            {
+                ["profile"] = sqlite.AcknowledgementProfile,
+                ["engine"] = new JsonObject([.. sqlite.EngineFacts.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)kv.Value))]),
+                ["writeCommits"] = sqlite.Runner.Commits,
+                ["busyConflicts"] = sqlite.Runner.BusyConflicts,
+            };
+        }
+
+        using (var process = Process.GetCurrentProcess())
+        {
+            result["peakWorkingSetBytes"] = process.PeakWorkingSet64;
+        }
+
         if (trace)
         {
             result["finishesSent"] = Interlocked.Read(ref engine.FinishesSent);

@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using Runwick.Internal;
 
 namespace Runwick.Sqlite.Store;
 
@@ -50,14 +51,19 @@ internal sealed class SqExecutor : IDisposable
     public SemaphoreSlim Gate(SqLane lane) => _lanes[lane];
 
     /// <summary>Runs <paramref name="work"/> on the writer thread with the writer connection.</summary>
-    public Task<T> WriteAsync<T>(SqLane lane, Func<SqliteConnection, T> work, CancellationToken ct) => Enqueue((int)lane, work, write: true, ct);
+    public Task<T> WriteAsync<T>(SqLane lane, Func<SqliteConnection, T> work, CancellationToken ct, string? operation = null) =>
+        Enqueue((int)lane, work, write: true, ct, operation);
 
     /// <summary>Runs <paramref name="work"/> on a reader thread with that reader's connection.</summary>
     public Task<T> ReadAsync<T>(Func<SqliteConnection, T> work, CancellationToken ct) => Enqueue(0, work, write: false, ct);
 
-    Task<T> Enqueue<T>(int priority, Func<SqliteConnection, T> work, bool write, CancellationToken ct)
+    Task<T> Enqueue<T>(int priority, Func<SqliteConnection, T> work, bool write, CancellationToken ct, string? operation = null)
     {
-        var item = new Work<T>(work, ct);
+        var item = new Work<T>(work, ct)
+        {
+            Operation = operation,
+            QueuedAt = operation is null ? 0 : PhaseTimings.Start(),
+        };
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_stopped, this);
@@ -94,6 +100,11 @@ internal sealed class SqExecutor : IDisposable
 
             try
             {
+                if (work.Operation is { } operation)
+                {
+                    PhaseTimings.Lap(work.QueuedAt, operation, "writerQueue");
+                }
+
                 if (conn is null)
                 {
                     conn = SqFile.Open(_connectionString, (int)_options.WriterBusyTimeout.TotalMilliseconds);
@@ -200,6 +211,10 @@ internal sealed class SqExecutor : IDisposable
         int _state; // 0 queued, 1 running, 2 cancelled
 
         public CancellationTokenRegistration Registration { get; set; }
+
+        public string? Operation { get; init; }
+
+        public long QueuedAt { get; init; }
 
         /// <summary>The work asks for its connection to be replaced.</summary>
         public bool Broken { get; set; }
