@@ -21,8 +21,8 @@ public sealed record PerfRated8Job(string Id) : IQueueJob;
 
 /// <summary>
 /// PERF-01 (performance plan PF-01): the SQL commands each store operation sends, counted through Npgsql's
-/// <c>Npgsql</c> ActivitySource, asserted exactly. One Npgsql command is one round trip (a multi-statement command is
-/// one batch on the wire). Transaction control is not traced: COMMIT adds one round trip to every driver-owned
+/// <c>Npgsql</c> ActivitySource, asserted exactly. Connection opens are measured separately from SQL. One Npgsql command
+/// is one round trip (a multi-statement command is one batch on the wire). Transaction control is not traced: COMMIT adds one round trip to every driver-owned
 /// operation, and the staged paths' <c>SAVEPOINT</c> and <c>RELEASE</c> add two. A change that adds a round trip fails
 /// here, not in a gate run; each PF item lowers the numbers.
 /// </summary>
@@ -86,7 +86,7 @@ public sealed class RoundTripBudgetTests
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
             ActivityStopped = a =>
             {
-                if (Current.Value is { } list)
+                if (Current.Value is { } list && !a.DisplayName.StartsWith("CONNECT ", StringComparison.Ordinal))
                 {
                     lock (list)
                     {

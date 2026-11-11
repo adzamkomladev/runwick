@@ -132,17 +132,20 @@ public sealed class WakeNotificationTests
         var ct = TestContext.Current.CancellationToken;
         await using var f = await DriverFixture.StartAsync(Ns("wake_failed"));
         var c = await f.OpenClient(configure: r => TestJobs.Register(r));
-        var attempted = new TaskCompletionSource<string[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var dispatchContext = new AsyncLocal<string?> { Value = "dispatch caller" };
+        var attempted = new TaskCompletionSource<(string[] Payloads, string? Caller)>(TaskCreationOptions.RunContinuationsAsynchronously);
         c.Store.Sources.SendDispatchWakesOverride = (payloads, _) =>
         {
-            attempted.TrySetResult(payloads);
+            attempted.TrySetResult((payloads, dispatchContext.Value));
             return Task.FromException(new IOException("Wake send failed."));
         };
 
         var prepared = c.Prepared.Prepare(new PingJob("committed"));
         var accepted = await c.Prepared.DispatchAsync(prepared, ct);
         Assert.Equal(DispatchDisposition.Created, accepted.Disposition);
-        Assert.Equal([f.Application + "/default"], await attempted.Task.WaitAsync(TimeSpan.FromSeconds(10), ct));
+        var wake = await attempted.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
+        Assert.Equal([f.Application + "/default"], wake.Payloads);
+        Assert.Null(wake.Caller);
         Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE job_id = @j", ("j", accepted.JobId.Value)));
         var resolution = await c.Prepared.ResolveAsync(prepared.OperationId, ct);
         Assert.Equal(DispatchResolutionStatus.Confirmed, resolution.Status);

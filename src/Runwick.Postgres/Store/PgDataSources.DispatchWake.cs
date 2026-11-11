@@ -28,7 +28,12 @@ internal sealed partial class PgDataSources
             }
 
             _pendingDispatchWakes.Add(application + "/" + queue);
-            _dispatchWakePump ??= Task.Run(FlushDispatchWakesAsync);
+            if (_dispatchWakePump is null)
+            {
+                // One pump can deliver hints from several independent dispatches.
+                using var flow = ExecutionContext.SuppressFlow();
+                _dispatchWakePump = Task.Run(FlushDispatchWakesAsync);
+            }
         }
     }
 
