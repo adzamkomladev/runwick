@@ -258,6 +258,8 @@ The deadline is cooperative: a synchronous Cronos or NodaTime call is not preemp
 
 Each scheduler/store group owns one evaluator slot. Work runs synchronously inside it; the slot is released only when the work returns. A caller whose budget elapsed, or who is cancelled, abandons only its wait; no replacement task is started while a library call is running *[choice]*.
 
+The scheduler evaluates due pages sequentially through this slot. Full productive pages continue without a poll delay under the same evaluator and job allowance. The scheduler's due-scan position lets it reach later rows after a page with local evaluation failures (13 §4.1).
+
 ## 9. Preview
 
 Preview returns the next **10** occurrences after a cursor under the registration budget. Each row has the UTC epoch milliseconds, the UTC instant (ISO-8601 extended), the local wall-clock time and offset at it, a label (`exact`, `fold-earlier`, `fold-later`, `gap-shifted`) and, for a gap shift, the skipped local range `from/to`.

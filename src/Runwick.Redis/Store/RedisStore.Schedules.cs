@@ -171,12 +171,14 @@ internal sealed partial class RedisStore : IScheduleStore
 
     // ------------------------------------------------------------------ reads (13 §6.9)
 
-    public async Task<DueSchedules> ReadDueSchedulesAsync(string application, int limit, CancellationToken ct)
+    public async Task<DueSchedules> ReadDueSchedulesAsync(string application, int limit, CancellationToken ct, DueSchedulePageCursor? after = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, ScheduleBounds.DueReadLimit);
         await EnsureStoreIdAsync(application, ct).ConfigureAwait(false);
-        var a = await runner.ReadAsync(application, RxScript.Read("sched_due"), RxLane.Background, [limit], ct).ConfigureAwait(false);
+        var a = await runner.ReadAsync(application, RxScript.Read("sched_due"), RxLane.Background,
+            after is { } cursor ? [limit, Ms(cursor.ScanAfterAt), Hex(cursor.ScheduleId), Ms(cursor.ScanThrough)] : [limit], ct)
+            .ConfigureAwait(false);
         if ((string)a[0]! != "OK" || a.Length < 3)
         {
             return new DueSchedules(time.GetUtcNow(), []);

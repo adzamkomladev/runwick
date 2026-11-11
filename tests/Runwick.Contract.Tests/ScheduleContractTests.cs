@@ -607,6 +607,42 @@ public sealed class ScheduleContractTests
 
     [Theory]
     [MemberData(nameof(CoreContractTests.Kinds), MemberType = typeof(CoreContractTests))]
+    [Trait("Case", "P-06s")]
+    public async Task A_due_page_cursor_reaches_tied_rows_after_its_anchor_is_removed(StoreKind kind)
+    {
+        var (f, c) = await OpenAsync(kind, "schpage");
+        await using var _ = f;
+        var store = Store(c);
+        var now = await store.StoreNowAsync(Ct);
+        var dueAt = now.AddSeconds(-1);
+        for (var i = 0; i < 4; i++)
+        {
+            var key = $"tied-{i}";
+            var definition = Definition(c, key, d =>
+            {
+                d.Cron = null;
+                d.DueAt = dueAt;
+            });
+            Assert.Equal(StoreStatus.Applied, (await store.RegisterScheduleAsync(
+                c.Command(new RegisterScheduleRequest(key, definition, now, dueAt)), Ct)).Status);
+        }
+
+        var all = await store.ReadDueSchedulesAsync(c.Application, ScheduleBounds.DueReadLimit, Ct);
+        Assert.Equal(4, all.Schedules.Count);
+        Assert.All(all.Schedules, s => Assert.Equal(dueAt, s.ScanAfterAt));
+        var page = await store.ReadDueSchedulesAsync(c.Application, 2, Ct);
+        Assert.Equal(all.Schedules.Take(2).Select(s => s.ScheduleId), page.Schedules.Select(s => s.ScheduleId));
+        var anchor = page.Schedules[^1];
+        var cursor = new DueSchedulePageCursor(anchor.ScanAfterAt, anchor.ScheduleId, page.ObservedAt);
+        var pause = c.Command(new ScheduleStateRequest(anchor.Key, true, null, anchor.ControlRevision, Actor));
+        Assert.Equal(StoreStatus.Applied, (await store.SetScheduleStateAsync(pause, Ct)).Status);
+
+        var next = await store.ReadDueSchedulesAsync(c.Application, 2, Ct, cursor);
+        Assert.Equal(all.Schedules.Skip(2).Select(s => s.ScheduleId), next.Schedules.Select(s => s.ScheduleId));
+    }
+
+    [Theory]
+    [MemberData(nameof(CoreContractTests.Kinds), MemberType = typeof(CoreContractTests))]
     [Trait("Case", "SCHED-11")]
     public async Task An_evaluation_failure_needs_review_until_revalidated(StoreKind kind)
     {

@@ -56,7 +56,7 @@ public enum ResumePolicy
 /// <summary>Scheduler role options (13 §10). Preview in M3.</summary>
 public sealed class SchedulerOptions
 {
-    /// <summary>Poll interval while due work exists; idle back-off doubles to <see cref="IdlePollInterval"/>.</summary>
+    /// <summary>Base poll interval after draining due work; idle back-off doubles to <see cref="IdlePollInterval"/>.</summary>
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(1);
 
     public TimeSpan IdlePollInterval { get; set; } = TimeSpan.FromSeconds(5);

@@ -136,6 +136,8 @@ Members sorted by the canonical encoder. `templateSha256` is lowercase hex SHA-2
 3. Compute the plan through the frozen cutoff T (§5), under the evaluator slot and the 250 ms budget.
 4. Send one `MaterializeOccurrences/1` with a fresh command ID, NotAfter 30 s, and the plan. An unknown outcome keeps the same command and plan and resolves through `ResolveCommand` until the 30 s resolution budget ends. Local replanning of that schedule is blocked meanwhile; a new command is never minted for the same plan.
 
+After a full page, carry its last `(scan_after_at, schedule_id)` into the next read as an exclusive position. A full page that applies at least one change continues promptly under the same local allowance. A full page with no applied changes backs off and resumes after its last row, so local incompatibilities or revision conflicts cannot hold the scan at the head of the index. The scan horizon is the store time of the first page. Each page also checks current due eligibility and uses its own store time as the planning cutoff. A short page ends the scan and the next poll starts at the head. The cursor is local and ephemeral. Rows that move behind it can be read again on the next scan. Store failures back off before retrying the current page position.
+
 ### 4.2 Store effect
 
 Lock order: gates → receipt → schedule row → (Dispatch core:) queue control read → dispatch keys → new jobs → concurrency scopes → rate scopes → occurrences, cursor, audit ranges, events, receipt.
@@ -206,7 +208,7 @@ All take a command ID and NotAfter, write a receipt, and follow 03 §8 replay ru
 | 6.6 | `ResolveCatchUp/1` | key, episode ID, resolution (`skip`, `extend` + jobs, `run_once`), next due after the cutoff, proposed job ID, actor | episode ID | `skip`: audit range to the cutoff (`catch_up_skipped`), episode closed, next due set. `extend`: limit raised (≤ 10,000 total), review cleared. `run_once`: one job keyed by `next_due_at` covering to the cutoff, episode closed. Event `catch_up_resolved` |
 | 6.7 | `RecordScheduleEvaluationFailure/1` | schedule ID, expected definition revision, code, detail, system actor | definition revision | `needs_review := true`, `review_reason := code`; cursor untouched. Only deterministic evaluator errors (12 §10: invalid definition, range overflow, horizon exhausted) and deterministic dispatch-core rejections (`queue_not_registered`, `uniqueness_conflict`, `invalid_request`). Local incompatibility, pressure and transient errors only back off locally. Event `schedule_needs_review`; audit with the system actor |
 | 6.8 | `RevalidateSchedule/1` | key, expected definition revision, actor | definition revision; no open episode | `needs_review := false`, `scan_after_at := now`; emits no jobs. Event `schedule_revalidated` |
-| 6.9 | Due read (no receipt) | limit ≤ 32 | gate | Plain read of due schedules with their current definition and the database time |
+| 6.9 | Due read (no receipt) | limit ≤ 32, optional exclusive scan position and horizon | gate | Plain read of due schedules with their current definition and the database time |
 
 ## 7. Overlap and uniqueness
 
@@ -236,7 +238,7 @@ Occurrence detail is retained 30 days after materialization (cleanup is SP-021).
 | Name | Value |
 |---|---|
 | Due read | ≤ 32 schedules per pass, ordered `(scan_after_at, schedule_id)` |
-| Polling | 1 s while due work exists; idle back-off to 5 s (15 s while the schedule listener is healthy; never past a due instant this process recorded), × (1 ± 0.10) |
+| Polling | Continue promptly after a full productive page. Base poll 1 s after a short productive page. Unproductive pages and failures back off to 5 s (15 s with a healthy schedule listener), × (1 ± 0.10). Idle waits respect the earliest recorded due instant. |
 | Materializations in flight | 1 per scheduler/store group |
 | Local allowance | 100 jobs/s, burst 32 per scheduler/store group |
 | Request / resolution budget | 5 s / 30 s |

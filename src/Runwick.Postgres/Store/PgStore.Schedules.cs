@@ -126,12 +126,16 @@ internal sealed partial class PgStore : IScheduleStore
 
     // ------------------------------------------------------------------ reads (13 §6.9)
 
-    public Task<DueSchedules> ReadDueSchedulesAsync(string application, int limit, CancellationToken ct)
+    public Task<DueSchedules> ReadDueSchedulesAsync(string application, int limit, CancellationToken ct, DueSchedulePageCursor? after = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, ScheduleBounds.DueReadLimit);
         return ReadOnlyAsync(PgLane.Background, async conn =>
         {
+            var continuation = after is null ? "" : """
+                AND s.scan_after_at <= @through
+                AND (s.scan_after_at, s.schedule_id) > (@scan, @id)
+                """;
             using var cmd = new NpgsqlCommand($"""
                 WITH gate AS (
                     SELECT m.store_id, m.schema_revision, m.protocol_epoch, m.migration_mode, clock_timestamp() AS observed_at
@@ -147,11 +151,17 @@ internal sealed partial class PgStore : IScheduleStore
                     WHERE s.application = @application
                       AND s.enabled AND NOT s.paused AND NOT s.needs_review AND s.next_due_at IS NOT NULL
                       AND s.scan_after_at <= g.observed_at
+                      {continuation}
                     ORDER BY s.scan_after_at, s.schedule_id
                     LIMIT @limit
                 ) AS x ON true
+                ORDER BY x.scan_after_at, x.schedule_id
                 """, conn);
             cmd.P("application", application).P("limit", limit);
+            if (after is { } cursor)
+            {
+                cmd.P("through", cursor.ScanThrough).P("scan", cursor.ScanAfterAt).P("id", cursor.ScheduleId);
+            }
             var list = new List<ScheduleSnapshot>();
             DateTimeOffset observed = default;
             var open = true;

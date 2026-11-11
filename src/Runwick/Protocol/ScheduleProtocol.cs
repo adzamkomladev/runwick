@@ -164,6 +164,9 @@ internal sealed record ScheduleSnapshot(
 
 internal sealed record DueSchedules(DateTimeOffset ObservedAt, IReadOnlyList<ScheduleSnapshot> Schedules);
 
+/// <summary>A local due scan continues strictly after the last row and up to the first page's observation time.</summary>
+internal readonly record struct DueSchedulePageCursor(DateTimeOffset ScanAfterAt, Guid ScheduleId, DateTimeOffset ScanThrough);
+
 // ---- 6.1 RegisterSchedule / 6.4 UpdateSchedule
 
 internal sealed record RegisterScheduleRequest(string Key, ScheduleDefinitionRecord Definition, DateTimeOffset Cutoff, DateTimeOffset? FirstDueAt);
@@ -227,7 +230,7 @@ internal sealed record RevalidateScheduleRequest(string Key, long ExpectedDefini
 internal interface IScheduleStore
 {
     /// <summary>Due read (13 §6.9): no receipt, no locks, at most <paramref name="limit"/> schedules.</summary>
-    Task<DueSchedules> ReadDueSchedulesAsync(string application, int limit, CancellationToken ct);
+    Task<DueSchedules> ReadDueSchedulesAsync(string application, int limit, CancellationToken ct, DueSchedulePageCursor? after = null);
 
     Task<ScheduleSnapshot?> ReadScheduleAsync(string application, string key, CancellationToken ct);
 

@@ -148,7 +148,7 @@ internal sealed partial class SqliteStore : IScheduleStore
 
     // ------------------------------------------------------------------ reads (13 §6.9)
 
-    public Task<DueSchedules> ReadDueSchedulesAsync(string application, int limit, CancellationToken ct)
+    public Task<DueSchedules> ReadDueSchedulesAsync(string application, int limit, CancellationToken ct, DueSchedulePageCursor? after = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, ScheduleBounds.DueReadLimit);
@@ -160,15 +160,23 @@ internal sealed partial class SqliteStore : IScheduleStore
                 return new DueSchedules(observed, []);
             }
 
+            var continuation = after is null ? "" : "AND (s.scan_after_at, s.schedule_id) > (@scan, @id)";
+            var through = after is { } cursor && cursor.ScanThrough < observed ? cursor.ScanThrough : observed;
             var cmd = Cmd(conn, application, $"""
                 SELECT {ScheduleColumns}
                 FROM {ScheduleJoin}
                 WHERE s.application = @application
                   AND s.enabled = 1 AND s.paused = 0 AND s.needs_review = 0 AND s.next_due_at IS NOT NULL
-                  AND s.scan_after_at <= @observed
+                  AND s.scan_after_at <= @through
+                  {continuation}
                 ORDER BY s.scan_after_at, s.schedule_id
                 LIMIT @limit
-                """).P("observed", observed).P("limit", limit);
+                """).P("through", through).P("limit", limit);
+            if (after is { } position)
+            {
+                cmd.P("scan", position.ScanAfterAt).P("id", position.ScheduleId);
+            }
+
             return new DueSchedules(observed, Rows(cmd, ReadSnapshot));
         }, ct);
     }

@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
+using Runwick.Dispatching;
 using Runwick.Harness.Engine;
 using Runwick.Protocol;
 using Runwick.Scheduling;
+using Runwick.Scheduling.Evaluation;
 
 namespace Runwick.Core.Tests.Scheduling;
 
@@ -16,17 +18,29 @@ public sealed class SchedulerIdleTests
 {
     static readonly TimeSpan Long = TimeSpan.FromMinutes(5);
 
-    /// <summary>A schedule store with nothing due; it records each due read and offers a scripted schedule listener.</summary>
+    /// <summary>Records due reads and offers a scripted schedule listener. Only the scheduler loop accesses the due rows.</summary>
     sealed class IdleScheduleStore(TimeProvider time) : IScheduleStore, IWakeNotificationSource
     {
         public ScriptedListener Listener { get; } = new();
 
         public ConcurrentQueue<DateTimeOffset> Reads { get; } = new();
 
-        public Task<DueSchedules> ReadDueSchedulesAsync(string application, int limit, CancellationToken ct)
+        public List<ScheduleSnapshot> Due { get; } = [];
+
+        public HashSet<Guid> Conflicts { get; } = [];
+
+        public Task<DueSchedules> ReadDueSchedulesAsync(string application, int limit, CancellationToken ct, DueSchedulePageCursor? after = null)
         {
-            Reads.Enqueue(time.GetUtcNow());
-            return Task.FromResult(new DueSchedules(time.GetUtcNow(), []));
+            var now = time.GetUtcNow();
+            Reads.Enqueue(now);
+            var page = Due.Where(s => s.ScanAfterAt <= now);
+            if (after is { } cursor)
+            {
+                page = page.Where(s => s.ScanAfterAt <= cursor.ScanThrough && (s.ScanAfterAt > cursor.ScanAfterAt
+                    || (s.ScanAfterAt == cursor.ScanAfterAt && s.ScheduleId.CompareTo(cursor.ScheduleId) > 0)));
+            }
+
+            return Task.FromResult(new DueSchedules(now, page.OrderBy(s => s.ScanAfterAt).ThenBy(s => s.ScheduleId).Take(limit).ToArray()));
         }
 
         public Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, Action onLost, CancellationToken ct) =>
@@ -38,7 +52,19 @@ public sealed class SchedulerIdleTests
 
         public Task<StoreReply<ScheduleRegistration>> RegisterScheduleAsync(StoreCommand<RegisterScheduleRequest> command, CancellationToken ct) => throw new NotSupportedException();
 
-        public Task<StoreReply<ScheduleMaterialization>> MaterializeOccurrencesAsync(StoreCommand<MaterializeRequest> command, CancellationToken ct) => throw new NotSupportedException();
+        public Task<StoreReply<ScheduleMaterialization>> MaterializeOccurrencesAsync(StoreCommand<MaterializeRequest> command, CancellationToken ct)
+        {
+            var plan = command.Body;
+            Assert.Single(plan.Occurrences);
+            if (Conflicts.Contains(plan.ScheduleId))
+            {
+                return Task.FromResult(StoreReply<ScheduleMaterialization>.NoEffect(StoreStatus.VersionConflict,
+                    new StoreError("revision_conflict"), time.GetUtcNow()));
+            }
+
+            Assert.Equal(1, Due.RemoveAll(s => s.ScheduleId == plan.ScheduleId));
+            return Task.FromResult(StoreReply<ScheduleMaterialization>.Applied(new ScheduleMaterialization(plan.ScheduleId, 2, []), time.GetUtcNow()));
+        }
 
         public Task<StoreReply<ScheduleState>> SetScheduleStateAsync(StoreCommand<ScheduleStateRequest> command, CancellationToken ct) => throw new NotSupportedException();
 
@@ -54,6 +80,83 @@ public sealed class SchedulerIdleTests
     }
 
     static int ReadsBetween(IdleScheduleStore store, DateTimeOffset from, DateTimeOffset to) => store.Reads.Count(r => r >= from && r < to);
+
+    static (EngineFixture Fixture, IdleScheduleStore Store, SchedulerService Scheduler) DueFixture(int count)
+    {
+        var e = EngineFixture.Create(
+            configure: r => r.AddScheduler(),
+            services: sc => sc.AddSingleton<IScheduleStore>(sp => new IdleScheduleStore(sp.GetRequiredService<TimeProvider>())));
+        var store = (IdleScheduleStore)e.Services.GetRequiredService<IScheduleStore>();
+        var now = e.Time.GetUtcNow();
+        var declaration = new ScheduleDeclaration("once", new WorkJob("once")) { DueAt = now };
+        var definition = ScheduleCompiler.Compile(declaration, e.Services.GetRequiredService<DispatchPreparer>(), TzdbArtifact.Pinned);
+        for (var i = 0; i < count; i++)
+        {
+            var id = new Guid(i, 0, 0, new byte[8]);
+            store.Due.Add(new ScheduleSnapshot(id, $"once-{i}", 1, 1, 1, true, false, false, null,
+                now, now, null, null, null, null, definition));
+        }
+
+        return (e, store, e.Services.GetRequiredService<SchedulerService>());
+    }
+
+    [Fact]
+    [Trait("Case", "P-06s")]
+    public async Task A_full_productive_due_page_is_followed_promptly_by_the_remaining_schedules()
+    {
+        var count = ScheduleBounds.DueReadLimit + 1;
+        var (fixture, _, scheduler) = DueFixture(count);
+        await using var e = fixture;
+        await e.StartAsync();
+        await e.RunUntilAsync(() => Interlocked.Read(ref scheduler.Materializations) >= ScheduleBounds.DueReadLimit,
+            TimeSpan.FromSeconds(5), "the first full due page");
+        // Allow time for the 33rd token to refill without advancing to the earliest possible jittered poll.
+        await e.AdvanceAsync(TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(10));
+
+        Assert.Equal(count, Interlocked.Read(ref scheduler.Materializations));
+        await e.StopAsync();
+    }
+
+    [Fact]
+    [Trait("Case", "P-06s")]
+    public async Task A_thousand_simultaneous_schedules_drain_within_the_default_allowance()
+    {
+        const int count = 1_000;
+        var (fixture, _, scheduler) = DueFixture(count);
+        await using var e = fixture;
+        var start = e.Time.GetUtcNow();
+
+        await e.StartAsync();
+        await e.RunUntilAsync(() => Interlocked.Read(ref scheduler.Materializations) == count,
+            TimeSpan.FromSeconds(13), "all one thousand due schedules", TimeSpan.FromMilliseconds(20));
+
+        Assert.True(e.Time.GetUtcNow() - start >= TimeSpan.FromSeconds(9.68), "the default token bucket still limits the drain");
+        await e.StopAsync();
+    }
+
+    [Fact]
+    [Trait("Case", "P-06s")]
+    public async Task An_unproductive_page_backs_off_and_then_reaches_later_schedules_at_the_same_instant()
+    {
+        var count = ScheduleBounds.DueReadLimit;
+        var (fixture, store, scheduler) = DueFixture(count + 1);
+        await using var e = fixture;
+        store.Conflicts.UnionWith(store.Due.Take(count).Select(s => s.ScheduleId));
+
+        await e.StartAsync();
+        await e.RunUntilAsync(() => Interlocked.Read(ref scheduler.RevisionConflicts) >= count,
+            TimeSpan.FromSeconds(5), "the full page conflicted");
+        await e.AdvanceAsync(TimeSpan.FromMilliseconds(500));
+        Assert.Single(store.Reads);
+        Assert.Equal(0, Interlocked.Read(ref scheduler.Materializations));
+
+        await e.RunUntilAsync(() => Interlocked.Read(ref scheduler.Materializations) == 1,
+            TimeSpan.FromSeconds(3), "the later eligible schedule");
+        Assert.Equal(2, store.Reads.Count);
+        await e.RunUntilAsync(() => Interlocked.Read(ref scheduler.RevisionConflicts) > count,
+            TimeSpan.FromSeconds(2), "the head of the next scan");
+        await e.StopAsync();
+    }
 
     [Fact]
     [Trait("Case", "WAKE-03")]

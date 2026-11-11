@@ -48,6 +48,8 @@ internal static class G2Roles
             }
         });
         await using var provider = sc.BuildServiceProvider();
+        var phases = new Metrics();
+        using var phaseListener = PhaseListener.Attach(phases);
         var hosted = provider.GetServices<IHostedService>().ToList();
         var started = Stopwatch.GetTimestamp();
         foreach (var h in hosted)
@@ -69,6 +71,12 @@ internal static class G2Roles
             ["schedules"] = count + (a.Has("catchup") ? 1 : 0),
             ["startSeconds"] = Math.Round(seedSeconds, 1),
             ["materializations"] = Interlocked.Read(ref scheduler.Materializations),
+            ["dueReads"] = Interlocked.Read(ref scheduler.DuePagesRead),
+            ["schedulesRead"] = Interlocked.Read(ref scheduler.DueSchedulesRead),
+            ["materializationCommands"] = Interlocked.Read(ref scheduler.MaterializationCommands),
+            ["plannedOccurrences"] = Interlocked.Read(ref scheduler.PlannedOccurrences),
+            ["revisionConflicts"] = Interlocked.Read(ref scheduler.RevisionConflicts),
+            ["phases"] = phases.LatenciesJson(),
             ["localDiagnostics"] = scheduler.LocalDiagnostics.Count,
             ["process"] = WorkerMode.ProcessStats(new TimerLag()),
         };

@@ -302,8 +302,8 @@ These are benchmark inputs, not tuned release values.
 
 | Setting | Default | Bound |
 |---|---|---|
-| Due read | 32 schedules per pass | — |
-| Polling | 1 s while due; idle back-off to 5 s (15 s while the schedule listener is healthy, never past a known due instant), × (1 ± 0.10) | — |
+| Due read | 32 schedules per page with a local scan position | — |
+| Polling | Full productive pages continue promptly. Base poll 1 s after a short productive page. Unproductive pages and failures back off to 5 s (15 s with a healthy schedule listener), × (1 ± 0.10). Idle waits respect known due instants. | — |
 | Materializations in flight | 1 per scheduler/store group | — |
 | Local allowance | 100 jobs/s, burst 32 | — |
 | Request / resolution budget | 5 s / 30 s | — |
