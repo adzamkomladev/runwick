@@ -309,6 +309,12 @@ The A5 source assessment traced a wait on a higher command ID during receipt see
 
 Across the five C1 baseline logs, 361 sampled finish-batch receipt inserts took a median 0.179 ms and p95 0.607 ms. The paired cross-class probes took 0.010 and 0.023 ms. This sample covers fresh receipts. Replay and retention races remain outside that profile. The assessment, parser and results are under `artifacts/perf/round-two/postgres-a5/`.
 
+### PostgreSQL short P-01
+
+The `2978f04` build ran one standard P-01 short repetition on PostgreSQL 18.6 with one minute of warm-up, three minutes of measurement, one 16-slot worker and 100 ms handlers. The producer averaged 99.66 offers/s and 98.65 accepted/s. The database window recorded 82.09 durable completions/s and backlog growth of 17.73 jobs/s. All 23,518 accepted jobs completed after a 48-second tail drain, with one invocation and execution per job.
+
+Due-to-Begin p99 was 46.44 s in the worker's measurement and drain samples. Pipeline-to-finish p99 was 208 ms. There were no sampled worker pressure stops or database lock waiters in the measurement window. The worker's samples nearest the window boundaries recorded 5,112 applied combined claims for 14,872 items and zero standalone Reserve calls. Of 14,876 confirmed finishes in those samples, 9,151 came through 1,980 finish batches. Managed allocation in the worker process was approximately 103 kB per confirmed finish. The rate, backlog and due-to-start gates remain open on this shared host. Raw P-01 results are under `artifacts/perf/round-two/sustained-100/P-01/`.
+
 ## Redis Phase 0
 
 A dedicated Redis 8.2.11 server used `appendonly yes`, `appendfsync always` and `noeviction`. A healthy store published both test batches, but each went through intent recovery. The probe measured intent shape with a separate injected interruption after intent storage. The traces shown here came from fault-free submissions.
