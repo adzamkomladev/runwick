@@ -133,6 +133,45 @@ public sealed class StoreSnapshotTests
         Assert.False(revoked.TryGetProperty("value", out _));
     }
 
+    [Fact]
+    public async Task Redis_diagnostics_are_sampled_and_require_an_explicit_grant()
+    {
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("RUNWICK_TEST_REDIS")))
+        {
+            Assert.Skip("Set RUNWICK_TEST_REDIS to exercise the Redis Store snapshot.");
+        }
+
+        await using var f = await DriverFixture.StartAsync(Ns("storeredis"), StoreKind.Redis);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var h = await DashHost.StartAsync(f, services: b => b.Services.AddSingleton<TimeProvider>(clock), api: true);
+        var admin = h.Browser(Users.Admin);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        JsonElement stats;
+        while (true)
+        {
+            stats = (await SnapshotAsync(admin)).GetProperty("redis");
+            if (stats.TryGetProperty("sampledAt", out _)) break;
+            await Task.Delay(TimeSpan.FromMilliseconds(100), timeout.Token);
+            clock.Advance(TimeSpan.FromSeconds(10));
+        }
+
+        var memory = stats.GetProperty("memory");
+        Assert.Equal("ProviderNode", memory.GetProperty("scope").GetString());
+        Assert.True(memory.GetProperty("value").GetProperty("usedBytes").GetInt64() > 0);
+        Assert.True(stats.GetProperty("activity").GetProperty("value").GetProperty("connectedClients").GetInt64() > 0);
+        Assert.True(stats.GetProperty("aof").GetProperty("value").GetProperty("enabled").GetBoolean());
+        Assert.Equal("Primary", stats.GetProperty("replication").GetProperty("value").GetProperty("role").GetString());
+
+        h.Grants[Users.Admin] = [.. Users.All.Where(g => g.Permission != ManagementPermissions.StoreDiagnosticsRead)];
+        var revoked = (await SnapshotAsync(admin)).GetProperty("redis");
+        Assert.False(revoked.TryGetProperty("sampledAt", out _));
+        foreach (var name in new[] { "memory", "activity", "aof", "replication" })
+        {
+            Assert.Equal("PermissionDenied", revoked.GetProperty(name).GetProperty("status").GetString());
+            Assert.False(revoked.GetProperty(name).TryGetProperty("value", out _));
+        }
+    }
+
     static async Task<JsonElement> WaitForSnapshotAsync(Browser browser, string connection, FakeTimeProvider? clock = null)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));

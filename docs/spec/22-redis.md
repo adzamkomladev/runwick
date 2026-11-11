@@ -207,7 +207,7 @@ The driver records whether the request bytes reached the socket, as 04 §10 does
 |---|---|---|
 | Control multiplexer | protocol (§5.2) | Renew, RenewMany, Finish, FinishMany, ReleaseReservation and their resolution |
 | Work multiplexer | protocol | everything else, including recovery and cleanup |
-| Admin connection | `AllowAdmin = true`, used only for §2.3 [choice] | `CONFIG GET`, `INFO`, `MODULE LIST` |
+| Admin connection | `AllowAdmin = true`, for §2.3 and management diagnostics (18 §7) | `CONFIG GET`, `INFO`, `MODULE LIST` |
 | Migration connection | own, opened and closed by the runner | §9 |
 
 The call classes and ceilings of 04 §9.1 apply as **logical in-flight limits**: renewal 4 and settlement 4 on the control multiplexer; admission 4, producer/admin `MaxConcurrentCalls` and background 2 on the work multiplexer [choice: 04's tuned ceilings, not the design's earlier 4/8 lane budget]. So `local_capacity_exceeded` and slot waits behave as on PostgreSQL. At most one unresolved owner command per attempt. A multiplexer is one socket; qualification (SP-029) records the actual socket count. A separate connection cannot keep a Renew from waiting behind a long script on the same server; §4.3 bounds that wait.

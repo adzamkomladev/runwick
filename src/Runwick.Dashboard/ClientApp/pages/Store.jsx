@@ -117,6 +117,65 @@ function PostgresDetails({ stats }) {
   )
 }
 
+function RedisSection({ title, fact, children }) {
+  return <div>
+    <h3 className="text-sm font-medium">{title}</h3>
+    {fact.value ? <dl>{children(fact.value)}</dl> : <div className="pt-2"><State value={fact.status} /></div>}
+  </div>
+}
+
+function RedisMetric({ label, value, format = n => n.toLocaleString() }) {
+  return <Row label={label}>{value == null ? <State value="Unavailable" /> : format(value)}</Row>
+}
+
+const yesNo = value => value ? 'Yes' : 'No'
+const aofStatus = value => value === 'Ok' ? 'OK' : 'Error'
+
+function RedisDetails({ stats }) {
+  const { sampledAt, ...facts } = stats
+  const { memory, activity, aof, replication } = facts
+  const stale = Object.values(facts).some(fact => fact.status === 'Stale')
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center gap-2"><h2>Redis diagnostics</h2>{stale && <State value="Stale" />}</CardTitle>
+        <CardDescription>Connected server. {sampledAt && <>Sampled <ObservationTime value={sampledAt} /></>}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <RedisSection title="Memory" fact={memory}>{v => <>
+          <RedisMetric label="Memory used" value={v.usedBytes} format={storageSize} />
+          <RedisMetric label="Memory limit" value={v.limitBytes} format={n => n === 0 ? 'No configured limit' : storageSize(n)} />
+          <RedisMetric label="Memory RSS to used ratio" value={v.fragmentationRatio} format={n => n.toLocaleString(undefined, { maximumFractionDigits: 2 })} />
+        </>}</RedisSection>
+        <RedisSection title="Server activity" fact={activity}>{v => <>
+          <RedisMetric label="Connected clients" value={v.connectedClients} />
+          <RedisMetric label="Redis commands per second" value={v.commandsPerSecond} />
+          <RedisMetric label="Evicted keys" value={v.evictedKeys} />
+        </>}</RedisSection>
+        <RedisSection title="Append-only file (AOF)" fact={aof}>{v => <>
+          <RedisMetric label="Enabled" value={v.enabled} format={yesNo} />
+          {v.enabled !== false && <>
+            <RedisMetric label="Current AOF size" value={v.currentBytes} format={storageSize} />
+            <RedisMetric label="Last AOF write" value={v.lastWrite} format={aofStatus} />
+            <RedisMetric label="Rewrite in progress" value={v.rewriteInProgress} format={yesNo} />
+            <RedisMetric label="Rewrite scheduled" value={v.rewriteScheduled} format={yesNo} />
+            <RedisMetric label="Last rewrite result" value={v.lastRewrite} format={aofStatus} />
+          </>}
+        </>}</RedisSection>
+        <RedisSection title="Replication" fact={replication}>{v => <>
+          <RedisMetric label="Node role" value={v.role} />
+          <RedisMetric label="Connected replicas" value={v.connectedReplicas} />
+          <RedisMetric label="Server replication offset (bytes)" value={v.replicationOffset} />
+          {v.role === 'Replica' && <>
+            <RedisMetric label="Replica applied offset (bytes)" value={v.replicaAppliedOffset} />
+            <RedisMetric label="Link to primary" value={v.primaryLinkUp} format={up => up ? 'Up' : 'Down'} />
+          </>}
+        </>}</RedisSection>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function Store({ snapshot }) {
   const live = usePoll(['snapshot'], 10)
   const { connection, identity, admission, persistence, capabilities } = snapshot
@@ -171,6 +230,7 @@ export default function Store({ snapshot }) {
             </Card>
             {snapshot.sqlite && <SqliteDetails stats={snapshot.sqlite} />}
             {snapshot.postgres && <PostgresDetails stats={snapshot.postgres} />}
+            {snapshot.redis && <RedisDetails stats={snapshot.redis} />}
           </div>
           <div className="order-first grid min-w-0 gap-6 xl:order-none">
             <Card>

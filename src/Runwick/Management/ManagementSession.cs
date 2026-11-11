@@ -624,7 +624,10 @@ internal sealed class ManagementSession(
         var engineVersion = retained?.EngineVersion;
         var sqlite = retained?.SqliteDiagnostics;
         var diagnosticsGranted = caller.Grants.Any(g => g.Permission == ManagementPermissions.StoreDiagnosticsRead);
-        var (postgres, postgresFresh) = diagnosticsGranted && provider == "postgres" ? health.PostgresDiagnostics(retained?.StoreId) : (null, false);
+        var (postgres, postgresAt, postgresFresh) = diagnosticsGranted && provider == "postgres"
+            ? health.Diagnostics<PostgresStoreDiagnostics>(retained?.StoreId) : (null, null, false);
+        var (redis, redisAt, redisFresh) = diagnosticsGranted && provider == "redis"
+            ? health.Diagnostics<RedisStoreDiagnostics>(retained?.StoreId) : (null, null, false);
 
         StoreSnapshotFact<T> Diagnostic<T>(StoreSnapshotFact<T>? fact, StoreSnapshotScope scope, bool observedFresh) where T : class
         {
@@ -664,7 +667,13 @@ internal sealed class ManagementSession(
                 Diagnostic(postgres?.Wal, StoreSnapshotScope.ProviderNode, fresh && postgresFresh),
                 Diagnostic(postgres?.Recovery, StoreSnapshotScope.ProviderNode, fresh && postgresFresh),
                 Diagnostic(postgres?.Replication, StoreSnapshotScope.ProviderNode, fresh && postgresFresh))
-                { SampledAt = postgres?.SampledAt } : null,
+                { SampledAt = postgresAt } : null,
+            Redis = provider == "redis" ? new(
+                Diagnostic(redis?.Memory, StoreSnapshotScope.ProviderNode, fresh && redisFresh),
+                Diagnostic(redis?.Activity, StoreSnapshotScope.ProviderNode, fresh && redisFresh),
+                Diagnostic(redis?.Aof, StoreSnapshotScope.ProviderNode, fresh && redisFresh),
+                Diagnostic(redis?.Replication, StoreSnapshotScope.ProviderNode, fresh && redisFresh))
+                { SampledAt = redisAt } : null,
         });
     }
 

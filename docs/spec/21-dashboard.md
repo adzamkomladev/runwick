@@ -386,6 +386,8 @@ SQLite diagnostics show database and WAL file sizes and this process's committed
 
 PostgreSQL diagnostics group current-database sessions, lock waits, disk usage and Runwick jobs-table statistics separately from the connected server's WAL, recovery and replication observations. The replay backlog measures bytes between a sender's sent and replayed WAL positions. The page shows the last successful diagnostics sample time, labels unavailable and denied fields independently, and marks retained values stale when a refresh fails or the sample is at least 30 seconds old.
 
+Redis diagnostics show memory, server command activity, append-only file state and replication observations for the configured standalone node. Commands per second and evictions cover the whole server. Replication offsets measure stream positions in bytes. The page shows the diagnostics sample time and labels stale, unavailable and denied values.
+
 ## 5. Controls
 
 A control is a `POST` to the mount, sent by the Inertia client (`router.post`) with the antiforgery header.

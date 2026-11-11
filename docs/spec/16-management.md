@@ -94,7 +94,7 @@ All lists use **keyset pagination only**: page size 50 by default, at most 200. 
 | `ListScopes` | `Capacity.Read` | kind | kind, key | kind, key, capacity, policy revision, live permits |
 | `ListSchedules` | `Schedules.Read` | — | key | key, paused, needs review, definition and control revisions, next due, last materialized |
 | `ListAudit` | `Audit.Read` | target kind, target id, from/to | `audit_id DESC` | every audit column except `details` beyond its allowlisted keys |
-| `GetStoreSnapshot` | `Settings.Read` | — | — | Cached host connection and role readiness, application admission and logical store details (§7 of 18). SQLite and PostgreSQL diagnostics require the explicit `StoreDiagnostics.Read` grant, checked on each request. No store I/O on the request. |
+| `GetStoreSnapshot` | `Settings.Read` | — | — | Cached host connection and role readiness, application admission and logical store details (§7 of 18). Provider diagnostics require the explicit `StoreDiagnostics.Read` grant, checked on each request. No store I/O on the request. |
 | `GetSettings` | `Settings.Read` | — | — | allowlist: application, store kind and schema revision, persistence profile, roles enabled in this process, management limits. Never connection strings or `IConfiguration` |
 
 A job in a queue the caller cannot read is **404**, never 403 (design §2: never confirm hidden IDs). Each store-backed query runs with `statement_timeout = 1 s`; a timeout returns 503 `query_budget_exceeded`, not a partial page.

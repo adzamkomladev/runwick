@@ -84,6 +84,36 @@ internal interface IPostgresStoreDiagnosticsSource
     Task<PostgresStoreDiagnostics> ObserveDiagnosticsAsync(CancellationToken ct);
 }
 
+public sealed record RedisMemoryStats(long? UsedBytes, long? LimitBytes, double? FragmentationRatio);
+
+public sealed record RedisActivityStats(long? ConnectedClients, long? CommandsPerSecond, long? EvictedKeys);
+
+[JsonConverter(typeof(JsonStringEnumConverter<RedisAofStatus>))]
+public enum RedisAofStatus { Ok, Error }
+
+public sealed record RedisAofStats(bool? Enabled, long? CurrentBytes, RedisAofStatus? LastWrite,
+    bool? RewriteInProgress, bool? RewriteScheduled, RedisAofStatus? LastRewrite);
+
+[JsonConverter(typeof(JsonStringEnumConverter<RedisNodeRole>))]
+public enum RedisNodeRole { Primary, Replica }
+
+public sealed record RedisReplicationStats(RedisNodeRole? Role, long? ConnectedReplicas, long? ReplicationOffset,
+    long? ReplicaAppliedOffset, bool? PrimaryLinkUp);
+
+public sealed record RedisStoreDiagnostics(
+    StoreSnapshotFact<RedisMemoryStats> Memory,
+    StoreSnapshotFact<RedisActivityStats> Activity,
+    StoreSnapshotFact<RedisAofStats> Aof,
+    StoreSnapshotFact<RedisReplicationStats> Replication)
+{
+    public DateTimeOffset? SampledAt { get; init; }
+}
+
+internal interface IRedisStoreDiagnosticsSource
+{
+    Task<RedisStoreDiagnostics> ObserveDiagnosticsAsync(CancellationToken ct);
+}
+
 [JsonConverter(typeof(JsonStringEnumConverter<StoreProviderCapability>))]
 public enum StoreProviderCapability
 {
@@ -117,6 +147,8 @@ public sealed record ManagementStoreSnapshot(
     public SqliteStoreDiagnostics? Sqlite { get; init; }
 
     public PostgresStoreDiagnostics? Postgres { get; init; }
+
+    public RedisStoreDiagnostics? Redis { get; init; }
 
     internal static ManagementStoreSnapshot Unobserved(DateTimeOffset now) => new("", "unknown", now, null, null,
         new(StoreSnapshotScope.Process, StoreReachability.Unknown, "not_observed"), [],

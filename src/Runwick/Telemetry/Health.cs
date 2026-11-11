@@ -101,10 +101,10 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
     readonly Lock _descriptorLock = new();
     (StoreDescriptor Descriptor, DateTimeOffset At, long Timestamp)? _lastDescriptor;
     string? _descriptorFailure;
-    (Guid StoreId, PostgresStoreDiagnostics Value, long Timestamp)? _lastPostgresDiagnostics;
-    bool _postgresDiagnosticsFailed;
-    TimeSpan _postgresRetryDelay;
-    long _postgresAttemptedAt;
+    (Guid StoreId, object Value, DateTimeOffset At, long Timestamp)? _lastDiagnostics;
+    bool _diagnosticsFailed;
+    TimeSpan _diagnosticsRetryDelay;
+    long _diagnosticsAttemptedAt;
 
     internal (StoreDescriptor? Descriptor, DateTimeOffset? LastSuccessfulAt, TimeSpan? Age, string? Failure) StoreObservation()
     {
@@ -116,41 +116,41 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
         }
     }
 
-    internal (PostgresStoreDiagnostics? Value, bool Fresh) PostgresDiagnostics(Guid? storeId)
+    internal (T? Value, DateTimeOffset? SampledAt, bool Fresh) Diagnostics<T>(Guid? storeId) where T : class
     {
         lock (_descriptorLock)
         {
-            if (_lastPostgresDiagnostics is not { } last || last.StoreId != storeId)
+            if (_lastDiagnostics is not { } last || last.StoreId != storeId || last.Value is not T value)
             {
-                return (null, false);
+                return (null, null, false);
             }
 
             var age = time.GetElapsedTime(last.Timestamp);
-            return (age < TimeSpan.FromMinutes(5) ? last.Value : null, !_postgresDiagnosticsFailed && age < 3 * RefreshPeriod);
+            return age < TimeSpan.FromMinutes(5) ? (value, last.At, !_diagnosticsFailed && age < 3 * RefreshPeriod) : (null, null, false);
         }
     }
 
-    async Task RefreshPostgresDiagnosticsAsync(IPostgresStoreDiagnosticsSource source, Guid storeId)
+    async Task RefreshDiagnosticsAsync<T>(Func<CancellationToken, Task<T>> observe, Guid storeId, string role) where T : class
     {
-        if (_postgresRetryDelay > TimeSpan.Zero && time.GetElapsedTime(_postgresAttemptedAt) < _postgresRetryDelay)
+        if (_diagnosticsRetryDelay > TimeSpan.Zero && time.GetElapsedTime(_diagnosticsAttemptedAt) < _diagnosticsRetryDelay)
         {
             return;
         }
 
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
         budget.CancelAfter(Budget);
-        _postgresAttemptedAt = time.GetTimestamp();
+        _diagnosticsAttemptedAt = time.GetTimestamp();
         try
         {
-            var value = await source.ObserveDiagnosticsAsync(budget.Token).ConfigureAwait(false);
+            var value = await observe(budget.Token).ConfigureAwait(false);
             budget.Token.ThrowIfCancellationRequested();
             lock (_descriptorLock)
             {
-                _lastPostgresDiagnostics = (storeId, value with { SampledAt = time.GetUtcNow() }, time.GetTimestamp());
-                _postgresDiagnosticsFailed = false;
+                _lastDiagnostics = (storeId, value, time.GetUtcNow(), time.GetTimestamp());
+                _diagnosticsFailed = false;
             }
 
-            _postgresRetryDelay = TimeSpan.Zero;
+            _diagnosticsRetryDelay = TimeSpan.Zero;
         }
         catch (Exception ex)
         {
@@ -158,11 +158,11 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
             {
                 lock (_descriptorLock)
                 {
-                    _postgresDiagnosticsFailed = true;
+                    _diagnosticsFailed = true;
                 }
 
-                _postgresRetryDelay = TimeSpan.FromSeconds(Math.Clamp(_postgresRetryDelay.TotalSeconds * 2, 20, 60));
-                Telemetry.RunwickLog.StoreUnavailable(_logger, "postgres_diagnostics", ex.GetType().Name);
+                _diagnosticsRetryDelay = TimeSpan.FromSeconds(Math.Clamp(_diagnosticsRetryDelay.TotalSeconds * 2, 20, 60));
+                Telemetry.RunwickLog.StoreUnavailable(_logger, role, ex.GetType().Name);
             }
         }
     }
@@ -255,10 +255,16 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
                 await Refresh(_managementReads, "management", ct => reads.ListQueuesAsync(runtime.Registry.Application, null, null, 1, ct)).ConfigureAwait(false);
             }
 
-            if (_management && store is IPostgresStoreDiagnosticsSource postgres &&
-                StoreObservation() is ({ } descriptor, _, _, null))
+            if (_management && StoreObservation() is ({ } descriptor, _, _, null))
             {
-                await RefreshPostgresDiagnosticsAsync(postgres, descriptor.StoreId).ConfigureAwait(false);
+                if (store is IPostgresStoreDiagnosticsSource postgres)
+                {
+                    await RefreshDiagnosticsAsync(postgres.ObserveDiagnosticsAsync, descriptor.StoreId, "postgres_diagnostics").ConfigureAwait(false);
+                }
+                else if (store is IRedisStoreDiagnosticsSource redis)
+                {
+                    await RefreshDiagnosticsAsync(redis.ObserveDiagnosticsAsync, descriptor.StoreId, "redis_diagnostics").ConfigureAwait(false);
+                }
             }
 
             if (tick % 6 == 5)

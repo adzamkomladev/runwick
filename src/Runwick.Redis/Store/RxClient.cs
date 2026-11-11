@@ -79,7 +79,7 @@ internal sealed record RxOp(
 
 /// <summary>
 /// Connections, script calls and the 22 §4.7 error mapping. One control and one work multiplexer with the 22 §5.2 settings,
-/// plus an admin connection used only for the profile check (22 §2.3).
+/// plus an admin connection for profile checks (22 §2.3) and read-only management diagnostics.
 /// </summary>
 internal sealed class RxClient : IAsyncDisposable
 {
@@ -123,6 +123,24 @@ internal sealed class RxClient : IAsyncDisposable
     {
         var mux = await (lane is RxLane.Renewal or RxLane.Settlement ? _control.Value : _work.Value).ConfigureAwait(false);
         return mux.GetDatabase();
+    }
+
+    internal async Task<string?> DiagnosticsInfoAsync(CancellationToken ct)
+    {
+        var gate = _lanes[(int)RxLane.Background];
+        await gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            // StackExchange.Redis requires its local AllowAdmin flag for INFO. Reuse the profile multiplexer and credentials.
+            var (server, _) = await AdminAsync().WaitAsync(ct).ConfigureAwait(false);
+            var result = await server.ExecuteAsync("INFO", ["memory", "clients", "stats", "persistence", "replication"],
+                CommandFlags.None).WaitAsync(ct).ConfigureAwait(false);
+            return (string?)result;
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     public async Task<(IServer Server, IDatabase Db)> AdminAsync()
