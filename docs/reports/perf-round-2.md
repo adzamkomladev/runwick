@@ -371,7 +371,18 @@ The MessagePack analysis found 2.23 MB of reply result bytes already present in 
 
 ### F4 Redis producer depth and settlement instrumentation
 
-The isolated workload records actual outstanding calls and EVALSHAs after the producer gate. It can vary producer depth and settlement consumers independently while retaining the existing renewal lane and lease timing. A one-second smoke reached eight outstanding EVALSHAs and settled 47 jobs. All 47 reconciled after SIGKILL and AOF restart following the confirmations. The run recorded 146 EVALSHAs and 12 finish batches. It produced no renewal samples. The full control-latency and depth sweep is pending. Harness and smoke results are under `artifacts/perf/round-two/redis-f4/`.
+The isolated workload records actual outstanding calls and EVALSHAs after the producer gate. It can vary producer depth and settlement consumers independently while retaining the existing renewal lane and lease timing. A one-second smoke reached eight outstanding EVALSHAs and settled 47 jobs. All 47 reconciled after SIGKILL and AOF restart following the confirmations. The run recorded 146 EVALSHAs and 12 finish batches. It produced no renewal samples.
+
+The first depth sweep used one 70-second closed-loop run per depth on Redis 8.2.11 with AOF `always`, 64 worker slots, four settlement consumers, and a 512-job backlog threshold. Each run included 24 jobs with 65-second handlers to exercise renewals. Every requested depth was observed in outstanding producer scripts. All offers were accepted and settled once, with exact job IDs and no pending intent after SIGKILL and AOF restart.
+
+| Producer depth | Accepted and settled | Durable completions/s including drain | EVALSHA calls per settled job | Settlement p99 | Overlapping renewal calls, longest |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 4,055 | 57.9 | 2.99 | 70 ms | 21, 128 ms |
+| 8 | 12,175 | 173.7 | 1.49 | 193 ms | 21, 182 ms |
+| 16 | 15,829 | 225.8 | 1.26 | 206 ms | 22, 143 ms |
+| 64 | 11,515 | 160.4 | 1.23 | 308 ms | 10, 106 ms |
+
+Depth 16 finished 15,790 jobs during offers. Depth 64 finished 10,972 during offers and had a settlement maximum of 852 ms. Whole-fixture Redis CPU per job was 9.05, 4.52, 3.86 and 4.81 ms by depth. Minimum observed renewal margin exceeded 31 s in every arm, with zero stale or error replies. Each row has too few overlapping renewal calls to qualify p99. The depth comparison is directional, with longer repeated runs and the settlement-consumer sweep still pending. Raw samples and the isolated harness are under `artifacts/perf/round-two/redis-f4/`.
 
 ## Outbox relay
 
