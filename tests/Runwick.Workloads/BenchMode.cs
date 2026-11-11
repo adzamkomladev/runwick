@@ -661,11 +661,12 @@ internal static class BenchMode
                         Interlocked.Increment(ref snapshotsWithDiagnostics);
                     }
 
-                    var remaining = stopAt - clock.Elapsed;
-                    if (remaining > TimeSpan.Zero)
+                    if (stopAt - clock.Elapsed <= interval)
                     {
-                        await Task.Delay(remaining < interval ? remaining : interval).ConfigureAwait(false);
+                        break;
                     }
+
+                    await Task.Delay(interval).ConfigureAwait(false);
                 }
             }
             result["latencySamples"] = s.Count;
