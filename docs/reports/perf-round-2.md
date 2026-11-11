@@ -375,6 +375,18 @@ Five alternating Release builds ran a synchronous decode probe with warm-up and 
 
 The probe excludes receipt parsing, store reads and handler execution. The allocation probe source and per-run outputs are under `artifacts/perf/round-two/`.
 
+### E2 Producer fingerprints and envelope export
+
+Dispatch streams its command digest over the canonical body. Single dispatch keeps the private business-encoding buffer through fingerprinting, and long strings use pooled UTF-8 scratch that is cleared on return. Envelope export encodes base64 in blocks and writes ASCII builder chunks directly to the owned output array. Unicode still uses the existing UTF-8 conversion. Independent Node vectors and the added Unicode, padding and ownership cases passed. The final candidate passed 109 core and golden checks and all nine cross-provider wire contracts.
+
+| Payload | Serialize, scan and fingerprint, baseline → candidate | ASCII envelope export, baseline → candidate |
+|---|---:|---:|
+| 1 KiB | 42.6 → 36.8 kB | 20.8 → 10.5 kB |
+| 64 KiB | 1.08 → 0.68 MB | 0.64 → 0.28 MB |
+| 1 MiB | 18.21 → 11.92 MB | 9.81 → 4.22 MB |
+
+The Release probe measured calling-thread allocations and produced identical dispatch digests and encoded lengths at all three sizes. The workload throughput effect is still unmeasured. Probe source and raw outputs are under `artifacts/perf/round-two/producer-e2/`.
+
 ### E3 Settlement reply decoding
 
 PostgreSQL and Redis use a shared forward decoder for normal `FinishMany` replies. Other shapes fall back to the existing decoder. PostgreSQL obtains UTF-8 from its result column and decodes the item fields after commit. SQLite already has an in-memory result and continues to read it directly. Receipt v1 persistence and replay bytes are unchanged.
