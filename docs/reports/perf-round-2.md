@@ -448,7 +448,9 @@ The M4 workload flag `bench --store-viewers 20` starts the co-hosted management 
 | Median due-to-handler p99 | 522 ms | 884 ms |
 | Total refused offers | 0 | 214 |
 
-All refusals came from one viewer arm. The median paired due-to-handler p99 ratio was 1.52×, ranging from 0.79× to 2.55×. The median snapshot call took 0.34–0.50 ms across viewer arms. Its p99 ranged from 250 to 422 ms. The comparison includes cold startup and JSON serializer initialization. It measures the session and serialization path on the shared host and misses the 5% p99 budget. A warmed comparison, the HTTP path, and overhead on PostgreSQL and Redis remain to be qualified. Raw results are under `artifacts/perf/round-two/store-viewer-cost/sqlite-current/`.
+All refusals came from one viewer arm. The median paired due-to-handler p99 ratio was 1.52×, ranging from 0.79× to 2.55×. The median snapshot call took 0.34–0.50 ms across viewer arms. Its p99 ranged from 250 to 422 ms. The comparison includes cold startup and JSON serializer initialization. It measures the session and serialization path on the shared host and misses the 5% p99 budget. Raw results are under `artifacts/perf/round-two/store-viewer-cost/sqlite-current/`.
+
+Five more pairs used a 12-second startup period in both arms and primed serialization before offers began in the viewer arm. All 600 polls returned diagnostics. Snapshot call p99 ranged from 3.0 to 21.3 ms. Median durable completions during offers were 49.50/s with zero viewers and 49.93/s with 20 viewers. The zero-viewer arms refused 211 offers across four runs. The viewer arms accepted all 7,500 offers. Every accepted job settled. The paired due-to-handler p99 ratio ranged from 0.73× to 1.57×, with a median of 1.14×. This variation spans the 5% p99 budget. The shared-host comparison leaves the SQLite gate open. The HTTP path and PostgreSQL and Redis overhead are still unqualified. Raw results are under `artifacts/perf/round-two/store-viewer-cost/sqlite-warmed/`.
 
 ## Full-suite verification
 
