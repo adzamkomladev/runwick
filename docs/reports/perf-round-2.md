@@ -172,6 +172,12 @@ The median paired throughput ratio was 2.05×, with a range of 1.65–2.56×. A 
 
 The candidate kept pace in this short run. Sustained capacity with larger retained history, maintenance and readers is still open. Query plans, provider binary checksums and raw results are under `artifacts/perf/round-two/sqlite-q5-receipt-index/`.
 
+### Q6 SQLite local wake experiment
+
+An isolated candidate sends a queue hint after a direct dispatch commits. Local workers using the same file and application can receive it across separate store instances. Workers retain the normal polling cap for remote writers, staged transactions and missed hints. The focused test held a dispatch before commit, then verified that the second store instance received the hint after commit even when another subscriber threw. Replaying the accepted dispatch did not send another hint. All three dispatch-group tests passed.
+
+Five alternating pairs offered three jobs/s for 15 seconds with 16 worker slots. All offers were accepted and settled once. Median due-to-handler p50/p95 moved from 143/346 ms to 30/117 ms. The candidate lowered p50 in every pair. There were about 45 observations per run, too few for a stable p99 estimate. In a separate five-pair 1,000-job drain the median paired throughput ratio was 1.09×, with a range of 0.85–1.29×. The candidate remains isolated pending a quieter check of saturated throughput. The patch and raw results are under `artifacts/perf/round-two/sqlite-q6-wake/`.
+
 ### B4 SQLite settlement experiment
 
 An isolated build used one completion consumer to give ready finishes time to collect behind the previous call. Five paired 1,000-job drains with 16 workers reduced median committed settlement calls from 289 to 183 and total writer commits from 442 to 376. Median throughput was 101.6 jobs/s with four consumers and 104.4 with one. The median paired gain was 3.9%, and individual pairs varied from a 16.6% drop to a 39.9% gain. Production uses four completion consumers. The next finish experiment should account for transaction body cost and protect unrelated finishes during receipt resolution.
@@ -273,6 +279,8 @@ The jobs table still had an estimated 15,463 dead tuples after two autovacuum pa
 
 A4's isolated finish prototype combined resource usage with attempt close. A single 5,000-job pair settled every job with one attempt and recorded usage for each. Attempt updates fell from 10,000 to 5,000 and WAL from 64.9 to 63.1 MB. Drain throughput moved from 118.7 to 125.2/s while the Redis fault suite shared the host. Focused PostgreSQL tests covered staged rollback, exact replay and batched usage. The migration remains isolated. Raw results are under `artifacts/perf/round-two/postgres-a4-pair/`.
 
+A separate PostgreSQL 18.6 diagnostic used sampled nested `auto_explain` with buffers and WAL. It settled 5,000 jobs once and wrote 65.5 MB of WAL during the fixture. The retained plan sample showed plain claim and readiness queries using `jobs_ready`, both receipt partitions using their command-ID indexes, and distinct finish attempt-close and usage updates. PostgreSQL reported 2.46 million entries returned by `jobs_name_list`, but Docker log rotation removed the early plan records. The remaining samples did not attribute that index. Raw plans and counters are under `artifacts/perf/round-two/postgres-nested/`.
+
 ## Redis Phase 0
 
 A dedicated Redis 8.2.11 server used `appendonly yes`, `appendfsync always` and `noeviction`. A healthy store published both test batches, but each went through intent recovery. The probe measured intent shape with a separate injected interruption after intent storage. The traces shown here came from fault-free submissions.
@@ -314,6 +322,21 @@ Median single-add p95/p99 was 90.9/159.8 ms for Runwick and 57.7/128.1 ms for Bu
 
 The AOF and server CPU counters cover setup and warm-up or seeding as applicable. In the first Runwick drain, 1,500 completions used 67 combined claim-and-begin calls, 82 individual finish calls and 84 finish batches. All returned directly without intent recovery. The CPU and AOF gap persisted while ordinary claims and finishes already shared script calls. Measure the bytes and CPU spent on payloads, after-images and lifecycle records before changing the number of sockets. Raw results and the runner are under `artifacts/perf/round-two/redis-bullmq-pair/`.
 
+### F5 Redis AOF byte attribution
+
+A separate AOF-always profile captured the full incremental AOF from fresh Redis 8.2.11 fixtures with automatic rewrite disabled for observation. One fixture bulk-added 1,500 jobs in groups of 100. Another added the same jobs and settled all 1,500 once with 64 worker slots. Parsing the persisted RESP commands accounted for every byte in both files.
+
+| AOF command category | Bulk only | Seed and drain |
+|---|---:|---:|
+| Total | 7.64 MB | 26.04 MB |
+| Guard and packed intent writes | 3.60 MB | 13.64 MB |
+| Job hash projection, including attempt fields | 1.40 MB | 4.31 MB |
+| Receipt projection | 0.18 MB | 3.32 MB |
+| Event and audit projection | 0.44 MB | 1.93 MB |
+| Live payload projection | 1.64 MB | 1.64 MB |
+
+The raw payload values accounted for 1.52 MB inside the intents and were also stored in the live payload keys. A payload reference could eliminate at most that duplicate value volume before accounting for staging and recovery overhead. That is about 20% of bulk bytes and 6% of whole-drain bytes in this fixture. Claim and finish amplification also needs attention. Raw AOFs, typed counters, parser and runner are under `artifacts/perf/round-two/redis-f5-aof/`.
+
 ## Outbox relay
 
 Phase 0.6 traces claim, transport record, destination receive and delivered mark separately. D1 assigns the UUIDv7 transport identity and deadline in the claim transaction for PostgreSQL and SQLite. A reclaim preserves the pair while its deadline remains live. Replacements respect the acceptance horizon. The relay checks lease authority before the first send, and subsequent source writes stay token-guarded. The eight focused tests passed, including a lost reply to a committed claim and later reuse of its transport identity.
@@ -352,6 +375,8 @@ The first M2 collector samples SQLite database and WAL file sizes and process wr
 
 M2 adds seven bounded PostgreSQL queries on the management host's background lane. The cached, timestamped sample covers database sessions, lock waits and size, Runwick jobs-table size and maintenance counters, and connected-node WAL, recovery and replication observations. A separate statistics permission gates the affected facts, and restricted backend access degrades them independently. Four focused tests passed on real PostgreSQL and SQLite fixtures, including a denied `pg_stat_wal` read, outage retention and expiry, grant revocation, and the asset embed. Chromium checked the denied view and simulated available and stale states at desktop and mobile widths. Pool wait metrics, live replica transitions and dashboard-on workload cost remain to be measured.
 
+M2 also samples the configured Redis node with one bounded, selected-section `INFO` request on the background lane. It uses the existing profile connection. The cached fields cover memory, client and command activity, evictions, AOF state, and replication indicators. The page labels Redis command activity as a node observation and shows the sample time. Two Redis driver tests and four dashboard tests passed, including real ACL denial, missing fields, permission revocation and generated assets. Live replica behavior and workload overhead remain unmeasured.
+
 ## Full-suite verification
 
-The worker checkpoint at `6011483` passed 426 Core and 475 shared contract tests. The SQLite provider suite passed 53 tests on the snapshot through `c48a8d4`. The integrated snapshot at `d0efb88` passed all 383 PostgreSQL tests with zero skips on a Docker-managed server, including CAP-10, TIME-09, TXC-05 and the store-outage cases. The same snapshot passed all 48 outbox and 70 Redis tests with zero skips, including the Redis AOF kill-and-restart sweep. Earlier and integrated logs are under `artifacts/perf/round-two/suites/` and `suites-integrated/`.
+The worker checkpoint at `6011483` passed 426 Core and 475 shared contract tests. The integrated snapshot at `d0efb88` passed all 383 PostgreSQL tests with zero skips on a Docker-managed server, including CAP-10, TIME-09, TXC-05 and the store-outage cases. The same snapshot passed all 48 outbox and 70 Redis tests with zero skips, including the Redis AOF kill-and-restart sweep. The SQLite receipt-index snapshot at `30fc1dd` passed all 53 SQLite and 430 Core tests. Earlier and integrated logs are under `artifacts/perf/round-two/suites/` and `suites-integrated/`.
