@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -8,6 +9,7 @@ using Npgsql;
 using Runwick.Harness.Store;
 using Runwick.Management;
 using Runwick.Postgres.Migrations;
+using Runwick.Serialization;
 using Runwick.Worker;
 using static Runwick.Workloads.G2Orchestrator;
 
@@ -271,10 +273,14 @@ internal static class Sp029Workloads
         }
 
         string? code = null;
+        var payloadBytes = PayloadBounds.MaxPayloadBytes + 1;
+        var pad = new string('x', G2Big.MaxString);
+        var job = new G2Big("1", [pad, pad, pad, pad, ""]);
+        var templateBytes = JsonSerializer.SerializeToUtf8Bytes(job, RunwickJsonProfile.V1.Options).Length;
+        job.Pads[^1] = new string('x', payloadBytes - templateBytes);
         try
         {
-            // The serialized object adds {"id":"1","pad":""} around the pad, so this is above the bound.
-            await provider.GetRequiredService<IJobDispatcher>().DispatchAsync(new G2Work("1", new string('x', 1_048_576))).ConfigureAwait(false);
+            await provider.GetRequiredService<IJobDispatcher>().DispatchAsync(job).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -287,7 +293,13 @@ internal static class Sp029Workloads
         }
 
         var stored = await ScalarAsync(Conn(db, database, "wl:analysis"), "SELECT count(*) FROM runwick.jobs").ConfigureAwait(false);
-        return new JsonObject { ["oversizeRejectedWith"] = code, ["jobsStored"] = stored, ["passed"] = code == "payload_too_large" && stored == 0 };
+        return new JsonObject
+        {
+            ["payloadBytes"] = payloadBytes,
+            ["oversizeRejectedWith"] = code,
+            ["jobsStored"] = stored,
+            ["passed"] = code == "payload_too_large" && stored == 0,
+        };
     }
 
     // ------------------------------------------------------------------------------------------------ P-07
