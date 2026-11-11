@@ -257,3 +257,7 @@ The probe excludes receipt parsing, store reads and handler execution. The alloc
 ## Store dashboard
 
 M1 adds a Store page and read-only snapshot for callers with `Settings.Read`. It reuses the process health probe for store and admission metadata, retains the last descriptor for up to five minutes, and labels stale and unavailable facts. Browser refreshes read the cached snapshot. Chromium checked the page at desktop and mobile widths. A follow-up uses the same probe to show PostgreSQL server and SQLite library versions with their respective node and process scope. All seven focused dashboard tests passed, including the real PostgreSQL outage, version expiry and generated asset checks. Provider collectors, topology observations and paired dashboard overhead measurements are still pending.
+
+## Full-suite verification
+
+The worker checkpoint at `6011483` passed 426 Core and 475 shared contract tests. The SQLite provider suite passed 53 tests on the snapshot through `c48a8d4`. The integrated snapshot at `d0efb88` passed all 383 PostgreSQL tests with zero skips on a Docker-managed server, including CAP-10, TIME-09, TXC-05 and the store-outage cases. Earlier and integrated logs are under `artifacts/perf/round-two/suites/` and `suites-integrated/`.
