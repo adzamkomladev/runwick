@@ -129,6 +129,25 @@ The contention sweep ran three trials per setting with four processes and 16 slo
 
 The native path reduced long writer waits. Throughput remained within 36–42 jobs/s at the medians. The prototype remains isolated while the retry budget under an externally held write lock is evaluated. Raw runs and the summarizer are under `artifacts/perf/round-two/sqlite-q3-busy/`.
 
+### Q4 SQLite WAL and retained read snapshots
+
+Three alternating pairs drained 2,000 jobs with 16 worker slots and eight seed callers on copies of the 5,000-terminal-job fixture, using the Q5 index seek. One variant held a separate read-only transaction from the end of seeding until after the drain. Every run settled all 2,000 jobs once with the same WAL and synchronous FULL settings and default 1,000-page autocheckpoint.
+
+| WAL after drain | Default | Pinned reader |
+|---|---:|---:|
+| File size (min–max) | 4.85–4.98 MB | 99.46–105.00 MB |
+| Log frames (min–max) | 378–768 | 24,140–25,486 |
+| Checkpointed frames at end (min–max) | 0 | 0–207 |
+
+After the pinned reader closed, one passive checkpoint backfilled all observed log frames in every run. The calls took 49–525 ms on a host shared with the integration suites. Drain throughput varied from 93–149/s in controls and 55–155/s with a pinned reader, leaving the throughput effect inconclusive. The pinned readers retained more than the 64 MiB journal size limit. The experiment shows the cost of holding a long snapshot and leaves the default checkpoint policy in place. Measuring dashboard and retention activity alongside production-like loads is still open.
+
+```sh
+dotnet "$workload_dll" bench --store sqlite --mode drain --n 2000 --workers 16 --calls 8 \
+  --trace --sqlite-seed "$terminal_fixture" --sqlite-hold-read --out "$output"
+```
+
+Omit `--sqlite-hold-read` for the control. Raw results and the runner are under `artifacts/perf/round-two/sqlite-q4-wal/`.
+
 ### Q5 SQLite receipt lookups with retained history
 
 SQLite 3.53.3 chose the primary key for the replay lookup and the undecided-receipt check. The primary key orders by retention class before command ID, so both plans searched only on application and visited unrelated receipts. Both queries now use the existing `runwick_command_by_id` index to seek by application and command ID. Replay still examines both retention classes and prefers the command's own class. All 15 focused receipt, finish and transaction tests passed.

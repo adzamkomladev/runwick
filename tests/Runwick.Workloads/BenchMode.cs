@@ -33,6 +33,7 @@ namespace Runwick.Workloads;
 /// <c>--warmup-jobs</c> adds jobs on the same producer before timing an enqueue run.
 /// SQLite uses a fresh file. <c>--sqlite-keep</c> keeps it, and <c>--sqlite-seed path</c> copies a drained fixture before the run.
 /// <c>--sqlite-profile-statements</c> groups native writer time by statement prefix for diagnosis.
+/// <c>--sqlite-hold-read</c> pins a read snapshot during a traced drain and measures checkpoint progress after releasing it.
 /// Trace adds per-job stage gaps, held-job and settlement-queue samples, and store call phases. Writes the same JSON shape as the River and pg-boss
 /// benches: <c>system</c>, <c>mode</c>, <c>completionsPerSec</c>, <c>latencyMs {p50, p95, p99, max}</c> (steady).
 /// </summary>
@@ -87,6 +88,13 @@ internal static class BenchMode
         if (store is not ("postgres" or "sqlite" or "redis"))
         {
             Console.Error.WriteLine("--store must be postgres, sqlite or redis");
+            return 2;
+        }
+
+        var holdRead = a.Has("sqlite-hold-read");
+        if (holdRead && (store != "sqlite" || mode != "drain" || !a.Has("trace")))
+        {
+            Console.Error.WriteLine("--sqlite-hold-read needs --store sqlite --mode drain --trace");
             return 2;
         }
 
@@ -313,6 +321,14 @@ internal static class BenchMode
         var unknownCodes = new ConcurrentDictionary<string, long>();
         var resolutions = new ConcurrentDictionary<string, long>();
         var resolveErrors = new ConcurrentDictionary<string, long>();
+        using var snapshotConnection = holdRead
+            ? new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = sqliteDirectory!.DatabasePath,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false,
+            }.ConnectionString)
+            : null;
 
         if (mode == "enqueue")
         {
@@ -448,6 +464,14 @@ internal static class BenchMode
 
             result["insertSeconds"] = Math.Round(insertWatch.Elapsed.TotalSeconds, 3);
             result["insertCalls"] = calls;
+            if (snapshotConnection is not null)
+            {
+                snapshotConnection.Open();
+                using var pin = snapshotConnection.CreateCommand();
+                pin.CommandText = "BEGIN; SELECT EXISTS(SELECT 1 FROM runwick_jobs WHERE application = 'bench')";
+                _ = pin.ExecuteScalar();
+            }
+
             var commitsBeforeDrain = sqlite?.Runner.Commits;
             var statementsBeforeDrain = Interlocked.Read(ref sqliteStatements);
             sqliteStatementProfile?.Clear();
@@ -657,10 +681,20 @@ internal static class BenchMode
             result["sqlite"]!["walBytesAfterRun"] = wal.Exists ? wal.Length : 0;
             if (Version.TryParse(sqlite.EngineFacts.GetValueOrDefault("sqlite_version"), out var version) && version >= new Version(3, 51))
             {
-                result["sqlite"]!["walAfterRun"] = await sqlite.Executor.WriteAsync(SqLane.Background, conn =>
+                result["sqlite"]!["walAfterRun"] = await ReadCheckpointAsync("PRAGMA wal_checkpoint(NOOP)").ConfigureAwait(false);
+                if (snapshotConnection is not null)
+                {
+                    snapshotConnection.Close();
+                    result["sqlite"]!["walAfterReaderRelease"] = await ReadCheckpointAsync("PRAGMA wal_checkpoint(PASSIVE)").ConfigureAwait(false);
+                }
+            }
+
+            Task<JsonObject> ReadCheckpointAsync(string pragma) =>
+                sqlite.Executor.WriteAsync(SqLane.Background, conn =>
                 {
                     using var cmd = conn.CreateCommand();
-                    cmd.CommandText = "PRAGMA wal_autocheckpoint; PRAGMA wal_checkpoint(NOOP)";
+                    cmd.CommandText = "PRAGMA wal_autocheckpoint; " + pragma;
+                    var elapsed = Stopwatch.StartNew();
                     using var rows = cmd.ExecuteReader();
                     rows.Read();
                     var checkpointPages = rows.GetInt32(0);
@@ -672,9 +706,9 @@ internal static class BenchMode
                         ["busy"] = rows.GetInt32(0) != 0,
                         ["logFrames"] = rows.GetInt32(1),
                         ["checkpointedFrames"] = rows.GetInt32(2),
+                        ["elapsedMs"] = elapsed.Elapsed.TotalMilliseconds,
                     };
-                }, CancellationToken.None).ConfigureAwait(false);
-            }
+                }, CancellationToken.None);
         }
 
         var json = result.ToJsonString(Json.Indented);
