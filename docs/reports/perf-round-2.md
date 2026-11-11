@@ -176,6 +176,8 @@ Five follow-up pairs ran 128 warm-up adds in the measured process before timing 
 
 The 16-caller throughput ratio improved in all five pairs (median 1.46×, range 1.17–1.63×). The one-caller ratios ranged from 0.91× to 1.15× with a median of 1.05×. The median 16-caller function phase mean rose from 19.9 to 27.6 ms. The function and commit phases include the server response and client scheduling. Raw cold and warm results are under `artifacts/perf/round-two/postgres-a1-ab/` and `postgres-a1-warm-ab/`.
 
+A separate 16-caller, 2,400-add sample read `pg_stat_activity` and `pg_locks` every 50 ms. The transactional run recorded 1,604 active-session observations waiting on an ungranted heavyweight `AccessExclusiveLock` for object ID zero out of 2,441 active observations. That shape matches PostgreSQL's commit-order notification lock. The post-commit run recorded zero such waits across 1,518 active observations. Its most frequent classified wait was `LWLock:WALWrite` with 431 observations. No advisory lock wait was sampled in either run. The counts describe sampled sessions and do not measure individual request durations. [PostgreSQL 18.6 notification implementation](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/commands/async.c#L840-L868).
+
 ```sh
 BENCH_TRACE=1 BENCH_ROUNDS=5 BENCH_ENQUEUE_N=750 BENCH_WARMUP_JOBS=128 \
   BENCH_TESTS='enqueue-c1 enqueue-c16' \
