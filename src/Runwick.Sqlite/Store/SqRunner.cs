@@ -668,8 +668,8 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         return false;
     }
 
-    /// <summary>R1–R3, expiry and the deadline cap (rw_receipt_v1). Null = new command, placeholder inserted.</summary>
-    internal SqRow? Receipt(SqTx tx)
+    /// <summary>R1–R3, expiry and the deadline cap (rw_receipt_v1). Null means a new command.</summary>
+    internal SqRow? Receipt(SqTx tx, bool insertPlaceholder = true)
     {
         var op = tx.Op;
         var cls = Operations.RetentionClass(op.Operation);
@@ -705,6 +705,11 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         if (op.NotAfter - tx.Clock > Operations.DeadlineCap(op.Operation))
         {
             return SqRow.NoEffect("InvalidRequest", "deadline_too_far", tx.Now);
+        }
+
+        if (!insertPlaceholder)
+        {
+            return null;
         }
 
         var notAfter = SqTime.Floor(op.NotAfter);

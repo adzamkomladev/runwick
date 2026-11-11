@@ -995,17 +995,19 @@ internal sealed partial class SqliteStore : ILeaseBatchStore, IReserveAndBeginSt
     SqRow FinishManyBody(SqTx tx, IReadOnlyList<StoreCommand<FinishRequest>> items, SqOp[] ops, ulong[] entropy)
     {
         var done = new JsonObject?[items.Count];
-        var itemTx = new SqTx[items.Count];
+        // The writer transaction excludes competing receipt inserts. Command IDs in this batch are distinct.
         foreach (var k in Enumerable.Range(0, items.Count).OrderBy(k => items[k].CommandId, UuidOrder.Instance))
         {
-            itemTx[k] = new SqTx(tx.Connection, tx.Transaction, ops[k], runner.Faults, tx.Ct) { Now = tx.Now, Clock = tx.Clock };
-            if (runner.Receipt(itemTx[k]) is { } r)
+            var itemTx = new SqTx(tx.Connection, tx.Transaction, ops[k], runner.Faults, tx.Ct) { Now = tx.Now, Clock = tx.Clock };
+            if (runner.Receipt(itemTx, insertPlaceholder: false) is { } r)
             {
                 done[k] = ItemJson(items[k].CommandId, r);
             }
         }
 
-        var applied = 0;
+        var receipts = new List<object?[]>(items.Count);
+        var retentionClass = Operations.RetentionClass(Operations.Finish);
+        var retentionFloor = Operations.RetentionFloor(Operations.Finish);
         for (var k = 0; k < items.Count; k++)
         {
             if (done[k] is not null)
@@ -1014,28 +1016,25 @@ internal sealed partial class SqliteStore : ILeaseBatchStore, IReserveAndBeginSt
             }
 
             // An item's refusal never mutates job state. An exception still rolls back the enclosing transaction.
-            var item = tx.Clock >= ops[k].NotAfter
-                ? SqRow.NoEffect("CommandExpired", "command_expired", tx.Now)
-                : FinishJob(tx, items[k].CommandId, items[k].Body, entropy[k]);
+            var op = ops[k];
+            var item = FinishJob(tx, op.CommandId, items[k].Body, entropy[k]);
 
             if (item.HasValue)
             {
-                SqRunner.Finalize(itemTx[k], "Applied", item.Result!, tx.Now);
-                applied++;
-            }
-            else
-            {
-                tx.Exec(tx.Sql("""
-                    DELETE FROM runwick_storage_commands
-                    WHERE application = @application AND retention_class = @class AND command_id = @command_id AND result IS NULL
-                    """).P("class", Operations.RetentionClass(Operations.Finish)).P("command_id", items[k].CommandId), mutation: false);
+                var notAfter = SqTime.Floor(op.NotAfter);
+                receipts.Add([tx.Application, retentionClass, op.CommandId, Operations.Finish, 1, 1, op.Fingerprint, 1,
+                    notAfter, 1, notAfter + retentionFloor, item.Status, item.Result!.ToJsonString(), tx.Now]);
             }
 
-            done[k] = ItemJson(items[k].CommandId, item);
+            done[k] = ItemJson(op.CommandId, item);
         }
 
+        Expect(InsertRows(tx, "runwick_storage_commands",
+            ["application", "retention_class", "command_id", "operation", "operation_version", "protocol_epoch", "fingerprint",
+                "fingerprint_version", "not_after", "receipt_codec_version", "retain_until", "status", "result", "decided_at"], receipts) == receipts.Count);
+
         var row = SqRow.Applied("Applied", null, tx.Now, new JsonObject { ["items"] = new JsonArray([.. done]) });
-        row.NoCommit = applied == 0;
+        row.NoCommit = receipts.Count == 0;
         return row;
     }
 
