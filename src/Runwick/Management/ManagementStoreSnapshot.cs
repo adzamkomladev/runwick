@@ -55,6 +55,35 @@ internal interface ISqliteStoreDiagnosticsSource
     SqliteStoreDiagnostics ObserveDiagnostics();
 }
 
+public sealed record PostgresSessionCount(int ConnectedSessions);
+
+public sealed record PostgresLockWaitCount(long SessionsWaiting);
+
+public sealed record PostgresJobTableStats(long TotalBytes, long EstimatedDeadTuples, long AutovacuumCount);
+
+public sealed record PostgresWalStats(decimal BytesGenerated, DateTimeOffset? ResetAt);
+
+public sealed record PostgresRecoveryState(bool InRecovery);
+
+public sealed record PostgresReplicationStats(long ConnectedSenders, decimal? LargestReplayBacklogBytes);
+
+public sealed record PostgresStoreDiagnostics(
+    StoreSnapshotFact<PostgresSessionCount> Sessions,
+    StoreSnapshotFact<PostgresLockWaitCount> LockWaits,
+    StoreSnapshotFact<StoreByteCount> DatabaseSize,
+    StoreSnapshotFact<PostgresJobTableStats> JobsTable,
+    StoreSnapshotFact<PostgresWalStats> Wal,
+    StoreSnapshotFact<PostgresRecoveryState> Recovery,
+    StoreSnapshotFact<PostgresReplicationStats> Replication)
+{
+    public DateTimeOffset? SampledAt { get; init; }
+}
+
+internal interface IPostgresStoreDiagnosticsSource
+{
+    Task<PostgresStoreDiagnostics> ObserveDiagnosticsAsync(CancellationToken ct);
+}
+
 [JsonConverter(typeof(JsonStringEnumConverter<StoreProviderCapability>))]
 public enum StoreProviderCapability
 {
@@ -86,6 +115,8 @@ public sealed record ManagementStoreSnapshot(
     StoreSnapshotFact<string> Topology)
 {
     public SqliteStoreDiagnostics? Sqlite { get; init; }
+
+    public PostgresStoreDiagnostics? Postgres { get; init; }
 
     internal static ManagementStoreSnapshot Unobserved(DateTimeOffset now) => new("", "unknown", now, null, null,
         new(StoreSnapshotScope.Process, StoreReachability.Unknown, "not_observed"), [],

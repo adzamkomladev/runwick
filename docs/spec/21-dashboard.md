@@ -384,6 +384,8 @@ The compatibility probe supplies PostgreSQL's server version and SQLite's loaded
 
 SQLite diagnostics show database and WAL file sizes and this process's committed writes and exhausted busy waits. The management host samples them with the background health check. The page labels a denied field when the caller lacks `StoreDiagnostics.Read` or the host lacks filesystem access.
 
+PostgreSQL diagnostics group current-database sessions, lock waits, disk usage and Runwick jobs-table statistics separately from the connected server's WAL, recovery and replication observations. The replay backlog measures bytes between a sender's sent and replayed WAL positions. The page shows the last successful diagnostics sample time, labels unavailable and denied fields independently, and marks retained values stale when a refresh fails or the sample is at least 30 seconds old.
+
 ## 5. Controls
 
 A control is a `POST` to the mount, sent by the Inertia client (`router.post`) with the antiforgery header.

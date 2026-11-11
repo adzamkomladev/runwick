@@ -77,6 +77,46 @@ function SqliteDetails({ stats }) {
   )
 }
 
+function PostgresDetails({ stats }) {
+  const { sampledAt, ...facts } = stats
+  const { sessions, lockWaits, databaseSize, jobsTable, wal, recovery, replication } = facts
+  const stale = Object.values(facts).some(fact => fact.status === 'Stale')
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center gap-2"><h2>PostgreSQL diagnostics</h2>{stale && <State value="Stale" />}</CardTitle>
+        {sampledAt && <CardDescription>Sampled <ObservationTime value={sampledAt} /></CardDescription>}
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div>
+          <h3 className="text-sm font-medium">Current database</h3>
+          <dl>
+            <Row label="Connected sessions"><Fact fact={sessions}>{sessions.value?.connectedSessions.toLocaleString()}</Fact></Row>
+            <Row label="Sessions waiting on locks"><Fact fact={lockWaits}>{lockWaits.value?.sessionsWaiting.toLocaleString()}</Fact></Row>
+            <Row label="Database size"><Fact fact={databaseSize}>{databaseSize.value && storageSize(databaseSize.value.bytes)}</Fact></Row>
+            <Row label="Runwick jobs table and indexes"><Fact fact={jobsTable}>{jobsTable.value && storageSize(jobsTable.value.totalBytes)}</Fact></Row>
+            <Row label="Estimated dead tuples in jobs table"><Fact fact={jobsTable}>{jobsTable.value?.estimatedDeadTuples.toLocaleString()}</Fact></Row>
+            <Row label="Autovacuum runs on jobs table"><Fact fact={jobsTable}>{jobsTable.value?.autovacuumCount.toLocaleString()}</Fact></Row>
+          </dl>
+        </div>
+        <div>
+          <h3 className="text-sm font-medium">Connected server</h3>
+          <dl>
+            <Row label="WAL generated since statistics reset"><Fact fact={wal}>{wal.value && storageSize(wal.value.bytesGenerated)}</Fact></Row>
+            <Row label="WAL statistics reset"><Fact fact={wal}><ObservationTime value={wal.value?.resetAt} /></Fact></Row>
+            <Row label="Server in recovery"><Fact fact={recovery}>{recovery.value?.inRecovery ? 'Yes' : 'No'}</Fact></Row>
+            <Row label="Connected WAL senders"><Fact fact={replication}>{replication.value?.connectedSenders.toLocaleString()}</Fact></Row>
+            <Row label="Largest replica replay backlog">
+              <Fact fact={replication}>{replication.value?.largestReplayBacklogBytes == null
+                ? <State value="Unavailable" /> : storageSize(replication.value.largestReplayBacklogBytes)}</Fact>
+            </Row>
+          </dl>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function Store({ snapshot }) {
   const live = usePoll(['snapshot'], 10)
   const { connection, identity, admission, persistence, capabilities } = snapshot
@@ -130,6 +170,7 @@ export default function Store({ snapshot }) {
               </CardContent>
             </Card>
             {snapshot.sqlite && <SqliteDetails stats={snapshot.sqlite} />}
+            {snapshot.postgres && <PostgresDetails stats={snapshot.postgres} />}
           </div>
           <div className="order-first grid min-w-0 gap-6 xl:order-none">
             <Card>

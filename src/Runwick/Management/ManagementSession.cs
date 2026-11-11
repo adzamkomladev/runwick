@@ -624,8 +624,9 @@ internal sealed class ManagementSession(
         var engineVersion = retained?.EngineVersion;
         var sqlite = retained?.SqliteDiagnostics;
         var diagnosticsGranted = caller.Grants.Any(g => g.Permission == ManagementPermissions.StoreDiagnosticsRead);
+        var (postgres, postgresFresh) = diagnosticsGranted && provider == "postgres" ? health.PostgresDiagnostics(retained?.StoreId) : (null, false);
 
-        StoreSnapshotFact<T> Diagnostic<T>(StoreSnapshotFact<T>? fact, StoreSnapshotScope scope) where T : class
+        StoreSnapshotFact<T> Diagnostic<T>(StoreSnapshotFact<T>? fact, StoreSnapshotScope scope, bool observedFresh) where T : class
         {
             if (!diagnosticsGranted)
             {
@@ -633,7 +634,7 @@ internal sealed class ManagementSession(
             }
 
             return fact is null ? new(scope, StoreSnapshotStatus.Unavailable, null)
-                : fact.Status == StoreSnapshotStatus.Available ? fact with { Status = availability } : fact;
+                : fact.Status == StoreSnapshotStatus.Available && !observedFresh ? fact with { Status = StoreSnapshotStatus.Stale } : fact;
         }
 
         return Task.FromResult(new ManagementStoreSnapshot(App, provider, time.GetUtcNow(), successfulAt, age?.TotalSeconds, connection,
@@ -653,8 +654,17 @@ internal sealed class ManagementSession(
             new(StoreSnapshotScope.Store, StoreSnapshotStatus.Unavailable, null),
             new(StoreSnapshotScope.ProviderNode, provider == "sqlite" ? StoreSnapshotStatus.Unsupported : StoreSnapshotStatus.Unavailable, null))
         {
-            Sqlite = provider == "sqlite" ? new(Diagnostic(sqlite?.DatabaseFile, StoreSnapshotScope.Store),
-                Diagnostic(sqlite?.WalFile, StoreSnapshotScope.Store), Diagnostic(sqlite?.Writer, StoreSnapshotScope.Process)) : null,
+            Sqlite = provider == "sqlite" ? new(Diagnostic(sqlite?.DatabaseFile, StoreSnapshotScope.Store, fresh),
+                Diagnostic(sqlite?.WalFile, StoreSnapshotScope.Store, fresh), Diagnostic(sqlite?.Writer, StoreSnapshotScope.Process, fresh)) : null,
+            Postgres = provider == "postgres" ? new(
+                Diagnostic(postgres?.Sessions, StoreSnapshotScope.Store, fresh && postgresFresh),
+                Diagnostic(postgres?.LockWaits, StoreSnapshotScope.Store, fresh && postgresFresh),
+                Diagnostic(postgres?.DatabaseSize, StoreSnapshotScope.Store, fresh && postgresFresh),
+                Diagnostic(postgres?.JobsTable, StoreSnapshotScope.Store, fresh && postgresFresh),
+                Diagnostic(postgres?.Wal, StoreSnapshotScope.ProviderNode, fresh && postgresFresh),
+                Diagnostic(postgres?.Recovery, StoreSnapshotScope.ProviderNode, fresh && postgresFresh),
+                Diagnostic(postgres?.Replication, StoreSnapshotScope.ProviderNode, fresh && postgresFresh))
+                { SampledAt = postgres?.SampledAt } : null,
         });
     }
 

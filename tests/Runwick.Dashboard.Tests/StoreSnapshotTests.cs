@@ -18,6 +18,7 @@ public sealed class StoreSnapshotTests
         await using var h = await DashHost.StartAsync(f, services: b => b.Services.AddSingleton<TimeProvider>(clock), api: true);
         var viewer = h.Browser(Users.Viewer);
         var scoped = h.Browser(Users.Scoped);
+        var admin = h.Browser(Users.Admin);
 
         Assert.Equal(HttpStatusCode.Forbidden, (await scoped.LoadAsync("/runwick/store")).Response.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await scoped.VisitAsync("/api/v1/store")).StatusCode);
@@ -30,14 +31,50 @@ public sealed class StoreSnapshotTests
         Assert.Equal("Available", version.GetProperty("status").GetString());
         Assert.Equal("ProviderNode", version.GetProperty("scope").GetString());
         Assert.True(Version.TryParse(version.GetProperty("value").GetString(), out _));
+        var denied = ready.GetProperty("postgres").GetProperty("databaseSize");
+        Assert.Equal("PermissionDenied", denied.GetProperty("status").GetString());
+        Assert.False(denied.TryGetProperty("value", out _));
+        Assert.False(ready.GetProperty("postgres").TryGetProperty("sampledAt", out _));
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        JsonElement stats;
+        do
+        {
+            stats = (await SnapshotAsync(admin)).GetProperty("postgres");
+            if (stats.GetProperty("databaseSize").GetProperty("status").GetString() == "Available") break;
+            await Task.Delay(TimeSpan.FromMilliseconds(100), timeout.Token);
+            clock.Advance(TimeSpan.FromSeconds(10));
+        }
+        while (true);
+        var sampledAt = stats.GetProperty("sampledAt").GetDateTimeOffset();
+        var size = stats.GetProperty("databaseSize").GetProperty("value").GetProperty("bytes").GetInt64();
+        Assert.True(size > 0);
+        Assert.True(stats.GetProperty("sessions").GetProperty("value").GetProperty("connectedSessions").GetInt32() > 0);
+        Assert.True(stats.GetProperty("jobsTable").GetProperty("value").GetProperty("totalBytes").GetInt64() > 0);
+        Assert.Equal("ProviderNode", stats.GetProperty("wal").GetProperty("scope").GetString());
+        Assert.True(stats.GetProperty("wal").GetProperty("value").GetProperty("bytesGenerated").GetDecimal() >= 0);
+        Assert.False(stats.GetProperty("recovery").GetProperty("value").GetProperty("inRecovery").GetBoolean());
+
+        h.Grants[Users.Admin] = [.. Users.All.Where(g => g.Permission != ManagementPermissions.StoreDiagnosticsRead)];
+        var revokedStats = (await SnapshotAsync(admin)).GetProperty("postgres");
+        var revoked = revokedStats.GetProperty("databaseSize");
+        Assert.Equal("PermissionDenied", revoked.GetProperty("status").GetString());
+        Assert.False(revoked.TryGetProperty("value", out _));
+        Assert.False(revokedStats.TryGetProperty("sampledAt", out _));
+        h.Grants[Users.Admin] = Users.All;
+        var lastSuccessfulAt = (await SnapshotAsync(admin)).GetProperty("lastSuccessfulAt").GetString();
 
         f.Proxy!.DropEverything = true;
-        var failed = await WaitForSnapshotAsync(viewer, "Unavailable", clock);
+        var failed = await WaitForSnapshotAsync(admin, "Unavailable", clock);
         Assert.Equal("Stale", failed.GetProperty("identity").GetProperty("status").GetString());
         Assert.Equal(id, failed.GetProperty("identity").GetProperty("value").GetProperty("storeId").GetGuid());
         Assert.Equal("Stale", failed.GetProperty("serverVersion").GetProperty("status").GetString());
         Assert.Equal(version.GetProperty("value").GetString(), failed.GetProperty("serverVersion").GetProperty("value").GetString());
-        Assert.Equal(ready.GetProperty("lastSuccessfulAt").GetString(), failed.GetProperty("lastSuccessfulAt").GetString());
+        var staleStats = failed.GetProperty("postgres").GetProperty("databaseSize");
+        Assert.Equal("Stale", staleStats.GetProperty("status").GetString());
+        Assert.Equal(size, staleStats.GetProperty("value").GetProperty("bytes").GetInt64());
+        Assert.Equal(sampledAt, failed.GetProperty("postgres").GetProperty("sampledAt").GetDateTimeOffset());
+        Assert.Equal(lastSuccessfulAt, failed.GetProperty("lastSuccessfulAt").GetString());
         var (response, body, page) = await viewer.LoadAsync("/runwick/store");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("Store", page.GetProperty("component").GetString());
@@ -45,11 +82,15 @@ public sealed class StoreSnapshotTests
         Assert.DoesNotContain("Password", body, StringComparison.OrdinalIgnoreCase);
 
         clock.Advance(TimeSpan.FromMinutes(5));
-        var expired = await SnapshotAsync(viewer);
+        var expired = await SnapshotAsync(admin);
         Assert.Equal("Unavailable", expired.GetProperty("identity").GetProperty("status").GetString());
         Assert.False(expired.GetProperty("identity").TryGetProperty("value", out _));
         Assert.Equal("Unavailable", expired.GetProperty("serverVersion").GetProperty("status").GetString());
         Assert.False(expired.GetProperty("serverVersion").TryGetProperty("value", out _));
+        var expiredStats = expired.GetProperty("postgres").GetProperty("databaseSize");
+        Assert.Equal("Unavailable", expiredStats.GetProperty("status").GetString());
+        Assert.False(expiredStats.TryGetProperty("value", out _));
+        Assert.False(expired.GetProperty("postgres").TryGetProperty("sampledAt", out _));
         Assert.Equal(failed.GetProperty("lastSuccessfulAt").GetString(), expired.GetProperty("lastSuccessfulAt").GetString());
     }
 

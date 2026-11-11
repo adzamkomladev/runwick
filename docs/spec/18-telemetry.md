@@ -250,6 +250,8 @@ The snapshot reports process-local readiness for each enabled role, application 
 
 On management hosts, the compatibility refresh also observes the SQLite database and WAL file lengths and snapshots the local writer counters. They age with that observation. The store-wide file sizes and process-scoped counts are available through the explicit `StoreDiagnostics.Read` grant.
 
+On PostgreSQL management hosts, successful compatibility refreshes permit a separate diagnostics sample on the background lane. The sample runs roughly every 10 seconds with a one-second cancellation budget and retries at 20, 40 and then 60 seconds after collection failures. It uses single-row reads of PostgreSQL's database and server statistics plus size and estimated tuple statistics for the fixed `runwick.jobs` relation. Lock waits are an aggregate of current-database sessions and replication statistics are aggregates of WAL senders on the connected server. These two fields require server visibility through `pg_read_all_stats` or equivalent privileges. No application job rows are scanned. Readers with `StoreDiagnostics.Read` can see available fields, including stale values for up to five minutes after the last sample. Database and server statistics include activity outside this application.
+
 Core exposes a snapshot API; `Runwick.AspNetCore` adapts it to `Microsoft.Extensions.Diagnostics.HealthChecks` (part of the ASP.NET Core shared framework, so no new package).
 
 ```csharp
