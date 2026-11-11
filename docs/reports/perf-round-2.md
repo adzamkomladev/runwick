@@ -222,7 +222,9 @@ The isolated S3 prototype ran a shortened P-06s pair with two groups in flight a
 | p95 | 25.88 s | 11.05 s |
 | p99 | 27.29 s | 11.38 s |
 
-The candidate processed 5,647 plans in 1,412 grouped commits over the scheduler lifetime and met the 13 s target in this pair. A focused PostgreSQL test exercised per-item rollback and same-ID replay after a lost group commit reply. The prototype is isolated while the grouped path and longer workloads are qualified. Both commit-acknowledgment logs are under `artifacts/perf/round-two/p06s-s3/`.
+The prototype processed 5,647 plans in 1,412 grouped commits over the scheduler lifetime and met the 13 s target in this pair. Both commit-acknowledgment logs are under `artifacts/perf/round-two/p06s-s3/`.
+
+The hardened implementation landed with schema revision 22 and opt-in `SchedulerOptions.GroupMaterializations`. It uses a shared materialization function, at most two groups of four independent plans, and up to 2 MiB of payload per group. Every plan retains its receipt identity, deadline and result. Unsupported plans use the single-command path. The 50 PostgreSQL and SQLite schedule contracts and 180 scheduler tests passed, including per-item rollback, same-ID replay after a lost commit reply, overlapping groups and shutdown. The migration suite passed 78 cases and the fresh-install snapshot passed after correcting the expected schema revision to 22. The long steady-state and catch-up qualification is pending.
 
 ## PostgreSQL post-commit wake
 
