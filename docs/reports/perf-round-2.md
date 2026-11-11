@@ -120,6 +120,16 @@ dotnet "$scheduler_workload_dll" run P-06s --out "$output" \
 
 Raw results, start/load logs, the baseline instrumentation patch and binary checksums are under `artifacts/perf/round-two/p06s/`.
 
+An isolated S2 prototype retained one evaluator and one 100 jobs/s allowance, with at most one pending command per schedule. A single 1/2/4 sweep used the same Release binary, 1,000 schedules, 2 minutes of warm-up, 2 minutes of measurement and a 60-second tail. Each run materialized all 2,000 expected occurrences with zero censoring, duplicates, lease losses or correctness violations.
+
+| Pending commands | Materialization p95 / p99 | Mean PostgreSQL lane wait | Mean function / commit |
+|---:|---:|---:|---:|
+| 1 | 29.61 / 30.87 s | 0.001 ms | 16.93 / 9.92 ms |
+| 2 | 19.74 / 20.60 s | 0.002 ms | 19.40 / 14.05 ms |
+| 4 | 25.81 / 26.97 s | 34.41 ms | 20.14 / 16.15 ms |
+
+Two pending commands reduced p99 by 33% in this sweep. All settings exceeded the 13 s gate. Four commands queued behind the two-slot PostgreSQL background lane and also ran during a noisier load interval. The prototype remains isolated pending paired qualification. Logs and the patch are under `artifacts/perf/round-two/p06s-s2/`.
+
 ## PostgreSQL post-commit wake
 
 Migration 0021 adds a versioned direct-dispatch path at schema revision 21. Direct dispatch now queues a best-effort wake after durable commit for newly created jobs due at the database decision time. Staged dispatch, scheduler, outbox and management writes retain their transactional notification paths. The 79 targeted wake, migration and upgrade tests passed, including a forced wake failure followed by resolving the accepted dispatch.
