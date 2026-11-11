@@ -19,6 +19,8 @@ internal sealed class JobContextHolder
 
 internal sealed class JobContext(AttemptEntry entry, string application, object payload, IReadOnlyList<ResourceFence> fences) : IJobContext
 {
+    Dictionary<object, object?>? _items;
+
     public string Application => application;
 
     public JobId JobId => new(entry.Lease.JobId);
@@ -57,7 +59,7 @@ internal sealed class JobContext(AttemptEntry entry, string application, object 
 
     public JobCancellationCause CancellationCauses => entry.Causes;
 
-    public IDictionary<object, object?> Items { get; } = new Dictionary<object, object?>();
+    public IDictionary<object, object?> Items => LazyInitializer.EnsureInitialized(ref _items);
 
     public TJob GetPayload<TJob>() where TJob : class, IQueueJob =>
         payload as TJob ?? throw new InvalidOperationException($"The current payload type of '{JobName}' is {payload.GetType().Name}, not {typeof(TJob).Name}.");
