@@ -99,6 +99,7 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
     readonly ILogger _logger = services.GetService<ILogger<RunwickHealthService>>() ?? (ILogger)Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
     Task? _loop;
     readonly Lock _descriptorLock = new();
+    readonly StoreObservationHistory _history = new();
     (StoreDescriptor Descriptor, DateTimeOffset At, long Timestamp)? _lastDescriptor;
     string? _descriptorFailure;
     (Guid StoreId, object Value, DateTimeOffset At, long Timestamp)? _lastDiagnostics;
@@ -130,6 +131,14 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
         }
     }
 
+    internal (IReadOnlyList<StoreCheckObservation> Checks, StoreTrend? Trend) StoreHistory(Guid? trendStoreId)
+    {
+        lock (_descriptorLock)
+        {
+            return _history.Snapshot(trendStoreId);
+        }
+    }
+
     async Task RefreshDiagnosticsAsync<T>(Func<CancellationToken, Task<T>> observe, Guid storeId, string role) where T : class
     {
         if (_diagnosticsRetryDelay > TimeSpan.Zero && time.GetElapsedTime(_diagnosticsAttemptedAt) < _diagnosticsRetryDelay)
@@ -146,8 +155,20 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
             budget.Token.ThrowIfCancellationRequested();
             lock (_descriptorLock)
             {
-                _lastDiagnostics = (storeId, value, time.GetUtcNow(), time.GetTimestamp());
+                var at = time.GetUtcNow();
+                _lastDiagnostics = (storeId, value, at, time.GetTimestamp());
                 _diagnosticsFailed = false;
+                switch (value)
+                {
+                    case PostgresStoreDiagnostics postgres:
+                        _history.RecordSample(storeId, at, StoreTrendMetric.PostgresLockWaits, postgres.LockWaits.Scope,
+                            postgres.LockWaits.Status == StoreSnapshotStatus.Available ? postgres.LockWaits.Value?.SessionsWaiting : null);
+                        break;
+                    case RedisStoreDiagnostics redis:
+                        _history.RecordSample(storeId, at, StoreTrendMetric.RedisMemoryUsedBytes, redis.Memory.Scope,
+                            redis.Memory.Status == StoreSnapshotStatus.Available ? redis.Memory.Value?.UsedBytes : null);
+                        break;
+                }
             }
 
             _diagnosticsRetryDelay = TimeSpan.Zero;
@@ -159,6 +180,7 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
                 lock (_descriptorLock)
                 {
                     _diagnosticsFailed = true;
+                    _history.RecordGap(time.GetUtcNow());
                 }
 
                 _diagnosticsRetryDelay = TimeSpan.FromSeconds(Math.Clamp(_diagnosticsRetryDelay.TotalSeconds * 2, 20, 60));
@@ -180,8 +202,19 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
             ct.ThrowIfCancellationRequested();
             lock (_descriptorLock)
             {
-                _lastDescriptor = (descriptor, time.GetUtcNow(), time.GetTimestamp());
+                var at = time.GetUtcNow();
+                _lastDescriptor = (descriptor, at, time.GetTimestamp());
                 _descriptorFailure = null;
+                if (_management)
+                {
+                    _history.SelectStore(descriptor.StoreId);
+                    _history.RecordCheck(at, StoreCheckStatus.Reachable);
+                    if (descriptor.SqliteDiagnostics?.WalFile is { } wal)
+                    {
+                        _history.RecordSample(descriptor.StoreId, at, StoreTrendMetric.SqliteWalBytes, wal.Scope,
+                            wal.Status == StoreSnapshotStatus.Available ? wal.Value?.Bytes : null);
+                    }
+                }
             }
 
             return descriptor;
@@ -190,7 +223,14 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
         {
             lock (_descriptorLock)
             {
-                _descriptorFailure = ex is StoreIncompatibleException ? "incompatible" : "store_unavailable";
+                var incompatible = ex is StoreIncompatibleException;
+                _descriptorFailure = incompatible ? "incompatible" : "store_unavailable";
+                if (_management)
+                {
+                    var at = time.GetUtcNow();
+                    _history.RecordCheck(at, incompatible ? StoreCheckStatus.Incompatible : StoreCheckStatus.Unavailable);
+                    _history.RecordGap(at);
+                }
             }
 
             throw;

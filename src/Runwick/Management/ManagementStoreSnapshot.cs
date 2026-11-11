@@ -33,6 +33,34 @@ public sealed record StoreSnapshotFact<T>(StoreSnapshotScope Scope, StoreSnapsho
 
 public sealed record StoreConnectionObservation(StoreSnapshotScope Scope, StoreReachability Status, string Reason);
 
+[JsonConverter(typeof(JsonStringEnumConverter<StoreCheckStatus>))]
+public enum StoreCheckStatus
+{
+    Reachable,
+    Unavailable,
+    Incompatible,
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter<StoreCheckSource>))]
+public enum StoreCheckSource
+{
+    HostCompatibilityCheck,
+}
+
+public sealed record StoreCheckObservation(StoreCheckSource Source, DateTimeOffset ObservedAt, StoreCheckStatus Status);
+
+[JsonConverter(typeof(JsonStringEnumConverter<StoreTrendMetric>))]
+public enum StoreTrendMetric
+{
+    SqliteWalBytes,
+    PostgresLockWaits,
+    RedisMemoryUsedBytes,
+}
+
+public sealed record StoreTrendSample(DateTimeOffset SampledAt, long? Value);
+
+public sealed record StoreTrend(StoreTrendMetric Metric, StoreSnapshotScope Scope, IReadOnlyList<StoreTrendSample> Samples);
+
 public sealed record StoreRoleObservation(StoreSnapshotScope Scope, RunwickRoleHealth Readiness);
 
 public sealed record StoreApplicationObservation(string AdmissionMode, int RequiredProtocolEpoch, bool SupportsRequirements);
@@ -149,6 +177,13 @@ public sealed record ManagementStoreSnapshot(
     public PostgresStoreDiagnostics? Postgres { get; init; }
 
     public RedisStoreDiagnostics? Redis { get; init; }
+
+    /// <summary>Recent changes observed by this management process, oldest first.</summary>
+    public IReadOnlyList<StoreCheckObservation> RecentChecks { get; init; } = [];
+
+    public StoreTrend? Trend { get; init; }
+
+    public StoreSnapshotStatus TrendStatus { get; init; } = StoreSnapshotStatus.Unavailable;
 
     internal static ManagementStoreSnapshot Unobserved(DateTimeOffset now) => new("", "unknown", now, null, null,
         new(StoreSnapshotScope.Process, StoreReachability.Unknown, "not_observed"), [],

@@ -624,6 +624,7 @@ internal sealed class ManagementSession(
         var engineVersion = retained?.EngineVersion;
         var sqlite = retained?.SqliteDiagnostics;
         var diagnosticsGranted = caller.Grants.Any(g => g.Permission == ManagementPermissions.StoreDiagnosticsRead);
+        var (checks, trend) = health.StoreHistory(diagnosticsGranted ? retained?.StoreId : null);
         var (postgres, postgresAt, postgresFresh) = diagnosticsGranted && provider == "postgres"
             ? health.Diagnostics<PostgresStoreDiagnostics>(retained?.StoreId) : (null, null, false);
         var (redis, redisAt, redisFresh) = diagnosticsGranted && provider == "redis"
@@ -657,6 +658,10 @@ internal sealed class ManagementSession(
             new(StoreSnapshotScope.Store, StoreSnapshotStatus.Unavailable, null),
             new(StoreSnapshotScope.ProviderNode, provider == "sqlite" ? StoreSnapshotStatus.Unsupported : StoreSnapshotStatus.Unavailable, null))
         {
+            RecentChecks = checks,
+            Trend = trend,
+            TrendStatus = !diagnosticsGranted ? StoreSnapshotStatus.PermissionDenied :
+                trend is null ? StoreSnapshotStatus.Unavailable : StoreSnapshotStatus.Available,
             Sqlite = provider == "sqlite" ? new(Diagnostic(sqlite?.DatabaseFile, StoreSnapshotScope.Store, fresh),
                 Diagnostic(sqlite?.WalFile, StoreSnapshotScope.Store, fresh), Diagnostic(sqlite?.Writer, StoreSnapshotScope.Process, fresh)) : null,
             Postgres = provider == "postgres" ? new(

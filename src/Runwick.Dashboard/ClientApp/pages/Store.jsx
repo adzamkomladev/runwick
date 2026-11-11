@@ -10,6 +10,7 @@ const STATUS = {
   Unsupported: ['neutral', 'Unsupported'],
   PermissionDenied: ['neutral', 'Permission denied'],
   Reachable: ['ready', 'Reachable'],
+  Incompatible: ['failed', 'Incompatible'],
   Unknown: ['neutral', 'Unknown'],
   Healthy: ['ready', 'Healthy'],
   Degraded: ['degraded', 'Degraded'],
@@ -176,6 +177,67 @@ function RedisDetails({ stats }) {
   )
 }
 
+const CHECK_SOURCES = { HostCompatibilityCheck: 'Host compatibility check' }
+const TREND_METRICS = {
+  SqliteWalBytes: ['SQLite write-ahead log size', storageSize],
+  PostgresLockWaits: ['PostgreSQL sessions waiting on locks', value => value.toLocaleString()],
+  RedisMemoryUsedBytes: ['Connected Redis server memory used', storageSize],
+}
+
+function StoreHistory({ checks = [], trend, trendStatus }) {
+  const metric = TREND_METRICS[trend?.metric]
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle><h2>Recent store observations</h2></CardTitle>
+          <CardDescription>Changes observed by this dashboard host. History clears when this process restarts.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {checks.length === 0 ? <p className="text-sm text-muted-foreground">Waiting for the first store check.</p> :
+            <ol role="list" className="divide-y">
+              {[...checks].reverse().map((check, index) => (
+                <li key={check.observedAt + index} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2.5 first:pt-0 last:pb-0">
+                  <div className="space-y-1">
+                    <State value={check.status} urgent />
+                    <p className="text-xs text-muted-foreground">{CHECK_SOURCES[check.source]}</p>
+                  </div>
+                  <span className="text-sm"><ObservationTime value={check.observedAt} /></span>
+                </li>
+              ))}
+            </ol>}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle><h2>Recent diagnostic samples</h2></CardTitle>
+          {metric && <CardDescription>Up to 12 observations from this process, sampled about every 10 seconds while available.</CardDescription>}
+        </CardHeader>
+        <CardContent>
+          {metric ? (
+            <table className="w-full text-left text-sm">
+              <caption className="sr-only">{metric[0]} history, most recent first</caption>
+              <thead className="border-b text-muted-foreground">
+                <tr><th scope="col" className="pb-2 pr-3 font-medium">Sampled at</th>
+                  <th scope="col" className="pb-2 font-medium">{metric[0]}</th></tr>
+              </thead>
+              <tbody className="divide-y">
+                {[...trend.samples].reverse().map((sample, index) => (
+                  <tr key={sample.sampledAt + index}>
+                    <td className="py-2 pr-3"><ObservationTime value={sample.sampledAt} /></td>
+                    <td className="py-2 tabular-nums">{sample.value == null ? <State value="Unavailable" /> : metric[1](sample.value)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : trendStatus === 'PermissionDenied' ? <State value="PermissionDenied" />
+            : <p className="text-sm text-muted-foreground">No diagnostic samples are available.</p>}
+        </CardContent>
+      </Card>
+    </>
+  )
+}
+
 export default function Store({ snapshot }) {
   const live = usePoll(['snapshot'], 10)
   const { connection, identity, admission, persistence, capabilities } = snapshot
@@ -258,6 +320,7 @@ export default function Store({ snapshot }) {
                   </ul> : <p className="mt-2 text-sm text-muted-foreground">No optional client capabilities.</p>}
               </CardContent>
             </Card>
+            <StoreHistory checks={snapshot.recentChecks} trend={snapshot.trend} trendStatus={snapshot.trendStatus} />
           </div>
         </div>
       </div>

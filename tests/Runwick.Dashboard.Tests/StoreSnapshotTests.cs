@@ -24,6 +24,12 @@ public sealed class StoreSnapshotTests
         Assert.Equal(HttpStatusCode.Forbidden, (await scoped.VisitAsync("/api/v1/store")).StatusCode);
 
         var ready = await WaitForSnapshotAsync(viewer, "Reachable");
+        Assert.Equal("PermissionDenied", ready.GetProperty("trendStatus").GetString());
+        Assert.False(ready.TryGetProperty("trend", out _));
+        var check = Assert.Single(ready.GetProperty("recentChecks").EnumerateArray());
+        Assert.Equal("HostCompatibilityCheck", check.GetProperty("source").GetString());
+        Assert.Equal("Reachable", check.GetProperty("status").GetString());
+        Assert.True(check.GetProperty("observedAt").GetDateTimeOffset() <= ready.GetProperty("lastSuccessfulAt").GetDateTimeOffset());
         var id = ready.GetProperty("identity").GetProperty("value").GetProperty("storeId").GetGuid();
         Assert.Equal("postgres", ready.GetProperty("provider").GetString());
         Assert.Equal("Available", ready.GetProperty("admission").GetProperty("status").GetString());
@@ -66,6 +72,10 @@ public sealed class StoreSnapshotTests
 
         f.Proxy!.DropEverything = true;
         var failed = await WaitForSnapshotAsync(admin, "Unavailable", clock);
+        Assert.Equal(["Reachable", "Unavailable"],
+            failed.GetProperty("recentChecks").EnumerateArray().Select(c => c.GetProperty("status").GetString()));
+        Assert.Equal("PostgresLockWaits", failed.GetProperty("trend").GetProperty("metric").GetString());
+        Assert.False(failed.GetProperty("trend").GetProperty("samples").EnumerateArray().Last().TryGetProperty("value", out _));
         Assert.Equal("Stale", failed.GetProperty("identity").GetProperty("status").GetString());
         Assert.Equal(id, failed.GetProperty("identity").GetProperty("value").GetProperty("storeId").GetGuid());
         Assert.Equal("Stale", failed.GetProperty("serverVersion").GetProperty("status").GetString());
@@ -92,6 +102,12 @@ public sealed class StoreSnapshotTests
         Assert.False(expiredStats.TryGetProperty("value", out _));
         Assert.False(expired.GetProperty("postgres").TryGetProperty("sampledAt", out _));
         Assert.Equal(failed.GetProperty("lastSuccessfulAt").GetString(), expired.GetProperty("lastSuccessfulAt").GetString());
+        Assert.False(expired.TryGetProperty("trend", out _));
+
+        f.Proxy.DropEverything = false;
+        var recovered = await WaitForSnapshotAsync(admin, "Reachable", clock);
+        Assert.Equal(["Reachable", "Unavailable", "Reachable"],
+            recovered.GetProperty("recentChecks").EnumerateArray().Select(c => c.GetProperty("status").GetString()));
     }
 
     [Fact]
@@ -120,7 +136,12 @@ public sealed class StoreSnapshotTests
         }
 
         var admin = h.Browser(Users.Admin);
-        var details = (await SnapshotAsync(admin)).GetProperty("sqlite");
+        var adminSnapshot = await SnapshotAsync(admin);
+        var trend = adminSnapshot.GetProperty("trend");
+        Assert.Equal("SqliteWalBytes", trend.GetProperty("metric").GetString());
+        Assert.Equal("Store", trend.GetProperty("scope").GetString());
+        Assert.True(trend.GetProperty("samples").EnumerateArray().Last().GetProperty("value").GetInt64() >= 0);
+        var details = adminSnapshot.GetProperty("sqlite");
         Assert.True(details.GetProperty("databaseFile").GetProperty("value").GetProperty("bytes").GetInt64() > 0);
         Assert.True(details.GetProperty("walFile").GetProperty("value").GetProperty("bytes").GetInt64() >= 0);
         var writer = details.GetProperty("writer");
@@ -128,7 +149,10 @@ public sealed class StoreSnapshotTests
         Assert.True(writer.GetProperty("value").GetProperty("busyConflicts").GetInt64() >= 0);
 
         h.Grants[Users.Admin] = [.. Users.All.Where(g => g.Permission != ManagementPermissions.StoreDiagnosticsRead)];
-        var revoked = (await SnapshotAsync(admin)).GetProperty("sqlite").GetProperty("databaseFile");
+        var revokedSnapshot = await SnapshotAsync(admin);
+        Assert.Equal("PermissionDenied", revokedSnapshot.GetProperty("trendStatus").GetString());
+        Assert.False(revokedSnapshot.TryGetProperty("trend", out _));
+        var revoked = revokedSnapshot.GetProperty("sqlite").GetProperty("databaseFile");
         Assert.Equal("PermissionDenied", revoked.GetProperty("status").GetString());
         Assert.False(revoked.TryGetProperty("value", out _));
     }
@@ -161,6 +185,12 @@ public sealed class StoreSnapshotTests
         Assert.True(stats.GetProperty("activity").GetProperty("value").GetProperty("connectedClients").GetInt64() > 0);
         Assert.True(stats.GetProperty("aof").GetProperty("value").GetProperty("enabled").GetBoolean());
         Assert.Equal("Primary", stats.GetProperty("replication").GetProperty("value").GetProperty("role").GetString());
+
+        var trend = (await SnapshotAsync(admin)).GetProperty("trend");
+        Assert.Equal("RedisMemoryUsedBytes", trend.GetProperty("metric").GetString());
+        Assert.Equal("ProviderNode", trend.GetProperty("scope").GetString());
+        Assert.Contains(trend.GetProperty("samples").EnumerateArray(),
+            sample => sample.TryGetProperty("value", out var value) && value.GetInt64() > 0);
 
         h.Grants[Users.Admin] = [.. Users.All.Where(g => g.Permission != ManagementPermissions.StoreDiagnosticsRead)];
         var revoked = (await SnapshotAsync(admin)).GetProperty("redis");
