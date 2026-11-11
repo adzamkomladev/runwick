@@ -324,6 +324,8 @@ In a separate AOF-always primary/replica fixture, the same client library report
 
 An R3 routing probe moved one key while two same-slot test keys were split between primaries. A Lua script declared only its metadata key and derived the second name. It changed metadata and then failed on the nonlocal key. Declaring both keys returned `TRYAGAIN` before any script mutation. After completing the slot move, the declared-key script succeeded on the new owner. This used three disposable Redis primaries and synthetic keys. Runner and raw replies are under `artifacts/perf/round-two/redis-cluster-key-discovery/`.
 
+The R3 source audit covers 48 embedded Lua operations, 15 management branches and four inline scripts. Its key manifest distinguishes caller-known keys from keys discovered in stored state. The design covers bounded read-only discovery and authoritative revalidation before writes, including claim payload replay, early receipt confirmation and projection from a pending intent. It also covers global metadata, cursor-based scans across primaries and node-specific profile checks. The inventory and source checksums passed. The manifest and reproducer are under `artifacts/perf/round-two/redis-r3-key-audit/`.
+
 ### Redis throughput against BullMQ
 
 Five alternating pairs per workload compared Runwick at `30fc1dd` with BullMQ 6.7.2 on Node.js 26.13.1. Each run used a fresh standalone Redis 8.2.11 container with AOF `always`, `noeviction` and RDB saves disabled. Both clients sent roughly 1 KiB no-op payloads. Both accepted every measured add and settled all seeded jobs in the drain. Runwick counted confirmed durable finishes. BullMQ counted worker completion events after the finish script replied and kept up to 1,000 completed or failed jobs. Runwick kept its command receipts, lifecycle history, and interrupted-intent recovery.
@@ -361,6 +363,10 @@ The raw payload values accounted for 1.52 MB inside the intents and were also st
 
 The MessagePack analysis found 2.23 MB of reply result bytes already present in the same command's receipt after-images, or 8.58% of whole-drain AOF. `ReserveAndBegin` accounted for 2.03 MB. Existing recovery scripts consume the full stored reply, so removing that copy requires a compatible format transition. The intent encoding is retained. The byte attribution and reproduction command are alongside the raw AOFs.
 
+### F4 Redis producer depth and settlement instrumentation
+
+The isolated workload records actual outstanding calls and EVALSHAs after the producer gate. It can vary producer depth and settlement consumers independently while retaining the existing renewal lane and lease timing. A one-second smoke reached eight outstanding EVALSHAs and settled 47 jobs. All 47 reconciled after SIGKILL and AOF restart following the confirmations. The run recorded 146 EVALSHAs and 12 finish batches. It produced no renewal samples. The full control-latency and depth sweep is pending. Harness and smoke results are under `artifacts/perf/round-two/redis-f4/`.
+
 ## Outbox relay
 
 Phase 0.6 traces claim, transport record, destination receive and delivered mark separately. D1 assigns the UUIDv7 transport identity and deadline in the claim transaction for PostgreSQL and SQLite. A reclaim preserves the pair while its deadline remains live. Replacements respect the acceptance horizon. The relay checks lease authority before the first send, and subsequent source writes stay token-guarded. The eight focused tests passed, including a lost reply to a committed claim and later reuse of its transport identity.
@@ -380,6 +386,8 @@ The baseline transport-record call averaged 20.14 ms, including 9.02 ms waiting 
 The isolated D2 candidate batches ready PostgreSQL delivered marks behind the current mark. It locks rows in message-ID order, keeps each lease token and confirms applied IDs after the implicit transaction finishes. All 23 relay tests and four final targeted cases passed, including mixed lease tokens, deferred commit rejection, lost reply and queued-mark abort.
 
 One pair used 30 seconds of warm-up, 60 seconds of measurement, four relay slots and 100 offered messages/s. Confirmed deliveries rose from 42.75 to 50.04/s during measurement, and ready-to-confirm p99 moved from 86.71 to 69.81 s. The candidate grouped 624 of 8,984 marks into 302 commits. It used 8,662 applied mark commits, 3.6% fewer than a commit per delivered message. Both arms eventually delivered every staged message with one destination mapping, zero blocked messages and no remaining backlog. The baseline and candidate recorded 12 and 15 relay lease losses. The candidate shared the host with the Contract suite. This is a directional pair, both P-09 gates remain open, and the candidate stays isolated. Raw results and the runner are under `artifacts/perf/round-two/p09-d2/`.
+
+The source already claims up to the relay's free slots. During the D2 pair's measurement windows, 2,029 and 2,318 claim calls averaged 25.4 and 22.4 ms. Source claim lane wait averaged 0.021 and 0.003 ms. Destination function and commit together averaged 43.6 and 35.1 ms. The next D3 comparison varies relay slots on the existing batched claim path and holds source lanes constant. Runner is under `artifacts/perf/round-two/p09-d3-slots/`.
 
 ## Worker payload decoding
 
