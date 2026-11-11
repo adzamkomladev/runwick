@@ -55,6 +55,28 @@ function ageLabel(seconds) {
   return seconds < 60 ? `${Math.floor(seconds)} s old` : `${Math.floor(seconds / 60)} min old`
 }
 
+function storageSize(bytes) {
+  if (bytes < 1024) return `${bytes.toLocaleString()} B`
+  const unit = bytes < 1048576 ? [1024, 'KiB'] : [1048576, 'MiB']
+  return `${(bytes / unit[0]).toLocaleString(undefined, { maximumFractionDigits: 1 })} ${unit[1]}`
+}
+
+function SqliteDetails({ stats }) {
+  const { databaseFile, walFile, writer } = stats
+  const stale = [databaseFile, walFile, writer].some(fact => fact.status === 'Stale')
+  return (
+    <Card>
+      <CardHeader><CardTitle className="flex flex-wrap items-center gap-2"><h2>SQLite diagnostics</h2>{stale && <State value="Stale" />}</CardTitle></CardHeader>
+      <CardContent><dl>
+        <Row label="Database file"><Fact fact={databaseFile}>{databaseFile.value && storageSize(databaseFile.value.bytes)}</Fact></Row>
+        <Row label="Write-ahead log"><Fact fact={walFile}>{walFile.value && storageSize(walFile.value.bytes)}</Fact></Row>
+        <Row label="Writer commits in this process"><Fact fact={writer}>{writer.value?.commits.toLocaleString()}</Fact></Row>
+        <Row label="Busy lock conflicts in this process"><Fact fact={writer}>{writer.value?.busyConflicts.toLocaleString()}</Fact></Row>
+      </dl></CardContent>
+    </Card>
+  )
+}
+
 export default function Store({ snapshot }) {
   const live = usePoll(['snapshot'], 10)
   const { connection, identity, admission, persistence, capabilities } = snapshot
@@ -107,6 +129,7 @@ export default function Store({ snapshot }) {
                 </dl>
               </CardContent>
             </Card>
+            {snapshot.sqlite && <SqliteDetails stats={snapshot.sqlite} />}
           </div>
           <div className="order-first grid min-w-0 gap-6 xl:order-none">
             <Card>

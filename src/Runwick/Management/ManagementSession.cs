@@ -622,6 +622,20 @@ internal sealed class ManagementSession(
         if (store is IWakeNotificationSource) capabilities.Add(StoreProviderCapability.WakeNotifications);
         if (store is IOutboxDestinationStore) capabilities.Add(StoreProviderCapability.OutboxDestination);
         var engineVersion = retained?.EngineVersion;
+        var sqlite = retained?.SqliteDiagnostics;
+        var diagnosticsGranted = caller.Grants.Any(g => g.Permission == ManagementPermissions.StoreDiagnosticsRead);
+
+        StoreSnapshotFact<T> Diagnostic<T>(StoreSnapshotFact<T>? fact, StoreSnapshotScope scope) where T : class
+        {
+            if (!diagnosticsGranted)
+            {
+                return new(scope, StoreSnapshotStatus.PermissionDenied, null);
+            }
+
+            return fact is null ? new(scope, StoreSnapshotStatus.Unavailable, null)
+                : fact.Status == StoreSnapshotStatus.Available ? fact with { Status = availability } : fact;
+        }
+
         return Task.FromResult(new ManagementStoreSnapshot(App, provider, time.GetUtcNow(), successfulAt, age?.TotalSeconds, connection,
             [.. health.Readiness().Select(r => new StoreRoleObservation(StoreSnapshotScope.Process, r))],
             new(StoreSnapshotScope.Application, gate is null ? StoreSnapshotStatus.Unavailable : availability, gate is null ? null :
@@ -637,7 +651,11 @@ internal sealed class ManagementSession(
             new(provider == "sqlite" ? StoreSnapshotScope.Process : StoreSnapshotScope.ProviderNode,
                 engineVersion is null ? StoreSnapshotStatus.Unavailable : availability, engineVersion),
             new(StoreSnapshotScope.Store, StoreSnapshotStatus.Unavailable, null),
-            new(StoreSnapshotScope.ProviderNode, provider == "sqlite" ? StoreSnapshotStatus.Unsupported : StoreSnapshotStatus.Unavailable, null)));
+            new(StoreSnapshotScope.ProviderNode, provider == "sqlite" ? StoreSnapshotStatus.Unsupported : StoreSnapshotStatus.Unavailable, null))
+        {
+            Sqlite = provider == "sqlite" ? new(Diagnostic(sqlite?.DatabaseFile, StoreSnapshotScope.Store),
+                Diagnostic(sqlite?.WalFile, StoreSnapshotScope.Store), Diagnostic(sqlite?.Writer, StoreSnapshotScope.Process)) : null,
+        });
     }
 
     public async Task<ManagementSettings> GetSettingsAsync(ManagementCaller caller, CancellationToken cancellationToken = default)

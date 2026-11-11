@@ -248,6 +248,8 @@ The Store snapshot reads one process-local observation from the existing compati
 
 The snapshot reports process-local readiness for each enabled role, application admission and protocol requirements, store-wide identity, schema or layout revision and migration mode, and the client’s acknowledgement profile. A successful SQLite descriptor check verifies the configured WAL/FULL profile for that observation. The acknowledgement profile name alone carries no verification status for PostgreSQL or Redis. Optional capabilities describe this process’s registered client. Provider-node fields carry explicit availability states for unavailable, unsupported and permission-denied observations. The common snapshot does not run server or node collectors, and SQLite topology is unsupported. No raw provider output or connection strings are included.
 
+On management hosts, the compatibility refresh also observes the SQLite database and WAL file lengths and snapshots the local writer counters. They age with that observation. The store-wide file sizes and process-scoped counts are available through the explicit `StoreDiagnostics.Read` grant.
+
 Core exposes a snapshot API; `Runwick.AspNetCore` adapts it to `Microsoft.Extensions.Diagnostics.HealthChecks` (part of the ASP.NET Core shared framework, so no new package).
 
 ```csharp

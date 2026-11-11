@@ -382,6 +382,8 @@ The Store page links from Overview, Settings and store-related outage pages when
 
 The compatibility probe supplies PostgreSQL's server version and SQLite's loaded library version. The page labels their provider-node and process scope respectively and retains them under the same freshness and expiry rules as the store descriptor.
 
+SQLite diagnostics show database and WAL file sizes and this process's committed writes and exhausted busy waits. The management host samples them with the background health check. The page labels a denied field when the caller lacks `StoreDiagnostics.Read` or the host lacks filesystem access.
+
 ## 5. Controls
 
 A control is a `POST` to the mount, sent by the Inertia client (`router.post`) with the antiforgery header.

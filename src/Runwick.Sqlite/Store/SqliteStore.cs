@@ -1,16 +1,19 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Data.Sqlite;
+using Runwick.Management;
 using Runwick.Protocol;
 using Runwick.Sqlite.Migrations;
 
 namespace Runwick.Sqlite.Store;
 
 /// <summary>The SQLite implementation of the storage protocol (03) per 20 §7: the PostgreSQL steps on one write lock.</summary>
-internal sealed partial class SqliteStore(SqExecutor executor, SqRunner runner, TimeProvider time) : IRunwickStore, IDisposable
+internal sealed partial class SqliteStore(SqExecutor executor, SqRunner runner, TimeProvider time) : IRunwickStore, ISqliteStoreDiagnosticsSource, IDisposable
 {
     public const string ManagementRead = "ManagementRead";
     public const string RecordDisclosure = "RecordDisclosure";
+
+    string? _databaseFile;
 
     public Guid StoreId => runner.StoreId ?? throw new InvalidOperationException("Describe has not run yet.");
 
@@ -24,6 +27,39 @@ internal sealed partial class SqliteStore(SqExecutor executor, SqRunner runner, 
     public IReadOnlyDictionary<string, string> EngineFacts { get; private set; } = new Dictionary<string, string>();
 
     public void Dispose() => executor.Dispose();
+
+    public SqliteStoreDiagnostics ObserveDiagnostics()
+    {
+        var path = Volatile.Read(ref _databaseFile);
+        var database = ObserveFileSize(path);
+        return new(database, ObserveFileSize(path is null ? null : path + "-wal", absentIsEmpty: database.Status == StoreSnapshotStatus.Available),
+            new(StoreSnapshotScope.Process, StoreSnapshotStatus.Available, new SqliteWriterCounters(runner.Commits, runner.BusyConflicts)));
+    }
+
+    static StoreSnapshotFact<StoreByteCount> ObserveFileSize(string? path, bool absentIsEmpty = false)
+    {
+        if (path is null)
+        {
+            return new(StoreSnapshotScope.Store, StoreSnapshotStatus.Unavailable, null);
+        }
+
+        try
+        {
+            return new(StoreSnapshotScope.Store, StoreSnapshotStatus.Available, new StoreByteCount(new FileInfo(path).Length));
+        }
+        catch (FileNotFoundException) when (absentIsEmpty)
+        {
+            return new(StoreSnapshotScope.Store, StoreSnapshotStatus.Available, new StoreByteCount(0));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return new(StoreSnapshotScope.Store, StoreSnapshotStatus.PermissionDenied, null);
+        }
+        catch (IOException)
+        {
+            return new(StoreSnapshotScope.Store, StoreSnapshotStatus.Unavailable, null);
+        }
+    }
 
     async Task<Guid> EnsureStoreIdAsync(string application, CancellationToken ct) =>
         runner.StoreId ?? (await DescribeAsync(application, ct).ConfigureAwait(false)).StoreId;
@@ -89,6 +125,7 @@ internal sealed partial class SqliteStore(SqExecutor executor, SqRunner runner, 
                         ["synchronous"] = "full",
                         ["topology"] = topology,
                     };
+                    Volatile.Write(ref _databaseFile, conn.DataSource);
                     runner.StoreId ??= descriptor.StoreId;
                     return descriptor;
                 }

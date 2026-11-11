@@ -13,7 +13,7 @@ public static class ManagementPermissions
         QueuesRead = "Queues.Read", QueuesControl = "Queues.Control",
         SchedulesRead = "Schedules.Read", SchedulesTrigger = "Schedules.Trigger", SchedulesControl = "Schedules.Control", SchedulesEdit = "Schedules.Edit",
         CapacityRead = "Capacity.Read", CapacityEdit = "Capacity.Edit",
-        SettingsRead = "Settings.Read", RetentionManage = "Retention.Manage", AuditRead = "Audit.Read";
+        SettingsRead = "Settings.Read", StoreDiagnosticsRead = "StoreDiagnostics.Read", RetentionManage = "Retention.Manage", AuditRead = "Audit.Read";
 
     /// <summary>Permissions a grant may scope to queues: jobs in a queue and that queue's control.</summary>
     public static IReadOnlySet<string> QueueScoped { get; } = new HashSet<string>(StringComparer.Ordinal)
@@ -24,13 +24,13 @@ public static class ManagementPermissions
     public static IReadOnlySet<string> All { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         JobsRead, JobsReadPayload, JobsReadError, JobsCancel, JobsRetry, JobsRerun, JobsDispatch, QueuesRead, QueuesControl,
-        SchedulesRead, SchedulesTrigger, SchedulesControl, SchedulesEdit, CapacityRead, CapacityEdit, SettingsRead, RetentionManage, AuditRead,
+        SchedulesRead, SchedulesTrigger, SchedulesControl, SchedulesEdit, CapacityRead, CapacityEdit, SettingsRead, StoreDiagnosticsRead, RetentionManage, AuditRead,
     };
 }
 
 /// <summary>
 /// One permission, for every queue (<paramref name="Queues"/> null) or for the listed queues. Application-wide
-/// permissions (schedules, capacity, settings, retention, audit) cannot be queue-scoped: constructing one is a
+/// permissions (schedules, capacity, settings, store diagnostics, retention, audit) cannot be queue-scoped: constructing one is a
 /// configuration error, never a silent widening (16 §1).
 /// </summary>
 public sealed record ManagementGrant(string Permission, IReadOnlySet<string>? Queues = null)
@@ -53,7 +53,7 @@ public sealed record ManagementGrant(string Permission, IReadOnlySet<string>? Qu
 /// <summary>A trusted caller: the authenticated actor and its grants, both from the host's principal mapping.</summary>
 public sealed record ManagementCaller(ManagementActor Actor, IReadOnlyList<ManagementGrant> Grants);
 
-/// <summary>Preset grant sets (16 §1). Payload, error and audit reads and <c>Jobs.Dispatch</c> are never in a preset.</summary>
+/// <summary>Preset grant sets (16 §1). Payload, error, audit and store diagnostics reads and <c>Jobs.Dispatch</c> require explicit grants.</summary>
 public static class ManagementRoles
 {
     static IReadOnlyList<ManagementGrant> Of(params string[] permissions) => [.. permissions.Select(p => new ManagementGrant(p))];

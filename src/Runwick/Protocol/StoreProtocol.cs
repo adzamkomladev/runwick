@@ -91,6 +91,8 @@ internal sealed record StoreDescriptor(
     DateTimeOffset ObservedAt)
 {
     public string? EngineVersion { get; init; }
+
+    public Management.SqliteStoreDiagnostics? SqliteDiagnostics { get; init; }
 }
 
 internal sealed record ApplicationGate(

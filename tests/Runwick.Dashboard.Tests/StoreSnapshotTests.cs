@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Runwick.Harness.Store;
+using Runwick.Management;
 using static Runwick.Dashboard.Tests.Support;
 
 namespace Runwick.Dashboard.Tests;
@@ -68,6 +69,27 @@ public sealed class StoreSnapshotTests
         Assert.True(Version.TryParse(version.GetProperty("value").GetString(), out _));
         Assert.Equal("Unsupported", snapshot.GetProperty("topology").GetProperty("status").GetString());
         Assert.Equal("Unavailable", snapshot.GetProperty("recovery").GetProperty("status").GetString());
+
+        var denied = snapshot.GetProperty("sqlite");
+        foreach (var name in new[] { "databaseFile", "walFile", "writer" })
+        {
+            var fact = denied.GetProperty(name);
+            Assert.Equal("PermissionDenied", fact.GetProperty("status").GetString());
+            Assert.False(fact.TryGetProperty("value", out _));
+        }
+
+        var admin = h.Browser(Users.Admin);
+        var details = (await SnapshotAsync(admin)).GetProperty("sqlite");
+        Assert.True(details.GetProperty("databaseFile").GetProperty("value").GetProperty("bytes").GetInt64() > 0);
+        Assert.True(details.GetProperty("walFile").GetProperty("value").GetProperty("bytes").GetInt64() >= 0);
+        var writer = details.GetProperty("writer");
+        Assert.Equal("Process", writer.GetProperty("scope").GetString());
+        Assert.True(writer.GetProperty("value").GetProperty("busyConflicts").GetInt64() >= 0);
+
+        h.Grants[Users.Admin] = [.. Users.All.Where(g => g.Permission != ManagementPermissions.StoreDiagnosticsRead)];
+        var revoked = (await SnapshotAsync(admin)).GetProperty("sqlite").GetProperty("databaseFile");
+        Assert.Equal("PermissionDenied", revoked.GetProperty("status").GetString());
+        Assert.False(revoked.TryGetProperty("value", out _));
     }
 
     static async Task<JsonElement> WaitForSnapshotAsync(Browser browser, string connection, FakeTimeProvider? clock = null)

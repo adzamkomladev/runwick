@@ -31,7 +31,7 @@ Not in SP-020: retention cleanup and the detail-expired projection (SP-021), the
 - (2026-11-08, implementation of SP-020) What the build settled where this document was silent or could not be met as written:
   - **Resending a client command ID.** NotAfter is part of the command fingerprint (03 §8), so a resend with a fresh NotAfter would be `command_conflict`. Before each mutation the session reads the NotAfter of an existing receipt for that command ID and reuses it; a first send gets now + the lifetime. One extra read per mutation. Two concurrent *first* sends of one ID can still race: one gets `command_conflict`, and its resend replays. For a schedule trigger the proposed job ID is derived from the command ID (SHA-256), so a resent trigger has the same body.
   - **Cursor key without `CursorKey`.** Data Protection has no public key-derivation API, so `Runwick.AspNetCore` seals cursors with an `IDataProtector` (purpose `Runwick.Management.Cursor.v1`, authenticated encryption) instead of deriving an HMAC key. Replicas sharing the key ring still accept each other's cursors. The core session alone, with no key, uses a random per-process HMAC key. With `CursorKey` set, the cursor is `payload ‖ HMAC-SHA256` as §2.1 says.
-  - **Application-wide permissions.** Only `Jobs.*` and `Queues.*` may be queue-scoped. `Capacity.*`, `Schedules.*`, `Settings.Read`, `Retention.Manage` and `Audit.Read` are application-wide (audit rows are not filtered per queue). Grants come from the host's per-request mapping, so the check is in `ManagementGrant`'s constructor: a bad grant throws where it is built (presets at type load), and the request fails with 500, never with wider access.
+  - **Application-wide permissions.** Only `Jobs.*` and `Queues.*` may be queue-scoped. `Capacity.*`, `Schedules.*`, `Settings.Read`, `StoreDiagnostics.Read`, `Retention.Manage` and `Audit.Read` are application-wide (audit rows are not filtered per queue). Grants come from the host's per-request mapping, so the check is in `ManagementGrant`'s constructor: a bad grant throws where it is built (presets at type load), and the request fails with 500, never with wider access. Grant `StoreDiagnostics.Read` explicitly for access to store-wide counters.
   - **Visibility.** A job (or attempt) is visible when the caller has `Jobs.Read` on its queue; otherwise every read, reveal and control on it is 404. A visible job without the specific permission is 403. A queue is visible for its controls with `Queues.Read` or `Queues.Control` on it. A list filtered to a queue outside the caller's scope returns an empty page.
   - **Pages.** `limit` above 200 is clamped to 200; below 1 is 400. Queues, workers, scopes and schedules are keyset-paged with the same cursor rules as jobs and audit.
   - **Reveal of an expired detail** writes no audit row (nothing is disclosed) and returns 410 with the job ID.
@@ -58,7 +58,7 @@ public static class ManagementPermissions
         QueuesRead = "Queues.Read", QueuesControl = "Queues.Control",
         SchedulesRead = "Schedules.Read", SchedulesTrigger = "Schedules.Trigger", SchedulesControl = "Schedules.Control", SchedulesEdit = "Schedules.Edit",
         CapacityRead = "Capacity.Read", CapacityEdit = "Capacity.Edit",
-        SettingsRead = "Settings.Read", RetentionManage = "Retention.Manage", AuditRead = "Audit.Read";
+        SettingsRead = "Settings.Read", StoreDiagnosticsRead = "StoreDiagnostics.Read", RetentionManage = "Retention.Manage", AuditRead = "Audit.Read";
 }
 
 public sealed record ManagementGrant(string Permission, IReadOnlySet<string>? Queues); // null = every queue
@@ -94,7 +94,7 @@ All lists use **keyset pagination only**: page size 50 by default, at most 200. 
 | `ListScopes` | `Capacity.Read` | kind | kind, key | kind, key, capacity, policy revision, live permits |
 | `ListSchedules` | `Schedules.Read` | — | key | key, paused, needs review, definition and control revisions, next due, last materialized |
 | `ListAudit` | `Audit.Read` | target kind, target id, from/to | `audit_id DESC` | every audit column except `details` beyond its allowlisted keys |
-| `GetStoreSnapshot` | `Settings.Read` | — | — | Cached host connection and role readiness, application admission, logical store details and provider diagnostics availability (§7 of 18). No store I/O on the request. |
+| `GetStoreSnapshot` | `Settings.Read` | — | — | Cached host connection and role readiness, application admission and logical store details (§7 of 18). SQLite file sizes and process writer counters require the explicit `StoreDiagnostics.Read` grant. No store I/O on the request. |
 | `GetSettings` | `Settings.Read` | — | — | allowlist: application, store kind and schema revision, persistence profile, roles enabled in this process, management limits. Never connection strings or `IConfiguration` |
 
 A job in a queue the caller cannot read is **404**, never 403 (design §2: never confirm hidden IDs). Each store-backed query runs with `statement_timeout = 1 s`; a timeout returns 503 `query_budget_exceeded`, not a partial page.

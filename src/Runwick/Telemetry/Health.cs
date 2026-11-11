@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Runwick.Hosting;
+using Runwick.Management;
 using Runwick.Protocol;
 using Runwick.Scheduling;
 using Runwick.Worker;
@@ -116,6 +117,11 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
         try
         {
             var descriptor = await store.DescribeAsync(runtime.Registry.Application, ct).ConfigureAwait(false);
+            if (_management && store is ISqliteStoreDiagnosticsSource sqlite)
+            {
+                descriptor = descriptor with { SqliteDiagnostics = sqlite.ObserveDiagnostics() };
+            }
+
             ct.ThrowIfCancellationRequested();
             lock (_descriptorLock)
             {

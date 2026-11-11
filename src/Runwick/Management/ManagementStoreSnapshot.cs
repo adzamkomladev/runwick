@@ -41,6 +41,20 @@ public sealed record StoreIdentityObservation(Guid StoreId, long SchemaRevision,
 
 public sealed record StoreProfileObservation(string Profile, StoreSnapshotStatus Verification);
 
+public sealed record StoreByteCount(long Bytes);
+
+public sealed record SqliteWriterCounters(long Commits, long BusyConflicts);
+
+public sealed record SqliteStoreDiagnostics(
+    StoreSnapshotFact<StoreByteCount> DatabaseFile,
+    StoreSnapshotFact<StoreByteCount> WalFile,
+    StoreSnapshotFact<SqliteWriterCounters> Writer);
+
+internal interface ISqliteStoreDiagnosticsSource
+{
+    SqliteStoreDiagnostics ObserveDiagnostics();
+}
+
 [JsonConverter(typeof(JsonStringEnumConverter<StoreProviderCapability>))]
 public enum StoreProviderCapability
 {
@@ -71,6 +85,8 @@ public sealed record ManagementStoreSnapshot(
     StoreSnapshotFact<string> Recovery,
     StoreSnapshotFact<string> Topology)
 {
+    public SqliteStoreDiagnostics? Sqlite { get; init; }
+
     internal static ManagementStoreSnapshot Unobserved(DateTimeOffset now) => new("", "unknown", now, null, null,
         new(StoreSnapshotScope.Process, StoreReachability.Unknown, "not_observed"), [],
         new(StoreSnapshotScope.Application, StoreSnapshotStatus.Unavailable, null),
