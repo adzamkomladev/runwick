@@ -104,6 +104,18 @@ A follow-up keeps the receipt lookup and deadline checks, then inserts decided r
 
 The paired throughput ratios ranged from 0.94× to 1.13× with a median of 1.00×. Statement counts fell 5.5–6.7% across pairs. The shorter batch transaction body left throughput nearly unchanged on this retained fixture. Raw results, the retained seed and the comparison script are under `artifacts/perf/round-two/sqlite-q2-receipts/`.
 
+### Q3 SQLite writers in separate processes
+
+Six runs drained copies of the same freshly seeded 1,000-job SQLite file with 16 total worker slots. One process used a single 16-slot worker. Four processes used four slots each and shared the same file. Every run durably settled 1,000 jobs with 1,000 attempts and 1,000 handler invocations. The rate uses the stored first attempt authorization and last finish times. Launch-through-drain includes process startup and polling until all finishes were visible.
+
+| SQLite no-op drain | One process | Four processes |
+|---|---:|---:|
+| Median jobs/s (min–max) | 111.7 (111.3–134.3) | 47.9 (42.1–48.9) |
+| Median launch-through-drain | 10.33 s | 22.07 s |
+| Worst worker-operation `BEGIN IMMEDIATE` p99, range across runs | 0.44–3.89 ms | 2.19–2.23 s |
+
+Multiple writers contended on the file despite the same total slot count. They also sent more separate finish calls as each process collected a smaller batch. The largest waits were near the configured two-second SQLite busy timeout. The next experiment sweeps the existing busy timeout and measures refusals, lease safety and writer wait with the same process count. Raw results and the process runner are under `artifacts/perf/round-two/sqlite-processes/`.
+
 ### B4 SQLite settlement experiment
 
 An isolated build used one completion consumer to give ready finishes time to collect behind the previous call. Five paired 1,000-job drains with 16 workers reduced median committed settlement calls from 289 to 183 and total writer commits from 442 to 376. Median throughput was 101.6 jobs/s with four consumers and 104.4 with one. The median paired gain was 3.9%, and individual pairs varied from a 16.6% drop to a 39.9% gain. Production uses four completion consumers. The next finish experiment should account for transaction body cost and protect unrelated finishes during receipt resolution.
