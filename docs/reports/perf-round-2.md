@@ -118,6 +118,17 @@ Multiple writers contended on the file despite the same total slot count. They a
 
 Microsoft.Data.Sqlite 10.0.14 retries busy or locked results from both prepare and step. Its managed one-second command timeout can outlast a shorter native busy timeout, and the native wait or final 150 ms sleep can overshoot the managed deadline. The Q3 prototype compares the managed path with a native `BEGIN IMMEDIATE` call under the existing SQLite busy handler and Runwick's same-command retries. [Managed prepare loop](https://github.com/dotnet/efcore/blob/v10.0.14/src/Microsoft.Data.Sqlite.Core/SqliteCommand.cs#L420-L493), [managed step loop](https://github.com/dotnet/efcore/blob/v10.0.14/src/Microsoft.Data.Sqlite.Core/SqliteDataReader.cs#L135-L190), [SQLite busy timeout](https://www.sqlite.org/c3ref/busy_timeout.html).
 
+The contention sweep ran three trials per setting with four processes and 16 slots total. All 12 runs completed 1,000 jobs with exactly 1,000 attempts and invocations. Redis crash tests ran on the same host, so throughput is directional.
+
+| Writer lock path | Busy timeout | Median jobs/s | Median of worst worker-operation `BEGIN IMMEDIATE` p99 |
+|---|---:|---:|---:|
+| Managed | 2,000 ms | 38.1 | 2,231 ms |
+| Managed | 100 ms | 36.3 | 1,256 ms |
+| Native | 100 ms | 39.2 | 277 ms |
+| Native | 500 ms | 42.2 | 617 ms |
+
+The native path reduced long writer waits. Throughput remained within 36–42 jobs/s at the medians. The prototype remains isolated while the retry budget under an externally held write lock is evaluated. Raw runs and the summarizer are under `artifacts/perf/round-two/sqlite-q3-busy/`.
+
 ### B4 SQLite settlement experiment
 
 An isolated build used one completion consumer to give ready finishes time to collect behind the previous call. Five paired 1,000-job drains with 16 workers reduced median committed settlement calls from 289 to 183 and total writer commits from 442 to 376. Median throughput was 101.6 jobs/s with four consumers and 104.4 with one. The median paired gain was 3.9%, and individual pairs varied from a 16.6% drop to a 39.9% gain. Production uses four completion consumers. The next finish experiment should account for transaction body cost and protect unrelated finishes during receipt resolution.
@@ -204,6 +215,8 @@ An isolated PostgreSQL 18.6 container with `fsync`, `synchronous_commit` and `fu
 | `storage_commands_durable` | 20,202 | 20,202 | 13,754 | 4.2 MB |
 
 The jobs table still had an estimated 15,463 dead tuples after two autovacuum passes. The `jobs_name_list` index recorded 6.40 million entries returned across 523 scans in this fixture without dashboard traffic. Nested SQL plans are needed to attribute those reads before changing the index. Server self-time was 24.6 s for `rw_claim_plain_v1`, 22.7 s for `rw_receipt_v1` and 14.8 s for the decided-receipt constraint trigger across the run. The profile points to attempt-close writes, receipt work and job-index maintenance as the next measured experiments. Raw table, index, function and WAL stats are under `artifacts/perf/round-two/postgres-write-profile/`.
+
+A4's isolated finish prototype combined resource usage with attempt close. A single 5,000-job pair settled every job with one attempt and recorded usage for each. Attempt updates fell from 10,000 to 5,000 and WAL from 64.9 to 63.1 MB. Drain throughput moved from 118.7 to 125.2/s while the Redis fault suite shared the host. Focused PostgreSQL tests covered staged rollback, exact replay and batched usage. The migration remains isolated. Raw results are under `artifacts/perf/round-two/postgres-a4-pair/`.
 
 ## Redis Phase 0
 
