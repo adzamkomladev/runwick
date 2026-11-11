@@ -122,10 +122,13 @@ public sealed class BuildAndPermissionTests
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
+            // A reused MSBuild node can retain the redirected pipes after pack exits.
+            start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
             using var process = Process.Start(start)!;
-            var log = await process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+            var stdout = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+            var stderr = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
             await process.WaitForExitAsync(TestContext.Current.CancellationToken);
-            Assert.True(process.ExitCode == 0, log);
+            Assert.True(process.ExitCode == 0, $"dotnet pack exited {process.ExitCode}\n{await stdout}\n{await stderr}");
 
             using var package = ZipFile.OpenRead(Directory.GetFiles(output, "Runwick.Dashboard.*.nupkg").Single());
             var names = package.Entries.Select(e => e.FullName).ToList();
