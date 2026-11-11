@@ -337,6 +337,8 @@ A separate AOF-always profile captured the full incremental AOF from fresh Redis
 
 The raw payload values accounted for 1.52 MB inside the intents and were also stored in the live payload keys. A payload reference could eliminate at most that duplicate value volume before accounting for staging and recovery overhead. That is about 20% of bulk bytes and 6% of whole-drain bytes in this fixture. Claim and finish amplification also needs attention. Raw AOFs, typed counters, parser and runner are under `artifacts/perf/round-two/redis-f5-aof/`.
 
+The MessagePack analysis found 2.23 MB of reply result bytes already present in the same command's receipt after-images, or 8.58% of whole-drain AOF. `ReserveAndBegin` accounted for 2.03 MB. Existing recovery scripts consume the full stored reply, so removing that copy requires a compatible format transition. The intent encoding is retained. The byte attribution and reproduction command are alongside the raw AOFs.
+
 ## Outbox relay
 
 Phase 0.6 traces claim, transport record, destination receive and delivered mark separately. D1 assigns the UUIDv7 transport identity and deadline in the claim transaction for PostgreSQL and SQLite. A reclaim preserves the pair while its deadline remains live. Replacements respect the acceptance horizon. The relay checks lease authority before the first send, and subsequent source writes stay token-guarded. The eight focused tests passed, including a lost reply to a committed claim and later reuse of its transport identity.
@@ -379,4 +381,6 @@ M2 also samples the configured Redis node with one bounded, selected-section `IN
 
 ## Full-suite verification
 
-The worker checkpoint at `6011483` passed 426 Core and 475 shared contract tests. The integrated snapshot at `d0efb88` passed all 383 PostgreSQL tests with zero skips on a Docker-managed server, including CAP-10, TIME-09, TXC-05 and the store-outage cases. The same snapshot passed all 48 outbox and 70 Redis tests with zero skips, including the Redis AOF kill-and-restart sweep. The SQLite receipt-index snapshot at `30fc1dd` passed all 53 SQLite and 430 Core tests. Earlier and integrated logs are under `artifacts/perf/round-two/suites/` and `suites-integrated/`.
+The worker checkpoint at `6011483` passed 426 Core and 475 shared contract tests. The integrated snapshot at `d0efb88` passed all 383 PostgreSQL tests with zero skips on a Docker-managed server, including CAP-10, TIME-09, TXC-05 and the store-outage cases. The same snapshot passed all 48 outbox and 70 Redis tests with zero skips, including the Redis AOF kill-and-restart sweep. The SQLite receipt-index snapshot at `30fc1dd` passed all 53 SQLite, 430 Core and 56 Dashboard tests. Its Contract run passed 474 of 478. All nine targeted retries of the affected cases passed on the same build.
+
+The Contract failures involved process-wide usage counts during concurrent worker tests, the PostgreSQL event-visibility horizon, and a Redis upgrade test that temporarily overrides the shared fixture's layout revision. The affected tests now run in non-parallel collections. The corrected snapshot passed all 14 focused checks. The full rerun is pending. Logs are under `artifacts/perf/round-two/suites-integrated/` and `suites-isolation/`.
