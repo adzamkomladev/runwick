@@ -470,7 +470,7 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         {
             // The PostgreSQL deferred trigger has no SQLite twin: the receipt this transaction inserted must be decided (20 §3).
             using var check = tx.Sql("""
-                SELECT count(*) FROM runwick_storage_commands
+                SELECT count(*) FROM runwick_storage_commands INDEXED BY runwick_command_by_id
                 WHERE application = @application AND command_id = @command_id AND result IS NULL
                 """).P("command_id", tx.Op.CommandId);
             if (tx.Count(check) != 0)
@@ -673,9 +673,11 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
     {
         var op = tx.Op;
         var cls = Operations.RetentionClass(op.Operation);
+        // Search both retention classes by command ID. The primary key orders by class before ID.
         var row = tx.One(tx.Sql("""
             SELECT retention_class, operation, operation_version, fingerprint, status, result, decided_at
-            FROM runwick_storage_commands WHERE application = @application AND command_id = @command_id
+            FROM runwick_storage_commands INDEXED BY runwick_command_by_id
+            WHERE application = @application AND command_id = @command_id
             ORDER BY retention_class = @class DESC LIMIT 1
             """).P("command_id", op.CommandId).P("class", cls),
             r => new { Class = r.GetString(0), Op = r.GetString(1), Version = r.GetInt32(2), Fp = r.Blob(3), Status = r.StrN(4),
