@@ -82,6 +82,8 @@ internal sealed class PgRow
 
     public JsonObject? Result { get; init; }
 
+    public byte[]? FinishedManyResult { get; init; }
+
     public byte[]? Payload { get; init; }
 
     public string? Headers { get; init; }
@@ -101,23 +103,31 @@ internal sealed class PgRow
 
     public StoreStatus StoreStatus => Enum.Parse<StoreStatus>(Status);
 
-    internal static PgRow Read(NpgsqlDataReader r) => new()
+    internal static PgRow Read(NpgsqlDataReader r, bool finishMany = false)
     {
-        Status = r.GetString(0),
-        Effect = r.GetString(1),
-        Code = r.IsDBNull(2) ? null : r.GetString(2),
-        Detail = r.IsDBNull(3) ? null : r.GetString(3),
-        ConflictingJobId = r.IsDBNull(4) ? null : r.GetGuid(4),
-        BlockedScopeId = r.IsDBNull(5) ? null : r.GetGuid(5),
-        ResumeEligibleAt = PgTime.ReadNullable(r, 6),
-        ResumeJobId = r.IsDBNull(7) ? null : r.GetGuid(7),
-        DecidedAt = PgTime.ReadNullable(r, 8),
-        Replayed = !r.IsDBNull(9) && r.GetBoolean(9),
-        Result = r.IsDBNull(10) ? null : JsonNode.Parse(r.GetString(10))!.AsObject(),
-        Payload = r.IsDBNull(11) ? null : (byte[])r[11],
-        Headers = r.IsDBNull(12) ? null : r.GetString(12),
-        CreatedAt = PgTime.ReadNullable(r, 13),
-    };
+        var hasResult = !r.IsDBNull(10);
+        // jsonb already validates the JSON syntax. Keep the previous object check here, and
+        // decode item fields after the transaction releases its locks.
+        var result = finishMany && hasResult && r.GetFieldValue<byte[]>(10) is [ (byte)'{', .. ] utf8 ? utf8 : null;
+        return new()
+        {
+            Status = r.GetString(0),
+            Effect = r.GetString(1),
+            Code = r.IsDBNull(2) ? null : r.GetString(2),
+            Detail = r.IsDBNull(3) ? null : r.GetString(3),
+            ConflictingJobId = r.IsDBNull(4) ? null : r.GetGuid(4),
+            BlockedScopeId = r.IsDBNull(5) ? null : r.GetGuid(5),
+            ResumeEligibleAt = PgTime.ReadNullable(r, 6),
+            ResumeJobId = r.IsDBNull(7) ? null : r.GetGuid(7),
+            DecidedAt = PgTime.ReadNullable(r, 8),
+            Replayed = !r.IsDBNull(9) && r.GetBoolean(9),
+            Result = hasResult && result is null ? JsonNode.Parse(r.GetString(10))!.AsObject() : null,
+            FinishedManyResult = result,
+            Payload = r.IsDBNull(11) ? null : (byte[])r[11],
+            Headers = r.IsDBNull(12) ? null : r.GetString(12),
+            CreatedAt = PgTime.ReadNullable(r, 13),
+        };
+    }
 
     /// <summary>The no-effect reply with this row's status, code and details.</summary>
     public StoreReply<T> Reject<T>() where T : class =>

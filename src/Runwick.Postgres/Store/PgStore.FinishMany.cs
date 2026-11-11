@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using NpgsqlTypes;
 using Runwick.Protocol;
 using Runwick.Worker;
@@ -57,8 +58,19 @@ internal sealed partial class PgStore : IFinishManyStore
     /// <summary>One <see cref="StoreReply{FinishedAttempt}"/> per item, exactly as <see cref="MapFinished"/> reads a Finish/1 row.</summary>
     static FinishedMany ReadFinishedMany(PgRow row)
     {
+        var result = row.Result;
+        if (row.FinishedManyResult is { } utf8)
+        {
+            if (FinishedManyReplyReader.TryRead(utf8) is { } finished)
+            {
+                return finished;
+            }
+
+            result = JsonNode.Parse(utf8)!.AsObject();
+        }
+
         var outcomes = new List<StoreReply<FinishedAttempt>>();
-        foreach (var node in row.Result!["items"]!.AsArray())
+        foreach (var node in result!["items"]!.AsArray())
         {
             var item = node!.AsObject();
             var status = Enum.Parse<StoreStatus>(item["status"]!.GetValue<string>());

@@ -383,6 +383,11 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
             return r.Reject<FinishedMany>();
         }
 
+        if (r.FinishedMany is { } finished)
+        {
+            return r.Applied(finished);
+        }
+
         var outcomes = new List<StoreReply<FinishedAttempt>>();
         foreach (var node in r.Result!["items"]!.AsArray())
         {

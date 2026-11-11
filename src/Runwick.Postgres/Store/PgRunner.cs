@@ -550,7 +550,7 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
                     throw new InvalidOperationException($"runwick.{call.Function} returned no row.");
                 }
 
-                var row = PgRow.Read(reader);
+                var row = PgRow.Read(reader, finishMany: op.Operation == Operations.FinishMany);
 
                 // A set-returning function (ReserveAndBegin/1) follows its reply row with one payload row per begun job.
                 while (await reader.ReadAsync(ct).ConfigureAwait(false))

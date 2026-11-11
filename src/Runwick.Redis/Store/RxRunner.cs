@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Runwick.Protocol;
+using Runwick.Worker;
 using StackExchange.Redis;
 
 namespace Runwick.Redis.Store;
@@ -25,6 +26,8 @@ internal sealed class RxReply
 
     public JsonObject? Result { get; init; }
 
+    public FinishedMany? FinishedMany { get; init; }
+
     public Guid? Conflict { get; init; }
 
     public Guid? Blocked { get; init; }
@@ -44,8 +47,10 @@ internal sealed class RxReply
     public static DateTimeOffset T(string ms) => DateTimeOffset.FromUnixTimeMilliseconds(long.Parse(ms, CultureInfo.InvariantCulture));
 
     /// <summary>Parses <c>R status effect replayed code detail decided result conflict blocked resumeAt resumeJob [n (id payload headers created)*]</c>.</summary>
-    public static RxReply Parse(RedisResult[] a, int at = 1)
+    public static RxReply Parse(RedisResult[] a, int at = 1, bool finishMany = false)
     {
+        var result = a[at + 6];
+        var finished = finishMany && (byte[]?)result is { Length: > 0 } utf8 ? FinishedManyReplyReader.TryRead(utf8) : null;
         var reply = new RxReply
         {
             Status = (string)a[at]!,
@@ -54,7 +59,8 @@ internal sealed class RxReply
             Code = S(a[at + 3]),
             Detail = S(a[at + 4]),
             Decided = S(a[at + 5]) is { } d ? T(d) : default,
-            Result = S(a[at + 6]) is { } json ? JsonNode.Parse(json)!.AsObject() : null,
+            Result = finished is null && S(result) is { } json ? JsonNode.Parse(json)!.AsObject() : null,
+            FinishedMany = finished,
             Conflict = G(a[at + 7]),
             Blocked = G(a[at + 8]),
             ResumeAt = S(a[at + 9]) is { } r ? T(r) : null,
@@ -152,7 +158,7 @@ internal sealed class RxRunner(RxClient client, TimeProvider time, IFaultInjecto
             switch ((string)a[0]!)
             {
                 case "R":
-                    var parsed = RxReply.Parse(a);
+                    var parsed = RxReply.Parse(a, finishMany: op.Operation == Operations.FinishMany);
                     await AfterCommitAsync(op, ct).ConfigureAwait(false);
                     return parsed;
                 case "E":
@@ -191,7 +197,7 @@ internal sealed class RxRunner(RxClient client, TimeProvider time, IFaultInjecto
                 case "MORE":
                     continue;
                 case "PUBLISHED":
-                    return RxReply.Parse(a, 3);
+                    return RxReply.Parse(a, 3, finishMany: op.Operation == Operations.FinishMany);
                 case "STUCK":
                     StartBackgroundRecovery(op.Application);
                     throw new StoreOutcomeUnknownException("store_recovering", op.CommandId, op.Operation);
