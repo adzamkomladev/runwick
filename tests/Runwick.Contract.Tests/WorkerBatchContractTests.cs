@@ -18,7 +18,7 @@ namespace Runwick.Contract.Tests;
 /// </summary>
 [Trait("Category", "Contract")]
 [Trait("Item", "SP-028")]
-[Collection(nameof(RedisPauseCollection))]
+[Collection(nameof(RedisServerWideCollection))]
 public sealed class WorkerBatchContractTests
 {
     public static TheoryData<StoreKind> Kinds => CoreContractTests.Kinds;

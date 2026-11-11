@@ -46,55 +46,6 @@ public sealed class WorkerContractTests
         Assert.Empty(SnapshotInvariants.Violations((await f.ReadCommittedSnapshot()).Model));
     }
 
-    /// <summary>
-    /// USG-03 (16 §3 AttemptResourceUsage): a handler that burns about 300 ms of CPU and allocates about 64 MB records at least
-    /// that much against its attempt; one that does almost nothing records far less CPU; with the option off nothing is recorded.
-    /// </summary>
-    [Theory]
-    [MemberData(nameof(CoreContractTests.Kinds), MemberType = typeof(CoreContractTests))]
-    [Trait("Case", "USG-03")]
-    public async Task A_cpu_burning_allocating_handler_records_plausible_usage(StoreKind kind)
-    {
-        await using var f = await DriverFixture.StartAsync("usg_" + Guid.NewGuid().ToString("N")[..8], kind);
-        await using var w = WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults, concurrency: 1);
-        w.Script.On("burn", (_, _, _) =>
-        {
-            var until = System.Diagnostics.Stopwatch.GetTimestamp() + System.Diagnostics.Stopwatch.Frequency * 3 / 10;
-            long keep = 0;
-            for (var i = 0; i < 64; i++)
-            {
-                keep += new byte[1 << 20].Length; // 64 x 1 MiB
-            }
-
-            var x = 0.0;
-            while (System.Diagnostics.Stopwatch.GetTimestamp() < until)
-            {
-                x += Math.Sqrt(keep + x);
-            }
-
-            return x > 0 ? Task.CompletedTask : Task.FromException(new InvalidOperationException());
-        });
-        await w.StartAsync();
-        var burn = (await w.DispatchAsync("burn")).JobId.Value;
-        var idle = (await w.DispatchAsync("idle")).JobId.Value;
-        var session = (await f.OpenClient()).Services.GetRequiredService<IManagementSession>();
-        var admin = new ManagementCaller(new ManagementActor("admin", null, "test"), [.. ManagementPermissions.All.Select(p => new ManagementGrant(p))]);
-        async Task<AttemptResourceUsage?> UsageOf(Guid job) =>
-            (await session.GetJobAsync(admin, job, CancellationToken.None))?.Attempts.SingleOrDefault(a => a.FinishedAt is not null)?.Usage;
-        await WorkerHost.WaitUntil(() => UsageOf(burn).GetAwaiter().GetResult() is not null && UsageOf(idle).GetAwaiter().GetResult() is not null, Wait, "both recorded");
-        await w.StopAsync(TestContext.Current.CancellationToken);
-
-        var b = (await UsageOf(burn))!;
-        var i0 = (await UsageOf(idle))!;
-        Assert.InRange(b.ProcessCpuMicroseconds, 250_000, 30_000_000);
-        Assert.True(b.ProcessAllocatedBytes >= 64L << 20, $"allocated {b.ProcessAllocatedBytes}");
-        Assert.True(b.WorkingSetPeakBytes >= Math.Max(b.WorkingSetStartBytes, b.WorkingSetEndBytes));
-        Assert.True(b.WorkingSetStartBytes > 0);
-        Assert.Equal(0, b.OverlappingAttempts);
-        Assert.True(i0.ProcessCpuMicroseconds < b.ProcessCpuMicroseconds / 2, $"idle cpu {i0.ProcessCpuMicroseconds} vs burn {b.ProcessCpuMicroseconds}");
-        Assert.True(i0.ProcessAllocatedBytes < 32L << 20, $"idle allocated {i0.ProcessAllocatedBytes}");
-    }
-
     [Theory]
     [MemberData(nameof(CoreContractTests.Kinds), MemberType = typeof(CoreContractTests))]
     [Trait("Case", "USG-04")]
@@ -139,5 +90,66 @@ public sealed class WorkerContractTests
         Assert.True(detail["settings"]!["leaseDurationMs"]!.GetValue<long>() > 0);
         Assert.True(detail["settings"]!["recordResourceUsage"]!.GetValue<bool>());
         Assert.NotNull(detail["runningCount"]);
+    }
+}
+
+[CollectionDefinition(nameof(ProcessUsageCollection), DisableParallelization = true)]
+public sealed class ProcessUsageCollection;
+
+/// <summary>Resource attribution counts attempts across all worker hosts in the process.</summary>
+[Trait("Category", "Contract")]
+[Trait("Item", "SP-019")]
+[Collection(nameof(ProcessUsageCollection))]
+public sealed class WorkerResourceUsageContractTests
+{
+    static readonly TimeSpan Wait = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// USG-03 (16 §3 AttemptResourceUsage): a handler that burns about 300 ms of CPU and allocates about 64 MB records at least
+    /// that much against its attempt. A handler that does almost nothing records far less CPU.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(CoreContractTests.Kinds), MemberType = typeof(CoreContractTests))]
+    [Trait("Case", "USG-03")]
+    public async Task A_cpu_burning_allocating_handler_records_plausible_usage(StoreKind kind)
+    {
+        await using var f = await DriverFixture.StartAsync("usg_" + Guid.NewGuid().ToString("N")[..8], kind);
+        await using var w = WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults, concurrency: 1);
+        w.Script.On("burn", (_, _, _) =>
+        {
+            var until = System.Diagnostics.Stopwatch.GetTimestamp() + System.Diagnostics.Stopwatch.Frequency * 3 / 10;
+            long keep = 0;
+            for (var i = 0; i < 64; i++)
+            {
+                keep += new byte[1 << 20].Length; // 64 x 1 MiB
+            }
+
+            var x = 0.0;
+            while (System.Diagnostics.Stopwatch.GetTimestamp() < until)
+            {
+                x += Math.Sqrt(keep + x);
+            }
+
+            return x > 0 ? Task.CompletedTask : Task.FromException(new InvalidOperationException());
+        });
+        await w.StartAsync();
+        var burn = (await w.DispatchAsync("burn")).JobId.Value;
+        var idle = (await w.DispatchAsync("idle")).JobId.Value;
+        var session = (await f.OpenClient()).Services.GetRequiredService<IManagementSession>();
+        var admin = new ManagementCaller(new ManagementActor("admin", null, "test"), [.. ManagementPermissions.All.Select(p => new ManagementGrant(p))]);
+        async Task<AttemptResourceUsage?> UsageOf(Guid job) =>
+            (await session.GetJobAsync(admin, job, CancellationToken.None))?.Attempts.SingleOrDefault(a => a.FinishedAt is not null)?.Usage;
+        await WorkerHost.WaitUntil(() => UsageOf(burn).GetAwaiter().GetResult() is not null && UsageOf(idle).GetAwaiter().GetResult() is not null, Wait, "both recorded");
+        await w.StopAsync(TestContext.Current.CancellationToken);
+
+        var b = (await UsageOf(burn))!;
+        var i0 = (await UsageOf(idle))!;
+        Assert.InRange(b.ProcessCpuMicroseconds, 250_000, 30_000_000);
+        Assert.True(b.ProcessAllocatedBytes >= 64L << 20, $"allocated {b.ProcessAllocatedBytes}");
+        Assert.True(b.WorkingSetPeakBytes >= Math.Max(b.WorkingSetStartBytes, b.WorkingSetEndBytes));
+        Assert.True(b.WorkingSetStartBytes > 0);
+        Assert.Equal(0, b.OverlappingAttempts);
+        Assert.True(i0.ProcessCpuMicroseconds < b.ProcessCpuMicroseconds / 2, $"idle cpu {i0.ProcessCpuMicroseconds} vs burn {b.ProcessCpuMicroseconds}");
+        Assert.True(i0.ProcessAllocatedBytes < 32L << 20, $"idle allocated {i0.ProcessAllocatedBytes}");
     }
 }

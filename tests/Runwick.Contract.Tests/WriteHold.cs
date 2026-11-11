@@ -8,11 +8,11 @@ using StackExchange.Redis;
 namespace Runwick.Contract.Tests;
 
 /// <summary>
-/// A server-wide stall (<c>CLIENT PAUSE</c>) delays every client of the Redis server, so the classes that use one run alone: xUnit runs a collection that
-/// disables parallelization after, and never beside, the others.
+/// Redis server-wide stalls and layout overrides affect every application on the shared fixture. xUnit runs this
+/// collection separately so tests of other applications only observe the normal server.
 /// </summary>
-[CollectionDefinition(nameof(RedisPauseCollection), DisableParallelization = true)]
-public sealed class RedisPauseCollection;
+[CollectionDefinition(nameof(RedisServerWideCollection), DisableParallelization = true)]
+public sealed class RedisServerWideCollection;
 
 /// <summary>
 /// Makes protocol commands wait on the store the way a contended lock does, then lets them go. This is how the "waits on a lock" cases

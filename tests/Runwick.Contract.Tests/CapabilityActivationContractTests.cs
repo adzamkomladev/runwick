@@ -13,6 +13,7 @@ namespace Runwick.Contract.Tests;
 /// </summary>
 [Trait("Category", "Contract")]
 [Trait("Item", "SP-028")]
+[Collection("EventCursor")] // An earlier PostgreSQL transaction can hold back the event cursor across databases.
 public sealed class CapabilityActivationContractTests
 {
     static CancellationToken Ct => TestContext.Current.CancellationToken;

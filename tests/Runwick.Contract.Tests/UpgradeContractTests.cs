@@ -13,6 +13,7 @@ namespace Runwick.Contract.Tests;
 /// </summary>
 [Trait("Category", "Contract")]
 [Trait("Item", "SP-026")]
+[Collection(nameof(RedisServerWideCollection))]
 public sealed class UpgradeContractTests
 {
     public static TheoryData<StoreKind> Kinds => CoreContractTests.Kinds;
