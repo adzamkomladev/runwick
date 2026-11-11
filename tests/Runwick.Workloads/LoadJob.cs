@@ -1,10 +1,33 @@
+using System.Globalization;
+using System.Text.Json.Serialization;
+using Runwick.Serialization;
+
 namespace Runwick.Workloads;
 
 /// <summary>Workload job: <see cref="Pad"/> sizes the payload (≈ 1 KiB for P-01, 07 §14.3).</summary>
 public sealed record LoadJob(string Id, string Pad) : IQueueJob
 {
-    public static LoadJob Create(long sequence, int payloadBytes) =>
-        new(sequence.ToString(System.Globalization.CultureInfo.InvariantCulture), new string('x', Math.Max(0, payloadBytes - 32)));
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string[]? ExtraPad { get; init; }
+
+    public static LoadJob Create(long sequence, int payloadBytes)
+    {
+        var id = sequence.ToString(CultureInfo.InvariantCulture);
+        var padLength = Math.Max(0, payloadBytes - 32);
+        if (padLength <= PayloadBounds.MaxStringBytes)
+        {
+            return new LoadJob(id, new string('x', padLength));
+        }
+
+        // Leave room for the property names, ID and array delimiters at the payload cap.
+        var chunks = new List<string>();
+        for (var remaining = payloadBytes - 128 - PayloadBounds.MaxStringBytes; remaining > 0; remaining -= PayloadBounds.MaxStringBytes)
+        {
+            chunks.Add(new string('x', Math.Min(remaining, PayloadBounds.MaxStringBytes)));
+        }
+
+        return new LoadJob(id, new string('x', PayloadBounds.MaxStringBytes)) { ExtraPad = [.. chunks] };
+    }
 }
 
 /// <summary>Handler duration for this worker process (0 = no-op).</summary>

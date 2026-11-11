@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using Runwick.Postgres.Migrations;
 using Runwick.Protocol;
+using Runwick.Serialization;
 using Runwick.Sqlite.Migrations;
 using Runwick.Sqlite.Store;
 using Runwick.Worker;
@@ -18,21 +19,34 @@ namespace Runwick.Workloads;
 /// <c>bench</c>: Runwick's row in the comparison benchmark (<c>eng/bench-compare/run.sh</c>, next to River and pg-boss).
 /// One process, one worker pool on queue <c>load</c>, a no-op handler and a 1 KiB payload, against a fresh store.
 /// <list type="bullet">
-/// <item><c>drain</c>: dispatch <c>--n</c> jobs first (DispatchMany, 100 per call, <c>--calls n</c> callers side by side), then start the worker and time the
+/// <item><c>drain</c>: dispatch <c>--n</c> jobs first (DispatchMany, up to 100 per call within the payload budget), then start the worker and time the
 /// first claim to the last confirmed finish.</item>
 /// <item><c>enqueue</c>: <c>--n</c> single-job Dispatch calls from <c>--calls</c> callers, worker never started; reports inserts/s.</item>
+/// <item><c>bulk</c>: <c>--n</c> jobs added with DispatchMany, worker never started; reports inserts/s.</item>
 /// <item><c>steady</c>: start the worker, dispatch single jobs at <c>--rate</c>/s for <c>--seconds</c> (one call at a time
 /// like the River and pg-boss benches, or open loop with <c>--calls n</c>), and measure dispatch call start to confirmed
 /// finish per job; then wait up to 60 s for the rest to finish.</item>
 /// </list>
-/// Usage: <c>bench --mode drain|steady [--no-usage] [--n 20000] [--rate 100] [--seconds 120] [--workers 16] [--payload 1024]
-/// [--calls 1] [--conn admin-cs] [--db bench_runwick] [--out file.json] [--trace]</c> (--trace adds per-job stage gaps, held-job and settlement-queue samples, and store call phases). Writes the same JSON shape as the River and pg-boss
+/// Usage: <c>bench --mode drain|enqueue|bulk|steady [--no-usage] [--n 20000] [--rate 100] [--seconds 120] [--workers 16]
+/// [--payload 1024] [--job-ms 0] [--calls 1] [--store postgres|sqlite|redis] [--out file.json] [--trace] [--sqlite-count-statements]</c>.
+/// Trace adds per-job stage gaps, held-job and settlement-queue samples, and store call phases. Writes the same JSON shape as the River and pg-boss
 /// benches: <c>system</c>, <c>mode</c>, <c>completionsPerSec</c>, <c>latencyMs {p50, p95, p99, max}</c> (steady).
 /// </summary>
 internal static class BenchMode
 {
     const string DefaultAdmin = "Host=127.0.0.1;Port=55499;Username=postgres;Password=pg;Database=postgres";
-    const int Chunk = 100; // PayloadBounds.MaxBatchItems
+    // Leave space in the 2 MiB envelope for base64 expansion and per-item metadata.
+    const int BatchPayloadBudget = 1024 * 1024;
+
+    sealed class SqliteBenchDirectory(string parent) : IDisposable
+    {
+        public string FullName { get; } = Directory.CreateDirectory(Path.Combine(parent, "bench-runwick-" + Guid.NewGuid().ToString("N"))).FullName;
+
+        public void Dispose()
+        {
+            try { Directory.Delete(FullName, recursive: true); } catch (IOException) { }
+        }
+    }
 
     public static async Task<int> RunAsync(Args a)
     {
@@ -48,6 +62,13 @@ internal static class BenchMode
         var seconds = a.Double("seconds", 120);
         var workers = a.OptInt("slots") ?? a.Int("workers", 16);
         var payload = a.Int("payload", 1024);
+        if (payload is < 1 or > PayloadBounds.MaxPayloadBytes)
+        {
+            Console.Error.WriteLine($"--payload must be between 1 and {PayloadBounds.MaxPayloadBytes} bytes");
+            return 2;
+        }
+
+        var chunk = Math.Min(PayloadBounds.MaxBatchItems, BatchPayloadBudget / payload);
         var database = a.OptStr("db") ?? "bench_runwick";
         var adminCs = a.OptStr("conn") ?? DefaultAdmin;
         var calls = Math.Max(1, a.Int("calls", 1));
@@ -61,13 +82,10 @@ internal static class BenchMode
         }
 
         Action<RunwickBuilder> useStore;
-        string? sqliteDir = null;
-        if (store == "sqlite")
+        using var sqliteDirectory = store == "sqlite" ? new SqliteBenchDirectory(a.OptStr("sqlite-dir") ?? Path.GetTempPath()) : null;
+        if (sqliteDirectory is not null)
         {
-            var parent = a.OptStr("sqlite-dir") ?? Path.GetTempPath();
-            sqliteDir = Path.Combine(parent, "bench-runwick-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(sqliteDir);
-            var sqliteCs = new SqliteConnectionStringBuilder { DataSource = Path.Combine(sqliteDir, "runwick.db") }.ConnectionString;
+            var sqliteCs = new SqliteConnectionStringBuilder { DataSource = Path.Combine(sqliteDirectory.FullName, "runwick.db") }.ConnectionString;
             await RunwickSqliteMigrations.MigrateAsync(sqliteCs).ConfigureAwait(false);
             useStore = r => r.UseSqlite(sqliteCs);
         }
@@ -102,7 +120,7 @@ internal static class BenchMode
 
         var sc = new ServiceCollection();
         sc.AddLogging(b => b.AddSimpleConsole(o => o.SingleLine = true).SetMinimumLevel(LogLevel.Warning));
-        sc.AddSingleton(new LoadBehaviour(TimeSpan.Zero));
+        sc.AddSingleton(new LoadBehaviour(TimeSpan.FromMilliseconds(a.Double("job-ms", 0))));
         sc.AddRunwick(r =>
         {
             r.Application("bench");
@@ -118,6 +136,17 @@ internal static class BenchMode
         var hosted = provider.GetServices<IHostedService>().Single();
         var dispatcher = provider.GetRequiredService<IJobDispatcher>();
         var sqlite = provider.GetRequiredService<IRunwickStore>() as SqliteStore;
+        long sqliteStatements = 0;
+        var countSqliteStatements = a.Has("sqlite-count-statements") && sqlite is not null;
+        if (countSqliteStatements)
+        {
+            await sqlite!.Executor.WriteAsync(SqLane.Background, conn =>
+            {
+                SQLitePCL.raw.sqlite3_profile(conn.Handle, (SQLitePCL.delegate_profile)((_, _, _) =>
+                    Interlocked.Increment(ref sqliteStatements)), null);
+                return true;
+            }, CancellationToken.None).ConfigureAwait(false);
+        }
 
         // Event hook: first claim, finish count, last finish, per-job dispatch-to-finish latency (steady).
         var clock = Stopwatch.StartNew();
@@ -147,7 +176,7 @@ internal static class BenchMode
                 {
                     invokedAt[id] = now;
                     stages.Observe("stage:reserved->handlerInvoked", Ms(now - r));
-                    stages.Observe("stage:due->handlerInvoked", (DateTimeOffset.UtcNow - entry.Reserved.CreatedAt).TotalMilliseconds);
+                    stages.Observe("stage:due->handlerInvoked", (DateTimeOffset.UtcNow - entry.Reserved.Cursor.EligibleAt).TotalMilliseconds);
                 }
                 else if (name is "finished" or "finishReplayed")
                 {
@@ -174,8 +203,15 @@ internal static class BenchMode
                     Interlocked.Increment(ref replayed);
                 }
 
+                for (var previous = Interlocked.Read(ref lastFinishTicks); now > previous; previous = Interlocked.Read(ref lastFinishTicks))
+                {
+                    if (Interlocked.CompareExchange(ref lastFinishTicks, now, previous) == previous)
+                    {
+                        break;
+                    }
+                }
+
                 Interlocked.Increment(ref finished);
-                Interlocked.Exchange(ref lastFinishTicks, now);
                 if (mode == "steady" && entry is not null)
                 {
                     var id = entry.Reserved.Position.JobId;
@@ -198,6 +234,7 @@ internal static class BenchMode
             ["mode"] = mode,
             ["workers"] = workers,
             ["payloadBytes"] = payload,
+            ["bulkChunk"] = chunk,
         };
         long sequence = 0;
         var failedDispatch = 0L;
@@ -230,14 +267,14 @@ internal static class BenchMode
         }
         else if (mode == "bulk")
         {
-            // --n jobs added with DispatchMany, 100 per call, from --calls callers side by side; worker never started.
+            // --n jobs added with DispatchMany from --calls callers side by side; worker never started.
             var watch = Stopwatch.StartNew();
             var nextChunk = -1;
             await Task.WhenAll(Enumerable.Range(0, calls).Select(_ => Task.Run(async () =>
             {
-                for (var c = Interlocked.Increment(ref nextChunk); c * Chunk < n; c = Interlocked.Increment(ref nextChunk))
+                for (var c = Interlocked.Increment(ref nextChunk); c * chunk < n; c = Interlocked.Increment(ref nextChunk))
                 {
-                    var items = Enumerable.Range(0, Math.Min(Chunk, n - c * Chunk))
+                    var items = Enumerable.Range(0, Math.Min(chunk, n - c * chunk))
                         .Select(_ => new BatchDispatchItem(LoadJob.Create(Interlocked.Increment(ref sequence), payload))).ToList();
                     var receipt = await dispatcher.DispatchManyAsync(items).ConfigureAwait(false);
                     Interlocked.Add(ref failedDispatch, receipt.Items.Count(x => x.Receipt is null));
@@ -255,9 +292,9 @@ internal static class BenchMode
             var nextChunk = -1;
             await Task.WhenAll(Enumerable.Range(0, calls).Select(_ => Task.Run(async () =>
             {
-                for (var c = Interlocked.Increment(ref nextChunk); c * Chunk < n; c = Interlocked.Increment(ref nextChunk))
+                for (var c = Interlocked.Increment(ref nextChunk); c * chunk < n; c = Interlocked.Increment(ref nextChunk))
                 {
-                    var items = Enumerable.Range(0, Math.Min(Chunk, n - c * Chunk))
+                    var items = Enumerable.Range(0, Math.Min(chunk, n - c * chunk))
                         .Select(_ => new BatchDispatchItem(LoadJob.Create(Interlocked.Increment(ref sequence), payload))).ToList();
                     BatchDispatchReceipt? receipt = null;
                     try
@@ -304,7 +341,7 @@ internal static class BenchMode
             {
                 result["check"] = new JsonObject
                 {
-                    ["chunks"] = (n + Chunk - 1) / Chunk,
+                    ["chunks"] = (n + chunk - 1) / chunk,
                     ["chunksWithUnknownOutcome"] = Interlocked.Read(ref unknownChunks),
                     ["errors"] = new JsonObject([.. unknownCodes.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)kv.Value))]),
                     ["resolveAttemptErrors"] = new JsonObject([.. resolveErrors.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)kv.Value))]),
@@ -317,6 +354,7 @@ internal static class BenchMode
             result["insertSeconds"] = Math.Round(insertWatch.Elapsed.TotalSeconds, 3);
             result["insertCalls"] = calls;
             var commitsBeforeDrain = sqlite?.Runner.Commits;
+            var statementsBeforeDrain = Interlocked.Read(ref sqliteStatements);
             var expected = check ? Interlocked.Read(ref acceptedItems) : n - failedDispatch;
             var startTicks = clock.ElapsedTicks;
             await hosted.StartAsync(CancellationToken.None).ConfigureAwait(false);
@@ -355,6 +393,10 @@ internal static class BenchMode
             result["finished"] = done;
             result["drained"] = done == expected;
             result["drainWriteCommits"] = sqlite?.Runner.Commits - commitsBeforeDrain;
+            if (countSqliteStatements)
+            {
+                result["drainWriterStatements"] = Interlocked.Read(ref sqliteStatements) - statementsBeforeDrain;
+            }
             result["startToFirstClaimMs"] = first < 0 ? null : Math.Round(Ms(first - startTicks), 1);
             result["drainSeconds"] = Math.Round(elapsed, 3);
             result["completionsPerSec"] = elapsed > 0 ? Math.Round(done / elapsed, 1) : 0;
@@ -465,6 +507,8 @@ internal static class BenchMode
                 ["engine"] = new JsonObject([.. sqlite.EngineFacts.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)kv.Value))]),
                 ["writeCommits"] = sqlite.Runner.Commits,
                 ["busyConflicts"] = sqlite.Runner.BusyConflicts,
+                ["writerConnectionsOpened"] = sqlite.Executor.WriterConnectionsOpened,
+                ["writerStatements"] = countSqliteStatements ? Interlocked.Read(ref sqliteStatements) : null,
             };
         }
 
@@ -478,6 +522,7 @@ internal static class BenchMode
             result["finishesSent"] = Interlocked.Read(ref engine.FinishesSent);
             result["finishManyCalls"] = Interlocked.Read(ref engine.Completion.BatchesSent);
             result["trace"] = stages.LatenciesJson();
+            result["traceCounters"] = stages.CountersJson();
         }
 
         result["diagnostics"] = new JsonArray([.. engine.Health().Diagnostics.Select(x => (JsonNode?)x)]);
@@ -486,11 +531,6 @@ internal static class BenchMode
         {
             using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             await hosted.StopAsync(stop.Token).ConfigureAwait(false);
-        }
-
-        if (sqliteDir is not null)
-        {
-            try { Directory.Delete(sqliteDir, true); } catch (IOException) { }
         }
 
         var json = result.ToJsonString(Json.Indented);
