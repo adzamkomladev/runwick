@@ -621,6 +621,7 @@ internal sealed class ManagementSession(
         if (store is IRetentionStore) capabilities.Add(StoreProviderCapability.Retention);
         if (store is IWakeNotificationSource) capabilities.Add(StoreProviderCapability.WakeNotifications);
         if (store is IOutboxDestinationStore) capabilities.Add(StoreProviderCapability.OutboxDestination);
+        var engineVersion = retained?.EngineVersion;
         return Task.FromResult(new ManagementStoreSnapshot(App, provider, time.GetUtcNow(), successfulAt, age?.TotalSeconds, connection,
             [.. health.Readiness().Select(r => new StoreRoleObservation(StoreSnapshotScope.Process, r))],
             new(StoreSnapshotScope.Application, gate is null ? StoreSnapshotStatus.Unavailable : availability, gate is null ? null :
@@ -633,7 +634,8 @@ internal sealed class ManagementSession(
                 new StoreProfileObservation(profile, provider == "sqlite" && profile == AcknowledgementProfiles.SqliteWalFull && retained is not null
                     ? availability : StoreSnapshotStatus.Unavailable)),
             new(StoreSnapshotScope.Process, StoreSnapshotStatus.Available, capabilities.AsReadOnly()),
-            new(StoreSnapshotScope.ProviderNode, StoreSnapshotStatus.Unavailable, null),
+            new(provider == "sqlite" ? StoreSnapshotScope.Process : StoreSnapshotScope.ProviderNode,
+                engineVersion is null ? StoreSnapshotStatus.Unavailable : availability, engineVersion),
             new(StoreSnapshotScope.Store, StoreSnapshotStatus.Unavailable, null),
             new(StoreSnapshotScope.ProviderNode, provider == "sqlite" ? StoreSnapshotStatus.Unsupported : StoreSnapshotStatus.Unavailable, null)));
     }

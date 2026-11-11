@@ -99,7 +99,10 @@ export default function Store({ snapshot }) {
               <CardHeader><CardTitle><h2>Provider diagnostics</h2></CardTitle><CardDescription>Server and node observations.</CardDescription></CardHeader>
               <CardContent>
                 <dl>
-                  <Row label="Server version"><State value={snapshot.serverVersion.status} /></Row>
+                  <Row label={snapshot.provider === 'sqlite' ? 'SQLite library version' : 'Server version'}>
+                    <Fact fact={snapshot.serverVersion}><span className="mr-2 tabular-nums">{snapshot.serverVersion.value}</span></Fact>
+                    {snapshot.serverVersion.status === 'Stale' && <State value="Stale" />}
+                  </Row>
                   <Row label="Topology"><State value={snapshot.topology.status} /></Row>
                 </dl>
               </CardContent>

@@ -88,7 +88,10 @@ internal sealed record StoreDescriptor(
     int CompatibilityManifestVersion,
     ReadOnlyMemory<byte> ManifestDigest,
     ApplicationGate? Application,
-    DateTimeOffset ObservedAt);
+    DateTimeOffset ObservedAt)
+{
+    public string? EngineVersion { get; init; }
+}
 
 internal sealed record ApplicationGate(
     long Revision,

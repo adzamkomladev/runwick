@@ -380,6 +380,8 @@ Queue, paused and schedule totals and the fleet figures page through every item 
 
 The Store page links from Overview, Settings and store-related outage pages when the caller has `Settings.Read`. It shows this host’s connection observation and role readiness separately from application admission, logical store metadata and provider-node facts. An outage still allows the Store page to render its bounded last-known snapshot with an explicit stale state. The Store page uses its cached snapshot for polling and omits the shell’s live notification queries. The generic 503 page describes the failed request and links to Store status when available.
 
+The compatibility probe supplies PostgreSQL's server version and SQLite's loaded library version. The page labels their provider-node and process scope respectively and retains them under the same freshness and expiry rules as the store descriptor.
+
 ## 5. Controls
 
 A control is a `POST` to the mount, sent by the Inertia client (`router.post`) with the antiforgery header.

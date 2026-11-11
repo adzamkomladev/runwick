@@ -25,12 +25,17 @@ public sealed class StoreSnapshotTests
         var id = ready.GetProperty("identity").GetProperty("value").GetProperty("storeId").GetGuid();
         Assert.Equal("postgres", ready.GetProperty("provider").GetString());
         Assert.Equal("Available", ready.GetProperty("admission").GetProperty("status").GetString());
-        Assert.Equal("Unavailable", ready.GetProperty("serverVersion").GetProperty("status").GetString());
+        var version = ready.GetProperty("serverVersion");
+        Assert.Equal("Available", version.GetProperty("status").GetString());
+        Assert.Equal("ProviderNode", version.GetProperty("scope").GetString());
+        Assert.True(Version.TryParse(version.GetProperty("value").GetString(), out _));
 
         f.Proxy!.DropEverything = true;
         var failed = await WaitForSnapshotAsync(viewer, "Unavailable", clock);
         Assert.Equal("Stale", failed.GetProperty("identity").GetProperty("status").GetString());
         Assert.Equal(id, failed.GetProperty("identity").GetProperty("value").GetProperty("storeId").GetGuid());
+        Assert.Equal("Stale", failed.GetProperty("serverVersion").GetProperty("status").GetString());
+        Assert.Equal(version.GetProperty("value").GetString(), failed.GetProperty("serverVersion").GetProperty("value").GetString());
         Assert.Equal(ready.GetProperty("lastSuccessfulAt").GetString(), failed.GetProperty("lastSuccessfulAt").GetString());
         var (response, body, page) = await viewer.LoadAsync("/runwick/store");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -42,6 +47,8 @@ public sealed class StoreSnapshotTests
         var expired = await SnapshotAsync(viewer);
         Assert.Equal("Unavailable", expired.GetProperty("identity").GetProperty("status").GetString());
         Assert.False(expired.GetProperty("identity").TryGetProperty("value", out _));
+        Assert.Equal("Unavailable", expired.GetProperty("serverVersion").GetProperty("status").GetString());
+        Assert.False(expired.GetProperty("serverVersion").TryGetProperty("value", out _));
         Assert.Equal(failed.GetProperty("lastSuccessfulAt").GetString(), expired.GetProperty("lastSuccessfulAt").GetString());
     }
 
@@ -55,6 +62,10 @@ public sealed class StoreSnapshotTests
         Assert.Equal("sqlite", snapshot.GetProperty("provider").GetString());
         var profile = snapshot.GetProperty("persistence").GetProperty("value");
         Assert.Equal("Available", profile.GetProperty("verification").GetString());
+        var version = snapshot.GetProperty("serverVersion");
+        Assert.Equal("Available", version.GetProperty("status").GetString());
+        Assert.Equal("Process", version.GetProperty("scope").GetString());
+        Assert.True(Version.TryParse(version.GetProperty("value").GetString(), out _));
         Assert.Equal("Unsupported", snapshot.GetProperty("topology").GetProperty("status").GetString());
         Assert.Equal("Unavailable", snapshot.GetProperty("recovery").GetProperty("status").GetString());
     }

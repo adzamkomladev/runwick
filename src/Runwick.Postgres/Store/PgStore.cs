@@ -60,7 +60,10 @@ internal sealed partial class PgStore(PgDataSources sources, PgRunner runner, Ti
                         reader.GetInt64(7), reader.GetInt32(8), ParseCapabilities(reader.GetString(9)), reader.GetString(10));
                     var descriptor = new StoreDescriptor(
                         reader.GetGuid(0), reader.GetInt64(1), reader.GetInt32(2), reader.GetString(3), reader.GetInt32(4),
-                        (byte[])reader[5], gate, PgTime.Read(reader, 6));
+                        (byte[])reader[5], gate, PgTime.Read(reader, 6))
+                    {
+                        EngineVersion = conn.PostgreSqlVersion.ToString(),
+                    };
                     if (descriptor.SchemaRevision == Migrations.PgMigrator.CurrentRevision)
                     {
                         // PF-05 (Q7): the function bodies must be this binary's, for the store's variant, and a fault-hooks

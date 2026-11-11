@@ -72,7 +72,10 @@ internal sealed partial class SqliteStore(SqExecutor executor, SqRunner runner, 
                     }
 
                     ApplicationGate? gate = r.IsDBNull(6) ? null : new ApplicationGate(r.GetInt64(6), r.GetInt32(7), ParseCapabilities(r.GetString(8)), r.GetString(9));
-                    var descriptor = new StoreDescriptor(r.Uuid(0), r.GetInt64(1), r.GetInt32(2), r.GetString(3), r.GetInt32(4), r.Blob(5), gate, Now());
+                    var descriptor = new StoreDescriptor(r.Uuid(0), r.GetInt64(1), r.GetInt32(2), r.GetString(3), r.GetInt32(4), r.Blob(5), gate, Now())
+                    {
+                        EngineVersion = version,
+                    };
                     if (descriptor.SchemaRevision == SqliteMigrator.CurrentRevision && !SqliteMigrator.SchemaMatches(conn))
                     {
                         throw new StoreIncompatibleException("The SQLite schema objects differ from this binary's: schema_incompatible.");
