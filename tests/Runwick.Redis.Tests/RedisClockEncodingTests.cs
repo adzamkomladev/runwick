@@ -37,9 +37,12 @@ public sealed partial class RedisClockEncodingTests
         return DateTimeOffset.FromUnixTimeMilliseconds(long.Parse((string)t[0]!, CultureInfo.InvariantCulture) * 1000 + long.Parse((string)t[1]!, CultureInfo.InvariantCulture) / 1000);
     }
 
-    static async Task<TestClient> OpenAsync(string name, TimeProvider? time = null) =>
-        await TestClient.CreateAsync(RedisServer.Prefix + RedisServer.Configuration, name + "_" + Guid.NewGuid().ToString("N")[..8],
+    static async Task<TestClient> OpenAsync(string name, TimeProvider? time = null)
+    {
+        await RedisServer.EnsureMigratedAsync();
+        return await TestClient.CreateAsync(RedisServer.Prefix + RedisServer.Configuration, name + "_" + Guid.NewGuid().ToString("N")[..8],
             new HarnessFaultInjector(), r => TestJobs.Register(r), time);
+    }
 
     static StoreCommand<DispatchBatchRequest> Many(TestClient c, IReadOnlyList<Guid>? ids, int count, DateTimeOffset notAfter)
     {
