@@ -506,6 +506,8 @@ The short P-03 diagnostic at `e1cb660` used PostgreSQL 18.6, one minute of warm-
 
 Peak worker RSS was 214 and 209 MB respectively. WAL per completed job was 13.5 and 30.3 kB with synthetic repeated-character payloads. The workload rejected an oversized payload with `payload_too_large` and stored zero jobs for that check. This was a diagnostic on the shared host with one repetition per size. Raw results are under `artifacts/perf/round-two/p03-payload/`.
 
+The boundary fixture now constructs 1,048,577 serialized bytes with individually valid strings. The focused rerun returned `payload_too_large` and stored zero jobs. Results are under `artifacts/perf/round-two/p03-payload/limit-exact/`.
+
 ## Store dashboard
 
 M1 adds a Store page and read-only snapshot for callers with `Settings.Read`. It reuses the process health probe for store and admission metadata, retains the last descriptor for up to five minutes, and labels stale and unavailable facts. Browser refreshes read the cached snapshot. Chromium checked the page at desktop and mobile widths. A follow-up uses the same probe to show PostgreSQL server and SQLite library versions with their respective node and process scope. All seven focused dashboard tests passed, including the real PostgreSQL outage, version expiry and generated asset checks. Provider collectors, topology observations and paired dashboard overhead measurements are still pending.
