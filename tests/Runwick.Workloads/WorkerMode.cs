@@ -12,8 +12,9 @@ using Runwick.Worker;
 namespace Runwick.Workloads;
 
 /// <summary>
-/// One worker process (07 §14.3): the shipped <c>AddRunwick(...).UsePostgres(...).AddWorker(...)</c> composition with
-/// <see cref="TimingStore"/> over the PostgreSQL store. Writes a sample line every 5 s and a summary on <c>stop</c>.
+/// One worker process (07 §14.3). Defaults to PostgreSQL with <see cref="TimingStore"/>;
+/// <c>--store sqlite --conn</c> attaches to a migrated SQLite file with the driver's phase timings.
+/// Writes a sample line every 5 s and a summary on <c>stop</c>.
 /// Stdin commands: <c>reset</c> (end of warm-up: drop latency samples), <c>stop</c> (staged shutdown, summary, exit).
 /// </summary>
 internal static class WorkerMode
@@ -26,12 +27,28 @@ internal static class WorkerMode
         var invocations = new ConcurrentDictionary<Guid, int>();
         var concurrency = a.Int("concurrency", 16);
         var g2 = a.Has("g2");
+        var store = a.OptStr("store") ?? "postgres";
+        if (store is not ("postgres" or "sqlite"))
+        {
+            Console.Error.WriteLine("worker --store must be postgres or sqlite");
+            return 2;
+        }
+
         var sc = new ServiceCollection();
         sc.AddLogging(b => b.AddSimpleConsole(o => o.SingleLine = true).SetMinimumLevel(LogLevel.Warning));
         sc.AddSingleton(new LoadBehaviour(TimeSpan.FromMilliseconds(a.Int("handler-ms", 0))));
         sc.AddRunwick(r =>
         {
-            r.Application(a.Str("app")).UsePostgres(a.Str("conn"));
+            r.Application(a.Str("app"));
+            if (store == "sqlite")
+            {
+                r.UseSqlite(a.Str("conn"));
+            }
+            else
+            {
+                r.UsePostgres(a.Str("conn"));
+            }
+
             if (g2)
             {
                 // G-2 workloads (G2Jobs): every G-2 contract registered; handlers and pool from the arguments.
@@ -51,7 +68,10 @@ internal static class WorkerMode
                 }
             }));
         });
-        sc.AddSingleton<IRunwickStore>(sp => new TimingStore(sp.GetRequiredService<PgStore>(), metrics, detailed: g2));
+        if (store == "postgres")
+        {
+            sc.AddSingleton<IRunwickStore>(sp => new TimingStore(sp.GetRequiredService<PgStore>(), metrics, detailed: g2));
+        }
         await using var provider = sc.BuildServiceProvider();
         var engine = provider.GetRequiredService<WorkerEngine>();
         engine.Hooks.Event = (name, entry) =>

@@ -305,9 +305,15 @@ internal static class BenchMode
                 stages.ResetLatencies();
             }
 
+            var allocatedBefore = trace ? GC.GetTotalAllocatedBytes(precise: true) : 0;
             var watch = Stopwatch.StartNew();
             await EnqueueAsync(n, enqueueLatency).ConfigureAwait(false);
             watch.Stop();
+            if (trace)
+            {
+                result["enqueueManagedAllocatedBytes"] = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
+            }
+
             var es = enqueueLatency.Summarize();
             result["jobs"] = n;
             result["warmupJobs"] = warmup;
@@ -426,6 +432,7 @@ internal static class BenchMode
             var statementsBeforeDrain = Interlocked.Read(ref sqliteStatements);
             var expected = check ? Interlocked.Read(ref acceptedItems) : n - failedDispatch;
             var startTicks = clock.ElapsedTicks;
+            var allocatedBeforeDrain = trace ? GC.GetTotalAllocatedBytes(precise: true) : 0;
             await hosted.StartAsync(CancellationToken.None).ConfigureAwait(false);
             using var sampling = new CancellationTokenSource();
             var sampler = trace ? Task.Run(async () =>
@@ -453,6 +460,11 @@ internal static class BenchMode
 
             await sampling.CancelAsync().ConfigureAwait(false);
             await sampler.ConfigureAwait(false);
+            if (trace)
+            {
+                result["drainManagedAllocatedBytes"] = GC.GetTotalAllocatedBytes(precise: true) - allocatedBeforeDrain;
+            }
+
             var done = Interlocked.Read(ref finished);
             var first = Interlocked.Read(ref firstClaimTicks);
             var elapsed = Ms(Interlocked.Read(ref lastFinishTicks) - (first < 0 ? startTicks : first)) / 1000;
