@@ -172,6 +172,8 @@ The median paired throughput ratio was 2.05×, with a range of 1.65–2.56×. A 
 
 The candidate kept pace in this short run. Sustained capacity with larger retained history, maintenance and readers is still open. Query plans, provider binary checksums and raw results are under `artifacts/perf/round-two/sqlite-q5-receipt-index/`.
 
+The same fixture exposed a correlated detail-retention query that scanned all application attempts for each eligible job. Selecting the bounded candidate jobs first and summing error bytes by their job IDs lets SQLite seek into an existing index. On 100 candidates from the retained fixture, the query ran 2,503,811 VM instructions before and 6,155 after. A single local query timing moved from 106.9 to 3.6 ms. The query retains the oldest-first order and the existing payload-plus-error byte limit. The 42 focused retention and settlement contracts passed across all three providers. Other retained plans used the expected indexes for ready jobs, expired leases and distinct job names. Statistics on a separate analyzed copy also improved the old detail lookup and the history-purge plan. The production change adds no statistics writes.
+
 ### Q6 SQLite local wake experiment
 
 An isolated candidate sends a queue hint after a direct dispatch commits. Local workers using the same file and application can receive it across separate store instances. Workers retain the normal polling cap for remote writers, staged transactions and missed hints. The focused test held a dispatch before commit, then verified that the second store instance received the hint after commit even when another subscriber threw. Replaying the accepted dispatch did not send another hint. All three dispatch-group tests passed.
@@ -369,6 +371,12 @@ Five alternating Release builds ran a synchronous decode probe with warm-up and 
 
 The probe excludes receipt parsing, store reads and handler execution. The allocation probe source and per-run outputs are under `artifacts/perf/round-two/`.
 
+### E3 Settlement reply decoding
+
+PostgreSQL and Redis use a shared forward decoder for normal `FinishMany` replies. Other shapes fall back to the existing decoder. PostgreSQL obtains UTF-8 from its result column and decodes the item fields after commit. SQLite already has an in-memory result and continues to read it directly. Receipt v1 persistence and replay bytes are unchanged.
+
+A captured 10,286-byte Redis reply with 25 outcomes allocated 114.6 kB with the old decoder and 27.3 kB with the forward reader, or 37.7 kB with UTF-8 conversion included. This measures decoding only. Two parser tests, 11 PostgreSQL finish-provider tests and 42 shared finish and retention contracts passed. The cold Redis overlap fixture preloads the scripts so a `NOSCRIPT` resend cannot reorder the paused commands. The case passed after three independent script-cache flushes. Probe and test output are under `artifacts/perf/round-two/finish-many-e3/`.
+
 ## Store dashboard
 
 M1 adds a Store page and read-only snapshot for callers with `Settings.Read`. It reuses the process health probe for store and admission metadata, retains the last descriptor for up to five minutes, and labels stale and unavailable facts. Browser refreshes read the cached snapshot. Chromium checked the page at desktop and mobile widths. A follow-up uses the same probe to show PostgreSQL server and SQLite library versions with their respective node and process scope. All seven focused dashboard tests passed, including the real PostgreSQL outage, version expiry and generated asset checks. Provider collectors, topology observations and paired dashboard overhead measurements are still pending.
@@ -378,6 +386,10 @@ The first M2 collector samples SQLite database and WAL file sizes and process wr
 M2 adds seven bounded PostgreSQL queries on the management host's background lane. The cached, timestamped sample covers database sessions, lock waits and size, Runwick jobs-table size and maintenance counters, and connected-node WAL, recovery and replication observations. A separate statistics permission gates the affected facts, and restricted backend access degrades them independently. Four focused tests passed on real PostgreSQL and SQLite fixtures, including a denied `pg_stat_wal` read, outage retention and expiry, grant revocation, and the asset embed. Chromium checked the denied view and simulated available and stale states at desktop and mobile widths. Pool wait metrics, live replica transitions and dashboard-on workload cost remain to be measured.
 
 M2 also samples the configured Redis node with one bounded, selected-section `INFO` request on the background lane. It uses the existing profile connection. The cached fields cover memory, client and command activity, evictions, AOF state, and replication indicators. The page labels Redis command activity as a node observation and shows the sample time. Two Redis driver tests and four dashboard tests passed, including real ACL denial, missing fields, permission revocation and generated assets. Live replica behavior and workload overhead remain unmeasured.
+
+M3 retains up to 12 check transitions and 12 samples of a provider gauge per management process. It marks gaps and clears the gauge series on store identity changes. The Store page distinguishes host observations from provider metrics and requires the diagnostics grant for the gauge. Two deterministic history tests and eight dashboard checks passed. Chromium verified the desktop and mobile tables and the viewer permission state.
+
+The M4 workload flag `bench --store-viewers 20` starts the co-hosted management sampler during steady load, polls the cached Store snapshot as authorized viewers and serializes the response. A five-viewer SQLite smoke run accepted and settled 120 jobs and returned diagnostics on all 13 polls. This exercises the session and serialization path. Paired overhead and HTTP-level qualification are pending.
 
 ## Full-suite verification
 
