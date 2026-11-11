@@ -405,6 +405,12 @@ PostgreSQL and Redis use a shared forward decoder for normal `FinishMany` replie
 
 A captured 10,286-byte Redis reply with 25 outcomes allocated 114.6 kB with the old decoder and 27.3 kB with the forward reader, or 37.7 kB with UTF-8 conversion included. This measures decoding only. Two parser tests, 11 PostgreSQL finish-provider tests and 42 shared finish and retention contracts passed. The cold Redis overlap fixture preloads the scripts so a `NOSCRIPT` resend cannot reorder the paused commands. The case passed after three independent script-cache flushes. Probe and test output are under `artifacts/perf/round-two/finish-many-e3/`.
 
+### E4 PostgreSQL dispatch arguments and E5 context items
+
+PostgreSQL builds the existing dispatch arrays directly and binds fresh parameters for each attempt. A Release probe measured parameter preparation and attachment at 17,016 → 11,472 bytes for one job and 41,344 → 35,792 bytes for an eight-item staged batch. All 44 focused PostgreSQL staging, retry, wire and schedule checks passed, including grouped materialization.
+
+Job context allocates its items dictionary on first access. The same probe measured 136 → 56 bytes per context when items went unused and 136 bytes when accessed. Concurrent getters returned the same dictionary, and four focused worker cases passed. A broader duplicate worker run was stopped after two minutes. The timer part of E5 and end-to-end allocation qualification remain open. Probe source and raw outputs are under `artifacts/perf/round-two/producer-e4-e5/`.
+
 ## Store dashboard
 
 M1 adds a Store page and read-only snapshot for callers with `Settings.Read`. It reuses the process health probe for store and admission metadata, retains the last descriptor for up to five minutes, and labels stale and unavailable facts. Browser refreshes read the cached snapshot. Chromium checked the page at desktop and mobile widths. A follow-up uses the same probe to show PostgreSQL server and SQLite library versions with their respective node and process scope. All seven focused dashboard tests passed, including the real PostgreSQL outage, version expiry and generated asset checks. Provider collectors, topology observations and paired dashboard overhead measurements are still pending.
@@ -417,7 +423,16 @@ M2 also samples the configured Redis node with one bounded, selected-section `IN
 
 M3 retains up to 12 check transitions and 12 samples of a provider gauge per management process. It marks gaps and clears the gauge series on store identity changes. The Store page distinguishes host observations from provider metrics and requires the diagnostics grant for the gauge. Two deterministic history tests and eight dashboard checks passed. Chromium verified the desktop and mobile tables and the viewer permission state.
 
-The M4 workload flag `bench --store-viewers 20` starts the co-hosted management sampler during steady load, polls the cached Store snapshot as authorized viewers and serializes the response. A five-viewer SQLite smoke run accepted and settled 120 jobs and returned diagnostics on all 13 polls. This exercises the session and serialization path. Paired overhead and HTTP-level qualification are pending.
+The M4 workload flag `bench --store-viewers 20` starts the co-hosted management sampler during steady load, polls the cached Store snapshot as authorized viewers and serializes the response. Five alternating pairs used 50 offers/s for 30 seconds on the retained SQLite fixture. The viewer arms returned diagnostics on all 600 polls. The first attempt used an incorrect final timer interval and was discarded before rerunning the five pairs.
+
+| SQLite co-hosted Store viewer comparison | No viewers | 20 viewers and sampler |
+|---|---:|---:|
+| Median completions during offers per second | 49.83 | 49.77 |
+| Median offer-to-finish p99 | 835 ms | 1,164 ms |
+| Median due-to-handler p99 | 522 ms | 884 ms |
+| Total refused offers | 0 | 214 |
+
+All refusals came from one viewer arm. The median paired due-to-handler p99 ratio was 1.52×, ranging from 0.79× to 2.55×. The median snapshot call took 0.34–0.50 ms across viewer arms. Its p99 ranged from 250 to 422 ms. The comparison includes cold startup and JSON serializer initialization. It measures the session and serialization path on the shared host and misses the 5% p99 budget. A warmed comparison, the HTTP path, and overhead on PostgreSQL and Redis remain to be qualified. Raw results are under `artifacts/perf/round-two/store-viewer-cost/sqlite-current/`.
 
 ## Full-suite verification
 
