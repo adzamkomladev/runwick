@@ -132,7 +132,7 @@ internal static partial class PreparedEnvelopeCodec
         w.Member("serializerProfileId").String(intent.SerializerProfileId);
         w.Member("serializerProfileVersion").Int(intent.SerializerProfileVersion);
         w.Member("payloadEncodingVersion").Int(PayloadEncodingVersion);
-        w.Member("payloadBase64").String(Convert.ToBase64String(intent.PayloadUtf8));
+        w.Member("payloadBase64").Base64(intent.PayloadUtf8);
         w.Member("queue").String(intent.Queue);
         w.Member("priority").String(intent.Priority);
         w.Member("eligibility").Begin();
@@ -211,6 +211,7 @@ internal static partial class PreparedEnvelopeCodec
     {
         readonly StringBuilder _sb = new();
         readonly Stack<bool> _first = new();
+        bool _ascii = true;
 
         public void Begin()
         {
@@ -278,6 +279,24 @@ internal static partial class PreparedEnvelopeCodec
             Quote(value);
         }
 
+        public void Base64(ReadOnlySpan<byte> bytes)
+        {
+            ValueSeparator();
+            _sb.Append('"');
+            // Keep intermediate blocks on a three-byte boundary. Only the last block needs padding.
+            Span<char> chars = stackalloc char[1024];
+            const int blockSize = 768;
+            while (!bytes.IsEmpty)
+            {
+                var count = Math.Min(blockSize, bytes.Length);
+                Convert.TryToBase64Chars(bytes[..count], chars, out var written);
+                _sb.Append(chars[..written]);
+                bytes = bytes[count..];
+            }
+
+            _sb.Append('"');
+        }
+
         public void StringOrNull(string? value)
         {
             if (value is null)
@@ -324,14 +343,33 @@ internal static partial class PreparedEnvelopeCodec
                     case '\r': _sb.Append("\\r"); break;
                     case '\t': _sb.Append("\\t"); break;
                     case < ' ': _sb.Append("\\u00").Append(((int)c).ToString("x2", CultureInfo.InvariantCulture)); break;
-                    default: _sb.Append(c); break;
+                    default:
+                        _ascii &= c <= '\x7f';
+                        _sb.Append(c);
+                        break;
                 }
             }
 
             _sb.Append('"');
         }
 
-        public byte[] ToArray() => Encoding.UTF8.GetBytes(_sb.ToString());
+        public byte[] ToArray()
+        {
+            if (!_ascii)
+            {
+                return Encoding.UTF8.GetBytes(_sb.ToString());
+            }
+
+            // ASCII characters occupy exactly one UTF-8 byte. Fill the owned output from the builder chunks.
+            var result = new byte[_sb.Length];
+            var written = 0;
+            foreach (var chunk in _sb.GetChunks())
+            {
+                written += Encoding.ASCII.GetBytes(chunk.Span, result.AsSpan(written));
+            }
+
+            return result;
+        }
     }
 
     // ---------------------------------------------------------------- read

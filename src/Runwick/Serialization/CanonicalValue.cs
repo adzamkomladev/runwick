@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Security.Cryptography;
@@ -45,7 +46,7 @@ internal sealed record CanonicalObject(IReadOnlyList<KeyValuePair<string, Canoni
 
 /// <summary>A value already encoded by <see cref="CanonicalEncoder.Encode"/>, written verbatim (a value hashed alone and
 /// inside a larger envelope is encoded once).</summary>
-internal sealed record CanonicalEncoded(byte[] Bytes) : CanonicalValue;
+internal sealed record CanonicalEncoded(ReadOnlyMemory<byte> Bytes) : CanonicalValue;
 
 internal sealed class CanonicalObjectBuilder
 {
@@ -91,11 +92,33 @@ internal static class CanonicalEncoder
         return buffer.ToArray();
     }
 
+    // The buffer stays private to one fingerprint calculation. The view excludes unused capacity.
+    public static CanonicalEncoded EncodeForDigest(CanonicalValue value)
+    {
+        using var buffer = new MemoryStream();
+        Write(buffer, value);
+        return new CanonicalEncoded(buffer.GetBuffer().AsMemory(0, checked((int)buffer.Length)));
+    }
+
     public static byte[] Digest(string domain, CanonicalValue value) =>
-        DigestEncoded(domain, value is CanonicalEncoded e ? e.Bytes : Encode(value));
+        DigestEncoded(domain, value is CanonicalEncoded encoded ? encoded.Bytes.Span : Encode(value));
+
+    // Dispatch command bodies may contain megabytes of already encoded values.
+    public static byte[] DigestStreaming(string domain, CanonicalValue value)
+    {
+        using var hash = SHA256.Create();
+        using (var stream = new BufferedStream(new CryptoStream(Stream.Null, hash, CryptoStreamMode.Write), 1024))
+        {
+            stream.Write(Encoding.ASCII.GetBytes(domain));
+            stream.WriteByte(0);
+            Write(stream, value);
+        }
+
+        return hash.Hash!;
+    }
 
     /// <summary>The digest of a value already encoded by <see cref="Encode"/>.</summary>
-    public static byte[] DigestEncoded(string domain, byte[] encoded)
+    static byte[] DigestEncoded(string domain, ReadOnlySpan<byte> encoded)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         hash.AppendData(Encoding.ASCII.GetBytes(domain));
@@ -109,7 +132,7 @@ internal static class CanonicalEncoder
         switch (value)
         {
             case CanonicalEncoded e:
-                output.Write(e.Bytes);
+                output.Write(e.Bytes.Span);
                 break;
             case CanonicalNull:
                 output.WriteByte(TagNull);
@@ -119,7 +142,7 @@ internal static class CanonicalEncoder
                 break;
             case CanonicalString s:
                 output.WriteByte(TagString);
-                WriteBytes(output, Utf8(s.Value));
+                WriteString(output, s.Value);
                 break;
             case CanonicalNumber n:
                 ValidateNumber(n.Lexeme);
@@ -175,7 +198,35 @@ internal static class CanonicalEncoder
         }
     }
 
-    static void WriteBytes(Stream output, byte[] bytes)
+    static void WriteString(Stream output, string value)
+    {
+        if (value.Length < 1024)
+        {
+            WriteBytes(output, Utf8(value));
+            return;
+        }
+
+        try
+        {
+            var count = StrictUtf8.GetByteCount(value);
+            var buffer = ArrayPool<byte>.Shared.Rent(count);
+            try
+            {
+                var written = StrictUtf8.GetBytes(value, buffer);
+                WriteBytes(output, buffer.AsSpan(0, written));
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
+            }
+        }
+        catch (EncoderFallbackException)
+        {
+            throw new CanonicalEncodingException(RunwickErrorCodes.PayloadInvalidUtf8, "String contains an unpaired surrogate.");
+        }
+    }
+
+    static void WriteBytes(Stream output, ReadOnlySpan<byte> bytes)
     {
         WriteUInt32(output, (uint)bytes.Length);
         output.Write(bytes);

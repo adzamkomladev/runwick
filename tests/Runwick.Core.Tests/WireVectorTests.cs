@@ -210,6 +210,43 @@ public sealed class WireVectorTests
         Assert.Equal(GvC0Export, TestHost.Utf8(export));
     }
 
+    [Theory]
+    [InlineData(1100, "ascii")]
+    [InlineData(1102, "é😀")]
+    public void Large_export_is_canonical_and_owns_its_result(int chars, string metadata)
+    {
+        var (intent, store, app, op, notAfter) = Base();
+        var payload = TestHost.Utf8("{\"value\":\"" + new string('é', chars) + "\"}");
+        intent = intent with { PayloadUtf8 = payload, BusinessMetadata = new Dictionary<string, string> { ["tenant"] = metadata } };
+        var digests = Fingerprints.ForDispatch(store, app, op, notAfter, intent);
+        var prepared = new PreparedDispatch(store, app, op, notAfter, intent, digests);
+
+        var export = prepared.Export();
+        using var document = JsonDocument.Parse(export);
+        Assert.Equal(Convert.ToBase64String(payload), document.RootElement.GetProperty("payloadBase64").GetString());
+        Assert.Equal(metadata, document.RootElement.GetProperty("businessMetadata").GetProperty("tenant").GetString());
+        var imported = PreparedEnvelopeCodec.ReadSingle(export.Span, store, app);
+        Assert.Equal(payload, imported.Intent.PayloadUtf8);
+        Assert.Equal(digests.Command, imported.Digests.Command);
+
+        Assert.True(System.Runtime.InteropServices.MemoryMarshal.TryGetArray(export, out var first));
+        first.Array![first.Offset] = 0;
+        Assert.Equal((byte)'{', prepared.Export().Span[0]);
+    }
+
+    [Fact]
+    public void Long_canonical_strings_keep_validation_and_byte_length()
+    {
+        var prefix = new string('é', 1025);
+        var value = CanonicalValue.Str(prefix + "😀");
+        var bytes = CanonicalEncoder.Encode(value);
+        Assert.Equal(bytes, CanonicalEncoder.EncodeForDigest(value).Bytes.ToArray());
+        Assert.Equal(CanonicalEncoder.Digest(Fingerprints.CommandDomain, value), CanonicalEncoder.DigestStreaming(Fingerprints.CommandDomain, value));
+
+        var ex = Assert.Throws<CanonicalEncodingException>(() => CanonicalEncoder.Encode(CanonicalValue.Str(prefix + "\uD800")));
+        Assert.Equal(RunwickErrorCodes.PayloadInvalidUtf8, ex.Code);
+    }
+
     [Fact]
     [Trait("Case", "SER-11")]
     public void Independent_node_encoder_verifies_published_vectors()

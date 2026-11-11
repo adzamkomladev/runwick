@@ -99,8 +99,8 @@ internal static class Fingerprints
     public static DispatchDigests ForDispatch(Guid storeId, string application, Guid commandId, long notAfterMs, DispatchIntent intent,
         CanonicalValue? payload = null)
     {
-        var business = new CanonicalEncoded(CanonicalEncoder.Encode(payload is null ? Business(application, intent) : Business(application, intent, payload)));
-        var policy = new CanonicalEncoded(CanonicalEncoder.Encode(Policy(intent.Policy)));
+        var business = CanonicalEncoder.EncodeForDigest(payload is null ? Business(application, intent) : Business(application, intent, payload));
+        var policy = CanonicalEncoder.EncodeForDigest(Policy(intent.Policy));
         var body = CanonicalValue.Object()
             .Add("business", business)
             .Add("diagnosticMetadata", StringMap(intent.DiagnosticMetadata))
@@ -110,7 +110,7 @@ internal static class Fingerprints
         return new DispatchDigests(
             Digest(BusinessDomain, business),
             Digest(PolicyDomain, policy),
-            Digest(CommandDomain, Command(storeId, application, "Dispatch", 1, commandId, notAfterMs, body)));
+            CanonicalEncoder.DigestStreaming(CommandDomain, Command(storeId, application, "Dispatch", 1, commandId, notAfterMs, body)));
     }
 
     /// <summary>
@@ -127,11 +127,12 @@ internal static class Fingerprints
         for (var ordinal = 0; ordinal < items.Count; ordinal++)
         {
             var intent = items[ordinal];
+            // The whole batch retains these values until hashing. Keep exact-sized item buffers.
             var business = new CanonicalEncoded(CanonicalEncoder.Encode(
                 payloads is null ? Business(application, intent) : Business(application, intent, payloads[ordinal])));
             if (!policies.TryGetValue(intent.Policy, out var policy))
             {
-                var encoded = new CanonicalEncoded(CanonicalEncoder.Encode(Policy(intent.Policy)));
+                var encoded = CanonicalEncoder.EncodeForDigest(Policy(intent.Policy));
                 policies[intent.Policy] = policy = (encoded, Digest(PolicyDomain, encoded));
             }
 
@@ -149,7 +150,7 @@ internal static class Fingerprints
             .Add("continueOnConflict", continueOnConflict)
             .Add("items", CanonicalValue.Array(bodies))
             .Build();
-        return (digests, Digest(CommandDomain, Command(storeId, application, "DispatchMany", 1, commandId, notAfterMs, body)));
+        return (digests, CanonicalEncoder.DigestStreaming(CommandDomain, Command(storeId, application, "DispatchMany", 1, commandId, notAfterMs, body)));
     }
 
     /// <summary>Instant → epoch ms, rounding toward +∞ (NotBefore) or −∞ (NotAfter/expiry). Spec 02 §6.</summary>
