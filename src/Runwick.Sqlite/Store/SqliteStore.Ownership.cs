@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Runwick.Internal;
+using Runwick.Management;
 using Runwick.Protocol;
 using Runwick.Serialization;
 
@@ -87,16 +88,18 @@ internal sealed partial class SqliteStore : ILeaseBatchStore, IReserveAndBeginSt
     /// <summary>A → P → J' → K' → E (rw_close_v1, 04 §7.10) with each row-count check; returns the job's new revision.</summary>
     static long Close(SqTx tx, Guid commandId, Guid jobId, Guid attemptId, Guid token, int generation, long revision, string jobName,
         string? activeKey, string outcome, string newState, string? reason, string eventKind, long? elapsedMs, long? retryDelayMs,
-        DateTimeOffset? nextEligible, JsonObject? error, JsonObject? eventDetails)
+        DateTimeOffset? nextEligible, JsonObject? error, JsonObject? eventDetails, AttemptResourceUsage? usage = null)
     {
         var now = tx.Now;
         Expect(tx.Exec(tx.Sql("""
             UPDATE runwick_job_attempts
             SET finished_at = @now, outcome = @outcome, disposition = @state, applied_reason = @reason, execution_elapsed_ms = @elapsed,
-                retry_delay_ms = @delay, next_eligible_at = @eligible, error = @error, closed_by_command_id = @command_id
+                retry_delay_ms = @delay, next_eligible_at = @eligible, error = @error, closed_by_command_id = @command_id,
+                usage = COALESCE(@usage, usage)
             WHERE application = @application AND attempt_id = @attempt_id AND job_id = @job_id AND finished_at IS NULL
             """).P("now", now).P("outcome", outcome).P("state", newState).P("reason", reason).P("elapsed", elapsedMs).P("delay", retryDelayMs)
-            .P("eligible", nextEligible).P("error", error).P("command_id", commandId).P("attempt_id", attemptId).P("job_id", jobId)) == 1);
+            .P("eligible", nextEligible).P("error", error).P("command_id", commandId).P("attempt_id", attemptId).P("job_id", jobId)
+            .P("usage", usage is null ? null : Worker.ResourceUsageJson.Write(usage))) == 1);
 
         tx.Exec(tx.Sql("""
             DELETE FROM runwick_concurrency_permits
@@ -928,7 +931,7 @@ internal sealed partial class SqliteStore : ILeaseBatchStore, IReserveAndBeginSt
         _ => ("failed", "execution_budget_exhausted"),
     };
 
-    /// <summary>rw_finish_job_v1: ownership, the retry delay and the close.</summary>
+    /// <summary>rw_finish_job_v1: ownership, the retry delay and the close. A refusal is decided before any mutation.</summary>
     static SqRow FinishJob(SqTx tx, Guid commandId, FinishRequest request, ulong entropy)
     {
         var now = tx.Now;
@@ -956,13 +959,7 @@ internal sealed partial class SqliteStore : ILeaseBatchStore, IReserveAndBeginSt
 
         var revision = Close(tx, commandId, lease.JobId, lease.AttemptId, lease.OwnershipToken, job.Generation, job.Revision, job.JobName, job.ActiveKey,
             outcome, state, reason, "attempt_finished", (long)Math.Max(0, request.ExecutionElapsed.TotalMilliseconds), delay, eligible,
-            ErrorJson(request.Error), null);
-        if (request.Usage is { } usage)
-        {
-            // 16 §3 AttemptResourceUsage: stored with the attempt in the Finish's own transaction; not part of the receipt.
-            tx.Exec(tx.Sql("UPDATE runwick_job_attempts SET usage = @usage WHERE application = @application AND attempt_id = @attempt_id")
-                .P("usage", Runwick.Worker.ResourceUsageJson.Write(usage)).P("attempt_id", lease.AttemptId));
-        }
+            ErrorJson(request.Error), null, request.Usage);
 
         return SqRow.Applied("Applied", null, now, new JsonObject
         {
@@ -1016,17 +1013,10 @@ internal sealed partial class SqliteStore : ILeaseBatchStore, IReserveAndBeginSt
                 continue;
             }
 
-            SqRow item;
-            if (tx.Clock >= ops[k].NotAfter)
-            {
-                item = SqRow.NoEffect("CommandExpired", "command_expired", tx.Now);
-            }
-            else
-            {
-                tx.Raw("SAVEPOINT rw_m");
-                item = FinishJob(tx, items[k].CommandId, items[k].Body, entropy[k]);
-                tx.Raw(item.HasValue ? "RELEASE rw_m" : "ROLLBACK TO rw_m; RELEASE rw_m");
-            }
+            // An item's refusal never mutates job state. An exception still rolls back the enclosing transaction.
+            var item = tx.Clock >= ops[k].NotAfter
+                ? SqRow.NoEffect("CommandExpired", "command_expired", tx.Now)
+                : FinishJob(tx, items[k].CommandId, items[k].Body, entropy[k]);
 
             if (item.HasValue)
             {
