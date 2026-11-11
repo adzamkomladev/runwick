@@ -97,6 +97,44 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
     readonly RoleTracker _managementReads = new(time);
     readonly ILogger _logger = services.GetService<ILogger<RunwickHealthService>>() ?? (ILogger)Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
     Task? _loop;
+    readonly Lock _descriptorLock = new();
+    (StoreDescriptor Descriptor, DateTimeOffset At, long Timestamp)? _lastDescriptor;
+    string? _descriptorFailure;
+
+    internal (StoreDescriptor? Descriptor, DateTimeOffset? LastSuccessfulAt, TimeSpan? Age, string? Failure) StoreObservation()
+    {
+        lock (_descriptorLock)
+        {
+            return _lastDescriptor is { } last
+                ? (last.Descriptor, last.At, time.GetElapsedTime(last.Timestamp), _descriptorFailure)
+                : (null, null, null, _descriptorFailure);
+        }
+    }
+
+    async Task<StoreDescriptor> ObserveDescriptorAsync(IRunwickStore store, CancellationToken ct)
+    {
+        try
+        {
+            var descriptor = await store.DescribeAsync(runtime.Registry.Application, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            lock (_descriptorLock)
+            {
+                _lastDescriptor = (descriptor, time.GetUtcNow(), time.GetTimestamp());
+                _descriptorFailure = null;
+            }
+
+            return descriptor;
+        }
+        catch (Exception ex) when (!_stop.IsCancellationRequested)
+        {
+            lock (_descriptorLock)
+            {
+                _descriptorFailure = ex is StoreIncompatibleException ? "incompatible" : "store_unavailable";
+            }
+
+            throw;
+        }
+    }
 
     public RunwickRoleHealth Liveness()
     {
@@ -150,7 +188,7 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
         var reads = services.GetService<IManagementQueryStore>();
         for (var tick = 0; !_stop.IsCancellationRequested; tick++)
         {
-            await Refresh(runtime.Producer, "producer", ct => store.DescribeAsync(runtime.Registry.Application, ct)).ConfigureAwait(false);
+            await Refresh(runtime.Producer, "producer", ct => ObserveDescriptorAsync(store, ct)).ConfigureAwait(false);
             if (_management && reads is not null)
             {
                 await Refresh(_managementReads, "management", ct => reads.ListQueuesAsync(runtime.Registry.Application, null, null, 1, ct)).ConfigureAwait(false);
@@ -181,14 +219,14 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
             await read(budget.Token).ConfigureAwait(false);
             tracker.Ok();
         }
-        catch (Exception ex) when (!_stop.IsCancellationRequested)
+        catch (Exception ex)
         {
-            tracker.Failed(ex);
-            Telemetry.RunwickLog.StoreUnavailable(_logger, role, ex is RunwickException r ? r.Code : ex.GetType().Name);
-        }
-        catch (OperationCanceledException)
-        {
-            // Stopping while a read was in flight is not a failure.
+            // A provider can report cancellation of an in-flight read as a store error during shutdown.
+            if (!_stop.IsCancellationRequested)
+            {
+                tracker.Failed(ex);
+                Telemetry.RunwickLog.StoreUnavailable(_logger, role, ex is RunwickException r ? r.Code : ex.GetType().Name);
+            }
         }
     }
 

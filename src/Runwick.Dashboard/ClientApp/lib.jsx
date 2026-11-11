@@ -1,7 +1,7 @@
 import { Link, router, usePage } from '@inertiajs/react'
 import {
   IconAlertTriangle, IconArrowDown, IconArrowRight, IconArrowUp, IconArrowsSort, IconBell, IconBolt, IconCalendarTime, IconCheck, IconChevronRight,
-  IconCopy, IconDeviceDesktop, IconFilter, IconGauge, IconHistory, IconLayoutDashboard, IconListDetails, IconPlayerPlay, IconLoader2, IconLogout,
+  IconCopy, IconDatabase, IconDeviceDesktop, IconFilter, IconGauge, IconHistory, IconLayoutDashboard, IconListDetails, IconPlayerPlay, IconLoader2, IconLogout,
   IconMoon, IconPlayerPause, IconSelector, IconServer2, IconSettings, IconStack2, IconStack3, IconSun, IconTrash, IconX,
 } from '@tabler/icons-react'
 import { createContext, use, useEffect, useRef, useState, useSyncExternalStore } from 'react'
@@ -367,6 +367,7 @@ const relativeTime = (iso) => {
 const NAV = [
   ['Monitor', [
     ['overview', 'Overview', '/overview', IconLayoutDashboard, ['Overview']],
+    ['store', 'Store', '/store', IconDatabase, ['Store']],
     ['runs', 'Runs', '', IconPlayerPlay, ['Runs', 'Run']],
     ['jobs', 'Jobs', '/jobs', IconListDetails, ['Jobs', 'Job']],
     ['queues', 'Queues', '/queues', IconStack2, ['Queues', 'Queue']],
@@ -551,7 +552,7 @@ export function SkeletonScope({ className, children }) {
 
 const ROUTES = [[/^\/?$/, 'Runs'], [/^\/runs\/?$/, 'Runs'], [/^\/runs\/[^/]+$/, 'Run'], [/^\/jobs\/?$/, 'Jobs'], [/^\/jobs\/[^/]+$/, 'Job'], [/^\/overview$/, 'Overview'], [/^\/queues$/, 'Queues'], [/^\/workers$/, 'Workers'],
   [/^\/queues\/[^/]+$/, 'Queue'], [/^\/workers\/[^/]+$/, 'Worker'], [/^\/pools$/, 'Pools'], [/^\/pools\/[^/]+$/, 'Pool'], [/^\/schedules\/[^/]+$/, 'Schedule'],
-  [/^\/schedules$/, 'Schedules'], [/^\/scaling$/, 'Scaling'], [/^\/audit$/, 'Audit'], [/^\/retention$/, 'Retention'], [/^\/settings$/, 'Settings']]
+  [/^\/schedules$/, 'Schedules'], [/^\/scaling$/, 'Scaling'], [/^\/audit$/, 'Audit'], [/^\/retention$/, 'Retention'], [/^\/settings$/, 'Settings'], [/^\/store$/, 'Store']]
 
 /** The page a slow page visit is going to: set 150 ms after the visit starts (not polls, controls or partial reloads) until it ends. */
 function useNavigatingTo(base) {

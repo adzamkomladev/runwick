@@ -244,6 +244,10 @@ Sanitization runs before the value reaches `Activity` or `ILogger`, not at expor
 
 ## 7. Health and readiness
 
+The Store snapshot reads one process-local observation from the existing compatibility refresh. It does no store I/O on request. The host records the last successful check in UTC and measures its age with its monotonic clock. A failure or 30 seconds without a fresh check marks the retained descriptor stale. After five minutes the descriptor is omitted. The last successful check time remains available. A failed compatibility check leaves reachability unknown.
+
+The snapshot reports process-local readiness for each enabled role, application admission and protocol requirements, store-wide identity, schema or layout revision and migration mode, and the client’s acknowledgement profile. A successful SQLite descriptor check verifies the configured WAL/FULL profile for that observation. The acknowledgement profile name alone carries no verification status for PostgreSQL or Redis. Optional capabilities describe this process’s registered client. Provider-node fields carry explicit availability states for unavailable, unsupported and permission-denied observations. The common snapshot does not run server or node collectors, and SQLite topology is unsupported. No raw provider output or connection strings are included.
+
 Core exposes a snapshot API; `Runwick.AspNetCore` adapts it to `Microsoft.Extensions.Diagnostics.HealthChecks` (part of the ASP.NET Core shared framework, so no new package).
 
 ```csharp

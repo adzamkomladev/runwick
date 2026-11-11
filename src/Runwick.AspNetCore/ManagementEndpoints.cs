@@ -392,6 +392,7 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
         g.MapGet("scaling-events", async (HttpContext ctx, CancellationToken _) => Ok(await Session(ctx).ListScalingEventsAsync(Caller(ctx),
             new ScalingEventQuery(QGuid(ctx, "instance"), Q(ctx, "pool"), QTime(ctx, "from"), QTime(ctx, "to"), QInt(ctx, "limit"), Q(ctx, "cursor")),
             ctx.RequestAborted)));
+        g.MapGet("store", async (HttpContext ctx, CancellationToken _) => Ok(await Session(ctx).GetStoreSnapshotAsync(Caller(ctx), ctx.RequestAborted)));
         g.MapGet("settings", async (HttpContext ctx, CancellationToken _) => Ok(await Session(ctx).GetSettingsAsync(Caller(ctx), ctx.RequestAborted)));
 
         g.MapGet("retention", async (HttpContext ctx, CancellationToken _) =>

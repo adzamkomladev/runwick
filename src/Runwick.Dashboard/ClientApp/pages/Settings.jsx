@@ -1,3 +1,5 @@
+import { Link } from '@inertiajs/react'
+import { Button } from '../components/ui/button'
 import { IconDatabase, IconGauge } from '@tabler/icons-react'
 import { StatusBadge } from '../components/status'
 import { Badge } from '../components/ui/badge'
@@ -14,9 +16,9 @@ const Row = ({ name, children, testId }) => (
 const words = (key) => key.replace(/([a-z\d])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase())
 
 /** GetSettings (16), read only: the application, its store, this process's roles and the management limits in force. */
-export default function Settings({ settings }) {
+export default function Settings({ base, can, settings }) {
   return (
-    <Layout heading="Settings">
+    <Layout heading="Settings" actions={can.store && <Button asChild variant="outline" size="sm"><Link href={`${base}/store`}>Store status</Link></Button>}>
       <div className="grid items-start gap-6 lg:grid-cols-2" data-testid="settings">
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><IconDatabase className="size-4 text-muted-foreground" />Application</CardTitle></CardHeader>

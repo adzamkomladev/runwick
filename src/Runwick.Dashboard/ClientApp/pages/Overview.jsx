@@ -10,6 +10,7 @@ import { relative } from '../components/timeline'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
+import { Button } from '../components/ui/button'
 import { cn } from '../components/ui/utils'
 import { AnimatedNumber, Layout, NameLink, OpenButton, SkeletonScope, standIn, time, usePoll } from '../lib'
 
@@ -98,7 +99,7 @@ const More = ({ href, children }) => (
 const top = (pairs, n = 6) => pairs.filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, n).map(([label, value]) => ({ label, value }))
 
 export default function Overview(props) {
-  const { can, stats, failed } = props
+  const { base, can, stats, failed } = props
   const live = usePoll(['stats', 'failed', ...(can.queues ? ['queues'] : []), ...(can.workers ? ['workers', 'events'] : [])], 10)
   const now = Date.now()
   const range = useRange(now)
@@ -106,7 +107,10 @@ export default function Overview(props) {
   // Until the deferred props arrive, the same body is drawn as a skeleton from stand-in props (21 §4.3).
   const stand = useStandIn(props)
   return (
-    <Layout heading="Overview" live={ready ? live : null} actions={<DateRangePicker query={range.query} fallback="1d" />}>
+    <Layout heading="Overview" live={ready ? live : null} actions={<>
+      {can.store && <Button asChild variant="outline" size="sm"><Link href={`${base}/store`}>Store status</Link></Button>}
+      <DateRangePicker query={range.query} fallback="1d" />
+    </>}>
       {ready ? <div className="grid min-w-0 animate-page-in gap-6"><OverviewBody {...props} now={now} range={range} /></div>
         : <SkeletonScope className="grid min-w-0 gap-6"><OverviewBody {...stand} now={now} range={range} /></SkeletonScope>}
     </Layout>

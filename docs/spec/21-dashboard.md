@@ -246,6 +246,7 @@ Routes are relative to the mount. All pages are `GET`. "Poll" is the interval wh
 | Workers and capacity (`Workers`) | `/workers?expired&cursor` | `ListWorkersAsync`, `ListScopesAsync` (`Capacity.Read`) | set scope capacity (`Capacity.Edit`) | 10 s |
 | Schedules (`Schedules`) | `/schedules?cursor` | `ListSchedulesAsync` (`Schedules.Read`) | pause, resume with policy (`Schedules.Control`); trigger (`Schedules.Trigger`); revalidate (`Schedules.Edit`) | 10 s |
 | Scaling (`Scaling`) | `/scaling?instance&pool&range\|from&to&cursor` | `ListScalingEventsAsync` (`Capacity.Read`, §6) | none | 15 s |
+| Store (`Store`) | `/store` | `GetStoreSnapshotAsync` (`Settings.Read`) | none | 10 s minimum |
 | Settings (`Settings`) | `/settings` | `GetSettingsAsync` (`Settings.Read`) | none | none |
 | Retention (`Retention`) | `/retention` | `GetRetentionAsync` (`Settings.Read`) | edit policy (`Retention.Manage`) | 30 s |
 | Audit (`Audit`) | `/audit?targetKind&targetId&range\|from&to&cursor` | `ListAuditAsync` (`Audit.Read`) | none | 15 s |
@@ -374,6 +375,10 @@ Each list page opens with a row of compact cards: an exact figure that tweens, a
 | Retention | rows kept, removed today, batches and failures today, classes behind |
 
 Queue, paused and schedule totals and the fleet figures page through every item of their list (at most 5,000; above that the prop answers `too_many`). Scaling has no header: its list is the history itself.
+
+### Store status
+
+The Store page links from Overview, Settings and store-related outage pages when the caller has `Settings.Read`. It shows this host’s connection observation and role readiness separately from application admission, logical store metadata and provider-node facts. An outage still allows the Store page to render its bounded last-known snapshot with an explicit stale state. The Store page uses its cached snapshot for polling and omits the shell’s live notification queries. The generic 503 page describes the failed request and links to Store status when available.
 
 ## 5. Controls
 

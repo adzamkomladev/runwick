@@ -79,6 +79,15 @@ export const PLACEHOLDERS = {
   }),
   Pools: () => ({ workers: [worker(0), worker(1)] }),
   Pool: () => ({ workers: [worker(0), worker(1)], events: page(0, () => null), query: { name: 'default' } }),
+  Store: () => ({
+    snapshot: {
+      application: 'Application', provider: 'postgres', connection: { status: 'Unknown', reason: 'not_observed' },
+      identity: { status: 'Unavailable' }, admission: { status: 'Unavailable' },
+      persistence: { status: 'Unavailable' }, capabilities: { status: 'Unavailable' },
+      recovery: { status: 'Unavailable' }, serverVersion: { status: 'Unavailable' }, topology: { status: 'Unavailable' },
+      roles: [],
+    },
+  }),
   Settings: () => ({
     settings: { application: 'application', storeKind: 'postgres', schemaRevision: 18, persistenceProfile: 'durable', roles: ['dispatcher', 'worker'], retentionPolicyRevision: 1,
       limits: Object.fromEntries(['maxPageSize', 'maxBulkItems', 'maxRangeDays', 'maxRevealBytes', 'maxReasonLength', 'maxFilterLength'].map((k) => [k, 100])) },

@@ -64,6 +64,19 @@ public interface IManagementSession
     Task<ManagementPage<ScalingEventSummary>> ListScalingEventsAsync(ManagementCaller caller, ScalingEventQuery query,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Reads the host's cached observation without querying the store.</summary>
+    Task<ManagementStoreSnapshot> GetStoreSnapshotAsync(ManagementCaller caller, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        if (!caller.Grants.Any(g => g.Permission == ManagementPermissions.SettingsRead))
+        {
+            throw new ManagementDeniedException(ManagementPermissions.SettingsRead);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(ManagementStoreSnapshot.Unobserved(DateTimeOffset.UtcNow));
+    }
+
     Task<ManagementSettings> GetSettingsAsync(ManagementCaller caller, CancellationToken cancellationToken = default);
 
     /// <summary>The retention policy and per-class cleanup progress (17 §7). Needs <c>Settings.Read</c>.</summary>
@@ -128,7 +141,7 @@ public interface IManagementSession
 
 internal sealed class ManagementSession(
     RunwickRuntime runtime, RunwickBuilder builder, IManagementQueryStore? store, ControlService controls, ScheduleControlService schedules,
-    ManagementCursors cursors, ManagementOptions options, TimeProvider time, DispatchPreparer preparer, LocalAdmission admission) : IManagementSession
+    ManagementCursors cursors, ManagementOptions options, TimeProvider time, DispatchPreparer preparer, LocalAdmission admission, RunwickHealthService health) : IManagementSession
 {
     public const int DefaultPageSize = 50, MaxPageSize = 200, MaxBulkItems = 100;
     static readonly TimeSpan DefaultRange = TimeSpan.FromDays(7), MaxRange = TimeSpan.FromDays(31);
@@ -567,6 +580,62 @@ internal sealed class ManagementSession(
         return start > end || end - start > MaxRange
             ? throw new ManagementValidationException("invalid_request", "The created range must be ordered and at most 31 days.")
             : (start, end);
+    }
+
+    public Task<ManagementStoreSnapshot> GetStoreSnapshotAsync(ManagementCaller caller, CancellationToken cancellationToken = default)
+    {
+        Require(caller, ManagementPermissions.SettingsRead);
+        cancellationToken.ThrowIfCancellationRequested();
+        var (last, successfulAt, age, failure) = health.StoreObservation();
+        var fresh = failure is null && age is { } observed && observed < 3 * RunwickHealthService.RefreshPeriod;
+        var retained = age < TimeSpan.FromMinutes(5) ? last : null;
+        var availability = fresh ? StoreSnapshotStatus.Available : retained is null ? StoreSnapshotStatus.Unavailable : StoreSnapshotStatus.Stale;
+        var connection = new StoreConnectionObservation(StoreSnapshotScope.Process,
+            fresh ? StoreReachability.Reachable : failure == "store_unavailable" ? StoreReachability.Unavailable : StoreReachability.Unknown,
+            fresh ? "ok" : failure ?? (age is null ? "not_observed" : "stale"));
+        var provider = builder.StoreProviders.FirstOrDefault()?.Name switch
+        {
+            "postgres" => "postgres",
+            "redis" => "redis",
+            "sqlite" => "sqlite",
+            _ => "unknown",
+        };
+        var profile = runtime.Store.AcknowledgementProfile switch
+        {
+            AcknowledgementProfiles.PostgresSynchronousCommit => AcknowledgementProfiles.PostgresSynchronousCommit,
+            AcknowledgementProfiles.SqliteWalFull => AcknowledgementProfiles.SqliteWalFull,
+            AcknowledgementProfiles.RedisAofAlways => AcknowledgementProfiles.RedisAofAlways,
+            _ => null,
+        };
+        var migration = retained?.MigrationMode is "normal" or "expand" or "maintenance" ? retained.MigrationMode : "unknown";
+        var gate = retained?.Application;
+        var admission = gate?.AdmissionMode is "open" or "drain" or "maintenance" ? gate.AdmissionMode : "unknown";
+
+        var store = runtime.Store;
+        List<StoreProviderCapability> capabilities = [];
+        if (store is IReserveAndBeginStore) capabilities.Add(StoreProviderCapability.BatchClaim);
+        if (store is IFinishManyStore) capabilities.Add(StoreProviderCapability.BatchFinish);
+        if (store is ILeaseBatchStore) capabilities.Add(StoreProviderCapability.BatchRenewal);
+        if (store is IRateControlStore) capabilities.Add(StoreProviderCapability.RateAdmission);
+        if (store is IScheduleStore) capabilities.Add(StoreProviderCapability.Scheduling);
+        if (store is IRetentionStore) capabilities.Add(StoreProviderCapability.Retention);
+        if (store is IWakeNotificationSource) capabilities.Add(StoreProviderCapability.WakeNotifications);
+        if (store is IOutboxDestinationStore) capabilities.Add(StoreProviderCapability.OutboxDestination);
+        return Task.FromResult(new ManagementStoreSnapshot(App, provider, time.GetUtcNow(), successfulAt, age?.TotalSeconds, connection,
+            [.. health.Readiness().Select(r => new StoreRoleObservation(StoreSnapshotScope.Process, r))],
+            new(StoreSnapshotScope.Application, gate is null ? StoreSnapshotStatus.Unavailable : availability, gate is null ? null :
+                new StoreApplicationObservation(admission, gate.RequiredProtocolEpoch,
+                    gate.RequiredProtocolEpoch == retained!.ProtocolEpoch &&
+                    gate.RequiredCapabilities.All(c => RunwickRuntime.KnownCapabilities.TryGetValue(c.Key, out var v) && v >= c.Value))),
+            new(StoreSnapshotScope.Store, availability, retained is null ? null :
+                new StoreIdentityObservation(retained.StoreId, retained.SchemaRevision, retained.ProtocolEpoch, migration)),
+            new(StoreSnapshotScope.Process, profile is null ? StoreSnapshotStatus.Unavailable : StoreSnapshotStatus.Available, profile is null ? null :
+                new StoreProfileObservation(profile, provider == "sqlite" && profile == AcknowledgementProfiles.SqliteWalFull && retained is not null
+                    ? availability : StoreSnapshotStatus.Unavailable)),
+            new(StoreSnapshotScope.Process, StoreSnapshotStatus.Available, capabilities.AsReadOnly()),
+            new(StoreSnapshotScope.ProviderNode, StoreSnapshotStatus.Unavailable, null),
+            new(StoreSnapshotScope.Store, StoreSnapshotStatus.Unavailable, null),
+            new(StoreSnapshotScope.ProviderNode, provider == "sqlite" ? StoreSnapshotStatus.Unsupported : StoreSnapshotStatus.Unavailable, null)));
     }
 
     public async Task<ManagementSettings> GetSettingsAsync(ManagementCaller caller, CancellationToken cancellationToken = default)

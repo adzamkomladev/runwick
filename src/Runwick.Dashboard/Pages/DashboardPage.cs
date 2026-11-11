@@ -18,12 +18,14 @@ internal abstract class DashboardPage
     public static readonly IReadOnlyDictionary<string, string> Abilities = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["overview"] = P.JobsRead, ["runs"] = P.JobsRead, ["jobs"] = P.JobsRead, ["queues"] = P.QueuesRead, ["workers"] = P.CapacityRead, ["schedules"] = P.SchedulesRead,
-        ["scaling"] = P.CapacityRead, ["pools"] = P.CapacityRead, ["settings"] = P.SettingsRead, ["retention"] = P.SettingsRead, ["audit"] = P.AuditRead,
+        ["scaling"] = P.CapacityRead, ["pools"] = P.CapacityRead, ["settings"] = P.SettingsRead, ["store"] = P.SettingsRead, ["retention"] = P.SettingsRead, ["audit"] = P.AuditRead,
         ["cancel"] = P.JobsCancel, ["retry"] = P.JobsRetry, ["rerun"] = P.JobsRerun, ["revealPayload"] = P.JobsReadPayload,
         ["revealError"] = P.JobsReadError, ["queueControl"] = P.QueuesControl, ["capacityEdit"] = P.CapacityEdit,
         ["scheduleControl"] = P.SchedulesControl, ["scheduleTrigger"] = P.SchedulesTrigger, ["scheduleEdit"] = P.SchedulesEdit,
         ["retentionManage"] = P.RetentionManage, ["dispatch"] = P.JobsDispatch,
     };
+
+    protected virtual bool SupportsNotifications => true;
 
     public abstract string Component { get; }
 
@@ -69,7 +71,7 @@ internal abstract class DashboardPage
             ["can"] = DashboardRequest.Element(Abilities.ToDictionary(a => a.Key, a => r.Has(a.Value))),
             ["signOut"] = r.Mount.SignOutPath,
             // The sidebar's notifications: loaded after the page, then kept by the client for a minute (21 §4.4).
-            ["notifications"] = Inertia.Net.Inertia.Defer(async _ => DashboardRequest.Element(await Notifications.LoadAsync(r)), "notifications")
+            ["notifications"] = !SupportsNotifications ? null : Inertia.Net.Inertia.Defer(async _ => DashboardRequest.Element(await Notifications.LoadAsync(r)), "notifications")
                 .Once("runwick-notifications", TimeSpan.FromMinutes(1)),
         };
         foreach (var prop in Props.Keys)

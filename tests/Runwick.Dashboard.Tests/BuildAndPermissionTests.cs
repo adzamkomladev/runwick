@@ -86,7 +86,7 @@ public sealed class BuildAndPermissionTests
         {
             ["overview"] = ManagementPermissions.JobsRead, ["runs"] = ManagementPermissions.JobsRead, ["jobs"] = ManagementPermissions.JobsRead, ["pools"] = ManagementPermissions.CapacityRead, ["queues"] = ManagementPermissions.QueuesRead, ["workers"] = ManagementPermissions.CapacityRead,
             ["schedules"] = ManagementPermissions.SchedulesRead, ["scaling"] = ManagementPermissions.CapacityRead,
-            ["settings"] = ManagementPermissions.SettingsRead, ["retention"] = ManagementPermissions.SettingsRead, ["audit"] = ManagementPermissions.AuditRead,
+            ["settings"] = ManagementPermissions.SettingsRead, ["store"] = ManagementPermissions.SettingsRead, ["retention"] = ManagementPermissions.SettingsRead, ["audit"] = ManagementPermissions.AuditRead,
             ["cancel"] = ManagementPermissions.JobsCancel, ["retry"] = ManagementPermissions.JobsRetry, ["rerun"] = ManagementPermissions.JobsRerun,
             ["revealPayload"] = ManagementPermissions.JobsReadPayload, ["revealError"] = ManagementPermissions.JobsReadError,
             ["queueControl"] = ManagementPermissions.QueuesControl, ["capacityEdit"] = ManagementPermissions.CapacityEdit,
@@ -101,7 +101,7 @@ public sealed class BuildAndPermissionTests
 
         // Each page the nav would list is 200; each it would hide is 403. The server checks; the map is a hint.
         foreach (var (name, route) in new[] { ("overview", "/runwick/overview"), ("runs", "/runwick/runs"), ("jobs", "/runwick/jobs"), ("pools", "/runwick/pools"), ("queues", "/runwick/queues"), ("workers", "/runwick/workers"),
-                     ("schedules", "/runwick/schedules"), ("scaling", "/runwick/scaling"), ("settings", "/runwick/settings"),
+                     ("schedules", "/runwick/schedules"), ("scaling", "/runwick/scaling"), ("settings", "/runwick/settings"), ("store", "/runwick/store"),
                      ("retention", "/runwick/retention"), ("audit", "/runwick/audit") })
         {
             var visit = await browser.VisitAsync(route);

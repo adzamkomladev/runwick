@@ -94,9 +94,10 @@ All lists use **keyset pagination only**: page size 50 by default, at most 200. 
 | `ListScopes` | `Capacity.Read` | kind | kind, key | kind, key, capacity, policy revision, live permits |
 | `ListSchedules` | `Schedules.Read` | — | key | key, paused, needs review, definition and control revisions, next due, last materialized |
 | `ListAudit` | `Audit.Read` | target kind, target id, from/to | `audit_id DESC` | every audit column except `details` beyond its allowlisted keys |
+| `GetStoreSnapshot` | `Settings.Read` | — | — | Cached host connection and role readiness, application admission, logical store details and provider diagnostics availability (§7 of 18). No store I/O on the request. |
 | `GetSettings` | `Settings.Read` | — | — | allowlist: application, store kind and schema revision, persistence profile, roles enabled in this process, management limits. Never connection strings or `IConfiguration` |
 
-A job in a queue the caller cannot read is **404**, never 403 (design §2: never confirm hidden IDs). Each query runs with `statement_timeout = 1 s`; a timeout returns 503 `query_budget_exceeded`, not a partial page.
+A job in a queue the caller cannot read is **404**, never 403 (design §2: never confirm hidden IDs). Each store-backed query runs with `statement_timeout = 1 s`; a timeout returns 503 `query_budget_exceeded`, not a partial page.
 
 ### 2.1 Cursors
 
@@ -240,6 +241,7 @@ Route table (all under `{prefix}/v1`):
 | `GET audit/stats?from&to` | GetAuditStats |
 | `GET schedules`; `POST schedules/{key}/pause`, `…/resume`, `…/trigger`, `…/revalidate` | ListSchedules; schedule controls |
 | `GET audit?targetKind&targetId&from&to&limit&cursor` | ListAudit |
+| `GET store` | GetStoreSnapshot |
 | `GET settings` | GetSettings |
 | `GET events?after&limit` | ListEvents (added by SP-032, 19 §6.1) |
 | `POST jobs:dispatch` | Dispatch (added by SP-032, 19 §6.2; body limit 1 MiB + 16 KiB) |

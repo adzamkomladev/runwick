@@ -27,11 +27,41 @@ async page => {
     await page.waitForURL(`${base}/ops/runwick/queues`)
     check(await text('title') === 'Runwick', 'title')
   })
+  await step('Store status links, scoped states and mobile width', async () => {
+    const path = '**/ops/runwick/store'
+    const synthetic = async (route) => {
+      const response = await route.fetch()
+      const data = await response.json()
+      data.props.snapshot.identity.status = 'Stale'
+      data.props.snapshot.topology.status = 'PermissionDenied'
+      await route.fulfill({ response, json: data })
+    }
+    await page.getByTestId('nav-overview').click()
+    await page.route(path, synthetic)
+    try {
+      await page.getByRole('link', { name: 'Store status' }).click()
+      const snapshot = page.getByTestId('store-snapshot')
+      await snapshot.getByText('Showing the last known observation from this host.').waitFor()
+      await snapshot.getByText('Permission denied', { exact: true }).waitFor()
+      const viewport = page.viewportSize()
+      await page.setViewportSize({ width: 375, height: 812 })
+      try {
+        check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'store page overflows on mobile')
+      } finally {
+        await page.setViewportSize(viewport ?? { width: 1280, height: 800 })
+      }
+    } finally {
+      await page.unroute(path, synthetic)
+    }
+    await page.getByTestId('nav-settings').click()
+    await page.getByRole('link', { name: 'Store status' }).click()
+    await page.getByTestId('store-snapshot').waitFor()
+  })
   await step('Runs page: hostile payload owner, rows, nav filtered by can', async () => {
     await page.getByTestId('nav-runs').click()
     await page.getByTestId('run-row').first().waitFor()
     check(await page.getByTestId('run-row').count() >= 5, 'rows')
-    for (const nav of ['overview', 'runs', 'jobs', 'queues', 'workers', 'schedules', 'scaling', 'settings', 'retention', 'audit']) {
+    for (const nav of ['overview', 'store', 'runs', 'jobs', 'queues', 'workers', 'schedules', 'scaling', 'settings', 'retention', 'audit']) {
       check(await page.getByTestId(`nav-${nav}`).count() === 1, `nav-${nav}`)
     }
   })

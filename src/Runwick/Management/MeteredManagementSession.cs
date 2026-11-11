@@ -111,6 +111,9 @@ internal sealed class MeteredManagementSession(IManagementSession inner, Microso
     public Task<ManagementPage<AuditEntry>> ListAuditAsync(ManagementCaller caller, AuditQuery query, CancellationToken cancellationToken = default) =>
         Measure("ListAudit", false, () => inner.ListAuditAsync(caller, query, cancellationToken));
 
+    public Task<ManagementStoreSnapshot> GetStoreSnapshotAsync(ManagementCaller caller, CancellationToken cancellationToken = default) =>
+        Measure("GetStoreSnapshot", false, () => inner.GetStoreSnapshotAsync(caller, cancellationToken));
+
     public Task<ManagementSettings> GetSettingsAsync(ManagementCaller caller, CancellationToken cancellationToken = default) =>
         Measure("GetSettings", false, () => inner.GetSettingsAsync(caller, cancellationToken));
 

@@ -28,6 +28,7 @@ internal static class DashboardRouter
                 ["pools"] => Get(r, PoolsPage.Instance),
                 ["pools", var pool] => Get(r, new PoolPage(pool)),
                 ["scaling"] => Get(r, ScalingPage.Instance),
+                ["store"] => Get(r, StorePage.Instance),
                 ["settings"] => Get(r, SettingsPage.Instance),
                 ["retention"] => Get(r, RetentionPage.Instance),
                 ["audit"] => Get(r, AuditPage.Instance),

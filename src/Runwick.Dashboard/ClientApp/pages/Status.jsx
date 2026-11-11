@@ -12,7 +12,7 @@ const HOME = [['overview', '/overview', 'Overview'], ['runs', '/runs', 'Runs'], 
 const COPY = {
   403: { icon: IconLock, title: 'You don’t have access to this page', text: 'Your account is signed in, but its Runwick grants don’t include this page. Ask whoever manages access to add the permission below, or sign in with another account.' },
   404: { icon: IconMapSearch, title: 'Nothing here', text: 'This page doesn’t exist, or what it shows was removed or is outside the queues you can see.' },
-  503: { icon: IconCloudOff, title: 'Runwick can’t reach its store', text: 'The dashboard is running, but the store did not answer in time. Your data is safe; try again in a moment.' },
+  503: { icon: IconCloudOff, title: 'Store request unavailable', text: 'The dashboard could not complete the store request for this page.' },
 }
 
 export default function Status({ base, can, signOut, status: s }) {
@@ -35,6 +35,7 @@ export default function Status({ base, can, signOut, status: s }) {
         </dl>
         <div className="flex flex-wrap gap-2">
           {home && <Button asChild data-testid="status-home"><Link href={`${base}${home[1]}`}><IconArrowLeft />Go to {home[2]}</Link></Button>}
+          {s.status === 503 && can.store && <Button asChild variant="outline"><Link href={`${base}/store`}>Store status</Link></Button>}
           {s.status === 503 && <Button variant="outline" data-testid="status-retry" onClick={() => window.location.reload()}>Try again</Button>}
           {s.status === 403 && signOut && <form method="post" action={signOut}><Button type="submit" variant="outline" data-testid="status-sign-out"><IconLogout />Sign in as someone else</Button></form>}
         </div>
