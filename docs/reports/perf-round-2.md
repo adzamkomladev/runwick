@@ -387,7 +387,18 @@ The raw payload values accounted for 1.52 MB inside the intents and were also st
 
 The MessagePack analysis found 2.23 MB of reply result bytes already present in the same command's receipt after-images, or 8.58% of whole-drain AOF. `ReserveAndBegin` accounted for 2.03 MB. Existing recovery scripts consume the full stored reply, so removing that copy requires a compatible format transition. The intent encoding is retained. The byte attribution and reproduction command are alongside the raw AOFs.
 
-An isolated CPU candidate encodes each applied table result once for the receipt, packed intent and live reply. Nine fixed-clock checks through the production Lua prelude matched the exact reply, receipt and persisted intent bytes. The existing recovery script read the candidate's interrupted intent. Eight focused provider tests passed on Redis 8.2.11 with AOF `always`, including prefix faults, interrupted bulk, replay after expiry and intent bounds. The clock fixture now initializes its own schema, and its replay test also passed alone against an empty server. Product CPU and throughput comparisons are pending. Patch and evidence are under `artifacts/perf/round-two/redis-f5-reply/`.
+An isolated CPU candidate encodes each applied table result once for the receipt, packed intent and live reply. Nine fixed-clock checks through the production Lua prelude matched the exact reply, receipt and persisted intent bytes. The existing recovery script read the candidate's interrupted intent. Eight focused provider tests passed on Redis 8.2.11 with AOF `always`, including prefix faults, interrupted bulk, replay after expiry and intent bounds. The clock fixture now initializes its own schema, and its replay test also passed alone against an empty server.
+
+Five alternating pairs per workload compared the `2978f04` baseline and the candidate on fresh Redis 8.2.11 AOF-always fixtures. All arms accepted 1,500 jobs. The 64-slot drains each settled 1,500 jobs once, and neither workload entered intent recovery.
+
+| F5 reply encoding | Baseline median | Candidate median | Paired median change (min–max) |
+|---|---:|---:|---:|
+| Durable drain completions/s | 263.6 | 355.6 | +32.5% (+24.2% to +77.8%) |
+| Redis CPU ms per job, whole drain fixture | 3.88 | 2.80 | −26.6% (−33.2% to −21.1%) |
+| Drain due-to-handler p99 | 5.79 s | 4.32 s | −24.1% (−42.0% to −19.3%) |
+| Bulk adds/s, eight callers | 926.3 | 848.2 | −2.4% (−26.9% to +19.9%) |
+
+Whole-fixture AOF size was identical across all bulk runs and stayed near 17.36 kB/job in the drain. Handler-to-finish p99 improved in four drain pairs and rose 14.2% in one. The median paired time from reservation to handler start rose 22.9% at p99 as the faster drain changed worker batching. The bulk throughput spread crosses the acceptance band. The candidate remains isolated while a longer bulk comparison is prepared. Patch and evidence are under `artifacts/perf/round-two/redis-f5-reply/`.
 
 ### F4 Redis producer depth and settlement instrumentation
 
