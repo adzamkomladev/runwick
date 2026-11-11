@@ -370,6 +370,12 @@ Median single-add p95/p99 was 90.9/159.8 ms for Runwick and 57.7/128.1 ms for Bu
 
 The AOF and server CPU counters cover setup and warm-up or seeding as applicable. In the first Runwick drain, 1,500 completions used 67 combined claim-and-begin calls, 82 individual finish calls and 84 finish batches. All returned directly without intent recovery. The CPU and AOF gap persisted while ordinary claims and finishes already shared script calls. Measure the bytes and CPU spent on payloads, after-images and lifecycle records before changing the number of sockets. Raw results and the runner are under `artifacts/perf/round-two/redis-bullmq-pair/`.
 
+### F1 Redis work hints
+
+The isolated prototype publishes a best-effort queue hint after an acknowledged direct dispatch creates ready work. A separate subscription connection receives hints. Workers keep the existing two-second polling cap for lost publications, delayed jobs and other write paths. Pub/Sub broadcasts to current subscribers and adds no durable Redis write. StackExchange.Redis 3.4.20 avoids blocking list pops on its multiplexers, and Redis Pub/Sub uses at-most-once delivery. [Pinned client documentation](https://github.com/StackExchange/StackExchange.Redis/blob/3.4.20/docs/PipelinesMultiplexers.md) · [Redis Pub/Sub](https://redis.io/docs/latest/develop/pubsub/).
+
+On Redis 8.2.11 with AOF `always`, the focused provider test confirmed both independent subscribers received the hint after one durable job and receipt existed. A separate fixture denied `PUBLISH`; all eight accepted jobs settled once through polling with zero hints. One eight-second sparse smoke per arm settled all eight jobs. Due-to-handler p50 was 484 ms with polling and 38 ms with hints. This sample verifies the path and is too small to qualify tail latency. The prototype stays isolated pending repeated sparse and saturated measurements. Evidence is under `artifacts/perf/round-two/redis-f1/`.
+
 ### F5 Redis AOF byte attribution
 
 A separate AOF-always profile captured the full incremental AOF from fresh Redis 8.2.11 fixtures with automatic rewrite disabled for observation. One fixture bulk-added 1,500 jobs in groups of 100. Another added the same jobs and settled all 1,500 once with 64 worker slots. Parsing the persisted RESP commands accounted for every byte in both files.
