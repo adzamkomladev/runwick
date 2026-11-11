@@ -7,6 +7,7 @@
 #   BENCH_STORE (postgres or sqlite, default postgres), BENCH_TRACE=1 to capture store phase timings.
 #   BENCH_STEADY_CALLS (default 1, set above 1 for open-loop arrivals).
 #   BENCH_ENQUEUE_N overrides both enqueue sizes (defaults 2000 at one caller and 10000 at 16 callers).
+#   BENCH_WARMUP_JOBS warms the producer in the same enqueue process before measuring (default 0).
 set -euo pipefail
 a="$1"; b="$2"; out="$3"; mkdir -p "$out"
 export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="${DOTNET_ROOT:-$HOME/.dotnet}" DOTNET_NOLOGO=1
@@ -15,6 +16,7 @@ steady_calls="${BENCH_STEADY_CALLS:-1}"
 enqueue_one="${BENCH_ENQUEUE_N:-2000}"; enqueue_many="${BENCH_ENQUEUE_N:-10000}"
 bench_args=(--store "${BENCH_STORE:-postgres}")
 if [[ "${BENCH_TRACE:-0}" == 1 ]]; then bench_args+=(--trace); fi
+if [[ -n "${BENCH_WARMUP_JOBS:-}" ]]; then bench_args+=(--warmup-jobs "$BENCH_WARMUP_JOBS"); fi
 snap() { echo "{\"cores\": $(nproc), \"load\": \"$(cut -d' ' -f1-3 /proc/loadavg)\", \"top\": $(ps -eo pcpu=,comm= --sort=-pcpu | head -5 | python3 -c 'import sys,json; print(json.dumps([" ".join(l.split()) for l in sys.stdin]))')}"; }
 one() { # round test variant dll args...
   local r="$1" t="$2" v="$3" dll="$4"; shift 4

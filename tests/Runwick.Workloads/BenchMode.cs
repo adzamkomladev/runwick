@@ -30,6 +30,7 @@ namespace Runwick.Workloads;
 /// </list>
 /// Usage: <c>bench --mode drain|enqueue|bulk|steady [--no-usage] [--n 20000] [--rate 100] [--seconds 120] [--workers 16]
 /// [--payload 1024] [--job-ms 0] [--calls 1] [--store postgres|sqlite|redis] [--out file.json] [--trace] [--sqlite-count-statements]</c>.
+/// <c>--warmup-jobs</c> adds jobs on the same producer before timing an enqueue run.
 /// SQLite uses a fresh file. <c>--sqlite-keep</c> keeps it, and <c>--sqlite-seed path</c> copies a drained fixture before the run.
 /// Trace adds per-job stage gaps, held-job and settlement-queue samples, and store call phases. Writes the same JSON shape as the River and pg-boss
 /// benches: <c>system</c>, <c>mode</c>, <c>completionsPerSec</c>, <c>latencyMs {p50, p95, p99, max}</c> (steady).
@@ -207,6 +208,11 @@ internal static class BenchMode
         engine.Hooks.Event = (name, entry) =>
         {
             var now = clock.ElapsedTicks;
+            if (trace && name.StartsWith("pressure", StringComparison.Ordinal))
+            {
+                stages.Count(name);
+            }
+
             if (trace && entry is not null)
             {
                 var id = entry.Reserved.Position.JobId;
@@ -292,22 +298,41 @@ internal static class BenchMode
         {
             // --n single-job Dispatch calls from --calls callers side by side; the worker is never started.
             var enqueueLatency = new LatencyReservoir();
-            var nextJob = 0;
-            var watch = Stopwatch.StartNew();
-            await Task.WhenAll(Enumerable.Range(0, calls).Select(_ => Task.Run(async () =>
+            var warmup = Math.Max(0, a.Int("warmup-jobs", 0));
+            if (warmup > 0)
             {
-                while (Interlocked.Increment(ref nextJob) <= n)
-                {
-                    var t = clock.ElapsedTicks;
-                    await dispatcher.DispatchAsync(LoadJob.Create(Interlocked.Increment(ref sequence), payload)).ConfigureAwait(false);
-                    enqueueLatency.Add(Ms(clock.ElapsedTicks - t));
-                }
-            }))).ConfigureAwait(false);
+                await EnqueueAsync(warmup, timings: null).ConfigureAwait(false);
+                stages.ResetLatencies();
+            }
+
+            var watch = Stopwatch.StartNew();
+            await EnqueueAsync(n, enqueueLatency).ConfigureAwait(false);
+            watch.Stop();
             var es = enqueueLatency.Summarize();
             result["jobs"] = n;
+            result["warmupJobs"] = warmup;
             result["calls"] = calls;
             result["insertsPerSec"] = Math.Round(n / watch.Elapsed.TotalSeconds, 1);
-            result["insertLatencyMs"] = new JsonObject { ["p50"] = Math.Round(es.P50Ms, 2), ["p99"] = Math.Round(es.P99Ms, 2) };
+            result["insertLatencyMs"] = new JsonObject
+            {
+                ["p50"] = Math.Round(es.P50Ms, 2),
+                ["p95"] = Math.Round(es.P95Ms, 2),
+                ["p99"] = Math.Round(es.P99Ms, 2),
+            };
+
+            Task EnqueueAsync(int count, LatencyReservoir? timings)
+            {
+                var nextJob = 0;
+                return Task.WhenAll(Enumerable.Range(0, calls).Select(_ => Task.Run(async () =>
+                {
+                    while (Interlocked.Increment(ref nextJob) <= count)
+                    {
+                        var started = clock.ElapsedTicks;
+                        await dispatcher.DispatchAsync(LoadJob.Create(Interlocked.Increment(ref sequence), payload)).ConfigureAwait(false);
+                        timings?.Add(Ms(clock.ElapsedTicks - started));
+                    }
+                })));
+            }
         }
         else if (mode == "bulk")
         {
