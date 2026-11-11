@@ -182,6 +182,12 @@ BENCH_TRACE=1 BENCH_ROUNDS=5 BENCH_ENQUEUE_N=750 BENCH_WARMUP_JOBS=128 \
   eng/bench-compare/ab.sh "$transactional_dll" "$post_commit_dll" artifacts/perf/round-two/postgres-a1-warm-ab
 ```
 
+### A6 PostgreSQL call text and policy cache experiment
+
+An isolated candidate reused the fixed capabilities JSON, named SQL text per function version, and JSON for immutable retry-policy objects. Both builds already had Npgsql auto-prepare set to 64 statements per connection with a two-use threshold. The exact SQL budget and wake tests passed after the budget test counted physical connection spans separately from SQL commands.
+
+Five pairs warmed 128 adds before timing 350. At one caller, median process allocation fell from 125.7 to 113.4 kB per add, with a 9–10% reduction across pairs. Median throughput moved from 57.3 to 49.2/s and enqueue p99 from 46.6 to 77.6 ms. The paired throughput ratios ranged from 0.70× to 1.25×, with function and commit time also moving between runs. At 16 callers median throughput moved from 363.7 to 404.6/s, with paired ratios of 0.70–1.30× and nearly unchanged median allocation. The single-caller tail crossed the acceptance band in three pairs, so the cache remains an experiment for a quieter rerun. Raw data and the patch are under `artifacts/perf/round-two/postgres-a6-ab/` and `next-build/a6.patch`.
+
 ## Redis Phase 0
 
 A dedicated Redis 8.2.11 server used `appendonly yes`, `appendfsync always` and `noeviction`. A healthy store published both test batches, but each went through intent recovery. The probe measured intent shape with a separate injected interruption after intent storage. The traces shown here came from fault-free submissions.
