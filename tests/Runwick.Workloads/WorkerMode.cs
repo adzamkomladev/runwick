@@ -14,6 +14,7 @@ namespace Runwick.Workloads;
 /// <summary>
 /// One worker process (07 §14.3). Defaults to PostgreSQL with <see cref="TimingStore"/>;
 /// <c>--store sqlite --conn</c> attaches to a migrated SQLite file with the driver's phase timings.
+/// <c>--sqlite-writer-busy-ms</c> overrides the SQLite busy timeout for contention experiments.
 /// Writes a sample line every 5 s and a summary on <c>stop</c>.
 /// Stdin commands: <c>reset</c> (end of warm-up: drop latency samples), <c>stop</c> (staged shutdown, summary, exit).
 /// </summary>
@@ -42,7 +43,13 @@ internal static class WorkerMode
             r.Application(a.Str("app"));
             if (store == "sqlite")
             {
-                r.UseSqlite(a.Str("conn"));
+                r.UseSqlite(a.Str("conn"), options =>
+                {
+                    if (a.OptInt("sqlite-writer-busy-ms") is { } milliseconds)
+                    {
+                        options.WriterBusyTimeout = TimeSpan.FromMilliseconds(milliseconds);
+                    }
+                });
             }
             else
             {

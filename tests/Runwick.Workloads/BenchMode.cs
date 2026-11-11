@@ -32,6 +32,7 @@ namespace Runwick.Workloads;
 /// [--payload 1024] [--job-ms 0] [--calls 1] [--store postgres|sqlite|redis] [--out file.json] [--trace] [--sqlite-count-statements]</c>.
 /// <c>--warmup-jobs</c> adds jobs on the same producer before timing an enqueue run.
 /// SQLite uses a fresh file. <c>--sqlite-keep</c> keeps it, and <c>--sqlite-seed path</c> copies a drained fixture before the run.
+/// <c>--sqlite-profile-statements</c> groups native writer time by statement prefix for diagnosis.
 /// Trace adds per-job stage gaps, held-job and settlement-queue samples, and store call phases. Writes the same JSON shape as the River and pg-boss
 /// benches: <c>system</c>, <c>mode</c>, <c>completionsPerSec</c>, <c>latencyMs {p50, p95, p99, max}</c> (steady).
 /// </summary>
@@ -175,13 +176,32 @@ internal static class BenchMode
         var driver = provider.GetRequiredService<IRunwickStore>();
         var sqlite = driver as SqliteStore;
         long sqliteStatements = 0;
-        var countSqliteStatements = a.Has("sqlite-count-statements") && sqlite is not null;
+        var sqliteStatementProfile = a.Has("sqlite-profile-statements") && sqlite is not null
+            ? new ConcurrentDictionary<string, (long Count, long Nanoseconds)>(StringComparer.Ordinal)
+            : null;
+        var countSqliteStatements = sqlite is not null && (a.Has("sqlite-count-statements") || sqliteStatementProfile is not null);
         if (countSqliteStatements)
         {
             await sqlite!.Executor.WriteAsync(SqLane.Background, conn =>
             {
-                SQLitePCL.raw.sqlite3_profile(conn.Handle, (SQLitePCL.delegate_profile)((_, _, _) =>
-                    Interlocked.Increment(ref sqliteStatements)), null);
+                if (sqliteStatementProfile is null)
+                {
+                    SQLitePCL.raw.sqlite3_profile(conn.Handle, (SQLitePCL.delegate_profile)((_, _, _) =>
+                        Interlocked.Increment(ref sqliteStatements)), null);
+                }
+                else
+                {
+                    SQLitePCL.raw.sqlite3_profile(conn.Handle, (SQLitePCL.strdelegate_profile)((_, sql, ns) =>
+                    {
+                        Interlocked.Increment(ref sqliteStatements);
+                        var statement = sql.AsSpan().TrimStart();
+                        var newline = statement.IndexOf('\n');
+                        var prefix = statement[..Math.Min(newline < 0 ? statement.Length : newline, 120)].ToString();
+                        sqliteStatementProfile.AddOrUpdate(prefix, static (_, elapsed) => (1, elapsed),
+                            static (_, sample, elapsed) => (sample.Count + 1, sample.Nanoseconds + elapsed), ns);
+                    }), null);
+                }
+
                 return true;
             }, CancellationToken.None).ConfigureAwait(false);
         }
@@ -430,6 +450,7 @@ internal static class BenchMode
             result["insertCalls"] = calls;
             var commitsBeforeDrain = sqlite?.Runner.Commits;
             var statementsBeforeDrain = Interlocked.Read(ref sqliteStatements);
+            sqliteStatementProfile?.Clear();
             var expected = check ? Interlocked.Read(ref acceptedItems) : n - failedDispatch;
             var startTicks = clock.ElapsedTicks;
             var allocatedBeforeDrain = trace ? GC.GetTotalAllocatedBytes(precise: true) : 0;
@@ -591,6 +612,17 @@ internal static class BenchMode
                 ["writerConnectionsOpened"] = sqlite.Executor.WriterConnectionsOpened,
                 ["writerStatements"] = countSqliteStatements ? Interlocked.Read(ref sqliteStatements) : null,
             };
+            if (sqliteStatementProfile is not null)
+            {
+                result["sqlite"]!["statementProfile"] = new JsonArray([.. sqliteStatementProfile.ToArray()
+                    .OrderByDescending(item => item.Value.Nanoseconds).Take(25)
+                    .Select(item => new JsonObject
+                    {
+                        ["statementPrefix"] = item.Key,
+                        ["calls"] = item.Value.Count,
+                        ["elapsedMs"] = item.Value.Nanoseconds / 1_000_000.0,
+                    })]);
+            }
 
             if (keepSqlite)
             {
