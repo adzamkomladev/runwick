@@ -12,6 +12,7 @@ local FAIL = tonumber(ARGV[1]) or 0
 local STORE, OP, CMD, FP = ARGV[2], ARGV[3], ARGV[4], ARGV[5]
 local NOT_AFTER, CAP, FLOOR, CLS, GATE = tonumber(ARGV[6]), tonumber(ARGV[7]), tonumber(ARGV[8]), ARGV[9], ARGV[10]
 local INLINE, MAX_OPS, MAX_KEYS, MAX_BYTES, MAX_SCORE = 100, 1024, 256, 4194304, 9007199254740991
+local BATCH_INLINE_OPS, BATCH_INLINE_KEYS, BATCH_INLINE_BYTES, BATCH_INLINE_ARGS = 256, 230, 524288, 8192
 
 local U = {}   -- helpers namespace (keeps the chunk under Lua's local-variable limit)
 
@@ -459,6 +460,21 @@ function U.project(intent, pos, budget)
   return nil
 end
 
+local function inline_budget(ops, keys, bytes)
+  if #ops <= INLINE or #ops > BATCH_INLINE_OPS or keys > BATCH_INLINE_KEYS or bytes > BATCH_INLINE_BYTES then
+    return INLINE
+  end
+  if OP ~= 'DispatchMany' and OP ~= 'FinishMany' then return INLINE end
+
+  -- A single after-image can carry hundreds of hash fields or sorted-set members.
+  local arguments = 0
+  for _, op in ipairs(ops) do
+    arguments = arguments + #op - 2 -- exclude the operation and key
+    if arguments > BATCH_INLINE_ARGS then return INLINE end
+  end
+  return #ops
+end
+
 local function commit(m, r)
   flush_events(m)
   local ops, keys = build_ops()
@@ -470,8 +486,9 @@ local function commit(m, r)
   local intent = { id = CMD, op = OP, rev = nextrev, decided = NOWS, ops = ops, reply = reply }
   local bytes = cmsgpack.pack(intent)
   if #bytes > MAX_BYTES then return U.noeffect('InvalidRequest', 'intent_too_large') end
+  local budget = inline_budget(ops, keys, #bytes)
   w('HSET', META, 'guard', CMD, 'intent', bytes, 'intentsha', redis.sha1hex(bytes), 'ipos', '1')
-  local more = U.project(intent, 1, INLINE)
+  local more = U.project(intent, 1, budget)
   if FAIL > 0 and writes >= FAIL then error('INJECTED reply lost after write ' .. writes) end
   if more then return { pending = true } end
   return nil

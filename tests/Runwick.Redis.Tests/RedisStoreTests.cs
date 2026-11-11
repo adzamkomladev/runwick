@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Runwick.Harness.Faults;
 using Runwick.Harness.Jobs;
@@ -131,19 +132,48 @@ public sealed class RedisStoreTests
 
     [Fact]
     [Trait("Case", "REDIS-07")]
-    public async Task The_largest_DispatchMany_fits_the_intent_limits_and_publishes_in_one_call()
+    public async Task Ordinary_bulk_dispatch_and_finish_publish_inline_and_larger_payloads_still_recover()
     {
-        // The dispatcher caps a batch at 100 items, which stays under 256 keys and 1,024 after-images; the limit refusals
-        // themselves are reachable only through larger intents than any current operation builds (see the SP-025 report).
         var (f, c) = await OpenAsync("redis07");
         await using var _ = f;
+        var calls = new ConcurrentQueue<string>();
+        var runner = Store(c).Runner;
+        runner.Client.Traced = (script, _, reply) =>
+        {
+            if (script.Name is "dispatch" or "finish_many" or "recovery")
+            {
+                calls.Enqueue(script.Name + ":" + (string?)reply[0]);
+            }
+        };
+
+        var smallPayload = new string('x', 992);
         var receipt = await c.Dispatcher.DispatchManyAsync(
-            [.. Enumerable.Range(0, 100).Select(i => new BatchDispatchItem(new PingJob("k" + i)))], cancellationToken: Ct);
+            [.. Enumerable.Range(0, 100).Select(_ => new BatchDispatchItem(new PingJob(smallPayload)))], cancellationToken: Ct);
         Assert.Equal(100, receipt.Items.Count);
+        Assert.Equal(["dispatch:R"], calls.ToArray());
+
+        var claimed = await c.ReserveAndBeginAsync(32);
+        Assert.Equal(StoreStatus.Applied, claimed.Status);
+        Assert.Equal(32, claimed.Value!.Outcomes.Count);
+        var finishes = claimed.Value.Outcomes.Select(job => c.FinishCommand(job.Begun!.Lease.Handle, AttemptOutcome.Succeeded)).ToArray();
+        calls.Clear();
+        var completed = await c.FinishManyAsync(finishes);
+        Assert.Equal(32, completed.Value!.Outcomes.Count);
+        Assert.All(completed.Value.Outcomes, reply => Assert.Equal(StoreStatus.Applied, reply.Status));
+        Assert.Equal(["finish_many:R"], calls.ToArray());
+
+        var largePayload = new string('x', 8192);
+        calls.Clear();
+        var larger = await c.Dispatcher.DispatchManyAsync(
+            [.. Enumerable.Range(0, 100).Select(_ => new BatchDispatchItem(new PingJob(largePayload)))], cancellationToken: Ct);
+        Assert.Equal(100, larger.Items.Count);
+        Assert.Contains("dispatch:P", calls);
+        Assert.Contains("recovery:PUBLISHED", calls);
+
         var mux = await RedisServer.AdminAsync();
         Assert.Equal("", (string?)await mux.GetDatabase().HashGetAsync(RxClient.Meta(f.Application), "guard") ?? "");
-        Assert.Equal(0, Store(c).Runner.RecoveringReplies);
-        Assert.Equal(100, (await f.ReadCommittedSnapshot()).Model.Jobs.Count);
+        Assert.Equal(0, runner.RecoveringReplies);
+        Assert.Equal(200, (await f.ReadCommittedSnapshot()).Model.Jobs.Count);
         await NoViolations(f);
     }
 
