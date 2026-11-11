@@ -115,20 +115,26 @@ public sealed class WorkerResourceUsageContractTests
     {
         await using var f = await DriverFixture.StartAsync("usg_" + Guid.NewGuid().ToString("N")[..8], kind);
         await using var w = WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults, concurrency: 1);
-        w.Script.On("burn", (_, _, _) =>
+        w.Script.On("burn", (_, _, token) =>
         {
-            var until = System.Diagnostics.Stopwatch.GetTimestamp() + System.Diagnostics.Stopwatch.Frequency * 3 / 10;
             long keep = 0;
             for (var i = 0; i < 64; i++)
             {
                 keep += new byte[1 << 20].Length; // 64 x 1 MiB
             }
 
+            // CPU time keeps the burn consistent when the test process is preempted.
+            var until = Environment.CpuUsage.TotalTime + TimeSpan.FromMilliseconds(300);
             var x = 0.0;
-            while (System.Diagnostics.Stopwatch.GetTimestamp() < until)
+            do
             {
-                x += Math.Sqrt(keep + x);
+                token.ThrowIfCancellationRequested();
+                for (var i = 0; i < 4096; i++)
+                {
+                    x += Math.Sqrt(keep + x);
+                }
             }
+            while (Environment.CpuUsage.TotalTime < until);
 
             return x > 0 ? Task.CompletedTask : Task.FromException(new InvalidOperationException());
         });
