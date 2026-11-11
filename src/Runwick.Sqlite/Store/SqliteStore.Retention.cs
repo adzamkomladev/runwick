@@ -187,17 +187,26 @@ internal sealed partial class SqliteStore : IRetentionStore
     static Swept ExpireDetail(SqTx tx, string[] states, DateTimeOffset cutoff, (DateTimeOffset At, Guid Id)? cursor, CleanupLimits limits)
     {
         var c = tx.Sql("");
+        // Collect errors for the bounded candidate IDs. A correlated sum can scan all application attempts per job.
         c.CommandText = $"""
-            SELECT j.job_id, j.terminal_at,
-                   COALESCE(length(p.payload_utf8), 0)
-                     + COALESCE((SELECT sum(length(CAST(a.error AS BLOB))) FROM runwick_job_attempts AS a
-                                 WHERE a.application = j.application AND a.job_id = j.job_id AND a.error IS NOT NULL), 0)
-            FROM runwick_jobs AS j
-            LEFT JOIN runwick_job_payloads AS p ON p.application = j.application AND p.job_id = j.job_id
-            WHERE j.application = @application AND j.state IN {c.In("s", states)} AND j.detail_expired_at IS NULL AND j.terminal_at < @cutoff
-              {(cursor is null ? "" : "AND (j.terminal_at, j.job_id) > (@cursor_at, @cursor_id)")}
+            WITH candidates AS MATERIALIZED (
+                SELECT j.job_id, j.terminal_at
+                FROM runwick_jobs AS j
+                WHERE j.application = @application AND j.state IN {c.In("s", states)} AND j.detail_expired_at IS NULL AND j.terminal_at < @cutoff
+                  {(cursor is null ? "" : "AND (j.terminal_at, j.job_id) > (@cursor_at, @cursor_id)")}
+                ORDER BY j.terminal_at, j.job_id
+                LIMIT @rows
+            ), errors AS (
+                SELECT a.job_id, sum(length(CAST(a.error AS BLOB))) AS error_bytes
+                FROM runwick_job_attempts AS a
+                WHERE a.application = @application AND a.job_id IN (SELECT job_id FROM candidates) AND a.error IS NOT NULL
+                GROUP BY a.job_id
+            )
+            SELECT j.job_id, j.terminal_at, COALESCE(length(p.payload_utf8), 0) + COALESCE(e.error_bytes, 0)
+            FROM candidates AS j
+            LEFT JOIN errors AS e USING (job_id)
+            LEFT JOIN runwick_job_payloads AS p ON p.application = @application AND p.job_id = j.job_id
             ORDER BY j.terminal_at, j.job_id
-            LIMIT @rows
             """;
         c.P("cutoff", cutoff).P("cursor_at", cursor?.At).P("cursor_id", cursor?.Id).P("rows", limits.Rows);
         var candidates = tx.Query(c, r => (Id: r.Uuid(0), At: r.Time(1), Bytes: r.GetInt64(2)));
