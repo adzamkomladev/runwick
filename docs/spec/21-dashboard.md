@@ -388,6 +388,8 @@ PostgreSQL diagnostics group current-database sessions, lock waits, disk usage a
 
 Redis diagnostics show memory, server command activity, append-only file state and replication observations for the configured standalone node. Commands per second and evictions cover the whole server. Replication offsets measure stream positions in bytes. The page shows the diagnostics sample time and labels stale, unavailable and denied values.
 
+Under `StoreDiagnostics.Read`, the Redis diagnostics also show whether the current application has a pending intent. A pending observation includes the next after-image index when valid. The section reports its own availability and permissions. It can remain available while the application compatibility check reports a recovery failure.
+
 ## 5. Controls
 
 A control is a `POST` to the mount, sent by the Inertia client (`router.post`) with the antiforgery header.

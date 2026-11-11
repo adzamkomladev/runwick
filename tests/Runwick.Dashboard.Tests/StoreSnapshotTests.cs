@@ -170,15 +170,19 @@ public sealed class StoreSnapshotTests
         await using var h = await DashHost.StartAsync(f, services: b => b.Services.AddSingleton<TimeProvider>(clock), api: true);
         var admin = h.Browser(Users.Admin);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        JsonElement stats;
-        while (true)
+        async Task<JsonElement> WaitForRedisSnapshotAsync(Func<JsonElement, bool> observed)
         {
-            stats = (await SnapshotAsync(admin)).GetProperty("redis");
-            if (stats.TryGetProperty("sampledAt", out _)) break;
-            await Task.Delay(TimeSpan.FromMilliseconds(100), timeout.Token);
-            clock.Advance(TimeSpan.FromSeconds(10));
+            while (true)
+            {
+                var value = await SnapshotAsync(admin);
+                if (observed(value)) return value;
+                await Task.Delay(TimeSpan.FromMilliseconds(100), timeout.Token);
+                clock.Advance(TimeSpan.FromSeconds(10));
+            }
         }
 
+        var initial = await WaitForRedisSnapshotAsync(value => value.GetProperty("redis").TryGetProperty("sampledAt", out _));
+        var stats = initial.GetProperty("redis");
         var memory = stats.GetProperty("memory");
         Assert.Equal("ProviderNode", memory.GetProperty("scope").GetString());
         Assert.True(memory.GetProperty("value").GetProperty("usedBytes").GetInt64() > 0);
@@ -192,10 +196,58 @@ public sealed class StoreSnapshotTests
         Assert.Contains(trend.GetProperty("samples").EnumerateArray(),
             sample => sample.TryGetProperty("value", out var value) && value.GetInt64() > 0);
 
+        var redis = await RedisServer.AdminAsync();
+        var db = redis.GetDatabase();
+        var meta = RedisServer.Key(f.Application, "meta");
+        var storeId = await db.HashGetAsync(meta, "store");
+        var epoch = await db.HashGetAsync(meta, "reqepoch");
+        var guard = Guid.NewGuid().ToString("N");
+        try
+        {
+            // A guard without a valid intent leaves compatibility recovery stuck.
+            await db.HashSetAsync(meta, [new("guard", guard), new("ipos", "101")]);
+            var recovering = await WaitForRedisSnapshotAsync(value => value.GetProperty("connection").GetProperty("status").GetString() == "Unavailable"
+                && value.GetProperty("redis").GetProperty("intentRecovery").TryGetProperty("value", out var fact)
+                && fact.GetProperty("pending").GetBoolean()
+                && value.GetProperty("lastSuccessfulAt").GetDateTimeOffset()
+                    < value.GetProperty("redis").GetProperty("sampledAt").GetDateTimeOffset());
+            var pending = recovering.GetProperty("redis");
+            var recovery = pending.GetProperty("intentRecovery");
+            Assert.Equal("Application", recovery.GetProperty("scope").GetString());
+            Assert.Equal("Available", recovery.GetProperty("status").GetString());
+            Assert.Equal(101, recovery.GetProperty("value").GetProperty("nextProjectionIndex").GetInt32());
+            Assert.DoesNotContain(guard, pending.GetRawText(), StringComparison.Ordinal);
+
+            // Make Describe fail for this app without touching the shared fixture's Redis server or ACL.
+            await db.HashSetAsync(meta, [new("reqepoch", "invalid"), new("guard", ""), new("ipos", "")]);
+            var stale = await WaitForRedisSnapshotAsync(value => value.GetProperty("redis").GetProperty("intentRecovery")
+                .GetProperty("status").GetString() == "Stale");
+            Assert.True(stale.GetProperty("redis").GetProperty("intentRecovery").TryGetProperty("value", out _));
+            Assert.True(stale.GetProperty("redis").GetProperty("sampledAt").GetDateTimeOffset()
+                >= pending.GetProperty("sampledAt").GetDateTimeOffset());
+            clock.Advance(TimeSpan.FromMinutes(5));
+            var expired = (await SnapshotAsync(admin)).GetProperty("redis").GetProperty("intentRecovery");
+            Assert.Equal("Unavailable", expired.GetProperty("status").GetString());
+            Assert.False(expired.TryGetProperty("value", out _));
+
+            await db.HashSetAsync(meta, [new("reqepoch", epoch), new("guard", guard), new("ipos", "101")]);
+            await WaitForRedisSnapshotAsync(value => value.GetProperty("redis").GetProperty("intentRecovery").GetProperty("status")
+                .GetString() == "Available");
+            await db.HashSetAsync(meta, [new("store", Guid.NewGuid().ToString("N")), new("guard", ""), new("ipos", "")]);
+            var incompatible = await WaitForRedisSnapshotAsync(value => value.GetProperty("connection").GetProperty("reason").GetString() == "incompatible");
+            var incompatibleRecovery = incompatible.GetProperty("redis").GetProperty("intentRecovery");
+            Assert.Equal("Unavailable", incompatibleRecovery.GetProperty("status").GetString());
+            Assert.False(incompatibleRecovery.TryGetProperty("value", out _));
+        }
+        finally
+        {
+            await db.HashSetAsync(meta, [new("store", storeId), new("reqepoch", epoch), new("guard", ""), new("ipos", "")]);
+        }
+
         h.Grants[Users.Admin] = [.. Users.All.Where(g => g.Permission != ManagementPermissions.StoreDiagnosticsRead)];
         var revoked = (await SnapshotAsync(admin)).GetProperty("redis");
         Assert.False(revoked.TryGetProperty("sampledAt", out _));
-        foreach (var name in new[] { "memory", "activity", "aof", "replication" })
+        foreach (var name in new[] { "memory", "activity", "aof", "replication", "intentRecovery" })
         {
             Assert.Equal("PermissionDenied", revoked.GetProperty(name).GetProperty("status").GetString());
             Assert.False(revoked.GetProperty(name).TryGetProperty("value", out _));

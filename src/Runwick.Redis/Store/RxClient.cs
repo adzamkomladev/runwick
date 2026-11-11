@@ -143,6 +143,22 @@ internal sealed class RxClient : IAsyncDisposable
         }
     }
 
+    internal async Task<RedisValue[]> DiagnosticsIntentAsync(CancellationToken ct)
+    {
+        var gate = _lanes[(int)RxLane.Background];
+        await gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var (_, db) = await AdminAsync().WaitAsync(ct).ConfigureAwait(false);
+            return await db.HashGetAsync(Meta(_application), ["store", "guard", "ipos"], CommandFlags.DemandMaster)
+                .WaitAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
     public async Task<(IServer Server, IDatabase Db)> AdminAsync()
     {
         var mux = await _admin.Value.ConfigureAwait(false);

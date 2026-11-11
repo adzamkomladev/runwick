@@ -587,6 +587,12 @@ internal sealed class ManagementSession(
         Require(caller, ManagementPermissions.SettingsRead);
         cancellationToken.ThrowIfCancellationRequested();
         var (last, successfulAt, age, failure) = health.StoreObservation();
+        var recovering = failure == "store_recovering";
+        if (recovering)
+        {
+            failure = "store_unavailable";
+        }
+
         var fresh = failure is null && age is { } observed && observed < 3 * RunwickHealthService.RefreshPeriod;
         var retained = age < TimeSpan.FromMinutes(5) ? last : null;
         var availability = fresh ? StoreSnapshotStatus.Available : retained is null ? StoreSnapshotStatus.Unavailable : StoreSnapshotStatus.Stale;
@@ -627,8 +633,8 @@ internal sealed class ManagementSession(
         var (checks, trend) = health.StoreHistory(diagnosticsGranted ? retained?.StoreId : null);
         var (postgres, postgresAt, postgresFresh) = diagnosticsGranted && provider == "postgres"
             ? health.Diagnostics<PostgresStoreDiagnostics>(retained?.StoreId) : (null, null, false);
-        var (redis, redisAt, redisFresh) = diagnosticsGranted && provider == "redis"
-            ? health.Diagnostics<RedisStoreDiagnostics>(retained?.StoreId) : (null, null, false);
+        var (redis, redisAt, redisFresh) = diagnosticsGranted && failure != "incompatible" && store is IRedisStoreDiagnosticsSource redisSource
+            ? health.Diagnostics<RedisStoreDiagnostics>(redisSource.DiagnosticsStoreId) : (null, null, false);
 
         StoreSnapshotFact<T> Diagnostic<T>(StoreSnapshotFact<T>? fact, StoreSnapshotScope scope, bool observedFresh) where T : class
         {
@@ -678,7 +684,11 @@ internal sealed class ManagementSession(
                 Diagnostic(redis?.Activity, StoreSnapshotScope.ProviderNode, fresh && redisFresh),
                 Diagnostic(redis?.Aof, StoreSnapshotScope.ProviderNode, fresh && redisFresh),
                 Diagnostic(redis?.Replication, StoreSnapshotScope.ProviderNode, fresh && redisFresh))
-                { SampledAt = redisAt } : null,
+                {
+                    IntentRecovery = Diagnostic(redis?.IntentRecovery, StoreSnapshotScope.Application,
+                        redisFresh && (fresh || recovering)),
+                    SampledAt = redisAt,
+                } : null,
         });
     }
 

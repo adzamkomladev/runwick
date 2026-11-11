@@ -6,15 +6,53 @@ namespace Runwick.Redis.Store;
 
 internal sealed partial class RedisStore : IRedisStoreDiagnosticsSource
 {
+    Guid? IRedisStoreDiagnosticsSource.DiagnosticsStoreId => runner.StoreId;
+
     async Task<RedisStoreDiagnostics> IRedisStoreDiagnosticsSource.ObserveDiagnosticsAsync(CancellationToken ct)
     {
+        RedisStoreDiagnostics diagnostics;
         try
         {
-            return ParseDiagnostics(await runner.Client.DiagnosticsInfoAsync(ct).ConfigureAwait(false));
+            diagnostics = ParseDiagnostics(await runner.Client.DiagnosticsInfoAsync(ct).ConfigureAwait(false));
         }
         catch (RedisServerException ex) when (ex.Message.StartsWith("NOPERM", StringComparison.Ordinal))
         {
-            return MissingDiagnostics(StoreSnapshotStatus.PermissionDenied);
+            diagnostics = MissingDiagnostics(StoreSnapshotStatus.PermissionDenied);
+        }
+
+        return diagnostics with { IntentRecovery = await ObserveIntentAsync(ct).ConfigureAwait(false) };
+    }
+
+    async Task<StoreSnapshotFact<RedisIntentRecovery>> ObserveIntentAsync(CancellationToken ct)
+    {
+        const StoreSnapshotScope scope = StoreSnapshotScope.Application;
+        if (runner.StoreId is not { } expected)
+        {
+            return new(scope, StoreSnapshotStatus.Unavailable, null);
+        }
+
+        try
+        {
+            var fields = await runner.Client.DiagnosticsIntentAsync(ct).ConfigureAwait(false);
+            if (!Guid.TryParseExact((string?)fields[0], "N", out var storeId)
+                || expected != storeId)
+            {
+                return new(scope, StoreSnapshotStatus.Unavailable, null);
+            }
+
+            var pending = !fields[1].IsNullOrEmpty;
+            // The projection cursor is 1-based and the Redis write prelude admits at most 1024 after-images.
+            int? next = pending && int.TryParse((string?)fields[2], NumberStyles.None, CultureInfo.InvariantCulture, out var index)
+                && index is >= 1 and <= 1024 ? index : null;
+            return new(scope, StoreSnapshotStatus.Available, new(pending, next));
+        }
+        catch (RedisServerException ex) when (ex.Message.StartsWith("NOPERM", StringComparison.Ordinal))
+        {
+            return new(scope, StoreSnapshotStatus.PermissionDenied, null);
+        }
+        catch (RedisException)
+        {
+            return new(scope, StoreSnapshotStatus.Unavailable, null);
         }
     }
 

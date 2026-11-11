@@ -134,15 +134,19 @@ const aofStatus = value => value === 'Ok' ? 'OK' : 'Error'
 
 function RedisDetails({ stats }) {
   const { sampledAt, ...facts } = stats
-  const { memory, activity, aof, replication } = facts
+  const { memory, activity, aof, replication, intentRecovery } = facts
   const stale = Object.values(facts).some(fact => fact.status === 'Stale')
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2"><h2>Redis diagnostics</h2>{stale && <State value="Stale" />}</CardTitle>
-        <CardDescription>Connected server. {sampledAt && <>Sampled <ObservationTime value={sampledAt} /></>}</CardDescription>
+        <CardDescription>Connected server and current application. {sampledAt && <>Sampled <ObservationTime value={sampledAt} /></>}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <RedisSection title="Application recovery" fact={intentRecovery}>{v => <>
+          <RedisMetric label="Pending intent" value={v.pending} format={yesNo} />
+          {v.pending && <RedisMetric label="Next after-image index" value={v.nextProjectionIndex} />}
+        </>}</RedisSection>
         <RedisSection title="Memory" fact={memory}>{v => <>
           <RedisMetric label="Memory used" value={v.usedBytes} format={storageSize} />
           <RedisMetric label="Memory limit" value={v.limitBytes} format={n => n === 0 ? 'No configured limit' : storageSize(n)} />

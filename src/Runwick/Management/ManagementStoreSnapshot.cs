@@ -128,17 +128,24 @@ public enum RedisNodeRole { Primary, Replica }
 public sealed record RedisReplicationStats(RedisNodeRole? Role, long? ConnectedReplicas, long? ReplicationOffset,
     long? ReplicaAppliedOffset, bool? PrimaryLinkUp);
 
+public sealed record RedisIntentRecovery(bool Pending, int? NextProjectionIndex);
+
 public sealed record RedisStoreDiagnostics(
     StoreSnapshotFact<RedisMemoryStats> Memory,
     StoreSnapshotFact<RedisActivityStats> Activity,
     StoreSnapshotFact<RedisAofStats> Aof,
     StoreSnapshotFact<RedisReplicationStats> Replication)
 {
+    public StoreSnapshotFact<RedisIntentRecovery> IntentRecovery { get; init; } =
+        new(StoreSnapshotScope.Application, StoreSnapshotStatus.Unavailable, null);
+
     public DateTimeOffset? SampledAt { get; init; }
 }
 
 internal interface IRedisStoreDiagnosticsSource
 {
+    Guid? DiagnosticsStoreId { get; }
+
     Task<RedisStoreDiagnostics> ObserveDiagnosticsAsync(CancellationToken ct);
 }
 

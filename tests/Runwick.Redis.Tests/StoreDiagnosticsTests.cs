@@ -45,6 +45,71 @@ public sealed class StoreDiagnosticsTests
     }
 
     [Fact]
+    public async Task Pending_intent_observation_is_app_scoped_and_hmget_denial_leaves_node_facts_available()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var application = "diagnostics-" + Guid.NewGuid().ToString("N");
+        var meta = RxClient.Meta(application);
+        var user = "rw_diag_" + Guid.NewGuid().ToString("N");
+        var password = Guid.NewGuid().ToString("N");
+        var mux = await RedisServer.AdminAsync();
+        var db = mux.GetDatabase();
+        await using var store = NewStore(RedisServer.Configuration, application);
+        await using var other = NewStore(RedisServer.Configuration, application + "-other");
+        var source = (IRedisStoreDiagnosticsSource)store;
+        var storeId = Guid.NewGuid();
+        store.Runner.StoreId = storeId;
+        other.Runner.StoreId = storeId;
+        var guard = Guid.NewGuid().ToString("N");
+        try
+        {
+            await db.HashSetAsync(meta, [new("store", storeId.ToString("N")), new("guard", guard), new("ipos", "101")]);
+            var pending = (await source.ObserveDiagnosticsAsync(ct)).IntentRecovery;
+            Assert.Equal(StoreSnapshotScope.Application, pending.Scope);
+            Assert.Equal(StoreSnapshotStatus.Available, pending.Status);
+            Assert.Equal(new RedisIntentRecovery(true, 101), pending.Value);
+            Assert.Equal(guard, (string?)await db.HashGetAsync(meta, "guard"));
+
+            var missing = (await ((IRedisStoreDiagnosticsSource)other).ObserveDiagnosticsAsync(ct)).IntentRecovery;
+            Assert.Equal(StoreSnapshotStatus.Unavailable, missing.Status);
+            Assert.Null(missing.Value);
+
+            await db.HashSetAsync(meta, "store", Guid.NewGuid().ToString("N"));
+            var mismatched = (await source.ObserveDiagnosticsAsync(ct)).IntentRecovery;
+            Assert.Equal(StoreSnapshotStatus.Unavailable, mismatched.Status);
+            Assert.Null(mismatched.Value);
+            await db.HashSetAsync(meta, "store", storeId.ToString("N"));
+
+            await db.HashSetAsync(meta, "ipos", "1025");
+            Assert.Equal(new RedisIntentRecovery(true, null), (await source.ObserveDiagnosticsAsync(ct)).IntentRecovery.Value);
+            await db.HashSetAsync(meta, "guard", "");
+            Assert.Equal(new RedisIntentRecovery(false, null), (await source.ObserveDiagnosticsAsync(ct)).IntentRecovery.Value);
+
+            await db.ExecuteAsync("ACL", "SETUSER", user, "on", ">" + password, "~" + meta.ToString(), "+@all", "-hmget");
+            var configuration = ConfigurationOptions.Parse(RedisServer.Configuration);
+            configuration.User = user;
+            configuration.Password = password;
+            await using var restricted = NewStore(configuration.ToString(includePassword: true), application);
+            restricted.Runner.StoreId = storeId;
+            var denied = await ((IRedisStoreDiagnosticsSource)restricted).ObserveDiagnosticsAsync(ct);
+            Assert.Equal(StoreSnapshotStatus.PermissionDenied, denied.IntentRecovery.Status);
+            Assert.Null(denied.IntentRecovery.Value);
+            Assert.Equal(StoreSnapshotStatus.Available, denied.Memory.Status);
+
+            await db.KeyDeleteAsync(meta);
+            await db.StringSetAsync(meta, "wrong-type");
+            var wrongType = await source.ObserveDiagnosticsAsync(ct);
+            Assert.Equal(StoreSnapshotStatus.Unavailable, wrongType.IntentRecovery.Status);
+            Assert.Equal(StoreSnapshotStatus.Available, wrongType.Memory.Status);
+        }
+        finally
+        {
+            await db.ExecuteAsync("ACL", "DELUSER", user);
+            await db.KeyDeleteAsync(meta);
+        }
+    }
+
+    [Fact]
     public void Missing_or_unknown_values_are_not_reported_as_zero()
     {
         var result = RedisStore.ParseDiagnostics("""
@@ -69,7 +134,7 @@ public sealed class StoreDiagnosticsTests
         Assert.False(result.Replication.Value?.PrimaryLinkUp);
     }
 
-    static RedisStore NewStore(string configuration) =>
-        new(new RxRunner(new RxClient(RxClient.Options(configuration, TimeSpan.FromSeconds(2)), "diagnostics", 1),
+    static RedisStore NewStore(string configuration, string application = "diagnostics") =>
+        new(new RxRunner(new RxClient(RxClient.Options(configuration, TimeSpan.FromSeconds(2)), application, 1),
             TimeProvider.System), new RedisOptions(), TimeProvider.System);
 }

@@ -224,7 +224,8 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
             lock (_descriptorLock)
             {
                 var incompatible = ex is StoreIncompatibleException;
-                _descriptorFailure = incompatible ? "incompatible" : "store_unavailable";
+                _descriptorFailure = ex is StoreNotAppliedException { Code: "store_recovering" } ? "store_recovering"
+                    : incompatible ? "incompatible" : "store_unavailable";
                 if (_management)
                 {
                     var at = time.GetUtcNow();
@@ -295,15 +296,16 @@ internal sealed class RunwickHealthService(IServiceProvider services, RunwickRun
                 await Refresh(_managementReads, "management", ct => reads.ListQueuesAsync(runtime.Registry.Application, null, null, 1, ct)).ConfigureAwait(false);
             }
 
-            if (_management && StoreObservation() is ({ } descriptor, _, _, null))
+            if (_management)
             {
-                if (store is IPostgresStoreDiagnosticsSource postgres)
+                var (descriptor, _, _, failure) = StoreObservation();
+                if (failure is null && descriptor is not null && store is IPostgresStoreDiagnosticsSource postgres)
                 {
                     await RefreshDiagnosticsAsync(postgres.ObserveDiagnosticsAsync, descriptor.StoreId, "postgres_diagnostics").ConfigureAwait(false);
                 }
-                else if (store is IRedisStoreDiagnosticsSource redis)
+                else if ((failure is null or "store_recovering") && store is IRedisStoreDiagnosticsSource { DiagnosticsStoreId: { } storeId } redis)
                 {
-                    await RefreshDiagnosticsAsync(redis.ObserveDiagnosticsAsync, descriptor.StoreId, "redis_diagnostics").ConfigureAwait(false);
+                    await RefreshDiagnosticsAsync(redis.ObserveDiagnosticsAsync, storeId, "redis_diagnostics").ConfigureAwait(false);
                 }
             }
 
