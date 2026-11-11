@@ -398,7 +398,9 @@ Five alternating pairs per workload compared the `2978f04` baseline and the cand
 | Drain due-to-handler p99 | 5.79 s | 4.32 s | −24.1% (−42.0% to −19.3%) |
 | Bulk adds/s, eight callers | 926.3 | 848.2 | −2.4% (−26.9% to +19.9%) |
 
-Whole-fixture AOF size was identical across all bulk runs and stayed near 17.36 kB/job in the drain. Handler-to-finish p99 improved in four drain pairs and rose 14.2% in one. The median paired time from reservation to handler start rose 22.9% at p99. The bulk throughput spread crosses the acceptance band. The candidate remains isolated while a longer bulk comparison is prepared. Patch and evidence are under `artifacts/perf/round-two/redis-f5-reply/`.
+Whole-fixture AOF size was identical across all bulk runs and stayed near 17.36 kB/job in the drain. Handler-to-finish p99 improved in four drain pairs and rose 14.2% in one. The median paired time from reservation to handler start rose 22.9% at p99.
+
+Five more alternating pairs used 10,000 bulk jobs per arm with eight callers. Every job was accepted without intent recovery. Median throughput was 1,355 versus 1,471 adds/s, with a paired median change of +9.4% and a range of −23.0% to +16.7%. Whole-fixture Redis CPU per job had a paired median change of −8.7%, ranging from −13.8% to +16.4%. The bulk throughput spread still crosses the acceptance band. The shared-prelude candidate stays isolated. The next isolated change scopes encoding reuse to the worker's claim and settlement scripts so the producer script bytes are identical. Patch and evidence are under `artifacts/perf/round-two/redis-f5-reply/`.
 
 ### F4 Redis producer depth and settlement instrumentation
 
