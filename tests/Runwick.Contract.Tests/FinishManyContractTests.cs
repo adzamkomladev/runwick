@@ -375,6 +375,21 @@ public sealed class FinishManyContractTests
         var leases = await RunningAsync(c, new ResourceJob("a", "r1"), new PingJob("b"), new SharedJob("c", "r2"));
         var other = await f.OpenClient(configure: r => TestJobs.Register(r));
 
+        if (kind == StoreKind.Redis)
+        {
+            // On a cold server an EVALSHA can leave the paused queue with NOSCRIPT and resend after the other call.
+            var mux = await RedisServer.AdminAsync();
+            var server = mux.GetServer(mux.GetEndPoints()[0]);
+            foreach (var script in new[] { "finish_many", "renew" })
+            {
+                await server.ScriptLoadAsync(RxScript.Write(script).Text);
+            }
+
+            await Task.WhenAll(
+                ((RedisStore)c.Driver).Runner.Client.DbAsync(RxLane.Settlement),
+                ((RedisStore)other.Driver).Runner.Client.DbAsync(RxLane.Renewal));
+        }
+
         // The batch is held first; a RenewMany and a Renew of the same leases wait on it, then find the jobs closed (InvalidState).
         var (batch, renewals) = await OverlapAsync(f, c, Operations.FinishMany,
             () => c.FinishManyAsync([c.FinishCommand(leases[0], AttemptOutcome.Succeeded), c.FinishCommand(leases[1], AttemptOutcome.Succeeded)]),
