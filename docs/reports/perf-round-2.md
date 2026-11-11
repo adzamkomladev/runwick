@@ -289,6 +289,8 @@ Median throughput was 141.1/s on the baseline and 128.0/s on the candidate. Pair
 
 A separate PostgreSQL 18.6 diagnostic used sampled nested `auto_explain` with buffers and WAL. It settled 5,000 jobs once and wrote 65.5 MB of WAL during the fixture. The retained plan sample showed plain claim and readiness queries using `jobs_ready`, both receipt partitions using their command-ID indexes, and distinct finish attempt-close and usage updates. PostgreSQL reported 2.46 million entries returned by `jobs_name_list`, but Docker log rotation removed the early plan records. The remaining samples did not attribute that index. Raw plans and counters are under `artifacts/perf/round-two/postgres-nested/`.
 
+The rerun retained the full log. It settled all 5,000 jobs once and recorded 2.88 million entries returned by `jobs_name_list`. Of 21 sampled uses of that index, nine came from the plain finish function, nine from the combined claim's payload fetch, and three from the finish batch's dispatch-key classification query. They used bitmap scans keyed only by application, despite the small sets of requested job IDs. This points to keyed joins in those paths before changing the dashboard index. The full log and per-plan attribution are under `artifacts/perf/round-two/postgres-nested-full/`.
+
 ## Redis Phase 0
 
 A dedicated Redis 8.2.11 server used `appendonly yes`, `appendfsync always` and `noeviction`. A healthy store published both test batches, but each went through intent recovery. The probe measured intent shape with a separate injected interruption after intent storage. The traces shown here came from fault-free submissions.
