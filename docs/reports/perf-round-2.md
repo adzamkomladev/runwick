@@ -305,7 +305,9 @@ Five alternating C1 pairs used a `43b3135` baseline, fresh PostgreSQL 18.6 conta
 
 Median drain throughput moved from 146.2 to 139.0/s, with paired changes from −25.4% to +24.0% and a median of −4.1%. Handler-to-finish p99 was 133.8 versus 210.1 ms by arm median. The paired median change was +9.4%, ranging from −4.1% to +100.7%. Whole-fixture WAL was nearly flat. The candidate stays isolated because the shared-host tails and throughput cross the 10% acceptance band. Raw results and the exact patch are under `artifacts/perf/round-two/postgres-c1-payload/`.
 
-The A5 source assessment traced a wait on a higher command ID during receipt seeding. A set-based insert followed by conflict and clock checks could delay the lower ID's checks until after a concurrent cross-class insert or deadline change. Rolling back the speculative insert releases its locks, and the retry still observes the later state. A successful insert in a subtransaction would also need a replacement for the current receipt discard's top-level transaction-ID check. The assessment records a concurrency and fault test matrix. No A5 migration was built. Evidence is under `artifacts/perf/round-two/postgres-a5/`.
+The A5 source assessment traced a wait on a higher command ID during receipt seeding. A set-based insert followed by conflict and clock checks could delay the lower ID's checks until after a concurrent cross-class insert or deadline change. Rolling back the speculative insert releases its locks, and the retry still observes the later state. A successful insert in a subtransaction would also need a replacement for the current receipt discard's top-level transaction-ID check. The assessment records a concurrency and fault test matrix. No A5 migration was built.
+
+Across the five C1 baseline logs, 361 sampled finish-batch receipt inserts took a median 0.179 ms and p95 0.607 ms. The paired cross-class probes took 0.010 and 0.023 ms. This sample covers fresh receipts. Replay and retention races remain outside that profile. The assessment, parser and results are under `artifacts/perf/round-two/postgres-a5/`.
 
 ## Redis Phase 0
 
