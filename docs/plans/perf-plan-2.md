@@ -4,6 +4,8 @@
 
 **Second review, 2026-11-11:** prioritize large PostgreSQL and Redis gains. This revision adds a critical path, measurement gates, replay and overload requirements, and upstream-source notes. It authorizes no implementation or optional durability change; proposed gains remain unmeasured.
 
+[Execution report and measured results](../reports/perf-round-2.md)
+
 This plan replaces the "what next" part of `docs/plans/perf-plan-draft.md`, whose steps are all done. It is written to be reviewed by a second reader, so every claim says whether it was measured, read in the code, or reasoned from the code.
 
 ## How to read and review this
