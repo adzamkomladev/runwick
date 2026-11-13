@@ -1,6 +1,6 @@
 # Round two performance handoff
 
-Updated 2026-11-13 15:56 UTC. Start here when resuming in a new model or session. Keep this file current after each result, decision, failed run, or change to the work queue. Keep detailed results in the report and raw evidence in the artifact directory.
+Updated 2026-11-13 15:59 UTC. Start here when resuming in a new model or session. Keep this file current after each result, decision, failed run, or change to the work queue. Keep detailed results in the report and raw evidence in the artifact directory.
 
 - Scope and acceptance gates: [perf-plan-2.md](perf-plan-2.md).
 - Measurements, changes, and exact test revisions: [performance report](../reports/perf-round-2.md).
@@ -23,7 +23,7 @@ The delayed Redis/BullMQ run restarted from pair four at 40/s in exec session 62
 ## Remaining work
 
 - Finish the delayed Redis/BullMQ comparison and report enqueue and due-to-handler tails alongside durable completions and refusals.
-- Prepare a PostgreSQL B1 transport benchmark under `pg-b1/transport/`. Measure explicit grouped submission with the same per-item receipts and durable commit as single submission. Qualify automatic producer admission, cancellation, and recovery separately before integration. The cap increase remains a separate B2 decision.
+- The PostgreSQL B1 transport proof and paired benchmark are queued in session 69387 behind the delayed Redis completion marker. Artifacts and runner are under `pg-b1/transport/`. The Npgsql harness compares explicit grouped submission with singleton dispatch, verifies receipt attribution, and measures durable commits. Check `build.log`, `results.ndjson`, `summary.json`, and `run.done`. Automatic producer admission and cancellation still require a separate qualification. The cap increase remains a separate B2 decision.
 - Keep the P-01 and P-09 gates, scheduler p99 gate, strict Sentinel and Cluster authority, and full SP-029 and quiet-host soak open until qualified. See the plan and report for the remaining implementation work and owner decisions.
 
 ## Reproducing runs
