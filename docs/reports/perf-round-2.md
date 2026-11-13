@@ -479,6 +479,8 @@ Across all five sixteen-slot D2 pairs, median confirmations increased from 75.73
 
 The D4 source assessment found that a destination batch would need per-item rollback for refusals after writes and a lock order spanning all items. In the five sixteen-slot D2 pairs, the median of the baseline runs’ mean destination function and commit phases was 20.05 and 68.14 ms. The client-observed commit phase includes backend waits, server response and client scheduling. A dedicated wait and WAL timing probe is the next attribution step. The design is under `artifacts/perf/round-two/p09-d4/`.
 
+The live D4 diagnostic sampled destination sessions 1,142 times during a 60-second, sixteen-slot P-09 run on PostgreSQL 18.6. The exact heavyweight `NOTIFY` lock accounted for 88.3% of active commit backend observations. WAL sync accounted for 4.5%. Destination commit averaged 74.4 ms at the client. Every staged message reconciled exactly once. The wait sampler adds load, so this run attributes observed wait states without estimating a throughput gain. The next isolated candidate moves the destination wake after durable commit. Raw data are under `artifacts/perf/round-two/p09-d4/destination-waits/`.
+
 ## Worker payload decoding
 
 E1 uses the strict payload scanner without constructing canonical values before worker deserialization. The same scanner still builds the canonical form for fingerprints. All 102 focused boundary, serialization and wire tests passed, including rejection-code parity and the existing canonical vectors.
