@@ -376,7 +376,7 @@ Five alternating pairs per workload compared Runwick at `30fc1dd` with BullMQ 6.
 | 2,000 bulk adds, batches of 100, 8 callers | 948.3 (620.6–1,112.0) | 2,724.8 (1,283.2–3,730.1) | 31% |
 | 1,500-job drain, 64 worker slots | 240.3 (182.9–262.2) | 1,032.4 (712.9–1,629.2) | 23% |
 
-Median single-add p95/p99 was 90.9/159.8 ms for Runwick and 57.7/128.1 ms for BullMQ. Runwick timed the drain from first claim and BullMQ from worker startup. The observed paired throughput ratios ranged from 31–73% for single adds, 25–48% for bulk and 16–36% for drain. Host load varied while the integration suites ran. The observed pairs fell short of the 90% target. Equal offered load and delayed-work comparisons remain open.
+Median single-add p95/p99 was 90.9/159.8 ms for Runwick and 57.7/128.1 ms for BullMQ. Runwick timed the drain from first claim and BullMQ from worker startup. The observed paired throughput ratios ranged from 31–73% for single adds, 25–48% for bulk and 16–36% for drain. Host load varied while the integration suites ran. The observed pairs fell short of the 90% target. The subsequent steady-arrival pairs use equal offered load.
 
 | Whole-fixture median per measured job | Runwick AOF | BullMQ AOF | Runwick Redis CPU | BullMQ Redis CPU |
 |---|---:|---:|---:|---:|
@@ -388,7 +388,7 @@ The AOF and server CPU counters cover setup and warm-up or seeding as applicable
 
 Five equal-offer pairs at 40/s used 16 workers and 16 producer calls, with 12 seconds of startup and 30 seconds of measurement. Median durable completions during offers were 39.93/s for Runwick and 39.70/s for BullMQ 6.7.2. Every accepted job settled. Median offer-to-finish p95/p99 was 665/1,382 ms and 545/954 ms, respectively. The paired p99 ratios ranged from 0.71× to 2.49×, with a median of 1.52×. These latencies include settlement. The harness counts locally refused arrivals for both clients. Raw results are under `artifacts/perf/round-two/redis-bullmq-steady/`.
 
-At 100 offers/s under the same steady fixture, five pairs had median durable completion rates of 99.43/s for Runwick and 99.00/s for BullMQ. Median refused offers per arm were zero and nine. Every accepted job settled. Median offer-to-finish p95/p99 was 1,417/1,795 ms and 308/441 ms, respectively. The paired p99 ratios ranged from 0.75× to 5.06×, with a median of 4.07×. These short pairs show comparable steady completion rates at the offered load and a substantial latency gap. Delayed jobs and the plan’s specific enqueue and due-to-start comparisons remain open.
+At 100 offers/s under the same steady fixture, five pairs had median durable completion rates of 99.43/s for Runwick and 99.00/s for BullMQ. Median refused offers per arm were zero and nine. Every accepted job settled. Median offer-to-finish p95/p99 was 1,417/1,795 ms and 308/441 ms, respectively. The paired p99 ratios ranged from 0.75× to 5.06×, with a median of 4.07×. These short pairs show comparable steady completion rates at the offered load and a substantial latency gap. The Runwick trace also captured due-to-handler p95/p99: medians of 540/1,165 ms at 40 offers/s and 1,333/1,744 ms at 100 offers/s. Its p99 ranged from 788–2,170 ms and 1,497–1,982 ms, respectively. The BullMQ arm recorded finish time only, so these traces cannot establish the due-to-start parity ratio. Delayed jobs and the paired enqueue and due-to-start checks remain open.
 
 ### F1 Redis work hints
 
