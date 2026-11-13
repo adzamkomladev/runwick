@@ -38,6 +38,8 @@ The initial steady fixture uses `--mode steady --rate 100 --seconds 30 --workers
 
 In the 64 KiB smoke run, the writer recorded 818 statements during drain and opened one connection. After shutdown the WAL held 953 log frames at the configured 1,000-page automatic checkpoint threshold. The harness queries `PRAGMA wal_checkpoint(NOOP)` after the timed interval on SQLite 3.51 and later. This reads frame counts without running a checkpoint. A WAL hook would replace SQLite's automatic checkpoint callback. [SQLite checkpoint interface](https://www.sqlite.org/c3ref/wal_checkpoint_v2.html), [SQLite automatic checkpoint interface](https://www.sqlite.org/c3ref/wal_autocheckpoint.html).
 
+Five fresh SQLite drain pairs compared the instrumented round-two baseline with the integrated `e1cb660` build on local ext4 with WAL and synchronous FULL. All ten arms accepted, invoked and durably settled exactly 1,000 jobs using 16 worker slots. Median throughput was 101.8 and 113.1/s, respectively. The paired median ratio was 1.23× and the range was 0.77–1.88×. This comparison leaves the several-fold fresh-database target open. Raw evidence is under `artifacts/perf/round-two/sqlite-round-two-total/`.
+
 ### Q1 worker claim comparison
 
 Five alternating pairs used the same workload binary source with and without the worker changes. The candidate enables `ReserveAndBegin` for a single eligible lane with only one free slot, restores work wakeups for cached lanes, and rechecks admission before submitting a new claim. Both builds had the same SQLite writer instrumentation. Each run followed a warm-up run per build and seeded 1,000 jobs through eight bulk callers before starting 16 workers. Every run settled all 1,000 jobs.
