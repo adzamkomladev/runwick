@@ -258,6 +258,8 @@ The first 15-minute eight-plan run stopped during the planned downtime before ca
 
 The repeat recorded 15,000 distinct measured acknowledgments, again with 1,000 per minute boundary. Its raw post-commit p50/p95/p99 was 6.20/11.87/13.86 s. The two long steady samples therefore fall on either side of the 13 s gate. Catch-up verification is in progress. The additive migration candidate remains isolated. Raw results are under `artifacts/perf/round-two/p06s-s3-group-size/group-8-long-retry/`.
 
+The additive revision 23 candidate preserves migrations 21 and 22 and retains four as the default group size when grouping is enabled. Its Release build passed, followed by 181 core scheduler tests, 82 PostgreSQL migration and upgrade tests, 26 PostgreSQL scheduler contracts, 24 applicable SQLite scheduler contracts and 23 applicable Redis scheduler contracts. The Redis-only filter excludes a lost-reply theory with no Redis data. The migration remains isolated pending timing qualification. Evidence is under `artifacts/perf/round-two/p06s-s3-group-size/additive/`.
+
 ## PostgreSQL post-commit wake
 
 Migration 0021 adds a versioned direct-dispatch path at schema revision 21. Direct dispatch now queues a best-effort wake after durable commit for newly created jobs due at the database decision time. Staged dispatch, scheduler, outbox and management writes retain their transactional notification paths. The 79 targeted wake, migration and upgrade tests passed, including a forced wake failure followed by resolving the accepted dispatch.
