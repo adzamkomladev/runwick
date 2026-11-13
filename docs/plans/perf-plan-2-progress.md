@@ -1,6 +1,6 @@
 # Round two performance handoff
 
-Updated 2026-11-13 16:10 UTC. Start here when resuming in a new model or session. Keep this file current after each result, decision, failed run, or change to the work queue. Keep detailed results in the report and raw evidence in the artifact directory.
+Updated 2026-11-13 16:23 UTC. Start here when resuming in a new model or session. Keep this file current after each result, decision, failed run, or change to the work queue. Keep detailed results in the report and raw evidence in the artifact directory.
 
 - Scope and acceptance gates: [perf-plan-2.md](perf-plan-2.md).
 - Measurements, changes, and exact test revisions: [performance report](../reports/perf-round-2.md).
@@ -24,6 +24,19 @@ The delayed Redis/BullMQ comparison completed five pairs each at 40 and 100 offe
 
 - B1 transport finished. The corrected Npgsql proof passed, and all 29,952 jobs reconciled. At 16 callers, groups of eight had median paired throughput ratios of 1.17× at 1 KiB and 1.13× at 64 KiB. Both ranges crossed parity. Eight callers and oversized 1 MiB groups regressed. Keep the experiment isolated. If continuing B1, test byte-bounded small groups with realistic collection and cancellation before changing production admission. Reproducer, results, and the archived deadline and build failures are under `pg-b1/transport/`.
 - Keep the P-01 and P-09 gates, scheduler p99 gate, strict Sentinel and Cluster authority, and full SP-029 and quiet-host soak open until qualified. See the plan and report for the remaining implementation work and owner decisions.
+
+## Overall execution queue
+
+| Workstream | Current step | What remains |
+|---|---|---|
+| SQLite (Q) | Preserve the landed grouping, receipt seek, and worker changes. Revisit the process-local wake on the integrated baseline after the current qualification run. | Verify the wake under low traffic and saturation, and repeat sustained retained runs against the throughput and latency gates. |
+| PostgreSQL (A–D) | Use the B1 proof to design byte-bounded producer admission. The B2 membership and D4 wake candidates remain isolated based on measured gates. | Qualify per-command cancellation, recovery, and real group sizes. Measure physical writes and retained claim cost before adopting further schema candidates. |
+| Redis throughput (F) | Prepare an isolated F3 grouped dispatch proof under `redis-f3/`. The delayed comparison provides a measured latency and storage baseline. | Verify independent receipts and recovery before paired timing. Compare latency, throughput, and AOF against BullMQ under the same durability. |
+| Redis topology (R) | Prepare an executable Cluster declared-key proof for a real operation or recovery segment under `redis-r3-next/`. | Qualify route changes and preserve continuity and old-primary fencing before write admission. Sentinel observer evidence is in the report. |
+| Scheduler and management (S/M) | Keep the scheduler and Store page results documented with their open p99 gates. | Repeat scheduler and HTTP tails on a quiet host. Reconcile topology display with the eventual Redis authority model. |
+| Qualification (H) | The integrated SP-029 short matrix started in session 41871. It covers all cases including a 10-minute soak smoke. Exact archive, pinned PostgreSQL fixture, log, and marker are under `sp029-integrated-short/`. | Check every case and record its verdict. Full SP-029 and the 24-hour reference soak require the plan's quiet host. |
+
+The Redis proofs can be prepared while the short matrix runs. Schedule timed experiments serially on this host.
 
 ## Reproducing runs
 
