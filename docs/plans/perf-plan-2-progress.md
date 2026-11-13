@@ -1,6 +1,6 @@
 # Round two performance handoff
 
-Updated 2026-11-13 16:04 UTC. Start here when resuming in a new model or session. Keep this file current after each result, decision, failed run, or change to the work queue. Keep detailed results in the report and raw evidence in the artifact directory.
+Updated 2026-11-13 16:05 UTC. Start here when resuming in a new model or session. Keep this file current after each result, decision, failed run, or change to the work queue. Keep detailed results in the report and raw evidence in the artifact directory.
 
 - Scope and acceptance gates: [perf-plan-2.md](perf-plan-2.md).
 - Measurements, changes, and exact test revisions: [performance report](../reports/perf-round-2.md).
@@ -22,7 +22,7 @@ The delayed Redis/BullMQ comparison completed five pairs each at 40 and 100 offe
 
 ## Remaining work
 
-- The PostgreSQL B1 transport proof and paired benchmark built cleanly in session 69387 after delayed Redis completed. Its first fixture run rejected sub-millisecond test deadlines. The harness now supplies millisecond-aligned deadlines and is retrying in session 45594. The failed attempt is archived under `pg-b1/transport/first-attempt/`. Artifacts and runner are under `pg-b1/transport/`. The Npgsql harness compares explicit grouped submission with singleton dispatch, verifies receipt attribution, and measures durable commits. Check `build.log`, `results.ndjson`, `summary.json`, and `run.done`. Automatic producer admission and cancellation still require a separate qualification. The cap increase remains a separate B2 decision.
+- The PostgreSQL B1 transport proof and paired benchmark built cleanly in session 69387 after delayed Redis completed. Its first fixture run rejected sub-millisecond test deadlines. The harness now supplies millisecond-aligned deadlines and passed the receipt, rollback, visibility and simulated lost-reply proof in session 27267. The timing matrix is running. The failed fixture attempt and a retry build that picked up the archived C# file are preserved under `pg-b1/transport/first-attempt/`. Artifacts and runner are under `pg-b1/transport/`. The Npgsql harness compares explicit grouped submission with singleton dispatch, verifies receipt attribution, and measures durable commits. Check `build.log`, `results.ndjson`, `summary.json`, and `run.done`. Automatic producer admission and cancellation still require a separate qualification. The cap increase remains a separate B2 decision.
 - Keep the P-01 and P-09 gates, scheduler p99 gate, strict Sentinel and Cluster authority, and full SP-029 and quiet-host soak open until qualified. See the plan and report for the remaining implementation work and owner decisions.
 
 ## Reproducing runs
