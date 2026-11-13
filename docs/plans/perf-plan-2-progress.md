@@ -1,6 +1,6 @@
 # Round two performance handoff
 
-Updated 2026-11-13 16:49 UTC. Start here when resuming in a new model or session. Keep this file current after each result, decision, failed run, or change to the work queue. Keep detailed results in the report and raw evidence in the artifact directory.
+Updated 2026-11-13 17:01 UTC. Start here when resuming in a new model or session. Keep this file current after each result, decision, failed run, or change to the work queue. Keep detailed results in the report and raw evidence in the artifact directory.
 
 - Scope and acceptance gates: [perf-plan-2.md](perf-plan-2.md).
 - Measurements, changes, and exact test revisions: [performance report](../reports/perf-round-2.md).
@@ -64,7 +64,7 @@ The source of truth is `perf-plan-2.md`. This file tracks execution. The plan is
 
 Phase 0 housekeeping is complete. The plan and round-one status table were committed in `49c1b7c`, and the shoot-out branch is an ancestor of main. The report contains the phase 0 claim/pressure counters, notification waits, physical writes, Redis script/recovery traces, relay phases, allocations, finish batch counts, nested SQL and scheduler attribution. Phase timings are from specific fixtures. The full matrix of retained-data, contention and payload cases remains part of qualification.
 
-The active integrated run has completed P-01, P-01t, and P-02. P-01 reconciled all 23,710 jobs and recorded 84.51 finishes/s, backlog growth of 14.05/s, and a 41.54 s due-to-Begin p99. P-02's confirmation finished at 98.79/s with a flat backlog and zero correctness violations. These are shared-host diagnostics. Check the remaining case results before drawing a conclusion about the whole matrix.
+The active integrated run has completed P-01, P-01t, P-02, and P-03. P-03 kept up at approximately 1 MB/s in both payload arms without correctness violations or dispatch failures. The exact one-byte-over-limit payload was rejected and stored zero jobs. P-04 is active. P-01 reconciled all 23,710 jobs and recorded 84.51 finishes/s, backlog growth of 14.05/s, and a 41.54 s due-to-Begin p99. P-02's confirmation finished at 98.79/s with a flat backlog and zero correctness violations. These are shared-host diagnostics. Check the remaining case results before drawing a conclusion about the whole matrix.
 
 Owner decisions still open in §11 include batch fairness, producer and bulk defaults, event shape, optional durability modes, and the specific Redis promotion authority. The current queue can advance without changing those contracts. The quiet reference host remains required for final qualification.
 
