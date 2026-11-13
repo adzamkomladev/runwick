@@ -38,6 +38,26 @@ The delayed Redis/BullMQ comparison completed five pairs each at 40 and 100 offe
 
 The Redis proofs can be prepared while the short matrix runs. Schedule timed experiments serially on this host.
 
+## Plan item index
+
+| Items | State and next evidence |
+|---|---|
+| Q0–Q5 | Cost baseline, durable producer grouping, claim and finish changes, writer/reader experiments, and receipt indexing are recorded. The 50,000-retained sustained run missed both gates. |
+| Q6–Q7 | Integrated wake pairs are queued. SQLite contracts passed on recorded revisions. Repeat crash/reopen, scheduler and outbox checks on any integration candidate. |
+| A1–A3, A7 | Landed. Recheck on the integrated workload matrix. |
+| A4–A6 | Attempt-close and allocator experiments are isolated. Set-based receipt creation needs a design that preserves replay, cross-class checks, and fresh decision time. |
+| B1–B2 | Explicit group transport and ordinal join were measured. Follow with byte-bounded admission and a separate cap decision. |
+| B3–B7 | Single-lane refill landed. SQLite finish grouping stayed isolated. Multi-lane fairness and combined finish/claim need separate ownership and scheduling proofs before any default change. |
+| C1–C8 | Claim index candidate stayed isolated. Prepare C5 measurements. Receipt compaction needs a replay proof. Gate locking and row-layout changes remain open. Event shape requires an explicit decision. |
+| D1–D4 | Transport identity in claim landed. Mark batching, slot sweep, and destination wake measured. True grouped destination delivery and P-09 qualification remain open. |
+| E1–E5 | Decoder, fingerprint, settlement reply, dispatch argument, and attempt allocation improvements landed. Integrated allocation gate still needs qualification. |
+| F1–F6 | Wake and encoding candidates remain isolated. Producer depth measured. F3 proof in preparation. Combined finish/claim and additional sockets remain conditional on bottleneck evidence. |
+| R0–R5 | Authority contract and Sentinel observer tested. Cluster key audit and synthetic migration proved the need for declared keys. Real recovery migration proof in preparation. Strict write authority and topology integration remain open. |
+| G, N | Optional durability and event tradeoffs require owner decisions. .NET 11 migration deferred by owner. |
+| S0–S6 | Scheduler attribution, productive scans, and durable idle time landed. Grouping remains opt-in. Eight-plan prototype missed one long-run p99 gate. Replica contention and definition caching stay evidence-driven. |
+| M1–M4 | Store page, bounded collectors, and history landed. HTTP viewer costs measured on three providers. Tail and topology gates remain open. |
+| H1–H4 | Focused and full suite evidence is in the report. Integrated short matrix is active. Full reference qualification remains open. |
+
 ## Reproducing runs
 
 Use .NET SDK 10.0.403 with `DOTNET_ROOT=/root/.dotnet` and its directory on `PATH`. Use pinned fixture images from each runner and retain default durable settings, including Redis AOF always and SQLite WAL with synchronous FULL. The host is shared. Run timing workloads serially and verify that an existing runner has exited before restarting. Check each experiment's `run.done` exit status, logs, and reconciliation evidence. Treat wide paired spreads as inconclusive and keep experiments with unresolved correctness or regression checks isolated.
