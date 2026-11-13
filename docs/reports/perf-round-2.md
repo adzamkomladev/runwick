@@ -1,5 +1,16 @@
 # Runwick performance, round two
 
+Status as of 2026-11-13: the changes below were measured on a shared host with default durability. The 100/s sustained and 2 s p99 targets, Redis parity and strict failover, and the full SP-029 release workload and quiet-host soak remain open.
+
+| Workload | Best established result and its limit |
+|---|---|
+| SQLite producer and retained receipts | Grouping lifted median 16-caller add throughput from 102.1 to 226.7/s. The indexed receipt check delivered a 2.05× median paired gain on the 5,000-retained fixture. With 50,000 retained jobs, the integrated build settled 93.83/s during offers and recorded 2.56 s due-to-handler p99. |
+| PostgreSQL direct dispatch | Moving the wake after commit raised median throughput from 226.6 to 301.8/s at 16 callers. The short integrated P-01 run settled 82.09/s during measurement at roughly 100 offers/s. |
+| PostgreSQL outbox | Destination commit wait samples pointed to the transactional notification lock. The post-commit wake candidate passed its focused tests and identity smoke check. Its paired timing is in progress. |
+| Redis | Bounded inline projection eliminated observed normal-path recoveries in the matched bulk fixture. Steady completions at 40 and 100 offers/s were close to BullMQ; saturated throughput and steady offer-to-finish tails still lag. The Sentinel observer detects promotion but leaves continuity unresolved. |
+| Scheduler | The eight-plan prototype preserved occurrence identity in two 15-minute steady measurements, with p99 samples on either side of 13 s. The completed retry also recovered all 1,000 outage occurrences. |
+| Store dashboard | The Store page provides cached, authorized provider observations. Paired snapshot runs kept median completion rates close, with enough p99 variation to leave the 5% budget open. The real HTTP comparison is queued. |
+
 ## SQLite baseline · 2026-11-11
 
 The first workload used the shipped SQLite provider at `11fa7f7` with `BenchMode.cs` from the queue shootout branch overlaid in an isolated checkout. The profiler build used the same runtime source plus the opt-in writer timings later committed in `8af3b29`. Both used .NET SDK `10.0.403`, bundled SQLite `3.53.3`, a fresh local ext4 database, WAL, and `synchronous=FULL`. The host has eight shared vCPUs and QEMU SSD storage. These runs do not qualify the release on a reference host.
