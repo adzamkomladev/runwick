@@ -1,6 +1,6 @@
 # Round two performance handoff
 
-Updated 2026-11-13 15:59 UTC. Start here when resuming in a new model or session. Keep this file current after each result, decision, failed run, or change to the work queue. Keep detailed results in the report and raw evidence in the artifact directory.
+Updated 2026-11-13 16:04 UTC. Start here when resuming in a new model or session. Keep this file current after each result, decision, failed run, or change to the work queue. Keep detailed results in the report and raw evidence in the artifact directory.
 
 - Scope and acceptance gates: [perf-plan-2.md](perf-plan-2.md).
 - Measurements, changes, and exact test revisions: [performance report](../reports/perf-round-2.md).
@@ -18,12 +18,11 @@ The authenticated Store HTTP run completed five pairs per provider. All 900 view
 
 The B1 SQL proof passed mixed reply, replay, and rollback checks on a disposable PostgreSQL fixture. It has no production queue integration or timing. B2 passed seven focused tests per arm and reconciled all measured and warm-up jobs. At eight callers, the ordinal join lost throughput in all five pairs, with median throughput 3,651 → 2,955/s and median paired p99 51% higher. Leave B2 isolated. Artifacts are under `pg-b1/` and `pg-b2-membership/`.
 
-The delayed Redis/BullMQ run restarted from pair four at 40/s in exec session 62007. Three earlier pairs were retained. The interrupted fourth pair is archived in `redis-bullmq-delayed/interrupted-pair-4/`. Its saved Runwick JSON passed identity and accounting checks, but Redis INFO was missing and the original runner exited. The resumed runner preserves diagnostic errors and continues when only INFO collection fails. All five 40/s pairs are complete. Runwick settled 6,000 of 6,000 offers, BullMQ settled all 5,857 accepted, and median due-to-handler p99 was 1,860 ms versus 745 ms. Median enqueue p99 was 248 ms versus 210 ms. The 100/s pairs are in progress. Check `resume-run.log`, `run.done`, and `summary.json`.
+The delayed Redis/BullMQ comparison completed five pairs each at 40 and 100 offers/s. Runwick settled all 21,000 offers. BullMQ settled all 20,692 accepted offers. Both rates met the throughput band. At 100/s, due-to-handler p99 was 1,719 ms versus 461 ms by arm median, with Runwick outside the latency band in all five pairs. Enqueue and resource measurements are in the report. The original interrupted fourth pair is preserved under `redis-bullmq-delayed/interrupted-pair-4/`. The final summaries are `summary.json` and `resources.json` in that experiment directory.
 
 ## Remaining work
 
-- Finish the delayed Redis/BullMQ comparison and report enqueue and due-to-handler tails alongside durable completions and refusals.
-- The PostgreSQL B1 transport proof and paired benchmark are queued in session 69387 behind the delayed Redis completion marker. Artifacts and runner are under `pg-b1/transport/`. The Npgsql harness compares explicit grouped submission with singleton dispatch, verifies receipt attribution, and measures durable commits. Check `build.log`, `results.ndjson`, `summary.json`, and `run.done`. Automatic producer admission and cancellation still require a separate qualification. The cap increase remains a separate B2 decision.
+- The PostgreSQL B1 transport proof and paired benchmark started in session 69387 after delayed Redis completed. Artifacts and runner are under `pg-b1/transport/`. The Npgsql harness compares explicit grouped submission with singleton dispatch, verifies receipt attribution, and measures durable commits. Check `build.log`, `results.ndjson`, `summary.json`, and `run.done`. Automatic producer admission and cancellation still require a separate qualification. The cap increase remains a separate B2 decision.
 - Keep the P-01 and P-09 gates, scheduler p99 gate, strict Sentinel and Cluster authority, and full SP-029 and quiet-host soak open until qualified. See the plan and report for the remaining implementation work and owner decisions.
 
 ## Reproducing runs
