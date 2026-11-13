@@ -256,6 +256,8 @@ Post-commit p50/p95/p99 was 8.12/13.12/13.99 s with four plans and 6.52/10.99/11
 
 The first 15-minute eight-plan run stopped during the planned downtime before catch-up completed. Its raw acknowledgment log still contains 15,000 distinct measured occurrences, with 1,000 at each of 15 minute boundaries. The nearest-rank post-commit p50/p95/p99 was 5.92/10.78/12.47 s. These records establish the steady acknowledgment timing for that fixture. Catch-up and full end-of-run reconciliation require a complete repeat.
 
+The repeat recorded 15,000 distinct measured acknowledgments, again with 1,000 per minute boundary. Its raw post-commit p50/p95/p99 was 6.20/11.87/13.86 s. The two long steady samples therefore fall on either side of the 13 s gate. Catch-up verification is in progress. The additive migration candidate remains isolated. Raw results are under `artifacts/perf/round-two/p06s-s3-group-size/group-8-long-retry/`.
+
 ## PostgreSQL post-commit wake
 
 Migration 0021 adds a versioned direct-dispatch path at schema revision 21. Direct dispatch now queues a best-effort wake after durable commit for newly created jobs due at the database decision time. Staged dispatch, scheduler, outbox and management writes retain their transactional notification paths. The 79 targeted wake, migration and upgrade tests passed, including a forced wake failure followed by resolving the accepted dispatch.
