@@ -469,6 +469,8 @@ A sixteen-slot D2 pair used the same 100/s offered rate and windows. The isolate
 
 Across all five sixteen-slot D2 pairs, median confirmations increased from 75.73 to 98.73/s and median ready-to-confirm p99 fell from 9.27 to 2.61 s. Applied mark commits fell by 29.0–32.7% across candidate runs. Each pair reconciled all staged messages to one destination job per message. Two candidate runs met the p99 target and one met the rate target. The patch remains isolated because each run missed at least one gate. The four additional pairs and combined summary are under `artifacts/perf/round-two/p09-d2/slots-16-repeat/`.
 
+The D4 source assessment found that a destination batch would need per-item rollback for refusals after writes and a lock order spanning all items. In the five sixteen-slot D2 pairs, the median of the baseline runs’ mean destination function and commit phases was 20.05 and 68.14 ms. The client-observed commit phase includes backend waits, server response and client scheduling. A dedicated wait and WAL timing probe is the next attribution step. The design is under `artifacts/perf/round-two/p09-d4/`.
+
 ## Worker payload decoding
 
 E1 uses the strict payload scanner without constructing canonical values before worker deserialization. The same scanner still builds the canonical form for fingerprints. All 102 focused boundary, serialization and wire tests passed, including rejection-code parity and the existing canonical vectors.
