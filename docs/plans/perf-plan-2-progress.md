@@ -1,6 +1,6 @@
 # Round two performance handoff
 
-Updated 2026-11-13 16:23 UTC. Start here when resuming in a new model or session. Keep this file current after each result, decision, failed run, or change to the work queue. Keep detailed results in the report and raw evidence in the artifact directory.
+Updated 2026-11-13 16:25 UTC. Start here when resuming in a new model or session. Keep this file current after each result, decision, failed run, or change to the work queue. Keep detailed results in the report and raw evidence in the artifact directory.
 
 - Scope and acceptance gates: [perf-plan-2.md](perf-plan-2.md).
 - Measurements, changes, and exact test revisions: [performance report](../reports/perf-round-2.md).
@@ -34,7 +34,7 @@ The delayed Redis/BullMQ comparison completed five pairs each at 40 and 100 offe
 | Redis throughput (F) | Prepare an isolated F3 grouped dispatch proof under `redis-f3/`. The delayed comparison provides a measured latency and storage baseline. | Verify independent receipts and recovery before paired timing. Compare latency, throughput, and AOF against BullMQ under the same durability. |
 | Redis topology (R) | Prepare an executable Cluster declared-key proof for a real operation or recovery segment under `redis-r3-next/`. | Qualify route changes and preserve continuity and old-primary fencing before write admission. Sentinel observer evidence is in the report. |
 | Scheduler and management (S/M) | Keep the scheduler and Store page results documented with their open p99 gates. | Repeat scheduler and HTTP tails on a quiet host. Reconcile topology display with the eventual Redis authority model. |
-| Qualification (H) | The integrated SP-029 short matrix started in session 41871. It covers all cases including a 10-minute soak smoke. Exact archive, pinned PostgreSQL fixture, log, and marker are under `sp029-integrated-short/`. | Check every case and record its verdict. Full SP-029 and the 24-hour reference soak require the plan's quiet host. |
+| Qualification (H) | The integrated SP-029 short matrix started in session 41871. It covers all cases including a 10-minute soak smoke. Exact archive, pinned PostgreSQL fixture, log, and marker are under `sp029-integrated-short/`. | Check every case and record its verdict. The archived launcher omitted Git metadata, so use its saved `revision.txt`. A separate verifier in session 18429 will write `case-status.json` and `verification.done`. Commit `357a119` fixes future launcher runs to return failure if any workload exits nonzero while still writing the summary. Full SP-029 and the 24-hour reference soak require the plan's quiet host. |
 
 The Redis proofs can be prepared while the short matrix runs. Schedule timed experiments serially on this host.
 
