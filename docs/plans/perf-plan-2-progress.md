@@ -14,13 +14,16 @@ SQLite producer grouping and retained receipt indexing landed, along with Postgr
 
 The PostgreSQL destination wake candidate passed 107 focused tests and improved every matched outbox pair. Median throughput was 88.71 → 96.10/s and p99 12.97 → 10.70 s. All 89,831 deliveries reconciled. Keep the candidate isolated because no arm met both P-09 targets. Its patch and qualification are under `p09-d4/`.
 
-The authenticated Store HTTP benchmark, PostgreSQL B1 SQL proof, and B2 paired experiment have success markers. Read their summaries and proof logs next. The delayed Redis/BullMQ runner stopped at pair four at 40/s. The saved Runwick JSON passes the job and identity checks. The corresponding Redis INFO file is missing. Resume with a fresh fourth pair, preserve the previous evidence, and finish the remaining 40/s and 100/s pairs.
+The authenticated Store HTTP run completed five pairs per provider. All 900 viewer polls returned diagnostics. Completion rates stayed close with and without viewers. The wide paired tail spread leaves the 5% p99 budget open. Results are in the report and `store-viewer-cost/http/results/summary.json`.
+
+The B1 SQL proof passed mixed reply, replay, and rollback checks on a disposable PostgreSQL fixture. It has no production queue integration or timing. B2 passed seven focused tests per arm and reconciled all measured and warm-up jobs. At eight callers, the ordinal join lost throughput in all five pairs, with median throughput 3,651 → 2,955/s and median paired p99 51% higher. Leave B2 isolated. Artifacts are under `pg-b1/` and `pg-b2-membership/`.
+
+The delayed Redis/BullMQ run restarted from pair four at 40/s in exec session 62007. Three earlier pairs were retained. The interrupted fourth pair is archived in `redis-bullmq-delayed/interrupted-pair-4/`. Its saved Runwick JSON passed identity and accounting checks, but Redis INFO was missing and the original runner exited. The resumed runner preserves diagnostic errors and continues when only INFO collection fails. Check `resume-run.log`, `run.done`, and `summary.json`.
 
 ## Remaining work
 
-- Record HTTP viewer throughput and latency for SQLite, PostgreSQL, and Redis, including diagnostics availability and the 5% budget.
-- Record B1 proof scope and B2 results. The B1 SQL proof does not include a production producer queue or cancellation and recovery qualification. B2 tests a SQL change at the existing 100-item cap.
 - Finish the delayed Redis/BullMQ comparison and report enqueue and due-to-handler tails alongside durable completions and refusals.
+- Prototype and qualify production B1 admission, cancellation, and replay if proceeding with grouped producer dispatch. The cap increase remains a separate B2 decision.
 - Keep the P-01 and P-09 gates, scheduler p99 gate, strict Sentinel and Cluster authority, and full SP-029 and quiet-host soak open until qualified. See the plan and report for the remaining implementation work and owner decisions.
 
 ## Reproducing runs
