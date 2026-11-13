@@ -15,7 +15,7 @@
 #   SP029_PG        connection string of a separate PostgreSQL server (the plan's 8 vCPU / 16 GiB database host, superuser,
 #                   databases are created and dropped per run). Unset: a local Testcontainers server per case. P-08c always
 #                   uses a local container, because it kills and restarts the server.
-set -uo pipefail
+set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="${DOTNET_ROOT:-$HOME/.dotnet}" DOTNET_NOLOGO=1
 unset RUNWICK_TEST_PG
@@ -24,7 +24,8 @@ profile="${SP029_PROFILE:-short}"
 out="${1:-artifacts/sp029/$(date -u +%Y%m%d-%H%M%S)}"
 mkdir -p "$out/perf"
 out="$(cd "$out" && pwd)"
-echo "SP-029 ($profile) into $out; commit $(git rev-parse HEAD) ($(git status --porcelain | wc -l) uncommitted paths); load $(cat /proc/loadavg)"
+revision="$(git rev-parse HEAD 2>/dev/null || printf unknown)"
+echo "SP-029 ($profile) into $out; commit $revision; load $(cat /proc/loadavg)"
 
 if [[ -z "${SP029_SKIP_BUILD:-}" ]]; then
   dotnet build Runwick.slnx -c Release 2>&1 | tail -3
@@ -65,6 +66,7 @@ args_for() {
   esac
 }
 
+failed=0
 for name in ${SP029_CASES:-P-01 P-01t P-02 P-03 P-04 P-05 P-06r P-06s P-07 P-08a P-08b P-08c P-09 P-10}; do
   # shellcheck disable=SC2207
   args=($(args_for "$name"))
@@ -77,8 +79,11 @@ for name in ${SP029_CASES:-P-01 P-01t P-02 P-03 P-04 P-05 P-06r P-06s P-07 P-08a
   fi
   if [[ -n "${SP029_PG:-}" && "$name" != P-08c ]]; then export RUNWICK_TEST_PG="$SP029_PG"; else unset RUNWICK_TEST_PG; fi
   start=$(date +%s)
-  "$wl" run "$name" --out "$out/perf/$(date -u +%Y%m%d-%H%M%S)-$name" "${args[@]}" > "$out/perf/$name.log" 2>&1
-  echo "$name: exit $? in $(( $(date +%s) - start )) s; $(tail -1 "$out/perf/$name.log")"
+  status=0
+  "$wl" run "$name" --out "$out/perf/$(date -u +%Y%m%d-%H%M%S)-$name" "${args[@]}" > "$out/perf/$name.log" 2>&1 || status=$?
+  if (( status != 0 )); then failed=1; fi
+  echo "$name: exit $status in $(( $(date +%s) - start )) s; $(tail -1 "$out/perf/$name.log")"
 done
 
 python3 eng/sp029-summary.py "$out" --profile "$profile" ${SP029_REFERENCE:+--reference}
+exit "$failed"
