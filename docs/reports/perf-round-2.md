@@ -254,6 +254,8 @@ One matched short pair at `e1cb660` compared the existing four-plan group with a
 
 Post-commit p50/p95/p99 was 8.12/13.12/13.99 s with four plans and 6.52/10.99/11.61 s with eight. Mean function and commit time per group was 56.1/25.6 ms and 95.3/27.4 ms, respectively. The eight-plan arm met the 13 s target in this short comparison. Longer steady-state and catch-up qualification for the larger groups remain open. Patch, acknowledgment identities and results are under `artifacts/perf/round-two/p06s-s3-group-size/`.
 
+The first 15-minute eight-plan run stopped during the planned downtime before catch-up completed. Its raw acknowledgment log still contains 15,000 distinct measured occurrences, with 1,000 at each of 15 minute boundaries. The nearest-rank post-commit p50/p95/p99 was 5.92/10.78/12.47 s. These records establish the steady acknowledgment timing for that fixture. Catch-up and full end-of-run reconciliation require a complete repeat.
+
 ## PostgreSQL post-commit wake
 
 Migration 0021 adds a versioned direct-dispatch path at schema revision 21. Direct dispatch now queues a best-effort wake after durable commit for newly created jobs due at the database decision time. Staged dispatch, scheduler, outbox and management writes retain their transactional notification paths. The 79 targeted wake, migration and upgrade tests passed, including a forced wake failure followed by resolving the accepted dispatch.
