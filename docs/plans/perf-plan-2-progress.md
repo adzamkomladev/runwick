@@ -22,7 +22,7 @@ The delayed Redis/BullMQ comparison completed five pairs each at 40 and 100 offe
 
 ## Remaining work
 
-- The PostgreSQL B1 transport proof and paired benchmark started in session 69387 after delayed Redis completed. Artifacts and runner are under `pg-b1/transport/`. The Npgsql harness compares explicit grouped submission with singleton dispatch, verifies receipt attribution, and measures durable commits. Check `build.log`, `results.ndjson`, `summary.json`, and `run.done`. Automatic producer admission and cancellation still require a separate qualification. The cap increase remains a separate B2 decision.
+- The PostgreSQL B1 transport proof and paired benchmark built cleanly in session 69387 after delayed Redis completed. Its first fixture run rejected sub-millisecond test deadlines. The harness now supplies millisecond-aligned deadlines and is retrying in session 45594. The failed attempt is archived under `pg-b1/transport/first-attempt/`. Artifacts and runner are under `pg-b1/transport/`. The Npgsql harness compares explicit grouped submission with singleton dispatch, verifies receipt attribution, and measures durable commits. Check `build.log`, `results.ndjson`, `summary.json`, and `run.done`. Automatic producer admission and cancellation still require a separate qualification. The cap increase remains a separate B2 decision.
 - Keep the P-01 and P-09 gates, scheduler p99 gate, strict Sentinel and Cluster authority, and full SP-029 and quiet-host soak open until qualified. See the plan and report for the remaining implementation work and owner decisions.
 
 ## Reproducing runs
