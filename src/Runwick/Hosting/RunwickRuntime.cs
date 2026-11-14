@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Runwick.Protocol;
 using Runwick.Registration;
+using Runwick.Serialization;
 
 namespace Runwick.Hosting;
 
@@ -29,6 +30,9 @@ internal sealed class RunwickRuntime(JobRegistry registry, IRunwickStore store, 
     public JobRegistry Registry => registry;
 
     public IRunwickStore Store => store;
+
+    /// <summary>Items accepted in one batch: the portable 100 unless the store declares a higher cap.</summary>
+    public int MaxBatchItems => store is IBatchLimitSource limit ? limit.MaxBatchItems : PayloadBounds.MaxBatchItems;
 
     public TimeProvider Time => time;
 

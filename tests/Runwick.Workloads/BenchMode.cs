@@ -82,7 +82,6 @@ internal static class BenchMode
             return 2;
         }
 
-        var chunk = Math.Min(PayloadBounds.MaxBatchItems, BatchPayloadBudget / payload);
         var database = a.OptStr("db") ?? "bench_runwick";
         var adminCs = a.OptStr("conn") ?? DefaultAdmin;
         var calls = Math.Max(1, a.Int("calls", 1));
@@ -94,6 +93,17 @@ internal static class BenchMode
             Console.Error.WriteLine("--store must be postgres, sqlite or redis");
             return 2;
         }
+
+        // --batch-items n: items per DispatchMany call (default the portable 100; PostgreSQL accepts up to 1,000); the 1 MiB byte budget still applies.
+        var batchCap = store == "postgres" ? PayloadBounds.PostgresMaxBatchItems : PayloadBounds.MaxBatchItems;
+        var batchItems = a.Int("batch-items", PayloadBounds.MaxBatchItems);
+        if (batchItems < 1 || batchItems > batchCap)
+        {
+            Console.Error.WriteLine($"--batch-items must be between 1 and {batchCap} for {store}");
+            return 2;
+        }
+
+        var chunk = Math.Min(batchItems, BatchPayloadBudget / payload);
 
         var holdRead = a.Has("sqlite-hold-read");
         if (holdRead && (store != "sqlite" || mode != "drain" || !a.Has("trace")))
@@ -397,6 +407,7 @@ internal static class BenchMode
         {
             // --n jobs added with DispatchMany from --calls callers side by side; worker never started.
             var watch = Stopwatch.StartNew();
+            var callMs = new System.Collections.Concurrent.ConcurrentBag<double>();
             var nextChunk = -1;
             await Task.WhenAll(Enumerable.Range(0, calls).Select(_ => Task.Run(async () =>
             {
@@ -404,10 +415,16 @@ internal static class BenchMode
                 {
                     var items = Enumerable.Range(0, Math.Min(chunk, n - c * chunk))
                         .Select(_ => new BatchDispatchItem(LoadJob.Create(Interlocked.Increment(ref sequence), payload))).ToList();
+                    var started = Stopwatch.GetTimestamp();
                     var receipt = await dispatcher.DispatchManyAsync(items).ConfigureAwait(false);
+                    callMs.Add(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
                     Interlocked.Add(ref failedDispatch, receipt.Items.Count(x => x.Receipt is null));
                 }
             }))).ConfigureAwait(false);
+            var sorted = callMs.OrderBy(x => x).ToArray();
+            double At(double q) => sorted.Length == 0 ? 0 : Math.Round(sorted[Math.Min(sorted.Length - 1, (int)Math.Ceiling(q * sorted.Length) - 1)], 2);
+            result["batchItems"] = chunk;
+            result["callLatencyMs"] = new JsonObject { ["p50"] = At(0.5), ["p95"] = At(0.95), ["p99"] = At(0.99), ["max"] = At(1) };
             result["jobs"] = n;
             result["calls"] = calls;
             result["failedDispatch"] = failedDispatch;

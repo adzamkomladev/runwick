@@ -138,7 +138,7 @@ public sealed class SignupService(NpgsqlDataSource db, IPostgresJobDispatcher jo
 }
 ```
 
-`StageAsync` returns a `StagedDispatch`, not a `DispatchReceipt`. Nothing is durable until you commit. Runwick never commits, rolls back or retries your transaction. If the transaction fails with a serialization error or a deadlock, retrying the whole transaction is your job. `StageManyAsync` stages a batch of up to 100 jobs the same way.
+`StageAsync` returns a `StagedDispatch`, not a `DispatchReceipt`. Nothing is durable until you commit. Runwick never commits, rolls back or retries your transaction. If the transaction fails with a serialization error or a deadlock, retrying the whole transaction is your job. `StageManyAsync` stages a batch of up to 1,000 jobs the same way.
 
 The other direction works too: a handler can mark its job as succeeded inside your transaction. [Transactions](/docs/transactions) covers both, with their rules and limits.
 

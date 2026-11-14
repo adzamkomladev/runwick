@@ -260,6 +260,12 @@ internal interface IWakeNotificationSource
     Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, Action onLost, CancellationToken ct);
 }
 
+/// <summary>A store that accepts more than the portable 100 items per DispatchMany/1 (spec 02 §4.1).</summary>
+internal interface IBatchLimitSource
+{
+    int MaxBatchItems { get; }
+}
+
 /// <summary>Process-local work hints. Workers retain the normal polling cap for remote and staged writes.</summary>
 internal interface ILocalWorkWakeSource
 {

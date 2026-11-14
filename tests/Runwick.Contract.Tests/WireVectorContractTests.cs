@@ -211,8 +211,8 @@ public sealed class WireVectorContractTests
         Assert.Equal(receipt.Items, resolution.BatchReceipt!.Items);
         Assert.Equal(3, await JobCount(f));
 
-        // 101 items: batch_too_large, known not applied.
-        var tooMany = Enumerable.Range(0, 101).Select(i => new BatchDispatchItem(new PingJob("x" + i))).ToList();
+        // One over the store cap (101, or 1,001 on PostgreSQL): batch_too_large, known not applied.
+        var tooMany = Enumerable.Range(0, c.Runtime.MaxBatchItems + 1).Select(i => new BatchDispatchItem(new PingJob("x" + i))).ToList();
         var large = await Assert.ThrowsAsync<DispatchValidationException>(() => c.Dispatcher.DispatchManyAsync(tooMany, cancellationToken: Ct));
         Assert.Equal((RunwickErrorCodes.BatchTooLarge, ErrorDisposition.KnownNotApplied), (large.Code, large.Disposition));
         Assert.Equal(3, await JobCount(f));

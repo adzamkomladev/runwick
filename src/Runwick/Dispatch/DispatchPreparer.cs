@@ -28,7 +28,8 @@ internal sealed class DispatchPreparer(JobRegistry registry, ProducerOptions opt
         return prepared;
     }
 
-    public PreparedBatch PrepareMany(Guid storeId, IReadOnlyList<BatchDispatchItem> items, BatchDispatchOptions? batchOptions)
+    public PreparedBatch PrepareMany(Guid storeId, IReadOnlyList<BatchDispatchItem> items, BatchDispatchOptions? batchOptions,
+        int maxItems = PayloadBounds.MaxBatchItems)
     {
         ArgumentNullException.ThrowIfNull(items);
         if (items.Count == 0)
@@ -36,9 +37,9 @@ internal sealed class DispatchPreparer(JobRegistry registry, ProducerOptions opt
             throw new DispatchValidationException(RunwickErrorCodes.BatchEmpty, "A batch needs at least one item.");
         }
 
-        if (items.Count > PayloadBounds.MaxBatchItems)
+        if (items.Count > maxItems)
         {
-            throw new DispatchValidationException(RunwickErrorCodes.BatchTooLarge, $"A batch holds at most {PayloadBounds.MaxBatchItems} items.");
+            throw new DispatchValidationException(RunwickErrorCodes.BatchTooLarge, $"A batch holds at most {maxItems} items.");
         }
 
         var intents = new List<DispatchIntent>(items.Count);

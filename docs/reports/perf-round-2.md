@@ -704,3 +704,22 @@ Read these with four caveats:
 - **Shared host.** The 16 PHP workers keep the load average at 8 to 16 by themselves, so the load snapshots do not show outside interference. Treat the figures as diagnostics.
 
 **PHP 8.3 finding.** On PHP 8.3 Laravel's SQLite queue is unreliable under 16 workers. Laravel reads `transaction_mode` only from PHP 8.4, so every pop transaction stays `DEFERRED`. A read-then-write upgrade then fails immediately with `SQLITE_BUSY` ("database is locked") despite a verified 5 s busy timeout. With `--tries=1` Laravel records those errors as `MaxAttemptsExceededException`, hiding the real cause. In the first run 13 of 15 SQLite Laravel runs failed jobs (251 of 20,000 in one drain), and a 2,000-job diagnostic gave 10 jobs/s with 31 failures. The same drain on PHP 8.4 gave 98.5 jobs/s with none. The harness now refuses to report SQLite unless the PHP version applies `BEGIN IMMEDIATE`, and records worker errors when jobs fail. The first-run outputs are kept in `laravel-queues/pairs/`. Its PostgreSQL results are the ones used above, and its SQLite results are not used.
+
+## PostgreSQL bulk cap of 1,000 items (B2)
+
+**Change.** The public PostgreSQL `DispatchMany` cap is now 1,000 items, up from 100. SQLite and Redis keep 100. The cap lives in the client (`IBatchLimitSource` on the PostgreSQL store, read by the preparer, caller-owned staging and prepared-envelope import). The dispatch SQL never checked the count, so there is no migration. Bytes stay bounded by the existing 2 MiB batch envelope, so 1,000 items fit only when each averages under about 2 KiB: 512-byte and 640-byte payloads fit, 1 KiB payloads do not (`batch_envelope_too_large`, rejected before any write). Spec 01 §12, 02 §4.1 and 04 (changes 2026-11-14) record it.
+
+**Tests.** `BatchCapTests` (PostgreSQL): 1,000 mixed plain, keyed and resource items commit once and replay to the same receipt, including through an exported and imported envelope; 1,001 items fail with `batch_too_large` and no table changes; a window-key conflict at ordinal 999 rolls back all 1,000 and `ContinueOnConflict` commits the other 999; the envelope byte cap still applies. A Core test covers the preparer and envelope reader at the cap and one over. The shared contract tests now assert one over each store's own cap, and passed 24 of 24 on SQLite, PostgreSQL and Redis (Redis 8.2.11 with AOF always). On the final tree Core passes 440 of 440, Outbox 48 of 48 and PostgreSQL 391 of 391 (logs in `artifacts/perf/round-two/pg-b2-cap/suites.log`).
+
+**Measurement.** Bulk dispatch of 20,000 jobs with 512-byte payloads on a fresh PostgreSQL 18 container, default durability, five alternating pairs per caller count, on this shared host. Raw files and `summary.json` are in `artifacts/perf/round-two/pg-b2-cap/`. No dispatch failed in any run.
+
+| Callers | Items per call | Median jobs/s | Paired throughput ratio (1,000 / 100) | Call p99 | WAL per job |
+|---|---|---|---|---|---|
+| 1 | 100 | 1,023 | 1.14 (0.97 to 1.25) | 297 ms | 3.4 KB |
+| 1 | 1,000 | 1,215 | | 2,314 ms | 3.4 KB |
+| 8 | 100 | 2,479 | 0.65 (0.61 to 0.76, all five pairs lower) | 1,652 ms | 3.5 KB |
+| 8 | 1,000 | 1,678 | | 6,649 ms | 4.9 KB |
+
+**Reading.** With one caller, 1,000-item calls raise throughput by about 14%, but the range crosses parity and a call now takes about 2.3 s at p99. With eight callers, 1,000-item calls lose about 35% throughput in every pair, and call p99 is four times higher. Per-job WAL is flat at one caller and about 40% higher at eight by arm median (4.9 against 3.5 KB; the paired median ratio is only 1.04). Call latency is the only proxy for how long a call holds locks; lock wait was not measured separately. The cap is a ceiling for single-caller bulk loads, not a better default. Keep 100 as the recommended size and document that larger calls raise latency and hurt concurrent producers.
+
+**Not done.** Per-ordinal lock-time and WAL profiling at 100 (the plan's profile-first step), 64 KiB and mixed payload sizes, and a rerun on the reference host.

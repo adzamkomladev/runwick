@@ -899,7 +899,7 @@ public sealed record BatchDispatchReceipt(
 Semantics:
 
 - **One command, one transaction, one receipt.** Every item is durably created/reused or none is. `Items` has exactly one entry per input item, ordered by `Ordinal` (0-based input index). Each item's `DispatchReceipt.OperationId` equals the batch operation ID. A lost reply resolves the whole batch through `ResolveAsync(OperationId)`.
-- **Bounds:** 1–100 items (`batch_empty`, `batch_too_large`) and a 2 MiB total prepared-envelope budget for the batch (`batch_envelope_too_large`). Callers split larger inputs.
+- **Bounds:** 1–100 items, or 1–1,000 on PostgreSQL (`batch_empty`, `batch_too_large`) and a 2 MiB total prepared-envelope budget for the batch (`batch_envelope_too_large`). Callers split larger inputs.
 - **Validation is all-or-nothing before any write.** Any invalid item rejects the whole batch with `DispatchValidationException` (known not applied) whose `ItemFailures` lists every invalid ordinal.
 - **Reused is success.** Reused items carry `PolicyDrift` where applicable.
 - **Hard uniqueness conflicts** (`uniqueness_conflict`, `uniqueness_composition_conflict`) fail the entire batch by default with `UniquenessConflictException` listing every conflicting ordinal. With `ContinueOnConflict = true`, conflicting items get a `Failure` and no rows; all other items commit atomically together. If every item conflicts, the command still commits its receipt with only failures.

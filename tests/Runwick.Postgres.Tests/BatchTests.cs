@@ -54,14 +54,14 @@ public sealed class BatchTests
         Assert.Equal(100, await Jobs(f));
         Assert.Empty(SnapshotInvariants.Violations(committed.Model));
 
-        // Invalid input: one bad item, 101 items, an envelope over 2 MiB — rejected before any write.
+        // Invalid input: one bad item, one over the cap, an envelope over 2 MiB — rejected before any write.
         var bad = items.Take(10).Append(new BatchDispatchItem(new KeyedJob("bad", ""))).ToList();
         var invalid = Assert.Throws<DispatchValidationException>(() => { c.Prepared.PrepareMany(bad); });
         Assert.Equal(ErrorDisposition.KnownNotApplied, invalid.Disposition);
         Assert.Equal(10, Assert.Single(invalid.ItemFailures).Ordinal);
         await Assert.ThrowsAsync<DispatchValidationException>(() => c.Dispatcher.DispatchManyAsync(bad));
 
-        var tooMany = Enumerable.Range(0, 101).Select(i => new BatchDispatchItem(new PingJob("x" + i))).ToList();
+        var tooMany = Enumerable.Range(0, c.Runtime.MaxBatchItems + 1).Select(i => new BatchDispatchItem(new PingJob("x" + i))).ToList();
         Assert.Equal(RunwickErrorCodes.BatchTooLarge, (await Assert.ThrowsAsync<DispatchValidationException>(() => c.Dispatcher.DispatchManyAsync(tooMany))).Code);
 
         var big = new string('a', 250_000);

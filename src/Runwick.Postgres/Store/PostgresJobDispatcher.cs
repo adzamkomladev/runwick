@@ -32,7 +32,7 @@ internal sealed class PostgresJobDispatcher(RunwickRuntime runtime, DispatchPrep
     {
         Validate(transaction);
         await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
-        return await SendAsync(preparer.PrepareMany(runtime.StoreId, items, options), transaction, cancellationToken).ConfigureAwait(false);
+        return await SendAsync(preparer.PrepareMany(runtime.StoreId, items, options, runtime.MaxBatchItems), transaction, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<StagedBatch> StageManyAsync(PreparedBatch prepared, NpgsqlTransaction transaction, CancellationToken cancellationToken = default)

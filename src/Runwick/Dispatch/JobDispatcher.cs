@@ -49,7 +49,7 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
         {
             await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
             using var lease = await admission.TryEnterAsync(cancellationToken).ConfigureAwait(false) ?? throw new LocalCapacityExceededException();
-            var prepared = preparer.PrepareMany(runtime.StoreId, items, options);
+            var prepared = preparer.PrepareMany(runtime.StoreId, items, options, runtime.MaxBatchItems);
             send.Batch(prepared.Items);
             return send.Done(await SendAsync(prepared, cancellationToken).ConfigureAwait(false));
         }
@@ -68,7 +68,7 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
         preparer.Prepare(runtime.StoreId, job, options);
 
     public PreparedBatch PrepareMany(IReadOnlyList<BatchDispatchItem> items, BatchDispatchOptions? options = null) =>
-        preparer.PrepareMany(runtime.StoreId, items, options);
+        preparer.PrepareMany(runtime.StoreId, items, options, runtime.MaxBatchItems);
 
     public async Task<DispatchReceipt> DispatchAsync(PreparedDispatch prepared, CancellationToken cancellationToken = default)
     {
@@ -150,7 +150,7 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
 
     public PreparedBatch ImportPreparedBatch(ReadOnlySpan<byte> envelope)
     {
-        var p = PreparedEnvelopeCodec.ReadBatch(envelope, runtime.StoreId, runtime.Registry.Application);
+        var p = PreparedEnvelopeCodec.ReadBatch(envelope, runtime.StoreId, runtime.Registry.Application, runtime.MaxBatchItems);
         return new PreparedBatch(p.StoreId, p.Application, p.OperationId.Value, p.NotAfterMs, p.ContinueOnConflict, p.Items, p.ItemDigests, p.CommandDigest)
         {
             Scopes = [.. p.Items.Select(preparer.ScopesForImport)],

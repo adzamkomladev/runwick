@@ -15,7 +15,7 @@ Redis cannot join a business transaction. With Redis, or with a business databas
 | | PostgreSQL | SQLite |
 |---|---|---|
 | Stage a job | `IPostgresJobDispatcher.StageAsync` | `ISqliteJobDispatcher.StageAsync` |
-| Stage a batch | `StageManyAsync` (up to 100 jobs) | `StageManyAsync` (up to 100 jobs) |
+| Stage a batch | `StageManyAsync` (up to 1,000 jobs) | `StageManyAsync` (up to 100 jobs) |
 | Complete the current job | `IPostgresJobCompletion.CompleteInTransactionAsync` | `ISqliteJobCompletion.CompleteInTransactionAsync` |
 | Transaction type | `NpgsqlTransaction` | `SqliteTransaction` |
 | Namespace | `Runwick.Postgres` | `Runwick.Sqlite` |

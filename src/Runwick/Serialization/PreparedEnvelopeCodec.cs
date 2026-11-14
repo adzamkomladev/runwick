@@ -391,7 +391,7 @@ internal static partial class PreparedEnvelopeCodec
         return new PreparedDispatch(store, app, opId, notAfter, intent, digests);
     }
 
-    public static PreparedBatch ReadBatch(ReadOnlySpan<byte> envelope, Guid storeId, string application)
+    public static PreparedBatch ReadBatch(ReadOnlySpan<byte> envelope, Guid storeId, string application, int maxItems = PayloadBounds.MaxBatchItems)
     {
         using var doc = Parse(envelope);
         var root = doc.RootElement;
@@ -405,9 +405,9 @@ internal static partial class PreparedEnvelopeCodec
             _ => throw Invalid("continueOnConflict must be a boolean."),
         };
         var items = root.GetProperty("items");
-        if (items.ValueKind != JsonValueKind.Array || items.GetArrayLength() is < 1 or > PayloadBounds.MaxBatchItems)
+        if (items.ValueKind != JsonValueKind.Array || items.GetArrayLength() < 1 || items.GetArrayLength() > maxItems)
         {
-            throw Invalid($"items must be an array of 1–{PayloadBounds.MaxBatchItems} entries.");
+            throw Invalid($"items must be an array of 1–{maxItems} entries.");
         }
 
         var intents = new List<DispatchIntent>();

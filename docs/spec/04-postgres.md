@@ -2017,3 +2017,13 @@ Harness (07): xunit v3, `Testcontainers.PostgreSql`; `RUNWICK_TEST_PG` (connecti
 | Missing/extra permit row on Renew | `permit_set_mismatch`, rollback, no partial success | OWN-05 |
 | Deadlock/serialization injection | Same command identity on retry | CMD-01 |
 | Kill/restart of the primary after acknowledged commit | Acknowledged receipts, jobs and permits present | driver-suite §5 PostgreSQL |
+
+## Changes (2026-11-14, bulk cap 1,000)
+
+The public PostgreSQL bulk cap is 1,000 items per `DispatchMany/1` (owner decision, perf round two). No migration and no SQL change: the dispatch functions already take parallel arrays of any length and never checked the count, so the cap lives in the client.
+
+- **Per-store cap.** `PgStore` declares `MaxBatchItems = 1,000` (`IBatchLimitSource`); `RunwickRuntime.MaxBatchItems` returns it, or the portable 100 for stores that declare nothing (SQLite, Redis). `DispatchPreparer.PrepareMany` and `PreparedEnvelopeCodec.ReadBatch` take the cap, so preparing, caller-owned staging and import of a prepared batch all use the same limit. An over-cap batch fails with `batch_too_large` as known-not-applied before any connection work.
+- **Bytes.** The cap on bytes is the existing 2 MiB batch envelope (`batch_envelope_too_large`); 1,000 items fit when they average under about 2 KiB. A larger batch must be split.
+- **Replay and compatibility.** The command digest, receipt shape and ordinal-ordered results are unchanged, so a 1,000-item batch replays to the same receipt and an envelope exported by a PostgreSQL client imports only on a store with the same cap (a 100-cap store rejects it as an invalid envelope).
+- **Earlier note superseded.** "`MaxBatchItems` stays 100" in the 2026-11-07 set-dispatch entry applies to the portable cap only.
+- **Tests.** `BatchCapTests` (1,000 mixed items commit once and replay; 1,001 rejected with no writes; a conflict at the last ordinal rolls back all 1,000 and `ContinueOnConflict` resolves it; the envelope byte cap still applies). `Batch_item_cap_follows_the_store_and_defaults_to_100` covers the preparer and envelope reader. The shared contract tests assert one over the store's own cap.

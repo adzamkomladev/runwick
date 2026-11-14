@@ -77,7 +77,7 @@ Runwick also captures the current trace context (`traceparent`, `tracestate`) at
 
 ## Batch dispatch
 
-`DispatchManyAsync` dispatches up to 100 jobs in **one** store transaction:
+`DispatchManyAsync` dispatches up to 100 jobs (1,000 on PostgreSQL) in **one** store transaction:
 
 ```csharp
 var items = invoices
@@ -94,7 +94,7 @@ foreach (var item in batch.Items)
 
 - Every item is created (or reused) or none is.
 - `Items` has one result per input, in input order (`Ordinal` is the 0-based index).
-- The limits are 100 items and 2 MiB for the whole batch. Split larger inputs yourself.
+- The limits are 100 items (1,000 on PostgreSQL) and 2 MiB for the whole batch, so 1,000 items fit only when they average under about 2 KiB. Split larger inputs yourself. On PostgreSQL, 100 per call is still the better size for many concurrent producers: in our test, 1,000-item calls were about 35% slower in total throughput with eight callers, and gained about 14% with one.
 - If any item is invalid, the whole batch is rejected before anything is written. The `DispatchValidationException` lists every bad ordinal in `ItemFailures`.
 - Duplicates inside one batch resolve as if dispatched one after another: a later item that matches an earlier one is `Reused`.
 

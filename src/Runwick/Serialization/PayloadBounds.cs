@@ -14,6 +14,9 @@ internal static class PayloadBounds
     public const int MaxMetadataEntries = 32;
     public const int MaxEnvelopeBytes = 2_097_152;
     public const int MaxBatchItems = 100;
+
+    /// <summary>PostgreSQL's public bulk cap; the 2 MiB batch envelope still bounds the bytes (spec 04 changes 2026-11-14).</summary>
+    public const int PostgresMaxBatchItems = 1_000;
     public const int MaxCapabilityTuples = 512;
 }
 

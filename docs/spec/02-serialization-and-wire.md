@@ -180,7 +180,7 @@ A host may impose **smaller** admission limits. Raising a structural bound requi
 | Metadata (business + diagnostic) | 16 KiB, 32 entries | Σ (UTF-8 bytes of key + UTF-8 bytes of value) over all entries ≤ 16,384; entry count ≤ 32 (IC-08) | 16,384 / 32 accepted; 16,385 / 33 rejected |
 | Metadata key | 128 chars | Identifier grammar (§1) | — |
 | Prepared export envelope | 2 MiB | Byte length of the UTF-8 export JSON (§9) including base64 payload and every policy/key/metadata field; batch: the whole batch envelope | 2,097,152 accepted; 2,097,153 rejected |
-| Batch | 100 items | Items in one `DispatchMany` | 100 accepted; 101 rejected |
+| Batch | 100 items (PostgreSQL: 1,000) | Items in one `DispatchMany`. A store may declare a higher cap; PostgreSQL does (04 changes 2026-11-14). The 2 MiB batch envelope above is the byte cap at every item count. | 100 accepted; 101 rejected (PostgreSQL: 1,000 accepted; 1,001 rejected) |
 
 ### 4.2 Scanner (normative, run before hashing and again on import)
 

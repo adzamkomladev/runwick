@@ -173,6 +173,23 @@ public sealed class BoundaryTests
     }
 
     [Fact]
+    public void Batch_item_cap_follows_the_store_and_defaults_to_100()
+    {
+        var preparer = TestHost.Preparer(b => b.AddJob<PlainJob>());
+        List<BatchDispatchItem> Items(int n) => [.. Enumerable.Range(0, n).Select(i => new BatchDispatchItem(new PlainJob("p" + i)))];
+        const int cap = PayloadBounds.PostgresMaxBatchItems;
+
+        var batch = preparer.PrepareMany(TestHost.StoreId, Items(cap), null, cap);
+        Assert.Equal(RunwickErrorCodes.BatchTooLarge,
+            Assert.Throws<DispatchValidationException>(() => preparer.PrepareMany(TestHost.StoreId, Items(cap + 1), null, cap)).Code);
+        Assert.Equal(RunwickErrorCodes.BatchTooLarge,
+            Assert.Throws<DispatchValidationException>(() => preparer.PrepareMany(TestHost.StoreId, Items(cap), null)).Code);
+
+        PreparedEnvelopeCodec.ReadBatch(batch.Export().Span, TestHost.StoreId, "billing", cap);
+        Assert.Throws<DispatchValidationException>(() => PreparedEnvelopeCodec.ReadBatch(batch.Export().Span, TestHost.StoreId, "billing"));
+    }
+
+    [Fact]
     public void Batch_count_and_envelope_bounds()
     {
         var preparer = TestHost.Preparer(b =>
