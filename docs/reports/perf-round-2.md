@@ -609,3 +609,98 @@ The Contract failures involved process-wide usage counts during concurrent worke
 The `38f40e0` snapshot passed all 439 Core and 53 SQLite tests. Its Dashboard rerun passed 55 tests before the package check stalled. The test process's output readers and a detached MSBuild node had the same pipe inodes after `dotnet pack` exited. Terminating that fixture node released the pipes and the test passed. The package test now disables reuse for the subprocess's MSBuild nodes and drains both output streams. The focused package test and all 57 Dashboard tests passed on the isolated `38f40e0` snapshot with that correction.
 
 The later `fa390b0` snapshot passed all 387 PostgreSQL and 48 outbox tests with zero skips. The outbox run included a dedicated AOF-always Redis fixture. All 57 Dashboard tests passed again on exact integrated `e1cb660`, including the new Redis intent observation. Logs and test results are under `artifacts/perf/round-two/suites-integrated/`, `suites-isolation/`, `suites-38f40e0/`, `suites-fa390b0/` and `suites-e1cb660/`.
+
+## Integrated short SP-029 matrix
+
+The short profile ran all 14 cases from exact `88a8016` on the shared host, with each case on its own pinned PostgreSQL container. It includes a 10-minute soak smoke for P-10. Every verdict is informational because the host is not the reference host. The host rebooted partway through P-08a. The first nine cases (P-01 to P-07) had already finished and were kept. P-08a was rerun from the saved runner binary, followed by the rest. The interrupted partial run is kept under `sp029-integrated-short/interrupted-by-reboot/`. The runner outputs, summary and per-case status are in `artifacts/perf/round-two/sp029-integrated-short/`, and `case-status.json` holds the verification.
+
+All 14 cases exited 0 with zero correctness violations and zero run failures. Throughput and latency gates mostly missed, as expected on a shared host with one worker.
+
+| Case | Result | Against the plan's threshold |
+|---|---|---|
+| P-01 | 84.51 finishes/s, backlog growing 14.05/s, due-to-Begin p99 41.5 s | Would miss throughput and latency. |
+| P-01t | Throughput 79.4 → 85.0/s, allocations +7.3% | Would pass the instrumentation cost limits. |
+| P-02 | Sustainable 100/s | No threshold. |
+| P-03 | 1 MiB + 1 B refused, zero stored | Would pass. |
+| P-04 | 0 pp share difference over 2,000 admissions | Shares were equal, but the run had 2,000 admissions against the required 10,000, so the summary marks it a miss. |
+| P-05 | 3 replicas / 1 replica = 2.03 | Would pass. |
+| P-06 | Lag p99 29.5 s, catch-up 305 of 300, no lease loss | Would miss the 13 s lag bound. |
+| P-07 | 720 polls, zero errors, list p99 196 ms, worker 80.72 → 76.42/s (5.3% loss) | Would pass. |
+| P-08 | Admission paused during the outage and worker reported ready 6.1 s after restoration | Would pass. See the note below. |
+| P-09 | 81.81 deliveries/s, ready-to-confirm p99 87 s | Would miss. |
+| P-10 | Post-GC heap last/first quarter 1.003 over 0.17 h | Smoke only. A 24 h run is required. |
+
+P-08's summary row says NO DATA because `Analysis.cs` returns null for readiness unless a new reserve counter is sampled after the worker reports ready, and none was. The worker's admission transitions show it closed under the outage, reopened, was degraded at 20:50:35 and ready at 20:50:40, against restoration at 20:50:34. The 6.1 s is read from those transitions by hand. The analysis rule still needs a fix before this case can produce a verdict automatically.
+
+P-08a and P-08b (1 s and 5 s control latency) completed with zero violations. Their detailed results are in the result files. P-08c's producer saw 6,080 `store_unavailable` refusals during the outage and one outcome-unknown, which replayed to a single acceptance.
+
+## SQLite process-local wake (Q6) and PostgreSQL retained storage (C5)
+
+**SQLite wake.** The candidate publishes a process-local hint after a due job commits, so a worker in the same process claims it without waiting for its poll. It adds no cross-process signal, and workers keep the normal polling cap for remote and staged writes. Five alternating pairs ran from exact `88a8016` on the shared host, each with a 15 s low-traffic run (3 offers/s) and a 1,000-job saturated drain. All 20 runs reconciled exactly.
+
+| Run | Metric | Baseline → candidate (median of 5 pairs) | Paired ratio, range |
+|---|---|---|---|
+| Low traffic | due-to-handler p50 | 125 → 34 ms | 0.27×, 0.22–0.35 |
+| Low traffic | due-to-handler p99 | 505 → 389 ms | 0.73×, 0.49–0.80 |
+| Drain | completions/s | 131.7 → 132.2 | 1.00×, 0.84–1.15 |
+| Drain | due-to-handler p99 | 7.55 → 7.70 s | 1.02×, 0.86–1.21 |
+
+Low-traffic latency improved in every pair. Saturated throughput and latency are unchanged within a wide spread, which is the expected result because a busy worker finds work without a wake. The candidate's focused test passed 3 of 3, including a held pre-commit barrier that shows no hint before commit, a replay that sends no second hint, and a subscriber that throws without disturbing the others.
+
+The patch is integrated into the working tree: `SqliteStore.Notifications.cs`, the dispatch hooks, an `ILocalWorkWakeSource` interface, the worker listener, and the test. The full SQLite project passes 54 of 54. The Core project passes 438 of 439. The one failure, `SerializationCaseTests.Prepare_allocation_is_linear_in_payload_size` (1 MiB must allocate at most 2.2× a 512 KiB prepare), fails identically on a clean `HEAD` archive with a ratio of 3.0, so it is unrelated to this patch. It needs its own look, because earlier suites on this branch reported the Core project fully passing. On the final tree, with the wake patch and a disposable AOF-always Redis, the Contract project passes 480 of 480 and the Outbox project passes 48 of 48. A first pass without a Redis server failed only Redis-provider cases with "Could not connect to Redis" (159 Contract, 2 Outbox) and no SQLite or PostgreSQL case. Its logs are kept under `q6-integrate/no-redis-run/`. Logs are under `artifacts/perf/round-two/q6-integrate*`.
+
+**PostgreSQL retained storage (C5).** A disposable P-07 fixture was observed every 30 s through seeding and measurement: 213,462 jobs, 453,848 events, 20 minutes, zero correctness violations. The fixture ran PostgreSQL 18.6 with `fsync` and `synchronous_commit` on and `full_page_writes` off, so its WAL byte counts (2.0 GB, 2,804 full-page images) understate what a default server would write. Autovacuum was on with default thresholds.
+
+| Table | Updates | HOT updates | Dead / live tuples at end |
+|---|---|---|---|
+| `jobs` | 303,773 | 0 (0.0%) | 26,597 / 213,454 |
+| `job_attempts` | 226,924 | 72,204 (31.8%) | 4,101 / 213,364 |
+| `job_generations` | 113,462 | 62,742 (55.3%) | 10,497 / 213,421 |
+| `storage_commands_durable` | 226,936 | 177,642 (78.3%) | 4,481 / 226,882 |
+| `storage_commands_ownership` | 35,439 | 24,349 (68.7%) | 899 / 19,367 |
+| `job_payloads` | 0 (76,849 deletes) | – | 12,620 / 136,600 |
+
+No `jobs` update is HOT, because every state change touches an indexed column (`state`, `lease_expires_at` or `eligible_at`). The `jobs` indexes total 129 MB against a 47 MB heap. Lowering the table's fill factor therefore cannot help on its own. Any change has to remove or narrow `jobs` indexes, which is a schema decision with its own correctness and query-plan checks. Autovacuum kept dead tuples at or below about 12% on every table while the run was active. The evidence does not support partitioning yet. The raw snapshots are in `artifacts/perf/round-two/pg-c5/observations/`.
+
+## Redis Cluster recovery proof (R3) and grouped dispatch proof (F3)
+
+Both proofs first failed with exit 127 because `rg` was missing from the host `PATH` after the reboot. Those outputs are preserved under `failed-no-rg/`, and both reran after linking `rg`.
+
+R3 used a real three-node Cluster with a real `RegisterQueue` intent in flight during slot migration. The pending intent survived `TRYAGAIN` before any mutation, an `ASK` redirect, a `NOSCRIPT` on the target node and a `MOVED` reply. It then published, and replaying the same intent afterwards completed it: the queue had no confirmation before the replay and carried a confirmation timestamp after it. A discovery against an incomplete key set returned `REDISCOVER` instead of a partial answer. This shows that declared keys let a migration-time retry finish. It does not qualify route changes or old-primary fencing, which remain open. Evidence is in `redis-r3-next/run-9ZZrdvFI/`.
+
+F3 loaded a standalone Redis candidate built from the production Lua prelude, dispatch core and recovery script, with AOF always. It injected 17 write boundaries and checked 39 jobs for independent per-command receipts and events. This is a correctness proof on synthetic prepared items only. It does not cover producer admission, cancellation, routing, client fault mapping, a live AOF restart or throughput, and the grouped script is not wired into the production client, so it shows no throughput gain. Evidence is in `redis-f3/`.
+
+## Laravel database queue comparison
+
+Laravel 13.42.0's `database` queue driver was measured against Runwick on the same database engine, so Runwick SQLite and PostgreSQL have a PHP baseline. The harness is `eng/bench-compare/laravel/`. Each arm used 16 workers (Laravel: 16 `queue:work database --sleep=1` processes), 1 KiB no-op jobs and a fresh database per run. The tests were a 20,000-job drain and 30 s steady runs at 40 and 100 offers/s, five alternating pairs per database. Steady latency is the dispatch call start to handler end. Runs with any failed job are excluded from the summaries. All figures are medians with the range over five pairs.
+
+**SQLite.** Both arms used WAL, synchronous FULL and a 5 s busy timeout. Laravel ran in the pinned `php:8.4-cli` image with `BEGIN IMMEDIATE`, and all 30 runs had zero failed jobs. The Runwick arm is the build from before the process-local wake patch.
+
+| Test | Metric | Runwick | Laravel | Paired Laravel/Runwick |
+|---|---|---|---|---|
+| Drain | jobs/s | 195.5 (161–205) | 125.0 (77–136) | 0.6× (0.5–0.7) |
+| 40 offers/s | jobs/s | 39.9 | 39.4 | 1.0× |
+| 40 offers/s | p50 / p99 ms | 60 / 961 | 184 / 884 | p50 2.1×, p99 1.2× (0.3–1.3) |
+| 100 offers/s | jobs/s | 99.7 (94–100) | 89.6 (71–95) | 0.9× (0.7–1.0) |
+| 100 offers/s | p50 / p99 ms | 136 / 949 | 660 / 3,328 | p50 5.6×, p99 2.3× (1.6–3.5) |
+
+**PostgreSQL.** Laravel ran natively on PHP 8.3 against a fresh pinned PostgreSQL 18.6 container per run with server defaults. All 30 runs had zero failed jobs.
+
+| Test | Metric | Runwick | Laravel | Paired Laravel/Runwick |
+|---|---|---|---|---|
+| Drain | jobs/s | 173.7 (107–198) | 213.2 (196–242) | 1.2× (1.1–2.1) |
+| 40 offers/s | jobs/s | 39.9 | 39.6 | 1.0× |
+| 40 offers/s | p50 / p99 ms | 83 / 852 | 115 / 851 | p50 1.2×, p99 1.0× (0.5–1.2) |
+| 100 offers/s | jobs/s | 99.8 (92–100) | 93.2 (48–97) | 0.9× (0.5–1.0) |
+| 100 offers/s | p50 / p99 ms | 269 / 1,555 | 114 / 517 | p50 0.5× (0.0–1.2), p99 0.3× (0.1–0.5) |
+
+So on SQLite Runwick is faster at saturation and at 100 offers/s, while the two are equal at 40 offers/s. On PostgreSQL Laravel's driver drains faster and has lower tail latency at 100 offers/s. Round 4 of the PostgreSQL pairs was noisy in both arms (Runwick p50 4.9 s, Laravel 48 jobs/s), so its ranges are wide.
+
+Read these with four caveats:
+
+- **Not equal work.** Runwick pays for leases with a fence, command receipts and an event stream. Laravel has none of these: after `retry_after` a second worker can take a job, and the first worker's late delete removes it from under the second. A faster Laravel drain on PostgreSQL is not a like-for-like cost.
+- **Polling.** Laravel's workers poll, so `--sleep=1` adds up to a second of idle pickup delay. With 16 desynchronized workers it showed as roughly 100 ms at these rates.
+- **Different runtimes.** The SQLite Laravel arm ran on PHP 8.4 in a container, and the PostgreSQL arm ran natively on PHP 8.3. Runwick ran natively. Both PHP runtimes have opcache off for the CLI.
+- **Shared host.** The 16 PHP workers keep the load average at 8 to 16 by themselves, so the load snapshots do not show outside interference. Treat the figures as diagnostics.
+
+**PHP 8.3 finding.** On PHP 8.3 Laravel's SQLite queue is unreliable under 16 workers. Laravel reads `transaction_mode` only from PHP 8.4, so every pop transaction stays `DEFERRED`. A read-then-write upgrade then fails immediately with `SQLITE_BUSY` ("database is locked") despite a verified 5 s busy timeout. With `--tries=1` Laravel records those errors as `MaxAttemptsExceededException`, hiding the real cause. In the first run 13 of 15 SQLite Laravel runs failed jobs (251 of 20,000 in one drain), and a 2,000-job diagnostic gave 10 jobs/s with 31 failures. The same drain on PHP 8.4 gave 98.5 jobs/s with none. The harness now refuses to report SQLite unless the PHP version applies `BEGIN IMMEDIATE`, and records worker errors when jobs fail. The first-run outputs are kept in `laravel-queues/pairs/`. Its PostgreSQL results are the ones used above, and its SQLite results are not used.

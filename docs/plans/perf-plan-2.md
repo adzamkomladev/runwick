@@ -508,6 +508,8 @@ The [TickerQ / Quartz.NET review](../reports/scheduler-upstream-review.md) suppl
 
 ## 11. Decisions that are yours
 
+**Owner decisions, 2026-11-14.** Target a public PostgreSQL bulk cap of 1,000 with a byte cap (B2). Implement all five work area G modes as opt-in profiles, including G2. Keep per-admission fairness and both lifecycle events. The [remaining work plan](perf-plan-2-remaining.md) records these decisions and the qualification window.
+
 1. **Redis parity with BullMQ is the goal** (owner request, 2026-11-11); §4.3 proposes a measurable near-parity band. PostgreSQL targets remain provisional, with River default/tuned comparisons reported separately.
 2. **Fair shares per batch instead of per admission (B5).** This is a spec change (05 §8.4).
 3. **Producer batching and revised queue bounds (B1).** Waiting already exists; any changed wait/count/byte defaults must be documented (06 §"local capacity").
