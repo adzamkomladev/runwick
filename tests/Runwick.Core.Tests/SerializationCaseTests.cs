@@ -474,7 +474,9 @@ public sealed class SerializationCaseTests
         var full = Payloads.OfSize(1_048_576);
         Assert.Equal(1_048_576, Payloads.SerializedLength(full));
         preparer.Prepare(Payloads.OfSize(4_096));
+        // Warm both sizes: a cold first call allocates one-time pool and cache state that the warmed one does not (ratio 3.0 cold, 2.19 steady).
         preparer.Prepare(half);
+        preparer.Prepare(full);
 
         var halfBytes = Allocated(() => preparer.Prepare(half));
         var fullBytes = Allocated(() => preparer.Prepare(full));

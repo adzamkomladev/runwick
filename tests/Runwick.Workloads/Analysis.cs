@@ -152,7 +152,11 @@ internal static class Analysis
                     previous = state;
                 }
 
-                var reserves = n["counters"]?["reserve:Applied"]?.GetValue<long>() ?? 0;
+                // Any applied reserve family counts (reserve:, reserveAndBegin:, reserveMany:); ".item:" counters repeat the same work per item.
+                var reserves = n["counters"] is JsonObject counters
+                    ? counters.Where(c => c.Key.StartsWith("reserve", StringComparison.Ordinal) && c.Key.EndsWith(":Applied", StringComparison.Ordinal) &&
+                                          !c.Key.Contains(".item:", StringComparison.Ordinal)).Sum(c => c.Value?.GetValue<long>() ?? 0)
+                    : 0;
                 if (restored != default && at >= restored)
                 {
                     reservesAtRestore ??= reserves;
