@@ -21,6 +21,10 @@ namespace Runwick
         /// <summary>Writes <c>rw:store</c> once, or does nothing when this layout is already installed (22 §9.2).</summary>
         public static Task<RedisMigrationResult> MigrateAsync(string configuration, CancellationToken cancellationToken = default) =>
             Runwick.Redis.Migrations.RedisMigrator.RunAsync(configuration, cancellationToken);
+
+        /// <summary>As above, checking the server against the given persistence profile (G4).</summary>
+        public static Task<RedisMigrationResult> MigrateAsync(string configuration, RedisPersistence persistence, CancellationToken cancellationToken = default) =>
+            Runwick.Redis.Migrations.RedisMigrator.RunAsync(configuration, cancellationToken, persistence);
     }
 }
 
@@ -36,11 +40,12 @@ namespace Runwick.Redis.Migrations
         /// <summary>Test seam (REDIS-14): how long to wait for the migration lock.</summary>
         internal static TimeSpan LockWait { get; set; } = TimeSpan.FromSeconds(60);
 
-        public static Task<RedisMigrationResult> RunAsync(string configuration, CancellationToken ct) =>
-            WithLockAsync(configuration, (db, server) => ApplyAsync(db, server, ct), ct);
+        public static Task<RedisMigrationResult> RunAsync(string configuration, CancellationToken ct, RedisPersistence persistence = RedisPersistence.AofAlways) =>
+            WithLockAsync(configuration, (db, server) => ApplyAsync(db, server, ct), ct, persistence);
 
         /// <summary>Connects as admin, checks the profile and runs <paramref name="body"/> under the migration lock (22 §9.2).</summary>
-        internal static async Task<T> WithLockAsync<T>(string configuration, Func<IDatabase, IServer, Task<T>> body, CancellationToken ct)
+        internal static async Task<T> WithLockAsync<T>(string configuration, Func<IDatabase, IServer, Task<T>> body, CancellationToken ct,
+            RedisPersistence persistence = RedisPersistence.AofAlways)
         {
             ConfigurationOptions options;
             try
@@ -76,7 +81,7 @@ namespace Runwick.Redis.Migrations
                 RxProfileReport report;
                 try
                 {
-                    report = await RxProfile.CheckAsync(server, db).ConfigureAwait(false);
+                    report = await RxProfile.CheckAsync(server, db, persistence).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is RedisException)
                 {

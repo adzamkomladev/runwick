@@ -165,8 +165,10 @@ internal static class BenchMode
                 await adminRedis.GetServer(adminRedis.GetEndPoints()[0]).FlushAllDatabasesAsync().ConfigureAwait(false);
             }
 
-            await RunwickRedisMigrations.MigrateAsync(redisCfg).ConfigureAwait(false);
-            useStore = r => r.UseRedis(redisCfg);
+            // --redis-everysec: the opt-in appendfsync everysec profile (the server must run it); default is appendfsync always.
+            var persistence = a.Has("redis-everysec") ? RedisPersistence.AofEverySecond : RedisPersistence.AofAlways;
+            await RunwickRedisMigrations.MigrateAsync(redisCfg, persistence).ConfigureAwait(false);
+            useStore = r => r.UseRedis(redisCfg, o => o.Persistence = persistence);
         }
         else
         {

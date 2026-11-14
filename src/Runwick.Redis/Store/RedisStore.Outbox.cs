@@ -10,7 +10,7 @@ namespace Runwick.Redis.Store;
 internal sealed partial class RedisStore : IOutboxDestinationStore
 {
     /// <summary>The delivered mark's confirmed profile on Redis (22 §7, 14 Implementation choice 4).</summary>
-    internal const string OutboxConfirmedProfile = "redis.aof-always.v1";
+    string OutboxConfirmedProfile => options.Persistence == RedisPersistence.AofEverySecond ? "redis.aof-everysec.v1" : "redis.aof-always.v1";
 
     static string OutboxField(OutboxSourceIdentity s) => Hex(s.SourceStoreId) + ":" + Hex(s.MessageId);
 

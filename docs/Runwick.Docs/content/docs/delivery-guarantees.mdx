@@ -25,7 +25,7 @@ In each case Runwick runs the job again rather than risk losing it. So write han
 |---|---|
 | PostgreSQL | the transaction committed |
 | SQLite | the commit is on disk, with WAL and `synchronous=FULL` |
-| Redis | the write is in the append-only file and synced, under `appendfsync always` |
+| Redis | the write is in the append-only file and synced, under `appendfsync always`. With the opt-in `appendfsync everysec` profile it is in the file but may not be synced yet, so a machine crash can lose about the last second |
 
 If `DispatchAsync` throws an error whose `Disposition` is `KnownNotApplied`, nothing was written. If it throws `DispatchOutcomeUnknownException` (codes `outcome_unknown`, `cancelled_after_send` or `expired_unknown`), the write may or may not have happened.
 

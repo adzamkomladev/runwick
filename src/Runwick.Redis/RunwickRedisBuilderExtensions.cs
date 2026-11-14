@@ -7,8 +7,24 @@ using Runwick.Registration;
 namespace Runwick;
 
 /// <summary>Redis store options (22 §2.1, §10).</summary>
+/// <summary>The persistence profile the Redis server must run and the acknowledgement it earns (22 §2.3, G4).</summary>
+public enum RedisPersistence
+{
+    /// <summary><c>appendfsync always</c>: a reply follows an fsync. The default.</summary>
+    AofAlways,
+
+    /// <summary>
+    /// <c>appendfsync everysec</c> (opt-in, profile <c>redis-aof-everysec-single-primary-v1</c>): faster writes, but a machine or
+    /// operating-system crash can lose about the last second of acknowledged writes. Replicas and failover stay unsupported.
+    /// </summary>
+    AofEverySecond,
+}
+
 public sealed class RedisOptions
 {
+    /// <summary>Which persistence profile the server must run. A server on the other profile is refused with <c>store_profile_mismatch</c>.</summary>
+    public RedisPersistence Persistence { get; set; } = RedisPersistence.AofAlways;
+
     /// <summary>How often the profile and topology check runs while the process runs (5 s – 5 min).</summary>
     public TimeSpan ProfileRecheckInterval { get; set; } = TimeSpan.FromSeconds(30);
 }

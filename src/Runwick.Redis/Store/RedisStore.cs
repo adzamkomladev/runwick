@@ -35,7 +35,8 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
 
     public Guid StoreId => runner.StoreId ?? throw new InvalidOperationException("Describe has not run yet.");
 
-    public string AcknowledgementProfile => AcknowledgementProfiles.RedisAofAlways;
+    public string AcknowledgementProfile =>
+        options.Persistence == RedisPersistence.AofEverySecond ? AcknowledgementProfiles.RedisAofEverySecond : AcknowledgementProfiles.RedisAofAlways;
 
     internal RxRunner Runner => runner;
 
@@ -167,7 +168,7 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
                 // A server still loading its AOF answers LOADING to some checks: that is not a profile verdict, so wait it out (bounded).
                 for (var i = 0; ; i++)
                 {
-                    report = await RxProfile.CheckAsync(server, db).ConfigureAwait(false);
+                    report = await RxProfile.CheckAsync(server, db, options.Persistence).ConfigureAwait(false);
                     if (report.Facts.GetValueOrDefault("loading") != "1" || i >= 150)
                     {
                         break;

@@ -723,3 +723,23 @@ Read these with four caveats:
 **Reading.** With one caller, 1,000-item calls raise throughput by about 14%, but the range crosses parity and a call now takes about 2.3 s at p99. With eight callers, 1,000-item calls lose about 35% throughput in every pair, and call p99 is four times higher. Per-job WAL is flat at one caller and about 40% higher at eight by arm median (4.9 against 3.5 KB; the paired median ratio is only 1.04). Call latency is the only proxy for how long a call holds locks; lock wait was not measured separately. The cap is a ceiling for single-caller bulk loads, not a better default. Keep 100 as the recommended size and document that larger calls raise latency and hurt concurrent producers.
 
 **Not done.** Per-ordinal lock-time and WAL profiling at 100 (the plan's profile-first step), 64 KiB and mixed payload sizes, and a rerun on the reference host.
+
+## Redis `appendfsync everysec` profile (G4)
+
+**Change.** An opt-in second persistence profile, `redis-aof-everysec-single-primary-v1`, selected with `RedisOptions.Persistence = RedisPersistence.AofEverySecond`. The default stays `appendfsync always`. Startup, the migrator, the periodic check and the reconnect check all require the setting that matches the chosen profile, so a server changed underneath a running host stops further writes with `store_profile_mismatch`. Receipts and the Store page carry `redis.aof-everysec-single-primary-v1`, and outbox receipts store `redis.aof-everysec.v1`. Spec 22, the Redis page and the delivery-guarantees page record it.
+
+**Tests (`RedisEverySecondTests`, three, all pass).** Each profile accepts only its own `appendfsync` and the migrator agrees; a host on the everysec profile reports it in its receipt, is refused after the server is switched to `always`, and recovers when it is switched back; 200 confirmed dispatches all resolve as confirmed after `SIGKILL` and restart of the Redis container. The whole Redis test project passes with these changes (76 of 76, 1.08 hours, including the kill-and-restart crash cases); the Contract and Outbox suites show no failures apart from one load-sensitive PostgreSQL CPU-usage test that passes when run alone.
+
+**Measurement.** Drain of 20,000 jobs of 1 KiB, 8 producer callers, 16 workers, on two throwaway Redis 8.2.11 servers on this shared host (`always` on one, `everysec` on the other), five alternating pairs per variant. The "rewrite" variant issues `BGREWRITEAOF` every 3 s during the run (179 rewrites on one server by the end). Every run exited 0 and reconciled all 20,000 jobs. Raw files and `summary.json` are in `artifacts/perf/round-two/redis-g4/`.
+
+| Variant | Insert jobs/s, always | everysec | Paired ratio | Drain jobs/s, always | everysec | Paired ratio |
+|---|---|---|---|---|---|---|
+| plain | 1,415 | 1,648 | 1.16 (1.05 to 1.45) | 177 | 272 | 1.54 (1.42 to 1.64) |
+| with rewrites | 1,136 | 1,539 | 1.35 (1.20 to 1.73) | 147 | 221 | 1.51 (1.25 to 1.82) |
+
+**Reading.** `everysec` drained about 1.5 times faster in all ten pairs and inserted 1.16 to 1.35 times faster. The profile removes the per-command fsync wait, so the gain is largest where commands are small and frequent (the worker path). Drain rates here are low in absolute terms because the host is shared and each job costs several scripts; compare ratios, not rates.
+
+**Acknowledged-loss exposure.** Killing the Redis process loses nothing acknowledged: the 200 confirmed dispatches all survived `SIGKILL` and an AOF reload, because the appended bytes are with the kernel. The exposure the profile adds is an operating-system or machine crash, which can lose about the last second of acknowledged writes. A power loss was **not simulated** (it needs a VM or hardware-level cut), so the one-second figure is Redis's documented behavior, not a measurement here. Receipts under this profile must not be read as machine-crash durable. Replicas and failover remain unsupported under both profiles.
+
+**Not done.** Measuring real loss under an OS crash or power cut, a quiet-host rerun, and the paired comparison against BullMQ under the everysec setting (the delayed BullMQ comparison remains under `always`).
+

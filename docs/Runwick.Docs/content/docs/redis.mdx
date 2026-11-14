@@ -38,6 +38,25 @@ aof-load-truncated no
 | `maxmemory-policy noeviction` | Redis must never drop keys to free memory. A full server returns errors instead. |
 | `aof-load-truncated no` | A damaged AOF stops Redis at startup instead of quietly loading less data. |
 
+### Faster, less durable: `appendfsync everysec` (opt-in)
+
+If you can accept losing about the last second of confirmed writes after a machine crash, run Redis with `appendfsync everysec` and tell Runwick:
+
+```csharp
+builder.UseRedis(configuration, o => o.Persistence = RedisPersistence.AofEverySecond);
+```
+
+Use `RunwickRedisMigrations.MigrateAsync(configuration, RedisPersistence.AofEverySecond)` to install. Runwick checks the setting the same way: a server on `always` is refused under this option, and the default option refuses a server on `everysec`. Everything else in the table above still applies.
+
+| | `always` (default) | `everysec` (opt-in) |
+|---|---|---|
+| Redis process is killed | no confirmed write is lost | no confirmed write is lost |
+| Machine or operating system crashes | no confirmed write is lost | about the last second of confirmed writes can be lost |
+| Failover to a replica | not supported | not supported |
+| Receipt's `ConfirmedAcknowledgementProfile` | `redis.aof-always-single-primary-v1` | `redis.aof-everysec-single-primary-v1` |
+
+In our drain test (20,000 jobs, 16 workers, one shared host) `everysec` drained about 1.5 times faster and inserted about 1.16 times faster, in every one of five pairs. A lost write after a crash looks like a dispatch that was confirmed but is not there, so use this only for work you can resend or regenerate.
+
 Size `maxmemory` with room to spare. With `noeviction`, a full server refuses writes, and dispatches fail until you free space.
 
 <Callout type="warning" title="Keep CONFIG GET readable">

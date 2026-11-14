@@ -14,9 +14,11 @@ internal static class RxProfile
 {
     public const string Name = "redis-aof-always-single-primary-v1";
 
-    static readonly (string Name, string Value)[] Required =
+    public const string EverySecondName = "redis-aof-everysec-single-primary-v1";
+
+    static (string Name, string Value)[] Required(RedisPersistence persistence) =>
     [
-        ("appendonly", "yes"), ("appendfsync", "always"), ("no-appendfsync-on-rewrite", "no"),
+        ("appendonly", "yes"), ("appendfsync", persistence == RedisPersistence.AofEverySecond ? "everysec" : "always"), ("no-appendfsync-on-rewrite", "no"),
         ("maxmemory-policy", "noeviction"), ("aof-load-truncated", "no"),
     ];
 
@@ -25,11 +27,11 @@ internal static class RxProfile
     /// <summary>The newest version a conformance report covers (00 §9 rule 10); newer ones are accepted, uncertified.</summary>
     public static readonly Version CertifiedVersion = new(8, 2, 11);
 
-    public static async Task<RxProfileReport> CheckAsync(IServer server, IDatabase db)
+    public static async Task<RxProfileReport> CheckAsync(IServer server, IDatabase db, RedisPersistence persistence = RedisPersistence.AofAlways)
     {
         var facts = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["driver"] = "redis", ["profile"] = Name, ["topology"] = "standalone-primary",
+            ["driver"] = "redis", ["profile"] = persistence == RedisPersistence.AofEverySecond ? EverySecondName : Name, ["topology"] = "standalone-primary",
             ["limits"] = "keys=256,afterImages=1024,intentBytes=4194304",
         };
         string? failure = null;
@@ -40,7 +42,7 @@ internal static class RxProfile
             code ??= c;
         }
 
-        foreach (var (name, value) in Required)
+        foreach (var (name, value) in Required(persistence))
         {
             string actual;
             try

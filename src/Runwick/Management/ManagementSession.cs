@@ -611,6 +611,7 @@ internal sealed class ManagementSession(
             AcknowledgementProfiles.PostgresSynchronousCommit => AcknowledgementProfiles.PostgresSynchronousCommit,
             AcknowledgementProfiles.SqliteWalFull => AcknowledgementProfiles.SqliteWalFull,
             AcknowledgementProfiles.RedisAofAlways => AcknowledgementProfiles.RedisAofAlways,
+            AcknowledgementProfiles.RedisAofEverySecond => AcknowledgementProfiles.RedisAofEverySecond,
             _ => null,
         };
         var migration = retained?.MigrationMode is "normal" or "expand" or "maintenance" ? retained.MigrationMode : "unknown";

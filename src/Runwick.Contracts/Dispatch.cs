@@ -100,6 +100,13 @@ public static class AcknowledgementProfiles
 
     /// <summary>A reply follows the script's writes being appended and fsynced under <c>appendfsync always</c> on the checked primary (22 §1).</summary>
     public const string RedisAofAlways = "redis.aof-always-single-primary-v1";
+
+    /// <summary>
+    /// A reply follows the script's writes being appended under <c>appendfsync everysec</c> on the checked primary. A crash of the Redis
+    /// process alone keeps them (the operating system holds the appended bytes), but an operating-system or machine crash can lose
+    /// up to about the last second of acknowledged writes. Opt-in (<c>RedisOptions.Persistence</c>).
+    /// </summary>
+    public const string RedisAofEverySecond = "redis.aof-everysec-single-primary-v1";
 }
 
 /// <summary>What staging reported inside a caller's transaction. Makes no durability claim.</summary>
