@@ -458,4 +458,19 @@ public sealed class WorkerOptions
     /// (16 §3 <c>AttemptResourceUsage</c>). On by default; the cost is a few counter reads per attempt plus one 250 ms sampler.
     /// </summary>
     public bool RecordResourceUsage { get; set; } = true;
+
+    /// <summary>
+    /// The fewer-renewals profile (G5): a 5-minute lease renewed about every 90 s (±10 s) instead of a 60 s lease renewed every 15 s,
+    /// so a running attempt sends about a sixth of the renewal commands. Fencing is unchanged: a stale owner is still rejected and
+    /// the worker still stops at the same safety margin before expiry. The price is crash detection: a worker that dies without a
+    /// graceful shutdown keeps its jobs until the lease expires, up to 5 minutes instead of 1. The 6 to 1 renewal ratio is measured
+    /// in <c>Fewer_renewals_profile_sends_a_sixth_of_the_renewals_and_keeps_the_timing_rules</c>. Every other option keeps its value.
+    /// </summary>
+    public WorkerOptions UseFewerLeaseRenewals()
+    {
+        LeaseDuration = TimeSpan.FromMinutes(5);
+        RenewalInterval = TimeSpan.FromSeconds(90);
+        RenewalJitter = TimeSpan.FromSeconds(10);
+        return this;
+    }
 }

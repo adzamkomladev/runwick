@@ -23,7 +23,7 @@ Each mode needs a named configuration, documented guarantees, focused failure te
 | G2 Reduced replay protection | Specify a shorter replay horizon and preserve historical finish identity within it. Test lost replies inside and outside the horizon, terminal jobs, retry/rerun and cleanup. Document when resending can create another job. |
 | G3 Lean history | Add a per-queue profile that keeps current state and attempts while omitting per-job events. Verify dashboard and event API behavior, retention and the profile's effect on write volume. |
 | G4 Redis fsync every second | Add a separately identified persistence profile and validate configuration on reconnect. Measure throughput and acknowledged-loss exposure under kill, restart and rewrite. Document the durability and failover assumptions. |
-| G5 Fewer lease renewals | Add an explicit renewal profile with a measured timeout sweep. Verify stale-owner rejection, long handlers, pause/outage behavior and crash detection latency. |
+| G5 Fewer lease renewals | **Profile landed 2026-11-14** as `WorkerOptions.UseFewerLeaseRenewals()` (5 min lease, 90 s renewals; sixth of the renewal commands in a fake-time test; V rules pass). Still open: measured timeout sweep on a real store, pause and outage behavior, and crash-detection latency. |
 
 ## Qualification window
 

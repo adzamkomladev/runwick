@@ -238,6 +238,38 @@ public sealed class WorkerEngineTests
 
     [Fact]
     [Trait("Category", "Pure")]
+    [Trait("Item", "PF2-G5")]
+    public async Task Fewer_renewals_profile_sends_a_sixth_of_the_renewals_and_keeps_the_timing_rules()
+    {
+        // The profile passes the same V-01..V-13 rules the defaults do, and keeps a positive stop margin.
+        var settings = WorkerSettings.Validate(new WorkerBuilder().Pool("p", p => p.Queues("default")).Configure(o => o.UseFewerLeaseRenewals()), ["default"]);
+        Assert.Equal(TimeSpan.FromMinutes(5), settings.Options.LeaseDuration);
+        Assert.True(settings.StopMargin > TimeSpan.Zero);
+        Assert.Empty(Validate(o => o.UseFewerLeaseRenewals()));
+
+        async Task<int> RenewalsInTenMinutes(Action<WorkerOptions>? options)
+        {
+            await using var e = EngineFixture.Create(options: options);
+            e.Step = TimeSpan.FromMilliseconds(250);
+            var id = e.Add("long");
+            e.Script.On("long", (_, _, ct) => Forever(e, ct));
+            await e.StartAsync();
+            await e.RunUntilAsync(() => e.Script.InvocationsOf("long") == 1, Long, "invocation");
+            await e.AdvanceAsync(TimeSpan.FromMinutes(10));
+            Assert.False(EntryOf(e, id).IsLost);
+            return CallsFor(e, Operations.Renew, id).Count;
+        }
+
+        var normal = await RenewalsInTenMinutes(null);
+        var fewer = await RenewalsInTenMinutes(o => o.UseFewerLeaseRenewals());
+
+        Assert.InRange(normal, 30, 55);
+        Assert.InRange(fewer, 5, 9);
+        Assert.True(normal >= 4 * fewer, $"default {normal} renewals, fewer-renewals profile {fewer}");
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
     [Trait("Item", "SP-009")]
     [Trait("Case", "TIME-02")]
     public async Task Delayed_fresh_reply_replay_and_late_responses()

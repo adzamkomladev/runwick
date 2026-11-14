@@ -59,6 +59,12 @@ Idle polling backs off further while a wake listener is healthy (05/13/14 Change
 
 - §1.12 adds the outbox relay budgets and horizon bounds (14 §4.2, §6).
 
+## Changes (2026-11-14, fewer-renewals profile)
+
+- **Opt-in profile `WorkerOptions.UseFewerLeaseRenewals()` (perf round two, G5).** It sets `LeaseDuration` 5 min, `RenewalInterval` 90 s and `RenewalJitter` 10 s, and changes nothing else. The defaults in §1 are unchanged. The profile passes V-01 to V-13 (renewal check sum 113 s < 290 s; StopMargin 183 s) and the stores' lease bounds (1 s to 1 h), so no new rule is needed.
+- **Guarantees kept.** Fencing and stale-owner rejection, the safety margin before expiry and the stop gate are the same rules on a longer lease.
+- **Cost.** A running attempt sends about a sixth of the renewal commands (measured 10 minutes of fake time: 6 to 9 against 30 to 55). A worker that dies without a graceful shutdown holds its jobs until the lease expires, up to 5 minutes instead of 1, so recovery of crashed work is slower by up to 4 minutes. Verified: a handler running 10 minutes of fake time keeps its lease with no loss. Not yet measured: pause and store-outage behavior and crash-detection latency against a real store; those need the timeout sweep in the round two plan.
+
 ## Changes (2026-10-31, SP-013)
 
 - §1.11 adds the rate policy bounds and deferral timing (10 §2, §4). V-24 now reads "the binary knows every capability the application requires".

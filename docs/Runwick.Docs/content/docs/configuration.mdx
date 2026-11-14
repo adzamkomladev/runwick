@@ -56,6 +56,8 @@ Set with `runwick.AddWorker(w => w.Configure(o => ...))`. Most apps never touch 
 | `ShutdownDrain` / `ShutdownCancellation` / `ShutdownFinalization` | 15 s / 5 s / 5 s | The three shutdown stages; their sum must fit in `ShutdownBudget` |
 | `RecordResourceUsage` | `true` | Store CPU time, allocations and working set per attempt |
 
+**Fewer lease renewals.** `o.UseFewerLeaseRenewals()` inside `Configure` sets a 5-minute lease renewed about every 90 s, so each running job sends about a sixth of the renewal calls. Fencing is unchanged. The cost is slower recovery when a worker crashes: its jobs stay claimed until the lease expires, up to 5 minutes instead of 1.
+
 Keep the host's shutdown timeout (`HostOptions.ShutdownTimeout`, 30 s by default in .NET) above `ShutdownBudget`. Runwick does not change it for you.
 
 ### Pools
