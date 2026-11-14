@@ -260,6 +260,12 @@ internal interface IWakeNotificationSource
     Task ListenAsync(string application, string channel, Action<string> onWake, Action onSubscribed, Action onLost, CancellationToken ct);
 }
 
+/// <summary>Process-local work hints. Workers retain the normal polling cap for remote and staged writes.</summary>
+internal interface ILocalWorkWakeSource
+{
+    Task ListenForLocalWorkAsync(string application, Action<string> onWake, CancellationToken ct);
+}
+
 /// <summary>RenewMany/1 (03 Changes 2026-11-02, PF-06): distinct leases of one worker, each renewed as Renew/1 would.</summary>
 internal sealed record RenewManyRequest(IReadOnlyList<LeaseHandle> Leases, TimeSpan LeaseDuration);
 

@@ -429,6 +429,11 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
             Supervise("listener", () => ListenAsync(notifications), critical: false);
         }
 
+        else if (Store is ILocalWorkWakeSource local)
+        {
+            Supervise("local-work-listener", () => local.ListenForLocalWorkAsync(Application, OnWakeNotification, LoopStop), critical: false);
+        }
+
         if (_lifetime is not null)
         {
             _stoppingRegistration = _lifetime.ApplicationStopping.Register(() => SignalStop());

@@ -21,6 +21,48 @@ public sealed class SqliteDispatchGroupingTests
     }
 
     [Fact]
+    public async Task Local_work_hint_crosses_store_instances_after_commit_and_is_best_effort()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await DriverFixture.StartAsync("local_wake_" + Guid.NewGuid().ToString("N")[..8], StoreKind.Sqlite);
+        var producer = await fixture.OpenClient(configure: r => TestJobs.Register(r));
+        var listener = await fixture.OpenClient(configure: r => TestJobs.Register(r));
+        Assert.NotSame(producer.Driver, listener.Driver);
+        var local = Assert.IsAssignableFrom<ILocalWorkWakeSource>(listener.Driver);
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var notified = new List<string>();
+        var command = Command(producer, new PingJob("ready"));
+        var badSubscriber = local.ListenForLocalWorkAsync(command.Application, _ => throw new InvalidOperationException(), stop.Token);
+        var subscriber = local.ListenForLocalWorkAsync(command.Application, notified.Add, stop.Token);
+        try
+        {
+            var held = fixture.ArmFault(FaultPoint.BeforeCommit, FaultSpec.Barrier, FaultTarget.Command(command.CommandId));
+            var dispatch = producer.Driver.DispatchAsync(command, ct);
+            try
+            {
+                await DriverFixture.WaitAtBarrier(held);
+                Assert.Empty(notified);
+                Assert.Equal(0, await fixture.CountAsync("SELECT count(*) FROM runwick_jobs"));
+            }
+            finally
+            {
+                DriverFixture.ReleaseBarrier(held);
+            }
+
+            Assert.Equal(StoreStatus.Applied, (await dispatch).Status);
+            Assert.Equal(command.Body.Item.Intent.Queue, Assert.Single(notified));
+            Assert.True((await producer.Driver.DispatchAsync(command, ct)).Replayed);
+            Assert.Single(notified);
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => badSubscriber);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => subscriber);
+        }
+    }
+
+    [Fact]
     public async Task Queued_dispatches_share_a_commit_with_independent_results_and_receipts()
     {
         var ct = TestContext.Current.CancellationToken;

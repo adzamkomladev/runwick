@@ -20,12 +20,41 @@ internal sealed partial class SqliteStore
     /// <summary>Test seam (SQL-12): a smaller per-statement parameter limit, so a test can cross the chunk boundary cheaply.</summary>
     internal static int ParameterLimit { get; set; } = MaxParameters;
 
-    public Task<StoreReply<DispatchResult>> DispatchAsync(StoreCommand<DispatchRequest> command, CancellationToken ct) =>
-        runner.DispatchAsync(DispatchOp(command), tx => DispatchBody(tx, [command.Body.Item], many: false, continueOnConflict: false),
-            MapDispatch, PreparedEnvelopeCodec.UpperBound(command.Application, command.Body.Item.Intent), ct);
+    public async Task<StoreReply<DispatchResult>> DispatchAsync(StoreCommand<DispatchRequest> command, CancellationToken ct)
+    {
+        var item = command.Body.Item;
+        var reply = await runner.DispatchAsync(DispatchOp(command), tx => DispatchBody(tx, [item], many: false, continueOnConflict: false),
+            MapDispatch, PreparedEnvelopeCodec.UpperBound(command.Application, item.Intent), ct).ConfigureAwait(false);
+        if (reply.Status == StoreStatus.Applied && !reply.Replayed && IsDueCreated(item, reply.Value, reply.DecidedAt) &&
+            LocalListenersFor(command.Application) is { } listeners)
+        {
+            PublishLocalWake(listeners, item.Intent.Queue);
+        }
 
-    public Task<StoreReply<DispatchBatchResult>> DispatchManyAsync(StoreCommand<DispatchBatchRequest> command, CancellationToken ct) =>
-        runner.CallAsync(DispatchManyOp(command), tx => DispatchBody(tx, command.Body.Items, many: true, command.Body.ContinueOnConflict), MapDispatchMany, ct);
+        return reply;
+    }
+
+    public async Task<StoreReply<DispatchBatchResult>> DispatchManyAsync(StoreCommand<DispatchBatchRequest> command, CancellationToken ct)
+    {
+        var items = command.Body.Items;
+        var reply = await runner.CallAsync(DispatchManyOp(command), tx => DispatchBody(tx, items, many: true, command.Body.ContinueOnConflict),
+            MapDispatchMany, ct).ConfigureAwait(false);
+        if (reply.Status == StoreStatus.Applied && !reply.Replayed && reply.Value is { } value &&
+            LocalListenersFor(command.Application) is { } listeners)
+        {
+            HashSet<string>? queues = null;
+            foreach (var outcome in value.Items)
+            {
+                var item = items[outcome.Ordinal];
+                if (IsDueCreated(item, outcome.Result, reply.DecidedAt) && (queues ??= new(StringComparer.Ordinal)).Add(item.Intent.Queue))
+                {
+                    PublishLocalWake(listeners, item.Intent.Queue);
+                }
+            }
+        }
+
+        return reply;
+    }
 
     /// <summary>Dispatch/1 on a caller-owned transaction (20 §8).</summary>
     public StoreReply<DispatchResult> StageDispatch(SqliteTransaction transaction, StoreCommand<DispatchRequest> command, CancellationToken ct) =>
