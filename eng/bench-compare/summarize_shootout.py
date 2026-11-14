@@ -4,7 +4,7 @@ import glob, json, os, re, statistics as st, sys
 d = sys.argv[1]; cells = {}
 for f in glob.glob(f"{d}/r*-*.json"):
     if f.endswith(".load.json"): continue
-    m = re.match(r"r(\d+)-(.+?)-((?:runwick|river|pgboss|fastend|bullmq|horizon).*)\.json$", os.path.basename(f))
+    m = re.match(r"r(\d+)-(.+?)-((?:runwick|river|pgboss|fastend|bullmq|horizon|laravel).*)\.json$", os.path.basename(f))
     j = json.load(open(f)); ld = json.load(open(f[:-5] + ".load.json"))
     t = m[2]; mode = t.split("-")[0]
     v = j.get("insertsPerSec") if mode in ("enqueue", "bulk") else j.get("completionsPerSec")
@@ -27,7 +27,7 @@ def cell(c, lat=False):
     if fr and st.median(fr) < 0.99: s += f" [only {st.median(fr)*100:.0f}% done]"
     if any(x[2] for x in r): s += f" ⚑{sum(x[2] for x in r)}/{len(r)}"
     return s
-cfgs = sorted({c for c, _ in cells}); order = ["runwick-pg","runwick-sqlite","runwick-redis","river","pgboss","fastendpoints","bullmq-everysec","bullmq-always","horizon-everysec","horizon-always"]
+cfgs = sorted({c for c, _ in cells}); order = ["runwick-pg","runwick-sqlite","runwick-redis","river","pgboss","fastendpoints","bullmq-everysec","bullmq-always","horizon-everysec","horizon-always","laravel-sqlite","laravel-pg"]
 cfgs = [c for c in order if c in cfgs]
 out = []
 for title, tests, lat in [("Push (jobs added per second)", ["enqueue-c1","enqueue-c16","bulk"], False), ("Process (20,000-job backlog drained, jobs/s)", ["drain-w1","drain-w16","drain-w64"], False),

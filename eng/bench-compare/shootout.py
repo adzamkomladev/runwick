@@ -2,8 +2,8 @@
 """Queue shootout runner (docs/reports/queue-shootout.md). ONE system config at a time, never two at once.
   shootout.py --out DIR --rounds 3 [--configs a,b,c] [--tests t1,t2]     rounds rotate the config order
   shootout.py --out DIR --one CONFIG --round 1                            a single config, one round
-Configs: runwick-pg runwick-sqlite runwick-redis river pgboss fastendpoints bullmq-everysec bullmq-always horizon-everysec horizon-always
-Needs: runwick-pg (127.0.0.1:55499) and two throwaway Redis containers, bench-redis-everysec (56391) and bench-redis-always (56392).
+Configs: runwick-pg runwick-sqlite runwick-redis river pgboss fastendpoints bullmq-everysec bullmq-always horizon-everysec horizon-always laravel-sqlite laravel-pg
+Needs: runwick-pg (127.0.0.1:55499; laravel-pg uses it too) and two throwaway Redis containers, bench-redis-everysec (56391) and bench-redis-always (56392).
 Each run: waits up to --quiet-wait seconds for 1-minute load < 8, records nproc/load/top processes before and after, flags load > 8 at start."""
 import argparse, json, os, subprocess, sys, time
 
@@ -11,7 +11,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 ap = argparse.ArgumentParser()
 ap.add_argument("--out", required=True); ap.add_argument("--rounds", type=int, default=3); ap.add_argument("--one"); ap.add_argument("--round", type=int, default=1)
-ap.add_argument("--configs", default="runwick-pg,runwick-sqlite,runwick-redis,river,pgboss,fastendpoints,bullmq-everysec,bullmq-always,horizon-everysec,horizon-always")
+ap.add_argument("--configs", default="runwick-pg,runwick-sqlite,runwick-redis,river,pgboss,fastendpoints,bullmq-everysec,bullmq-always,horizon-everysec,horizon-always,laravel-sqlite,laravel-pg")
 ap.add_argument("--tests", default="enqueue-c1,enqueue-c16,bulk,drain-w1,drain-w16,drain-w64,steady-100,steady-500")
 ap.add_argument("--scale", type=int, default=1, help="divide job counts (smoke test only)"); ap.add_argument("--quiet-wait", type=int, default=300); ap.add_argument("--steady-seconds", type=int, default=30)
 a = ap.parse_args()
@@ -68,6 +68,12 @@ def cmd(cfg, test, outf):
             if mode == "enqueue": c += ["--calls", str(k)]
             if mode == "drain": c += ["--max-seconds", str(MAXS[test])]
             if mode == "steady": c += ["--rate", str(rate), "--seconds", str(secs)]
+        return c
+    if kind == "laravel":  # database queue driver, `queue:work` x16; run laravel/setup.sh once first
+        c = ["python3", f"{HERE}/laravel/bench.py", "--db", variant, "--mode", mode, "--n", str(n), "--workers", str(w), "--out", outf]
+        if mode == "enqueue": c += ["--calls", str(k)]
+        if mode == "drain": c += ["--max-seconds", str(MAXS[test])]
+        if mode == "steady": c += ["--rate", str(rate), "--seconds", str(secs)]
         return c
     raise SystemExit("unknown config " + cfg)
 
