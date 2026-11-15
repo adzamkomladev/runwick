@@ -6,6 +6,10 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-15, grouped outbox delivery)
+
+- Migration `0023_outbox_group`, schema revision 23, adds the driver-only function `receive_outbox_group_v1` and its item type. It adds no protocol operation and does not change the manifest except its schema revision. It takes the store and application gate once, checks the shape of the whole group before any receipt, orders items by command ID, and runs each through `receive_outbox_v3` inside its own savepoint, so every item keeps its own receipt, mapping and reply. A refused item rolls back with its receipt placeholder. A failure of the transaction rolls back the group, and the relay resends the same commands alone.
+
 ## Changes (2026-11-11, grouped schedule materialization)
 
 - Migration `0022_schedule_groups`, schema revision 22, adds a shared materialization body for the driver-owned single and grouped entry points. Each item uses the existing `MaterializeOccurrences/1` fingerprint, receipt, deadline and decision time. The group takes its application gate once, then locks receipts by command ID and schedules by schedule ID, and inserts jobs by job ID. A refused item rolls back to its savepoint. A transaction failure rolls back the group and the caller can resend the same commands, including after a lost reply.

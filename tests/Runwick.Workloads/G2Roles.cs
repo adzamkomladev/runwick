@@ -137,7 +137,11 @@ internal static class G2Roles
             G2Jobs.Register(r, a);
         });
         var source = new NpgsqlConnectionStringBuilder(a.Str("source")) { ApplicationName = "rw:outbox:relay" }.ConnectionString;
-        sc.AddRunwickPostgresOutbox(source, relay: o => o.MaxInFlight = a.Int("slots", 4));
+        sc.AddRunwickPostgresOutbox(source, relay: o =>
+        {
+            o.MaxInFlight = a.Int("slots", 4);
+            o.DeliveryGroupSize = a.Int("group", 1);
+        });
         await using var log = new MarkLog(a.Str("out") + ".marks.csv");
         LossySource? lossy = null;
         sc.AddSingleton<IOutboxSource>(_ => lossy = new LossySource(new PostgresOutboxSource(source), log));
@@ -182,6 +186,10 @@ internal static class G2Roles
             ["retriesScheduled"] = Interlocked.Read(ref relay.RetriesScheduled),
             ["leaseLosses"] = Interlocked.Read(ref relay.LeaseLosses),
             ["sends"] = Interlocked.Read(ref relay.Sends),
+            ["group"] = a.Int("group", 1),
+            ["groupSends"] = Interlocked.Read(ref relay.GroupSends),
+            ["groupedCommands"] = Interlocked.Read(ref relay.GroupedCommands),
+            ["groupFallbacks"] = Interlocked.Read(ref relay.GroupFallbacks),
             ["marksLost"] = lossy?.Lost ?? 0,
             ["process"] = WorkerMode.ProcessStats(new TimerLag()),
         };

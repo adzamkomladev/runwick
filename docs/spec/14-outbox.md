@@ -2,6 +2,14 @@
 
 **Sources:** [transactional-outbox.md](../architecture/transactional-outbox.md) (all sections, OUTBOX-01 … OUTBOX-07); [storage-command-protocol.md](../architecture/storage-command-protocol.md) "Outbox destination extension"; [driver-contract-suite.md](../architecture/driver-contract-suite.md) §4 (TX), OUT-01, OUT-02, CMD-01 … CMD-05, ISO-01; [performance-acceptance-plan.md](../architecture/performance-acceptance-plan.md) (P-09); 02 §7–§9; 03 §2.1, §4, §10; 04 §5, §6, §8; 06 §1.4, §1.7; 07 §4 (CMD), §8 (TX), §9 (ISO-01); 15 §10–§11.
 
+## Changes (2026-11-15, D4 grouped delivery)
+
+- **Option.** `OutboxRelayOptions.DeliveryGroupSize` (default 1, 1 – 16). At 1 every claimed message is sent alone, exactly as before. Above 1, the relay sends the plain messages of one claim to the destination as one transaction of up to that many. Plain means no active or window key, no scopes and no rates, so groups share no row locks other than their own; every other message is sent alone, at the same time. A destination that cannot group (SQLite, Redis) ignores the option.
+- **Identity is unchanged.** Each message in a group keeps its own transport command ID, deadline, command fingerprint, receipt and delivery mapping, built exactly as for a single send, and the group function runs `receive_outbox_v3` for each one. A group reply is one reply per command, each equal to the reply a single `ReceiveOutbox/1` would give it, including replays of an earlier mapping, conflicts, expired commands and a past `AcceptUntil`. A refused item rolls back in its own subtransaction, receipt placeholder included, and the other items commit.
+- **Source confirmation is unchanged.** After the group reply the relay marks each message delivered under its own lease token, one source call per message, concurrently. A message whose lease was lost still gets the destination's mapping and a counted lease loss.
+- **Failure.** Anything that is not a full, applied group reply (an unknown outcome, an unavailable destination, a timeout, a refused group, a count mismatch) sends each command alone with its original command ID. The per-command receipts and the delivery mapping answer the ones the group already applied, so no second job is created.
+- **PostgreSQL.** Migration `0023_outbox_group` (schema revision 23, driver-only, no manifest entry) adds `receive_outbox_group_v1`. It takes the store and application gate once, rejects a malformed group (fewer than 2 or more than 16 items, a repeated command or message identity, a keyed item or 2 MiB of payload) before any receipt, and runs items in command-ID order. **SQLite.** A relay slot's `ReceiveOutbox/1` now goes through the same producer group commit as `Dispatch/1`, so concurrent slots share one commit with no relay change.
+
 ## Changes (2026-11-02, idle caps)
 
 - **Idle poll.** While the relay's wake listener is healthy (from a successful (re)subscription until the session is lost or refused, or the listener stops), a claim loop that claimed nothing with a free slot waits **5 × `IdlePoll`** (5 s by default). Otherwise it waits `IdlePoll` (1 s), as before; a full relay or one paused by renewal uncertainty always waits `IdlePoll`, and a freed slot ends any wait. A lost session ends the current wait at once.
@@ -173,6 +181,7 @@ The renewal loop renews every in-flight lease each `RenewalInterval`. A `false` 
 | Setting | Default | Bound |
 |---|---|---|
 | `MaxInFlight` (messages; also the claim batch) | 4 | 1 – 64 |
+| `DeliveryGroupSize` (plain messages sent to the destination in one transaction) | 1 (off) | 1 – 16 |
 | `LeaseDuration` | 60 s | ≥ 5 s and ≥ 3 × `RenewalInterval` |
 | `RenewalInterval` | 15 s | > 0 |
 | `ProviderCallTimeout` (each source or destination call) | 5 s | > 0 and < `RenewalInterval` |
