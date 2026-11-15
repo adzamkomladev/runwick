@@ -21,6 +21,7 @@ run_arm() {
   uptime > "$prefix.load"
   local cmd=()
   local rw=(dotnet "$dll" bench --store redis --redis "$address" --out "$prefix.json")
+  [[ $arm == base ]] && rw[1]="${BASE_DLL:?arm base needs BASE_DLL, the workload binary of the tree before the change}"
   [[ $arm == on ]] && rw+=(--redis-group)
   [[ $arm == on4 ]] && rw+=(--redis-group --group-slots 4)
   [[ $arm == on8 ]] && rw+=(--redis-group --group-slots 8)

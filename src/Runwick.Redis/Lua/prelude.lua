@@ -44,10 +44,15 @@ function U.inc(s)
 end
 
 -- Bytewise a < b (never Lua '<' on strings: it follows the server's LC_COLLATE).
+local byte = string.byte
 function U.blt(a, b)
-  local n = math.min(#a, #b)
-  for i = 1, n do
-    local x, y = string.byte(a, i), string.byte(b, i)
+  -- Most keys differ at the first byte, so settle that before any loop.
+  local x, y = byte(a, 1), byte(b, 1)
+  if x ~= y then return (x or -1) < (y or -1) end
+  local n, m = #a, #b
+  if m < n then n = m end
+  for i = 2, n do
+    x, y = byte(a, i), byte(b, i)
     if x ~= y then return x < y end
   end
   return #a < #b
@@ -56,7 +61,7 @@ end
 function U.sorted(t)
   local k = {}
   for key in pairs(t) do k[#k + 1] = key end
-  table.sort(k, U.blt)
+  if #k > 1 then table.sort(k, U.blt) end
   return k
 end
 
@@ -156,6 +161,7 @@ end
 
 function U.hset(k, f, v)
   local r = rec(P .. k, 'h')
+  r.pre = nil
   if v == nil then
     r.set[f] = nil
     r.del[f] = true
@@ -163,6 +169,29 @@ function U.hset(k, f, v)
     r.set[f] = tostring(v)
     r.del[f] = nil
   end
+end
+
+-- Writes several fields of a hash that has no other write yet in this command. names must be in bytewise order (a test checks
+-- the literal lists), so build_ops can skip sorting them. A nil value is skipped when skipnil is set; otherwise it takes the plain
+-- path, which records a field deletion.
+function U.hset_sorted(k, names, vals, skipnil)
+  local r = rec(P .. k, 'h')
+  local fresh = next(r.set) == nil and next(r.del) == nil and not r.kill
+  for i = 1, #names do
+    local f = names[i]
+    local v = vals[f]
+    if v == nil then
+      if not skipnil then
+        fresh = false
+        U.hset(k, f, nil)
+      end
+    elseif fresh then
+      r.set[f] = tostring(v)
+    else
+      U.hset(k, f, v)
+    end
+  end
+  r.pre = fresh and names or nil
 end
 
 function U.zscore(k, m)
@@ -319,9 +348,20 @@ end
 
 -- ------------------------------------------------------------------ gates (03 §10.1) and receipt (03 §8.2)
 
+-- The result as text. The receipt, the intent's reply and the final reply all need it, so a decided result is encoded once.
+local function result_text(r)
+  if type(r.result) ~= 'table' then return r.result end
+  local t = r.rtext
+  if not t then
+    t = U.enc(r.result)
+    r.rtext = t
+  end
+  return t
+end
+
 local function reply_array(r, replayed)
   local a = { 'R', r.status, r.effect, replayed and '1' or '0', r.code or '', r.detail or '', r.decided or '',
-    type(r.result) == 'table' and U.enc(r.result) or (r.result or ''),
+    result_text(r) or '',
     r.conflict or '', r.blocked or '', r.resumeAt and U.S(r.resumeAt) or '', r.resumeJob or '' }
   return a
 end
@@ -404,10 +444,13 @@ local function flush_events(m)
   local id = tonumber(m.nextevent or '1')
   for _, e in ipairs(EV) do
     if id > MAX_SCORE then U.abort('InvariantFault', 'counter_limit') end
-    local row = { eventId = id, jobId = e.job or NULL, attemptId = e.attempt or NULL, commandId = e.commandId or CMD, kind = e.kind,
-      occurredAt = NOW, details = e.details, actorId = e.actor or NULL }
-    U.zadd('events', id, U.S(id))
-    U.hset('events:data', U.S(id), U.enc(row))
+    -- The row's keys are fixed, so they are written in bytewise order instead of being sorted.
+    local ids = U.S(id)
+    local row = '{"actorId":' .. (e.actor and U.str(e.actor) or 'null') .. ',"attemptId":' .. (e.attempt and U.str(e.attempt) or 'null')
+      .. ',"commandId":' .. U.str(e.commandId or CMD) .. ',"details":' .. U.enc(e.details) .. ',"eventId":' .. ids
+      .. ',"jobId":' .. (e.job and U.str(e.job) or 'null') .. ',"kind":' .. U.str(e.kind) .. ',"occurredAt":' .. NOWS .. '}'
+    U.zadd('events', id, ids)
+    U.hset('events:data', ids, row)
     id = id + 1
   end
   U.hset('meta', 'nextevent', U.S(id))
@@ -423,13 +466,19 @@ local function build_ops()
     if r.t == 's' then
       if r.val ~= nil then ops[#ops + 1] = { 'S', s, r.val } end
     else
-      local d = U.sorted(r.del)
+      local d = next(r.del) ~= nil and U.sorted(r.del) or {}
       if #d > 0 and not r.kill then
         local op = { r.t == 'h' and 'HD' or 'ZR', s }
         for _, f in ipairs(d) do op[#op + 1] = f end
         ops[#ops + 1] = op
       end
-      local fs = U.sorted(r.set)
+      local fs
+      if r.pre then
+        fs = {}
+        for _, f in ipairs(r.pre) do if r.set[f] ~= nil then fs[#fs + 1] = f end end
+      else
+        fs = U.sorted(r.set)
+      end
       if #fs > 0 then
         local op = { r.t == 'h' and 'H' or 'Z', s }
         for _, f in ipairs(fs) do
@@ -508,6 +557,9 @@ end
 
 -- ------------------------------------------------------------------ the frame
 
+-- Receipt hash fields in bytewise order, the order U.sorted gave them.
+local RECEIPT_FIELDS = { 'cls', 'code', 'decided', 'detail', 'fp', 'notafter', 'op', 'result', 'retain', 'status', 'ver' }
+
 function U.run(M)
   local mr = redis.call('HGETALL', META)
   local m = {}
@@ -565,17 +617,9 @@ function U.run(M)
 
   if FP ~= '' then
     local na = NOT_AFTER
-    U.hset('rcpt:' .. CMD, 'cls', CLS)
-    U.hset('rcpt:' .. CMD, 'op', OP)
-    U.hset('rcpt:' .. CMD, 'ver', '1')
-    U.hset('rcpt:' .. CMD, 'fp', FP)
-    U.hset('rcpt:' .. CMD, 'notafter', U.S(na))
-    U.hset('rcpt:' .. CMD, 'retain', U.S(na + FLOOR))
-    U.hset('rcpt:' .. CMD, 'status', r.status)
-    U.hset('rcpt:' .. CMD, 'code', r.code or '')
-    U.hset('rcpt:' .. CMD, 'detail', r.detail or '')
-    U.hset('rcpt:' .. CMD, 'decided', r.decided)
-    U.hset('rcpt:' .. CMD, 'result', type(r.result) == 'table' and U.enc(r.result) or r.result)
+    U.hset_sorted('rcpt:' .. CMD, RECEIPT_FIELDS, { cls = CLS, op = OP, ver = '1', fp = FP, notafter = U.S(na), retain = U.S(na + FLOOR),
+      status = r.status, code = r.code or '', detail = r.detail or '', decided = r.decided,
+      result = result_text(r) })
     U.zadd('rcpt:exp:' .. CLS, na + FLOOR, CMD)
   end
 

@@ -349,6 +349,11 @@ end
 -- ------------------------------------------------------------------ dispatch core (rw_dispatch_core_v3)
 
 -- items: decoded item tables with .payload; returns nil, results (array of result tables) or a no-effect reply.
+-- The fields a created job's hash starts with, in bytewise order (what sorting them gave); a test checks the order.
+U.JOB_FIELDS = { 'akey', 'created', 'eligible', 'g:1:created', 'g:1:max', 'g:1:maxun', 'g:1:reason', 'g:1:retry', 'g:1:started',
+  'g:1:timeout', 'g:1:unstarted', 'g:1:uretry', 'gen', 'headers', 'name', 'penc', 'priority', 'profile', 'profver', 'pver', 'queue',
+  'rates', 'rcount', 'rev', 'scopes', 'state', 'updated', 'xcount' }
+
 function U.dispatch_core(items, continueOnConflict, createdReason, actor)
   local hasRates = false
   for _, it in ipairs(items) do if #it.rates > 0 then hasRates = true end end
@@ -489,7 +494,7 @@ function U.dispatch_core(items, continueOnConflict, createdReason, actor)
       ['g:1:timeout'] = U.nn(p.timeout) and U.S(p.timeout) or nil, ['g:1:retry'] = p.retry, ['g:1:uretry'] = p.uretry,
       ['g:1:started'] = '0', ['g:1:unstarted'] = '0',
     }
-    for f, v in pairs(fields) do if v ~= nil then U.hset('job:' .. id, f, v) end end
+    U.hset_sorted('job:' .. id, U.JOB_FIELDS, fields, true)
     U.sset('pay:' .. id, it.payload)
     U.zadd('idx:created', NOW, id)
     U.zadd('idx:created:q:' .. it.queue, NOW, id)
