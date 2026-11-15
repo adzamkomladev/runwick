@@ -8,17 +8,31 @@ using Runwick.Serialization;
 namespace Runwick.Postgres.Store;
 
 /// <summary>The PostgreSQL implementation of the storage protocol (03) per 04 §7.</summary>
-internal sealed partial class PgStore(PgDataSources sources, PgRunner runner, TimeProvider time) : IRunwickStore, IAsyncDisposable
+internal sealed partial class PgStore(PgDataSources sources, PgRunner runner, TimeProvider time, PostgresOptions? options = null)
+    : IRunwickStore, IAsyncDisposable
 {
+    readonly PgDispatchGroup? _group = options is { GroupProducerAdmission: true } ? new PgDispatchGroup(options.GroupMaxInFlight) : null;
+
     public Guid StoreId => runner.StoreId ?? throw new InvalidOperationException("Describe has not run yet.");
 
     public string AcknowledgementProfile => AcknowledgementProfiles.PostgresSynchronousCommit;
 
     internal PgRunner Runner => runner;
 
+    /// <summary>The producer grouping state when <see cref="PostgresOptions.GroupProducerAdmission"/> is on (diagnostics and tests).</summary>
+    internal PgDispatchGroup? Group => _group;
+
     internal PgDataSources Sources => sources;
 
-    public ValueTask DisposeAsync() => sources.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        if (_group is not null)
+        {
+            await _group.DisposeAsync().ConfigureAwait(false);
+        }
+
+        await sources.DisposeAsync().ConfigureAwait(false);
+    }
 
     async Task<Guid> EnsureStoreIdAsync(string application, CancellationToken ct) =>
         runner.StoreId ?? (await DescribeAsync(application, ct).ConfigureAwait(false)).StoreId;

@@ -126,7 +126,7 @@ internal sealed class DriverFixture : IAsyncDisposable
 
     /// <summary>Opens an in-process client over the real registry, dispatcher, store and SQL.</summary>
     public async Task<TestClient> OpenClient(string processIdentity = "local", Action<RunwickBuilder>? configure = null,
-        string? application = null, TimeProvider? time = null, bool ensureReady = true)
+        string? application = null, TimeProvider? time = null, bool ensureReady = true, Action<Runwick.Postgres.PostgresOptions>? postgres = null)
     {
         if (processIdentity != "local")
         {
@@ -134,7 +134,7 @@ internal sealed class DriverFixture : IAsyncDisposable
         }
 
         var client = await TestClient.CreateAsync(ClientConnectionString(processIdentity), application ?? Application, Faults,
-            configure, time, ensureReady).ConfigureAwait(false);
+            configure, time, ensureReady, postgres).ConfigureAwait(false);
         _clients.Add(client);
         return client;
     }
@@ -301,11 +301,11 @@ internal sealed class DriverFixture : IAsyncDisposable
         }
     }
 
-    internal PgStore NewStore(string identity = "harness")
+    internal PgStore NewStore(string identity = "harness", Runwick.Postgres.PostgresOptions? options = null)
     {
         var sources = new PgDataSources(ClientConnectionString(identity), "runwick:" + Application, new ProducerOptions().MaxConcurrentCalls);
         var runner = new PgRunner(sources, Faults, TimeProvider.System);
-        return new PgStore(sources, runner, TimeProvider.System);
+        return new PgStore(sources, runner, TimeProvider.System, options);
     }
 
     public async Task Stop()

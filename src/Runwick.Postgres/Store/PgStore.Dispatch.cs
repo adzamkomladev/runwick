@@ -11,17 +11,60 @@ internal sealed partial class PgStore
     // Direct calls use dispatch_v4 and can publish a wake after commit. Staged calls use dispatch_v3 and its
     // transactional wake, as do the outbox, management and schedule paths through rw_dispatch_core_v3 (04 §7.2).
 
-    public async Task<StoreReply<DispatchResult>> DispatchAsync(StoreCommand<DispatchRequest> command, CancellationToken ct)
+    public Task<StoreReply<DispatchResult>> DispatchAsync(StoreCommand<DispatchRequest> command, CancellationToken ct) =>
+        _group is { } group && PgDispatchGroup.IsPlain(command) ? group.DispatchAsync(this, command, ct) : DispatchSingleAsync(command, ct);
+
+    internal async Task<StoreReply<DispatchResult>> DispatchSingleAsync(StoreCommand<DispatchRequest> command, CancellationToken ct)
     {
         var reply = await runner.CallAsync(DispatchOp(command), DispatchCall([command.Body.Item], many: false, continueOnConflict: false),
             MapDispatch, ct).ConfigureAwait(false);
+        WakeIfDue(command, reply);
+        return reply;
+    }
+
+    internal void WakeIfDue(StoreCommand<DispatchRequest> command, StoreReply<DispatchResult> reply)
+    {
         var item = command.Body.Item;
         if (reply.Status == StoreStatus.Applied && !reply.Replayed && IsDueCreated(item, reply.Value, PgTime.Ms(reply.DecidedAt)))
         {
             sources.WakeDispatch(command.Application, item.Intent.Queue);
         }
+    }
 
-        return reply;
+    internal static StoreReply<DispatchResult> MapGroupRow(PgRow row) => MapDispatch(row);
+
+    static readonly HashSet<string> GroupArrays = new(StringComparer.Ordinal)
+    {
+        "p_job_ids", "p_job_names", "p_payload_versions", "p_profile_ids", "p_profile_versions", "p_queues", "p_priorities",
+        "p_not_before_ms", "p_payloads", "p_headers", "p_max_executions", "p_max_unstarted", "p_timeouts", "p_retry", "p_unstarted",
+    };
+
+    /// <summary>
+    /// dispatch_group_v1 for 1 to 8 plain commands: the same parallel arrays as a single dispatch, plus one command id,
+    /// deadline, fingerprint and request-bound verdict per command (0023_dispatch_group).
+    /// </summary>
+    internal static PgCall DispatchGroupCall(IReadOnlyList<PgOp> ops, IReadOnlyList<DispatchItem> items)
+    {
+        var call = new PgCall("dispatch_group_v1")
+            .Arr("p_command_ids", [.. ops.Select(o => o.CommandId)], NpgsqlDbType.Uuid)
+            .Arr("p_not_afters", [.. ops.Select(o => o.NotAfter.UtcDateTime)], NpgsqlDbType.TimestampTz)
+            .Arr("p_fingerprints", [.. ops.Select(o => o.Fingerprint!)], NpgsqlDbType.Bytea)
+            .Arr("p_invalid", [.. items.Select(i => InvalidDispatch([i]))], NpgsqlDbType.Text);
+        foreach (var (name, value, type) in DispatchArgs(items))
+        {
+            if (GroupArrays.Contains(name))
+            {
+                call.P(name, value, type);
+            }
+        }
+
+        return call;
+    }
+
+    internal Task<PgGroupCall> DispatchGroupAsync(IReadOnlyList<StoreCommand<DispatchRequest>> commands, CancellationToken ct)
+    {
+        var ops = commands.Select(DispatchOp).ToArray();
+        return runner.CallGroupAsync(ops, DispatchGroupCall(ops, [.. commands.Select(c => c.Body.Item)]), ct);
     }
 
     public async Task<StoreReply<DispatchBatchResult>> DispatchManyAsync(StoreCommand<DispatchBatchRequest> command, CancellationToken ct)

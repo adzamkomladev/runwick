@@ -12,7 +12,7 @@ namespace Runwick.Postgres.Store;
 /// Runs one driver-owned operation: connection, READ COMMITTED transaction, gates, receipt protocol,
 /// body, finalization and commit, with SQLSTATE classification and same-command transient retry (04 §6, §10).
 /// </summary>
-internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, TimeProvider time)
+internal sealed partial class PgRunner(PgDataSources sources, IFaultInjector faults, TimeProvider time)
 {
     const int MaxTransientRetries = 3;
     static readonly TimeSpan DefaultBudget = TimeSpan.FromSeconds(5);
