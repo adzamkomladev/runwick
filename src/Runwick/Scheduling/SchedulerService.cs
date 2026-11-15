@@ -292,6 +292,20 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
 
     async Task LoopAsync(IScheduleStore store, CancellationToken ct)
     {
+        try
+        {
+            await RunLoopAsync(store, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Stop returns only after every carried group has settled.
+            await ((Task)Task.WhenAll(_carry)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            _carry.Clear();
+        }
+    }
+
+    async Task RunLoopAsync(IScheduleStore store, CancellationToken ct)
+    {
         var options = _declarations.Options;
         var idle = options.PollInterval;
         DueSchedulePageCursor? cursor = null;

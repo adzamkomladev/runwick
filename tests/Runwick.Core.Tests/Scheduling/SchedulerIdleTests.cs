@@ -34,6 +34,8 @@ public sealed class SchedulerIdleTests
         public TimeSpan ClockOffset { get; set; }
         public ConcurrentQueue<int> GroupSizes { get; } = new();
         public Task? GroupBarrier { get; set; }
+        int _groupsRunning;
+        public int GroupsRunning => Volatile.Read(ref _groupsRunning);
 
         public Task<DueSchedules> ReadDueSchedulesAsync(string application, int limit, CancellationToken ct, DueSchedulePageCursor? after = null)
         {
@@ -89,18 +91,26 @@ public sealed class SchedulerIdleTests
             IReadOnlyList<StoreCommand<MaterializeRequest>> commands, CancellationToken ct)
         {
             GroupSizes.Enqueue(commands.Count);
-            if (GroupBarrier is { } barrier)
+            Interlocked.Increment(ref _groupsRunning);
+            try
             {
-                await barrier.WaitAsync(ct);
-            }
+                if (GroupBarrier is { } barrier)
+                {
+                    await barrier.WaitAsync(ct);
+                }
 
-            var replies = new List<StoreReply<ScheduleMaterialization>>();
-            foreach (var command in commands)
+                var replies = new List<StoreReply<ScheduleMaterialization>>();
+                foreach (var command in commands)
+                {
+                    replies.Add(await MaterializeOccurrencesAsync(command, ct));
+                }
+
+                return StoreReply<ScheduleGroupMaterialization>.Applied(new ScheduleGroupMaterialization(replies, Grouped: true), time.GetUtcNow());
+            }
+            finally
             {
-                replies.Add(await MaterializeOccurrencesAsync(command, ct));
+                Interlocked.Decrement(ref _groupsRunning);
             }
-
-            return StoreReply<ScheduleGroupMaterialization>.Applied(new ScheduleGroupMaterialization(replies, Grouped: true), time.GetUtcNow());
         }
 
         public Task<StoreReply<ScheduleState>> SetScheduleStateAsync(StoreCommand<ScheduleStateRequest> command, CancellationToken ct) => throw new NotSupportedException();
@@ -219,6 +229,23 @@ public sealed class SchedulerIdleTests
         await e.StopAsync(maxFake: TimeSpan.FromSeconds(5));
 
         Assert.Equal(2, store.GroupSizes.Count);
+        Assert.Equal(0, Interlocked.Read(ref scheduler.Materializations));
+    }
+
+    [Fact]
+    [Trait("Case", "S3")]
+    public async Task Shutdown_waits_for_groups_carried_past_a_full_page()
+    {
+        var (fixture, store, scheduler) = DueFixture(ScheduleBounds.DueReadLimit * 2, configure: options => options.GroupMaterializations = true);
+        await using var e = fixture;
+        store.GroupBarrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task;
+        await e.StartAsync();
+        await e.RunUntilAsync(() => store.GroupSizes.Count >= 2 && store.Reads.Count >= 2, TimeSpan.FromSeconds(5),
+            "two groups entered with the second page already read");
+
+        await e.StopAsync(maxFake: TimeSpan.FromSeconds(5));
+
+        Assert.Equal(0, store.GroupsRunning);
         Assert.Equal(0, Interlocked.Read(ref scheduler.Materializations));
     }
 
