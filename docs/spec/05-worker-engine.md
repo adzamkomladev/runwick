@@ -4,6 +4,17 @@
 
 Numeric values are restated here where the engine behavior depends on them; [06-defaults.md](06-defaults.md) is the single table of defaults, derived formulas and startup inequalities. Where the two disagree, 06 is authoritative for the number and this file for the behavior.
 
+## Changes (2026-11-15, buffered finish)
+
+New **§12.6 Buffered finish (perf round two, G1)**, an opt-in mode (`WorkerOptions.UseBufferedFinish()`, `BufferedFinish`, default off). Without it §12.1 to §12.5 are unchanged.
+
+- **What changes.** When an attempt publishes its Finish (§10.1 step 8), the engine gives the attempt's local capacity ticket back at once, so the pool refills while the Finish is still in memory or in flight. Nothing else is released early: the attempt stays in the entry table in `Finishing`, keeps its arbiter, its fence and its storage-side permits (concurrency and rate scopes, unique keys), and retires only when the store settled the Finish. Renewal follows the existing rule (§11: no renewal while a Finish call is in flight).
+- **Bounds (V-22).** The give-back happens only while the number of unsettled buffered Finishes is below `FinishBufferMaxCount` (default 256, 1 to 4,096) and their estimated size is below `FinishBufferMaxBytes` (default 4 MiB, 64 KiB to 64 MiB; 256 bytes per Finish plus twice the error text length, plus 64 when usage is recorded), and the oldest unsettled buffered Finish is under 1 s old. Beyond a bound the ticket stays held until retirement, exactly as in the default mode, which is how admission stops refilling. The completion channel is sized to at least `FinishBufferMaxCount`.
+- **Flush.** With `FinishMany/1`, one completion worker at a time collects. It takes the first Finish and then waits up to `FinishFlushInterval` (default 25 ms, 1 ms to 1 s, whole milliseconds) from that Finish's publication for more, and sends them as one `FinishMany` (§12.5, unchanged). It sends earlier when 32 are collected, when the worker is draining, when the engine stops, or when a collected attempt is within `RenewalLead` of its local authority deadline. Other completion workers collect the next batch while a call is in flight. Without `FinishMany/1` nothing waits; the mode then only gives the slot back.
+- **Resolution.** A buffered Finish has the same frozen command, resolution budget (`CompletionResolutionBudget` counts from publication, so buffering time is part of it) and fallbacks as §12.2 to §12.5.
+- **What it can lose.** A worker that dies while Finishes are in memory has not told the store those jobs finished. They stay `Running` until their leases expire; recovery then retries them and the handler runs again. Handlers must be idempotent in this mode. A graceful stop sends the buffer before the shutdown budget ends (a store that does not answer leaves the same unresolved outcome as in the default mode).
+- **Diagnostics.** `CompletionCoordinator.Buffered`, `BufferedHighWater`, `BufferFullRefusals`, `FlushesFull`, `FlushesByAge` and `FlushesForced`.
+
 ## Changes (2026-11-10, exact stats)
 
 - §14: the detail is version 2 and adds `handlers`, the job names this worker has a handler for (16 §2.3).

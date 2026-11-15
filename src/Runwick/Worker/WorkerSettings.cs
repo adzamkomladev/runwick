@@ -234,6 +234,25 @@ internal sealed class WorkerSettings
                     }
                 }
 
+                if (o.BufferedFinish)
+                {
+                    if (o.FinishFlushInterval < TimeSpan.FromMilliseconds(1) || o.FinishFlushInterval > TimeSpan.FromSeconds(1)
+                        || o.FinishFlushInterval.Ticks % TimeSpan.TicksPerMillisecond != 0)
+                    {
+                        Fail("V-22", nameof(o.FinishFlushInterval), "FinishFlushInterval must be 1 ms to 1 s, in whole milliseconds.");
+                    }
+
+                    if (o.FinishBufferMaxCount is < 1 or > 4096)
+                    {
+                        Fail("V-22", nameof(o.FinishBufferMaxCount), "FinishBufferMaxCount must be 1 to 4,096.");
+                    }
+
+                    if (o.FinishBufferMaxBytes is < 64 * 1024 or > 64 * 1024 * 1024)
+                    {
+                        Fail("V-22", nameof(o.FinishBufferMaxBytes), "FinishBufferMaxBytes must be 64 KiB to 64 MiB.");
+                    }
+                }
+
                 if (!(o.RecoveryScanJitter < o.RecoveryScanInterval))
                 {
                     Fail("V-13", nameof(o.RecoveryScanJitter), "0 < RecoveryScanMin ≤ RecoveryScanNominal ≤ RecoveryScanMax is required.");

@@ -314,24 +314,51 @@ internal class ScriptedStore(TimeProvider time) : IRunwickStore, IWakeNotificati
     // ---- state
 
     public Task<StoreReply<FinishedAttempt>> FinishAsync(StoreCommand<FinishRequest> command, CancellationToken ct) =>
-        Run(Operations.Finish, command.CommandId, command.Body, now =>
+        Run(Operations.Finish, command.CommandId, command.Body, now => FinishCore(command.Body, now), ct);
+
+    StoreReply<FinishedAttempt> FinishCore(FinishRequest body, DateTimeOffset now)
+    {
+        var job = Owned(body.Lease);
+        if (job is null || job.ExpiresAt <= now)
         {
-            var job = Owned(command.Body.Lease);
-            if (job is null || job.ExpiresAt <= now)
+            return Fail<FinishedAttempt>(StoreStatus.StaleLease, "stale_lease", now);
+        }
+
+        if (job.State != JobStates.Running)
+        {
+            return Fail<FinishedAttempt>(StoreStatus.InvalidState, "not_running", now);
+        }
+
+        job.Finishes.Add(body);
+        job.State = body.Outcome == AttemptOutcome.Succeeded ? JobStates.Succeeded : JobStates.Failed;
+        job.Lease = null;
+        job.History.Add("finished:" + body.Outcome);
+        return StoreReply<FinishedAttempt>.Applied(new FinishedAttempt(Position(job), body.Outcome.ToString(), job.State, null, null), now);
+    }
+
+    /// <summary>FinishMany/1: each item decided like its own Finish, with its own receipt (so a later single Finish replays).</summary>
+    private protected Task<StoreReply<FinishedMany>> FinishManyCore(StoreCommand<FinishManyRequest> command, CancellationToken ct) =>
+        Run(Operations.FinishMany, command.CommandId, command.Body, now =>
+        {
+            var outcomes = new List<StoreReply<FinishedAttempt>>();
+            foreach (var item in command.Body.Items)
             {
-                return Fail<FinishedAttempt>(StoreStatus.StaleLease, "stale_lease", now);
+                if (_receipts.TryGetValue(item.CommandId, out var stored))
+                {
+                    outcomes.Add(Replay((StoreReply<FinishedAttempt>)stored));
+                    continue;
+                }
+
+                var reply = FinishCore(item.Body, now);
+                if (IsApplied(reply))
+                {
+                    _receipts[item.CommandId] = reply;
+                }
+
+                outcomes.Add(reply);
             }
 
-            if (job.State != JobStates.Running)
-            {
-                return Fail<FinishedAttempt>(StoreStatus.InvalidState, "not_running", now);
-            }
-
-            job.Finishes.Add(command.Body);
-            job.State = command.Body.Outcome == AttemptOutcome.Succeeded ? JobStates.Succeeded : JobStates.Failed;
-            job.Lease = null;
-            job.History.Add("finished:" + command.Body.Outcome);
-            return StoreReply<FinishedAttempt>.Applied(new FinishedAttempt(Position(job), command.Body.Outcome.ToString(), job.State, null, null), now);
+            return StoreReply<FinishedMany>.Applied(new FinishedMany(outcomes), now);
         }, ct);
 
     public Task<StoreReply<FinishedAttempt>> RecoverAsync(StoreCommand<RecoverRequest> command, CancellationToken ct) =>
@@ -413,7 +440,7 @@ internal class ScriptedStore(TimeProvider time) : IRunwickStore, IWakeNotificati
 /// The scripted store with the batched claim (ReserveAndBegin/1, 05 §9.6): up to MaxJobs of the lane's next jobs are
 /// reserved and begun in one call, each exactly as Reserve then Begin would leave it. An empty lane is NoWork.
 /// </summary>
-internal sealed class ScriptedBatchStore(TimeProvider time) : ScriptedStore(time), IReserveAndBeginStore
+internal class ScriptedBatchStore(TimeProvider time) : ScriptedStore(time), IReserveAndBeginStore
 {
     public Task<StoreReply<ClaimedJobs>> ReserveAndBeginAsync(StoreCommand<ReserveAndBeginRequest> command, CancellationToken ct) =>
         Run(Operations.ReserveAndBegin, command.CommandId, command.Body, now =>
@@ -430,6 +457,12 @@ internal sealed class ScriptedBatchStore(TimeProvider time) : ScriptedStore(time
                 ? StoreReply<ClaimedJobs>.Applied(new ClaimedJobs(outcomes), now)
                 : StoreReply<ClaimedJobs>.NoEffect(StoreStatus.NoWork, new StoreError("no_work"), now);
         }, ct);
+}
+
+/// <summary>The batch store that also offers FinishMany/1 (PF-06), for batched and buffered finish tests.</summary>
+internal sealed class ScriptedFinishManyStore(TimeProvider time) : ScriptedBatchStore(time), IFinishManyStore
+{
+    public Task<StoreReply<FinishedMany>> FinishManyAsync(StoreCommand<FinishManyRequest> command, CancellationToken ct) => FinishManyCore(command, ct);
 }
 
 /// <summary>A scripted wake listener session: the test decides when it subscribes, loses its session and notifies.</summary>

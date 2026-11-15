@@ -17,6 +17,8 @@ A handler can run again when:
 
 In each case Runwick runs the job again rather than risk losing it. So write handlers that are safe to repeat.
 
+With the opt-in [buffered finish](/docs/configuration) mode (`UseBufferedFinish()`), the first case gets wider. A worker starts its next job before the store has confirmed the previous one finished, so a crash can rerun jobs that already completed in the last few tens of milliseconds, up to the size of the buffer. A normal shutdown sends the buffer first.
+
 ### When a dispatch is confirmed
 
 `DispatchAsync` returns a `DispatchReceipt` only after the store has confirmed the write. The receipt's `ConfirmedAcknowledgementProfile` says what "confirmed" means for that store:

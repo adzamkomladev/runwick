@@ -473,4 +473,37 @@ public sealed class WorkerOptions
         RenewalJitter = TimeSpan.FromSeconds(10);
         return this;
     }
+
+    /// <summary>
+    /// Buffered finish (G1). Off by default. When on, an attempt that has finished gives its worker slot back at once and its
+    /// Finish waits in a bounded buffer that is flushed every <see cref="FinishFlushInterval"/> (or as soon as a batch is full),
+    /// so the next job starts without waiting for the finish round trip. The attempt keeps its lease, its renewals and its
+    /// store-side permits until the store has accepted the Finish.
+    /// <para>
+    /// What it can lose: a worker that crashes (or is killed) while Finishes are still in memory leaves those jobs running
+    /// until their leases expire, and then they run again. Handlers must be idempotent in this mode. A graceful shutdown flushes the
+    /// buffer first. The buffer is bounded by <see cref="FinishBufferMaxCount"/>, <see cref="FinishBufferMaxBytes"/> and a one-second
+    /// age; when a bound is hit the slot stays held until the Finish settles, exactly as with the default.
+    /// </para>
+    /// </summary>
+    public WorkerOptions UseBufferedFinish(TimeSpan? flushInterval = null, int maxCount = 256, int maxBytes = 4 * 1024 * 1024)
+    {
+        BufferedFinish = true;
+        FinishFlushInterval = flushInterval ?? TimeSpan.FromMilliseconds(25);
+        FinishBufferMaxCount = maxCount;
+        FinishBufferMaxBytes = maxBytes;
+        return this;
+    }
+
+    /// <summary>Buffered finish (G1) switch; see <see cref="UseBufferedFinish"/>. Default off.</summary>
+    public bool BufferedFinish { get; set; }
+
+    /// <summary>The longest a finished attempt's Finish waits for company before it is sent. 1 ms to 1 s; default 25 ms.</summary>
+    public TimeSpan FinishFlushInterval { get; set; } = TimeSpan.FromMilliseconds(25);
+
+    /// <summary>Most Finishes that may be buffered (slot already reused, not yet settled). 1 to 4,096; default 256.</summary>
+    public int FinishBufferMaxCount { get; set; } = 256;
+
+    /// <summary>Most estimated bytes of buffered Finishes (error text and fixed overhead). 64 KiB to 64 MiB; default 4 MiB.</summary>
+    public int FinishBufferMaxBytes { get; set; } = 4 * 1024 * 1024;
 }

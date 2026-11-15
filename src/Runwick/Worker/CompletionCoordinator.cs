@@ -28,10 +28,33 @@ internal enum SettlementResult
 /// </summary>
 internal sealed class CompletionCoordinator(WorkerEngine engine)
 {
+    // Buffered finish (G1): more Finishes can be waiting than there are slots, so the channel is sized to the buffer bound.
     readonly Channel<AttemptEntry> _ready = Channel.CreateBounded<AttemptEntry>(
-        new BoundedChannelOptions(Math.Max(1, engine.Settings.GroupMax)) { FullMode = BoundedChannelFullMode.Wait });
+        new BoundedChannelOptions(Math.Max(Math.Max(1, engine.Settings.GroupMax), engine.Options.BufferedFinish ? engine.Options.FinishBufferMaxCount : 0))
+        { FullMode = BoundedChannelFullMode.Wait });
+    readonly bool _buffered = engine.Options.BufferedFinish;
+    readonly PriorityGate _collector = new(1);
+    readonly Lock _bufferLock = new();
+    readonly Queue<AttemptEntry> _bufferedOrder = new();
+    long _bufferedBytes;
+    int _bufferedCount;
     int _diagnosticResolvers;
     bool _batchOff;
+
+    /// <summary>A buffered Finish older than this stops further slot give-backs until it settles (G1 age bound).</summary>
+    static readonly TimeSpan BufferStallAge = TimeSpan.FromSeconds(1);
+
+    /// <summary>Finishes whose slot was given back and that the store has not yet settled (G1).</summary>
+    public int Buffered => Volatile.Read(ref _bufferedCount);
+
+    /// <summary>The most buffered Finishes seen at once (G1 diagnostics and tests).</summary>
+    public int BufferedHighWater;
+
+    /// <summary>Finishes that kept their slot because a count, byte or age bound was hit (G1).</summary>
+    public long BufferFullRefusals;
+
+    /// <summary>Flushes sent because the batch was full, the flush interval passed, or a drain or lease margin forced it (G1).</summary>
+    public long FlushesFull, FlushesByAge, FlushesForced;
 
     public int Pending => _ready.Reader.Count;
 
@@ -66,6 +89,11 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
             return SettlementResult.Unresolved;
         }
 
+        if (_buffered)
+        {
+            GiveBackSlot(entry, finish);
+        }
+
         var started = Stopwatch.GetTimestamp();
         using var span = T.Span("settle " + entry.Reserved.Queue);
         span.Activity?.SetTag("messaging.system", "runwick").SetTag("messaging.operation.type", "settle").SetTag("messaging.operation.name", "finish")
@@ -79,6 +107,8 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
         }
         finally
         {
+            Unbuffer(entry);
+
             // After the decision: the measurement never shapes it (18 §1).
             var name = result switch
             {
@@ -105,31 +135,170 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
 
     async Task WorkerAsync()
     {
-        while (await _ready.Reader.WaitToReadAsync(engine.ControlStop).ConfigureAwait(false))
+        while (await NextBatchAsync().ConfigureAwait(false) is { } batch)
         {
-            if (!_ready.Reader.TryRead(out var first))
-            {
-                continue;
-            }
-
-            // What is already waiting joins this call: no coalescing delay (05 §12.5). A Finish that finds the lane idle is
-            // sent at once, alone; Finishes that queued while both lane calls were busy go together.
-            var batch = new List<AttemptEntry> { first };
-            if (!Volatile.Read(ref _batchOff) && engine.Store is IFinishManyStore)
-            {
-                while (batch.Count < IFinishManyStore.MaxItems && _ready.Reader.TryRead(out var more))
-                {
-                    batch.Add(more);
-                }
-            }
-
             if (batch.Count == 1)
             {
-                Complete(first, await ResolveAsync(first, detached: false).ConfigureAwait(false));
+                Complete(batch[0], await ResolveAsync(batch[0], detached: false).ConfigureAwait(false));
                 continue;
             }
 
             await SettleBatchAsync(batch).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// The next Finishes to send together; null when the engine stops. Default: the first Finish plus whatever already waits, no
+    /// delay (05 §12.5). Buffered finish (G1): one worker at a time collects, waiting up to the flush interval for company.
+    /// </summary>
+    async Task<List<AttemptEntry>?> NextBatchAsync()
+    {
+        using var turn = _buffered ? await _collector.AcquireAsync(0, engine.ControlStop).ConfigureAwait(false) : null;
+        {
+            while (await _ready.Reader.WaitToReadAsync(engine.ControlStop).ConfigureAwait(false))
+            {
+                if (!_ready.Reader.TryRead(out var first))
+                {
+                    continue;
+                }
+
+                // What is already waiting joins this call. A Finish that finds the lane idle is sent at once, alone, unless
+                // buffered finish asks it to wait for company.
+                var batch = new List<AttemptEntry> { first };
+                if (!Volatile.Read(ref _batchOff) && engine.Store is IFinishManyStore)
+                {
+                    if (_buffered)
+                    {
+                        await CollectAsync(batch).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        while (batch.Count < IFinishManyStore.MaxItems && _ready.Reader.TryRead(out var more))
+                        {
+                            batch.Add(more);
+                        }
+                    }
+                }
+
+                return batch;
+            }
+
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Fills <paramref name="batch"/> until it is full, the first Finish has waited the flush interval, the engine drains, or an
+    /// attempt is close to its lease safety margin: a partial batch never waits past those (plan §5.1 rule 5).
+    /// </summary>
+    async Task CollectAsync(List<AttemptEntry> batch)
+    {
+        var flushAt = batch[0].FinishPublishedAt!.Value + engine.Options.FinishFlushInterval;
+        while (batch.Count < IFinishManyStore.MaxItems)
+        {
+            if (_ready.Reader.TryRead(out var more))
+            {
+                batch.Add(more);
+                continue;
+            }
+
+            var now = engine.Clock.Now;
+            if (engine.Draining || engine.ControlStop.IsCancellationRequested || NearLeaseMargin(batch, now))
+            {
+                Interlocked.Increment(ref FlushesForced);
+                return;
+            }
+
+            if (now >= flushAt)
+            {
+                Interlocked.Increment(ref FlushesByAge);
+                return;
+            }
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(engine.ControlStop);
+            var arrival = _ready.Reader.WaitToReadAsync(cts.Token).AsTask();
+            var tick = engine.Clock.Delay(flushAt - now, cts.Token);
+            await Task.WhenAny(arrival, tick).ConfigureAwait(false);
+            await cts.CancelAsync().ConfigureAwait(false);
+            foreach (var t in new Task[] { arrival, tick })
+            {
+                try
+                {
+                    await t.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            }
+        }
+
+        Interlocked.Increment(ref FlushesFull);
+    }
+
+    bool NearLeaseMargin(List<AttemptEntry> batch, TimeSpan now)
+    {
+        foreach (var e in batch)
+        {
+            if (e.Deadline is { } d && d - now <= engine.Settings.RenewalLead)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Buffered finish (G1): frees the local slot as soon as the Finish is published, if the buffer has room. The entry stays
+    /// tracked, renewed and fenced until the store settles it; only the capacity ticket is given back. A refused give-back
+    /// (count, bytes or age bound) leaves the ticket held until retirement, which is the default behaviour and the refill stop.
+    /// </summary>
+    void GiveBackSlot(AttemptEntry entry, FinishRequest finish)
+    {
+        var size = 256 + 2 * ((finish.Error?.Code.Length ?? 0) + (finish.Error?.ExceptionType.Length ?? 0) + (finish.Error?.Message.Length ?? 0)
+            + (finish.Error?.StackTrace?.Length ?? 0)) + (finish.Usage is null ? 0 : 64);
+        lock (_bufferLock)
+        {
+            while (_bufferedOrder.TryPeek(out var head) && head.BufferedBytes == 0)
+            {
+                _bufferedOrder.Dequeue();
+            }
+
+            var stalled = _bufferedOrder.TryPeek(out var oldest) && engine.Clock.Now - oldest.FinishPublishedAt!.Value > BufferStallAge;
+            if (_bufferedCount >= engine.Options.FinishBufferMaxCount || _bufferedBytes + size > engine.Options.FinishBufferMaxBytes || stalled)
+            {
+                Interlocked.Increment(ref BufferFullRefusals);
+                return;
+            }
+
+            _bufferedCount++;
+            _bufferedBytes += size;
+            entry.BufferedBytes = size;
+            _bufferedOrder.Enqueue(entry);
+            if (_bufferedCount > BufferedHighWater)
+            {
+                BufferedHighWater = _bufferedCount;
+            }
+        }
+
+        entry.Ticket.Release();
+    }
+
+    void Unbuffer(AttemptEntry entry)
+    {
+        if (!_buffered)
+        {
+            return;
+        }
+
+        lock (_bufferLock)
+        {
+            if (entry.BufferedBytes > 0)
+            {
+                _bufferedCount--;
+                _bufferedBytes -= entry.BufferedBytes;
+                entry.BufferedBytes = 0;
+            }
         }
     }
 

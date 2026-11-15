@@ -204,7 +204,14 @@ internal static class BenchMode
             r.AddHandler<LoadJob, LoadHandler>();
             r.Producer(o => o.MaxConcurrentCalls = Math.Max(2, calls));
             r.AddWorker(w => w.MaxOutstandingAttempts(workers).Pool("main", p => p.Queues(LoadRegistration.Queue).FixedConcurrency(workers))
-                .Configure(o => o.RecordResourceUsage = !a.Has("no-usage"))); // --no-usage: the attempt-usage overhead baseline
+                .Configure(o =>
+                {
+                    o.RecordResourceUsage = !a.Has("no-usage"); // --no-usage: the attempt-usage overhead baseline
+                    if (a.Has("buffered-finish")) // G1: give the slot back at once and flush finishes in batches
+                    {
+                        o.UseBufferedFinish();
+                    }
+                }));
         });
         await using var provider = sc.BuildServiceProvider();
         var engine = provider.GetRequiredService<WorkerEngine>();

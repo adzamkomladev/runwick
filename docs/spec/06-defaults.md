@@ -59,6 +59,10 @@ Idle polling backs off further while a wake listener is healthy (05/13/14 Change
 
 - §1.12 adds the outbox relay budgets and horizon bounds (14 §4.2, §6).
 
+## Changes (2026-11-15, buffered finish)
+
+- **Opt-in profile `WorkerOptions.UseBufferedFinish(flushInterval, maxCount, maxBytes)` (perf round two, G1).** Off by default. New options, read only when `BufferedFinish` is true: `FinishFlushInterval` 25 ms, `FinishBufferMaxCount` 256, `FinishBufferMaxBytes` 4 MiB. New rule **V-22**: the interval is 1 ms to 1 s in whole milliseconds, the count 1 to 4,096 and the bytes 64 KiB to 64 MiB. The behaviour is in 05 §12.6. No existing default changes.
+
 ## Changes (2026-11-14, fewer-renewals profile)
 
 - **Opt-in profile `WorkerOptions.UseFewerLeaseRenewals()` (perf round two, G5).** It sets `LeaseDuration` 5 min, `RenewalInterval` 90 s and `RenewalJitter` 10 s, and changes nothing else. The defaults in §1 are unchanged. The profile passes V-01 to V-13 (renewal check sum 113 s < 290 s; StopMargin 183 s) and the stores' lease bounds (1 s to 1 h), so no new rule is needed.

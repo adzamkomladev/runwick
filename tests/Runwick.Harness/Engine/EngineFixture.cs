@@ -54,10 +54,10 @@ internal sealed class EngineFixture : IAsyncDisposable
 
     /// <summary>Builds (not starts) an engine with default timing unless <paramref name="options"/> changes it.</summary>
     public static EngineFixture Create(int concurrency = 4, Action<JobBuilder<WorkJob>>? jobs = null, Action<WorkerOptions>? options = null,
-        Action<RunwickBuilder>? configure = null, Action<IServiceCollection>? services = null, Action<PoolBuilder>? pool = null, bool batch = false)
+        Action<RunwickBuilder>? configure = null, Action<IServiceCollection>? services = null, Action<PoolBuilder>? pool = null, bool batch = false, bool finishMany = false)
     {
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 30, 12, 0, 0, TimeSpan.Zero));
-        var store = batch ? new ScriptedBatchStore(time) : new ScriptedStore(time);
+        var store = finishMany ? new ScriptedFinishManyStore(time) : batch ? new ScriptedBatchStore(time) : new ScriptedStore(time);
         var sc = new ServiceCollection();
         sc.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
         sc.AddSingleton<TimeProvider>(time);
