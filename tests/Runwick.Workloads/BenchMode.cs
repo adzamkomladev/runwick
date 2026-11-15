@@ -212,6 +212,19 @@ internal static class BenchMode
                 await using var unlogged = new Npgsql.NpgsqlCommand("ALTER TABLE runwick.queue_events SET UNLOGGED", probe);
                 await unlogged.ExecuteNonQueryAsync().ConfigureAwait(false);
             }
+            if (a.Has("pg-no-receipts"))
+            {
+                // --pg-no-receipts: upper-bound probe for a reduced-replay-protection mode (G2). The receipt partitions stay readable but lose their WAL
+                // logging, which is most of the per-receipt cost. The run proves nothing about durability or replay.
+                await using var probe = new Npgsql.NpgsqlConnection(new NpgsqlConnectionStringBuilder(adminCs) { Database = database, Pooling = false }.ConnectionString);
+                await probe.OpenAsync().ConfigureAwait(false);
+                foreach (var part in new[] { "storage_commands_ownership", "storage_commands_durable" })
+                {
+                    await using var unlogged = new Npgsql.NpgsqlCommand($"ALTER TABLE runwick.{part} SET UNLOGGED", probe);
+                    await unlogged.ExecuteNonQueryAsync().ConfigureAwait(false);
+                }
+            }
+
             var storeCs = new NpgsqlConnectionStringBuilder(adminCs)
             {
                 Database = database,
