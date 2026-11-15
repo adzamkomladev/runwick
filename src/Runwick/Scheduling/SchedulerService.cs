@@ -295,24 +295,48 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         var options = _declarations.Options;
         var idle = options.PollInterval;
         DueSchedulePageCursor? cursor = null;
+        // Grouped mode reads the next page while this one commits, so the group pipeline does not drain at every page.
+        Task<DueSchedules>? prefetch = null;
+        var prefetchStarted = 0L;
         while (!ct.IsCancellationRequested)
         {
             var worked = false;
             var failed = false;
-            var readStarted = _time.GetTimestamp();
+            var readStarted = prefetch is null ? _time.GetTimestamp() : prefetchStarted;
             TimeSpan? durableDelay = null;
             try
             {
                 Interlocked.Increment(ref Passes);
                 var read = PhaseTimings.Start();
-                var due = await store.ReadDueSchedulesAsync(Application, ScheduleBounds.DueReadLimit, ct, cursor).ConfigureAwait(false);
+                var due = prefetch is { } ahead
+                    ? await ahead.ConfigureAwait(false)
+                    : await store.ReadDueSchedulesAsync(Application, ScheduleBounds.DueReadLimit, ct, cursor).ConfigureAwait(false);
+                prefetch = null;
                 PhaseTimings.Lap(read, PhaseOperation, "dueRead");
                 durableDelay = due.NextScanAfterAt - due.ObservedAt;
                 Interlocked.Increment(ref DuePagesRead);
                 Interlocked.Add(ref DueSchedulesRead, due.Schedules.Count);
+                var full = due.Schedules.Count == ScheduleBounds.DueReadLimit;
+                DueSchedulePageCursor? next = null;
+                if (full)
+                {
+                    var last = due.Schedules[^1];
+                    next = new DueSchedulePageCursor(last.ScanAfterAt, last.ScheduleId, cursor?.ScanThrough ?? due.ObservedAt);
+                }
+
                 if (options.GroupMaterializations && store is IScheduleGroupStore grouped)
                 {
-                    worked = await MaterializePageAsync(store, grouped, due, readStarted, ct).ConfigureAwait(false);
+                    if (full)
+                    {
+                        prefetchStarted = _time.GetTimestamp();
+                        prefetch = store.ReadDueSchedulesAsync(Application, ScheduleBounds.DueReadLimit, ct, next);
+                    }
+
+                    worked = await MaterializePageAsync(store, grouped, due, readStarted, full, ct).ConfigureAwait(false);
+                    if (!worked)
+                    {
+                        worked = await SettleCarryAsync().ConfigureAwait(false);
+                    }
                 }
                 else
                 {
@@ -324,16 +348,18 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
                 }
 
                 Health.Ok();
-                if (due.Schedules.Count == ScheduleBounds.DueReadLimit)
+                if (full)
                 {
-                    var last = due.Schedules[^1];
-                    cursor = new DueSchedulePageCursor(last.ScanAfterAt, last.ScheduleId, cursor?.ScanThrough ?? due.ObservedAt);
+                    cursor = next;
                     if (worked)
                     {
                         idle = options.PollInterval;
                         await Task.Yield();
                         continue;
                     }
+
+                    await AbandonAsync(prefetch).ConfigureAwait(false);
+                    prefetch = null;
                 }
                 else
                 {
@@ -351,6 +377,10 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
             }
             catch (Exception ex) when (ex is StoreUnavailableException or StoreNotAppliedException or StoreOutcomeUnknownException or TimeoutException)
             {
+                await AbandonAsync(prefetch).ConfigureAwait(false);
+                prefetch = null;
+                await ((Task)Task.WhenAll(_carry)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                _carry.Clear();
                 failed = true;
                 Health.Failed(ex);
                 _logger.LogDebug(ex, "Scheduler pass failed; retrying after back-off.");
@@ -408,15 +438,54 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
 
     readonly record struct PreparedMaterialization(ScheduleSnapshot Schedule, StoreCommand<MaterializeRequest> Command);
 
+    // Groups still committing when a full page ends. The next page keeps them in flight; the loop settles them before it idles.
+    readonly List<Task<bool>> _carry = [];
+
+    static async Task AbandonAsync(Task? task)
+    {
+        if (task is not null)
+        {
+            await ((Task)task).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+    }
+
+    /// <summary>Waits for every carried group. Any failure is rethrown after all have settled, so no send is left running.</summary>
+    async Task<bool> SettleCarryAsync()
+    {
+        var worked = false;
+        Exception? failure = null;
+        while (_carry.Count > 0)
+        {
+            var done = await Task.WhenAny(_carry).ConfigureAwait(false);
+            _carry.Remove(done);
+            try
+            {
+                worked |= await done.ConfigureAwait(false);
+            }
+            catch (Exception ex) when (failure is null)
+            {
+                failure = ex;
+            }
+        }
+
+        if (failure is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
+        return worked;
+    }
+
     async Task<bool> MaterializePageAsync(IScheduleStore store, IScheduleGroupStore grouped, DueSchedules due, long readStarted,
-        CancellationToken ct)
+        bool more, CancellationToken ct)
     {
         const int groupsInFlight = 2;
         var groupSize = _declarations.Options.MaterializationGroupSize;
-        var pending = new List<Task<bool>>(groupsInFlight);
+        var pending = _carry;
         var buffer = new List<PreparedMaterialization>(groupSize);
         long payloadBytes = 0;
         var worked = false;
+        var carrying = false;
 
         async Task CollectAsync()
         {
@@ -425,11 +494,17 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
             worked |= await done.ConfigureAwait(false);
         }
 
-        void Flush()
+        // Plans are prepared while both groups commit; only the send waits for a free slot.
+        async Task FlushAsync()
         {
             if (buffer.Count == 0)
             {
                 return;
+            }
+
+            while (pending.Count >= groupsInFlight)
+            {
+                await CollectAsync().ConfigureAwait(false);
             }
 
             pending.Add(buffer.Count == 1
@@ -444,11 +519,6 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
             foreach (var schedule in due.Schedules)
             {
                 ct.ThrowIfCancellationRequested();
-                if (pending.Count == groupsInFlight)
-                {
-                    await CollectAsync().ConfigureAwait(false);
-                }
-
                 var (command, preparedWork) = await PrepareAsync(store, schedule, due.ObservedAt, ct).ConfigureAwait(false);
                 worked |= preparedWork;
                 if (command is null)
@@ -459,7 +529,7 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
                 var item = new PreparedMaterialization(schedule, command);
                 if (!ScheduleBounds.CanGroup(schedule.Definition, command.Body))
                 {
-                    Flush();
+                    await FlushAsync().ConfigureAwait(false);
                     while (pending.Count > 0)
                     {
                         await CollectAsync().ConfigureAwait(false);
@@ -472,22 +542,24 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
                 var bytes = schedule.Definition.Template.PayloadUtf8.Length;
                 if (payloadBytes + bytes > ScheduleBounds.MaxPlanPayloadBytes)
                 {
-                    Flush();
-                    if (pending.Count == groupsInFlight)
-                    {
-                        await CollectAsync().ConfigureAwait(false);
-                    }
+                    await FlushAsync().ConfigureAwait(false);
                 }
 
                 buffer.Add(item);
                 payloadBytes += bytes;
                 if (buffer.Count == groupSize)
                 {
-                    Flush();
+                    await FlushAsync().ConfigureAwait(false);
                 }
             }
 
-            Flush();
+            await FlushAsync().ConfigureAwait(false);
+            if (more)
+            {
+                carrying = true;
+                return worked;
+            }
+
             while (pending.Count > 0)
             {
                 await CollectAsync().ConfigureAwait(false);
@@ -497,7 +569,11 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         }
         finally
         {
-            await ((Task)Task.WhenAll(pending)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            if (!carrying)
+            {
+                await ((Task)Task.WhenAll(pending)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                pending.Clear();
+            }
         }
     }
 

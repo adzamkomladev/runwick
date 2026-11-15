@@ -181,6 +181,33 @@ public sealed class SchedulerIdleTests
 
     [Fact]
     [Trait("Case", "S3")]
+    public async Task The_next_due_page_is_read_while_the_current_groups_commit()
+    {
+        var count = ScheduleBounds.DueReadLimit * 2 + 3;
+        var (fixture, store, scheduler) = DueFixture(count, configure: options => options.GroupMaterializations = true);
+        await using var e = fixture;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        store.GroupBarrier = release.Task;
+        await e.StartAsync();
+        try
+        {
+            await e.RunUntilAsync(() => store.GroupSizes.Count >= 2 && store.Reads.Count >= 2, TimeSpan.FromSeconds(5),
+                "the second page was read before any group committed");
+            Assert.Equal(0, Interlocked.Read(ref scheduler.Materializations));
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+
+        await e.RunUntilAsync(() => Interlocked.Read(ref scheduler.Materializations) == count, TimeSpan.FromSeconds(10),
+            "every schedule on all three pages materialized exactly once");
+        Assert.Empty(store.Due);
+        await e.StopAsync();
+    }
+
+    [Fact]
+    [Trait("Case", "S3")]
     public async Task Shutdown_cancels_both_in_flight_schedule_groups()
     {
         var (fixture, store, scheduler) = DueFixture(12, configure: options => options.GroupMaterializations = true);
