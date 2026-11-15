@@ -41,7 +41,7 @@ public sealed class RedisOptions
     /// <summary>Most estimated request bytes in one grouped call (16 KiB – 128 KiB, default 128 KiB). Larger dispatches go alone.</summary>
     public int MaxGroupBytes { get; set; } = 131_072;
 
-    /// <summary>Grouped or single sends that may be in flight at once per application (1 – 4, default 2).</summary>
+    /// <summary>Grouped or single sends that may be in flight at once per application (1 – 16, default 2).</summary>
     public int MaxGroupsInFlight { get; set; } = 2;
 }
 
@@ -79,10 +79,10 @@ public static class RunwickRedisBuilderExtensions
             builder.EarlyErrors.Add(new ConfigurationError(RunwickErrorCodes.InvalidPolicy, "redis", "ProfileRecheckInterval must be 5 s – 5 min."));
         }
 
-        if (options.GroupDispatches && (options.MaxGroupItems is < 2 or > 16 || options.MaxGroupBytes is < 16_384 or > 131_072 || options.MaxGroupsInFlight is < 1 or > 4))
+        if (options.GroupDispatches && (options.MaxGroupItems is < 2 or > 16 || options.MaxGroupBytes is < 16_384 or > 131_072 || options.MaxGroupsInFlight is < 1 or > 16))
         {
             builder.EarlyErrors.Add(new ConfigurationError(RunwickErrorCodes.InvalidPolicy, "redis",
-                "MaxGroupItems must be 2 – 16, MaxGroupBytes 16 KiB – 128 KiB and MaxGroupsInFlight 1 – 4."));
+                "MaxGroupItems must be 2 – 16, MaxGroupBytes 16 KiB – 128 KiB and MaxGroupsInFlight 1 – 16."));
         }
 
         builder.AddStoreProvider(new RedisStoreRegistration(parsed, options));
