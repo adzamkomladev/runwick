@@ -35,13 +35,19 @@ The whole Outbox project passed 57 of 57 before the last test was added (the las
 
 Setup: the P-09 workload (`--rate 100`, 8 business writers, 1 KiB intents, 30 s warm-up, 60 s measurement, 2 min drain), PostgreSQL 18 source and destination in a fresh pinned container with fsync, synchronous commit and full-page writes on. The same build runs both arms: group size 1 against group size 4 at 4 relay slots. The host was shared with the SP-029 qualification run and several other agents' builds and benchmarks, so absolute rates are far below earlier quiet-host numbers and only the paired comparison means anything.
 
-**Pair 1 at 4 slots (the only completed pair when this was written):**
+Three alternating pairs each at 4 slots (group 4) and 16 slots (group 8), same build, group size 1 against the group size:
 
-| Arm | Confirmed deliveries/s | Destination commit, mean per call | Destination function, mean per call | Lease losses | Fallbacks |
-|---|---|---|---|---|---|
-| Group size 1 | 19.45 | 72.8 ms | 35.9 ms | 13 | 0 |
-| Group size 4 | 25.27 | 44.0 ms | 29.2 ms | 28 | 0 |
+| Config | Pair | Confirmed/s off → on | Destination commit mean per call off → on | Avg group |
+|---|---|---|---|---|
+| 4 slots, group 4 | 1 | 19.5 → 25.3 | 72.8 → 44.0 ms | 2.3 |
+| | 2 | 27.0 → 21.6 | 41.3 → 55.9 ms | 2.3 |
+| | 3 | 33.1 → 38.3 | 29.6 → 24.1 ms | 2.3 |
+| 16 slots, group 8 | 1 | 60.4 → 69.5 | 85.1 → 61.7 ms | 2.9 |
+| | 2 | 54.4 → 69.3 | 94.8 → 50.9 ms | 2.9 |
+| | 3 | 49.8 → 46.6 | 103.0 → 117.6 ms | 2.9 |
 
-Grouped delivery confirmed 1.30× as many messages per second in this pair. The 1,170 group calls carried 2,658 commands, an average group of 2.3, because a claim only returns as many messages as there are free slots. Neither arm drained its backlog inside the 2-minute bound (both stayed far under the 100/s offered rate), so the run reports a run failure and no ready-to-confirm p99. Every message that was delivered had exactly one mapping and one job and no mark mismatches, in both arms. **This does not meet P-09** (100 deliveries/s, p99 at most 2 s). One pair is a direction, not a result.
+Medians: at 4 slots 27.0 → 25.3 confirmed/s (paired median ratio 1.16, with one pair worse); at 16 slots 54.4 → 69.3/s (paired median ratio 1.15, with one pair worse). Ready-to-confirm p99 at 16 slots was 35.3 s off and 39.3 s on (ratio 1.11, so no better). At 4 slots most runs never drained and report no p99. There were no fallbacks, and every message that was delivered had one mapping, one job and no mark mismatch in all twelve runs. Groups were small (2.3 and 2.9 commands on average) because a claim only returns as many messages as there are free slots, so a larger group size does nothing until the claim itself is larger.
 
-The rest of the plan (three pairs at 4 slots and group 4, three pairs at 16 slots and group 8) was started as a detached script; it waits its turn on the shared benchmark lock. Results land in `artifacts/perf/round-two/outbox-d4/slots4-g4/` and `slots16-g8/` in the worktree, and `python3 summarize.py <dir>` in `artifacts/perf/round-two/outbox-d4/` prints the paired medians. The 16-slot run is the separate 16-slot measurement the plan asks for.
+**Reading.** Grouping cuts destination commits per delivery in most pairs and helps median throughput by about 15%, but two of six pairs went the other way, the host was loaded by other work, and the tail did not improve. **P-09 is not met at either slot count** (100 deliveries/s and p99 at most 2 s), so grouped delivery stays opt-in and the default stays 1. The remaining cost sits at the source (one claim, one transport write and one delivered mark per message) and in the small claim size, not only in destination commits. The next steps with a real chance are batched source marks (D2) and claiming more messages per call than there are free slots, measured on a quiet host.
+
+Raw results: `artifacts/perf/round-two/outbox-d4/slots4-g4/` and `slots16-g8/` in the worktree (git-ignored); `python3 summarize.py <dir>` prints the paired medians.
