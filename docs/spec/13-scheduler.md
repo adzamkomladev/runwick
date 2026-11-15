@@ -6,6 +6,8 @@
 
 With grouping on, the loop reads the next due page while the current page's groups commit, and carries groups that are still in flight into the next page instead of waiting for them at each page boundary. A plan is prepared while both group slots are busy; only its send waits for a free slot. At most two groups are in flight and one group of plans is held ready, so memory stays bounded. A prefetched page keeps its own store time as its planning cutoff and its own read start as the anchor for next-scan delays. The loop settles every carried group before it idles or retries, and a failed carried group is handled like a failed page. Without grouping the loop is unchanged.
 
+Measured replica contention (2026-11-15, short PostgreSQL runs at equal aggregate allowance): two schedulers sent about 40% more plans than there were occurrences and four sent about 2.6 times as many, the extra plans ending in `revision_conflict`. Occurrence identity held. Revision checks remain the only coordination between schedulers; no ownership protocol exists.
+
 ## Changes (2026-11-11, durable due hints)
 
 An empty read at the head of the due index returns the earliest eligible future `scan_after_at`. The scheduler bounds idle waits by that instant and any next scan times already known from its own commands. Store delays are anchored to the local monotonic clock before the read, so read and materialization time count toward the wait. The poll cap still bounds discovery of changes made after the read.
