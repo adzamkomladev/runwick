@@ -42,8 +42,9 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
         WithRetriesAsync(op, () => executor.WriteAsync(op.Lane, conn => RunOnce(conn, op, tx => Protocol(tx, body, onReplay), ct), ct, op.Operation),
             map, ct);
 
-    public Task<StoreReply<DispatchResult>> DispatchAsync(SqOp op, Func<SqTx, SqRow> body, Func<SqRow, StoreReply<DispatchResult>> map,
-        long bytes, CancellationToken ct) =>
+    /// <summary>A producer-lane command that may share one commit with the queued producer commands behind it (Dispatch/1, ReceiveOutbox/1).</summary>
+    public Task<StoreReply<T>> DispatchAsync<T>(SqOp op, Func<SqTx, SqRow> body, Func<SqRow, StoreReply<T>> map,
+        long bytes, CancellationToken ct) where T : class =>
         WithRetriesAsync(op, () => executor.DispatchAsync(this, op, body, bytes, ct), map, ct);
 
     /// <summary>A C#-bodied operation (as PgRunner.ExecuteAsync).</summary>

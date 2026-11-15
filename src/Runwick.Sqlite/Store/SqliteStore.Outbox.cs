@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Runwick.Protocol;
+using Runwick.Serialization;
 
 namespace Runwick.Sqlite.Store;
 
@@ -20,11 +21,12 @@ internal sealed partial class SqliteStore : IOutboxDestinationStore
         var storeId = await EnsureStoreIdAsync(command.Application, ct).ConfigureAwait(false);
         var fp = OutboxFingerprints.Command(storeId, command.Application, command.CommandId, command.NotAfter, r.DeliveryFingerprint);
         var acceptUntil = SqTime.Floor(r.AcceptUntil);
-        return await runner.CallAsync(
+        // D4: concurrent relay slots share one commit through the producer group (each command keeps its own receipt and mapping).
+        return await runner.DispatchAsync(
             Op(command.Application, command.CommandId, OutboxOperations.ReceiveOutbox, command.NotAfter, fp, SqLane.Producer, r.StoreId),
             tx => ReceiveBody(tx, r, acceptUntil, AcknowledgementProfile),
             row => row.HasValue ? row.Applied(ReadDeliveryJson(row.Result!)) : row.Reject<OutboxDelivery>(),
-            ct).ConfigureAwait(false);
+            PreparedEnvelopeCodec.UpperBound(command.Application, r.Item.Intent), ct).ConfigureAwait(false);
     }
 
     /// <summary>receive_outbox_v3 after the frame (the frame already checked expiry and the deadline cap at the decision time).</summary>

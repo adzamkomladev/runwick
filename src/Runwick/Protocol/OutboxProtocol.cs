@@ -48,6 +48,25 @@ internal interface IOutboxDestinationStore
     Task<OutboxLookup> FindDeliveryAsync(string application, OutboxSourceIdentity source, byte[] deliveryFingerprint, CancellationToken ct);
 }
 
+/// <summary>One reply per grouped transport command, in request order, each exactly the reply ReceiveOutbox/1 would give it.</summary>
+internal sealed record OutboxGroupDelivery(IReadOnlyList<StoreReply<OutboxDelivery>> Outcomes);
+
+/// <summary>
+/// Driver-only grouped ReceiveOutbox/1 (14 Changes 2026-11-15, D4): several plain deliveries in one transaction, each with its own
+/// transport command ID, fingerprint, deadline, receipt and mapping. A refused item leaves no trace and does not stop the others.
+/// Any group-level failure is answered by sending each command alone under its own identity.
+/// </summary>
+internal interface IOutboxGroupDestinationStore
+{
+    const int MaxGroupItems = 16;
+
+    /// <summary>Plain items only: no active or window key, no scopes and no rates, so groups share no row locks beyond their own.</summary>
+    static bool CanGroup(ReceiveOutboxRequest request) =>
+        request.Item is { Scopes.Count: 0, Rates.Count: 0, Intent: { ActiveKey: null, WindowKey: null } };
+
+    Task<StoreReply<OutboxGroupDelivery>> ReceiveOutboxGroupAsync(IReadOnlyList<StoreCommand<ReceiveOutboxRequest>> commands, CancellationToken ct);
+}
+
 /// <summary>
 /// A mapping lookup: <see cref="Delivery"/> when a mapping with the same delivery fingerprint is retained;
 /// <see cref="Conflict"/> when a mapping exists for the identity with different intent; neither when none is retained.
