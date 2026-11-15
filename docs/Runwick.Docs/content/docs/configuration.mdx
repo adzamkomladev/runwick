@@ -58,6 +58,8 @@ Set with `runwick.AddWorker(w => w.Configure(o => ...))`. Most apps never touch 
 
 **Fewer lease renewals.** `o.UseFewerLeaseRenewals()` inside `Configure` sets a 5-minute lease renewed about every 90 s, so each running job sends about a sixth of the renewal calls. Fencing is unchanged. The cost is slower recovery when a worker crashes: its jobs stay claimed until the lease expires, up to 5 minutes instead of 1.
 
+**Buffered finish.** `o.UseBufferedFinish()` inside `Configure` lets a worker start the next job as soon as the previous handler returns, instead of waiting for the database to confirm that the previous job finished. Finishes wait in a bounded buffer (256 jobs or 4 MiB, by default) and go to the store together about every 25 ms. A job keeps its lease, its concurrency and rate permits until the store has accepted its finish. If a worker is killed while finishes are still in memory, those jobs run again once their leases expire, so handlers must be safe to run twice. A normal shutdown sends the buffer first. When the buffer is full, slots are held until finishes settle, as without the option. Use it when the finish round trip, not the handler, limits how many jobs a worker completes.
+
 Keep the host's shutdown timeout (`HostOptions.ShutdownTimeout`, 30 s by default in .NET) above `ShutdownBudget`. Runwick does not change it for you.
 
 ### Pools

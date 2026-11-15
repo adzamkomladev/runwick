@@ -54,7 +54,18 @@ internal sealed class BatchStoreDouble(IRunwickStore inner) : IRunwickStore, ILe
 
     public Task<StoreReply<RenewedLease>> RenewAsync(StoreCommand<RenewRequest> command, CancellationToken ct) => inner.RenewAsync(command, ct);
 
-    public Task<StoreReply<FinishedAttempt>> FinishAsync(StoreCommand<FinishRequest> command, CancellationToken ct) => inner.FinishAsync(command, ct);
+    /// <summary>While true, Finish and FinishMany never reach the store and never answer (a worker that dies with its finishes in memory).</summary>
+    public volatile bool HoldFinishes;
+
+    public async Task<StoreReply<FinishedAttempt>> FinishAsync(StoreCommand<FinishRequest> command, CancellationToken ct)
+    {
+        if (HoldFinishes)
+        {
+            await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
+        }
+
+        return await inner.FinishAsync(command, ct).ConfigureAwait(false);
+    }
 
     public Task<StoreReply<FinishedAttempt>> RecoverAsync(StoreCommand<RecoverRequest> command, CancellationToken ct) => inner.RecoverAsync(command, ct);
 
@@ -80,6 +91,11 @@ internal sealed class BatchStoreDouble(IRunwickStore inner) : IRunwickStore, ILe
 
     public async Task<StoreReply<FinishedMany>> FinishManyAsync(StoreCommand<FinishManyRequest> command, CancellationToken ct)
     {
+        if (HoldFinishes)
+        {
+            await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
+        }
+
         if (Refused.Contains(Operations.FinishMany))
         {
             return StoreReply<FinishedMany>.NoEffect(StoreStatus.UnsupportedVersion, new StoreError("operation_unsupported"), DateTimeOffset.UtcNow);

@@ -146,6 +146,9 @@ internal sealed class AttemptEntry : IDisposable
 
     public TimeSpan? FinishPublishedAt { get; set; }
 
+    /// <summary>Estimated bytes counted in the buffered-finish bound (G1); 0 when the slot was not given back early.</summary>
+    public int BufferedBytes { get; set; }
+
     public string? Diagnostic { get; set; }
 
     /// <summary>The attempt's <c>process</c> span (18 §2.1); null when nothing listens.</summary>

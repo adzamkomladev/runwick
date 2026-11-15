@@ -268,6 +268,191 @@ public sealed class WorkerEngineTests
         Assert.True(normal >= 4 * fewer, $"default {normal} renewals, fewer-renewals profile {fewer}");
     }
 
+    static Func<StoreCall, Task<CallEffect>> HoldFinishes(Func<bool> open) =>
+        call => Task.FromResult(call.Operation is Operations.Finish or Operations.FinishMany && !open() ? CallEffect.Hang : CallEffect.Proceed);
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    [Trait("Item", "PF2-G1")]
+    public void Buffered_finish_is_off_by_default_and_its_bounds_are_validated()
+    {
+        Assert.False(new WorkerOptions().BufferedFinish);
+        Assert.Empty(Validate(o => o.UseBufferedFinish()));
+        Assert.Contains(Validate(o => o.UseBufferedFinish(TimeSpan.Zero)), x => x.Message.StartsWith("V-22", StringComparison.Ordinal));
+        Assert.Contains(Validate(o => o.UseBufferedFinish(TimeSpan.FromSeconds(2))), x => x.Message.StartsWith("V-22", StringComparison.Ordinal));
+        Assert.Contains(Validate(o => o.UseBufferedFinish(maxCount: 0)), x => x.Message.StartsWith("V-22", StringComparison.Ordinal));
+        Assert.Contains(Validate(o => o.UseBufferedFinish(maxBytes: 1024)), x => x.Message.StartsWith("V-22", StringComparison.Ordinal));
+        // Outside the profile the three bounds are not looked at.
+        Assert.Empty(Validate(o => o.FinishBufferMaxCount = 0));
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    [Trait("Item", "PF2-G1")]
+    public async Task Buffered_finish_reuses_the_slot_before_the_finish_settles()
+    {
+        async Task<int> StartedWhileFinishesAreHeld(Action<WorkerOptions>? options)
+        {
+            await using var e = EngineFixture.Create(concurrency: 1, options: options, finishMany: true);
+            for (var i = 0; i < 6; i++)
+            {
+                e.Add("j" + i);
+            }
+
+            e.Store.Before = HoldFinishes(() => false);
+            await e.StartAsync();
+            await e.AdvanceAsync(TimeSpan.FromSeconds(2));
+            return e.Script.Invocations.Count;
+        }
+
+        Assert.Equal(1, await StartedWhileFinishesAreHeld(null));
+        Assert.Equal(6, await StartedWhileFinishesAreHeld(o => o.UseBufferedFinish()));
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    [Trait("Item", "PF2-G1")]
+    public async Task Buffered_finish_stops_reusing_slots_at_its_count_bound_and_resumes_when_the_store_accepts()
+    {
+        var open = false;
+        await using var e = EngineFixture.Create(concurrency: 1, options: o => o.UseBufferedFinish(maxCount: 3), finishMany: true);
+        var ids = Enumerable.Range(0, 10).Select(i => e.Add("j" + i)).ToList();
+        e.Store.Before = HoldFinishes(() => Volatile.Read(ref open));
+        await e.StartAsync();
+        await e.AdvanceAsync(TimeSpan.FromSeconds(2));
+
+        // Three finishes buffered, so the slot was given back three times: the fourth job ran and kept its slot.
+        Assert.Equal(4, e.Script.Invocations.Count);
+        Assert.Equal(3, e.Engine.Completion.Buffered);
+        Assert.Equal(3, e.Engine.Completion.BufferedHighWater);
+        Assert.True(Interlocked.Read(ref e.Engine.Completion.BufferFullRefusals) >= 1);
+
+        Volatile.Write(ref open, true);
+        await e.RunUntilAsync(() => ids.All(id => e.Store.JobOf(id).State == JobStates.Succeeded), Long, "every job settled after the store accepted");
+        Assert.Equal(10, e.Script.Invocations.Count);
+        Assert.Equal(0, e.Engine.Completion.Buffered);
+        Assert.All(ids, id => Assert.Single(e.Store.JobOf(id).Finishes));
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    [Trait("Item", "PF2-G1")]
+    public async Task Buffered_finish_bounds_the_bytes_it_holds()
+    {
+        var open = false;
+        // Each finish is estimated at 256 bytes plus its error text; a 64 KiB bound allows only a few handlers that fail with long messages.
+        await using var e = EngineFixture.Create(concurrency: 1, options: o => o.UseBufferedFinish(maxBytes: 64 * 1024), finishMany: true);
+        for (var i = 0; i < 6; i++)
+        {
+            var id = e.Add("big" + i);
+            e.Script.On("big" + i, (_, _, _) => throw new InvalidOperationException(new string('x', 20_000)));
+        }
+
+        e.Store.Before = HoldFinishes(() => Volatile.Read(ref open));
+        await e.StartAsync();
+        await e.AdvanceAsync(TimeSpan.FromSeconds(2));
+
+        // About 40 KB of text per failed attempt: one fits under 64 KiB, the second does not.
+        Assert.True(Interlocked.Read(ref e.Engine.Completion.BufferFullRefusals) >= 1);
+        Assert.InRange(e.Engine.Completion.Buffered, 1, 2);
+        Assert.True(e.Script.Invocations.Count <= 3, $"{e.Script.Invocations.Count} handlers started");
+        Volatile.Write(ref open, true);
+        await e.RunUntilAsync(() => e.Engine.Completion.Buffered == 0, Long, "buffer empties");
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    [Trait("Item", "PF2-G1")]
+    public async Task Buffered_finish_sends_finishes_that_finish_together_in_one_call_after_the_flush_interval()
+    {
+        await using var e = EngineFixture.Create(concurrency: 8, options: o => o.UseBufferedFinish(TimeSpan.FromMilliseconds(100)), finishMany: true);
+        for (var i = 0; i < 8; i++)
+        {
+            e.Add("j" + i);
+        }
+
+        await e.StartAsync();
+        await e.RunUntilAsync(() => e.Store.Jobs.All(j => j.State == JobStates.Succeeded), Long, "all succeeded");
+        Assert.True(e.Store.Count(Operations.FinishMany) >= 1);
+        Assert.True(Interlocked.Read(ref e.Engine.Completion.BatchedItemsSettled) >= 4, $"{e.Engine.Completion.BatchedItemsSettled} items batched");
+        Assert.Equal(0, e.Engine.Completion.Buffered);
+
+        // The default sends a lone finish at once; buffered finish waits the interval for company, then goes alone.
+        await using var one = EngineFixture.Create(concurrency: 1, options: o => o.UseBufferedFinish(TimeSpan.FromMilliseconds(100)), finishMany: true);
+        var id = one.Add("lone");
+        await one.StartAsync();
+        await one.RunUntilAsync(() => one.Store.JobOf(id).State == JobStates.Succeeded, Long, "lone job settled");
+        Assert.True(Interlocked.Read(ref one.Engine.Completion.FlushesByAge) >= 1);
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    [Trait("Item", "PF2-G1")]
+    public async Task Buffered_finish_is_flushed_at_once_when_the_worker_drains()
+    {
+        // A one-second interval would hold these finishes for a second; the stop signal sends them now.
+        await using var e = EngineFixture.Create(concurrency: 4, options: o => o.UseBufferedFinish(TimeSpan.FromSeconds(1)), finishMany: true);
+        e.Step = TimeSpan.FromMilliseconds(10);
+        for (var i = 0; i < 4; i++)
+        {
+            e.Add("j" + i);
+        }
+
+        await e.StartAsync();
+        await e.RunUntilAsync(() => e.Script.Invocations.Count == 4 && e.Engine.Completion.Buffered > 0, Long, "handlers done, finishes buffered");
+        await e.StopAsync();
+        Assert.All(e.Store.Jobs, j => Assert.Equal(JobStates.Succeeded, j.State));
+        Assert.True(Interlocked.Read(ref e.Engine.Completion.FlushesForced) >= 1);
+        Assert.Equal(0, e.Engine.Completion.Buffered);
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    [Trait("Item", "PF2-G1")]
+    public async Task A_buffered_attempt_stays_tracked_and_fenced_until_the_store_accepts_the_finish()
+    {
+        var open = false;
+        await using var e = EngineFixture.Create(concurrency: 1, options: o => o.UseBufferedFinish(), finishMany: true);
+        e.Step = TimeSpan.FromMilliseconds(250);
+        var id = e.Add("held");
+        e.Store.Before = HoldFinishes(() => Volatile.Read(ref open));
+        await e.StartAsync();
+        await e.RunUntilAsync(() => e.Engine.Completion.Buffered == 1, Long, "finish buffered");
+
+        // The slot is back (ticket released) but the attempt is still in the engine's table, in Finishing, with its authority.
+        // Renewals stop while the Finish call is in flight, exactly as without the profile (05 §11), so the lease is what bounds it.
+        await e.AdvanceAsync(TimeSpan.FromSeconds(20));
+        var entry = EntryOf(e, id);
+        Assert.True(entry.Ticket.IsReleased);
+        Assert.Equal(AttemptPhase.Finishing, entry.Phase);
+        Assert.False(entry.IsLost);
+        Assert.Contains(entry, e.Engine.Entries);
+        Assert.Equal(JobStates.Running, e.Store.JobOf(id).State);
+
+        Volatile.Write(ref open, true);
+        await e.RunUntilAsync(() => e.Store.JobOf(id).State == JobStates.Succeeded, Long, "finish accepted");
+        Assert.Single(e.Store.JobOf(id).Finishes);
+        await e.RunUntilAsync(() => e.Engine.Entries.Count == 0, Long, "attempt retired");
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    [Trait("Item", "PF2-G1")]
+    public async Task Finishes_that_never_reach_the_store_leave_the_job_to_expire_and_be_recovered()
+    {
+        // The process dies (or the store never answers) while the finish is in memory: nothing was accepted, so the lease
+        // expires and recovery takes the job back to retry. The handler already ran once, so it runs again: the at-least-once
+        // cost of the mode.
+        await using var e = EngineFixture.Create(concurrency: 1, options: o => o.UseBufferedFinish(), finishMany: true);
+        var id = e.Add("rerun");
+        e.Store.Before = HoldFinishes(() => false);
+        await e.StartAsync();
+        await e.RunUntilAsync(() => e.Store.JobOf(id).History.Contains("recovered:abandoned_running"), TimeSpan.FromMinutes(10), "recovery after expiry");
+        Assert.Empty(e.Store.JobOf(id).Finishes);
+        Assert.Equal(JobStates.Retrying, e.Store.JobOf(id).State);
+        Assert.Equal(1, e.Script.InvocationsOf("rerun"));
+    }
+
     [Fact]
     [Trait("Category", "Pure")]
     [Trait("Item", "SP-009")]
