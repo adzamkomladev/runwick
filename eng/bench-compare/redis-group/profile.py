@@ -5,7 +5,9 @@ import argparse, json, socket, statistics
 from pathlib import Path
 from uuid import uuid4
 
-LUA = Path(__file__).resolve().parents[3] / "src/Runwick.Redis/Lua"
+import os
+# LUA_DIR points at another checkout's Lua folder, so a before and an after can be profiled back to back under the same load.
+LUA = Path(os.environ.get("LUA_DIR") or Path(__file__).resolve().parents[3] / "src/Runwick.Redis/Lua")
 STORE = uuid4().hex
 PREFIX = "rw:{" + b"prof".hex() + uuid4().hex[:8] + "}:"
 META = PREFIX + "meta"
@@ -57,7 +59,22 @@ local function mark(n) PM[#PM + 1] = n .. ':' .. math.floor((os.clock() - C0) * 
     if os.environ.get("SORT_FAST"):
         assert prelude.count("table.sort(k, U.blt)") == 1
         prelude = prelude.replace("table.sort(k, U.blt)", "table.sort(k)")
-    return "\n".join([prelude, (LUA / "jobs.lua").read_text(), op])
+    jobs = (LUA / "jobs.lua").read_text()
+    if os.environ.get("DEEP"):
+        # Finer marks: meta read, gates and receipt lookup before the decision; inside the dispatch core during it.
+        rep("function U.run(M)\n", "function U.run(M)\n  mark('run_start')\n")
+        rep("  local g = gates(m)\n", "  mark('meta')\n  local g = gates(m)\n  mark('gates')\n")
+        rep("  if NOW >= NOT_AFTER then", "  mark('receipt')\n  if NOW >= NOT_AFTER then")
+        for old, new in [("  local hasRates = false\n", "  mark('dc_start')\n  local hasRates = false\n"),
+                         ("  -- Key writes in sorted order.\n", "  mark('dc_items')\n  -- Key writes in sorted order.\n"),
+                         ("  for _, it in ipairs(byJob) do\n    local id = it.jobId\n", "  mark('dc_scopes')\n  for _, it in ipairs(byJob) do\n    local id = it.jobId\n"),
+                         ("    U.sset('pay:' .. id, it.payload)\n", "    mark('dc_fields')\n    U.sset('pay:' .. id, it.payload)\n"),
+                         ("  for _, i in ipairs(created) do\n    local it = items[i]\n    U.event", "  mark('dc_jobs')\n  for _, i in ipairs(created) do\n    local it = items[i]\n    U.event")]:
+            assert jobs.count(old) == 1, old
+            jobs = jobs.replace(old, new)
+    if os.environ.get("DEEP"):
+        return "\n".join([prelude, "mark('prelude_end')", jobs, "mark('jobs_end')", op])
+    return "\n".join([prelude, jobs, op])
 
 
 def main():
