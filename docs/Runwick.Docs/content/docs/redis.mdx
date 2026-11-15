@@ -117,6 +117,18 @@ The configuration string is a StackExchange.Redis string. Runwick uses only the 
 | Option | Default | Allowed | What it does |
 |---|---|---|---|
 | `ProfileRecheckInterval` | 30 s | 5 s to 5 min | How often the settings and topology check runs while the app runs. |
+| `GroupDispatches` | off | on or off | Sends plain dispatches that arrive while another send is in flight together, in one Redis call. See below. |
+| `MaxGroupItems` | 8 | 2 to 16 | Most dispatches in one grouped call. |
+| `MaxGroupBytes` | 128 KiB | 16 to 128 KiB | Most request bytes in one grouped call. A larger dispatch goes alone. |
+| `MaxGroupsInFlight` | 2 | 1 to 16 | Sends per application that may be in flight at once. |
+
+### Grouped dispatch (opt-in)
+
+With `GroupDispatches` on, a dispatch that finds a free send slot goes out alone, at once, exactly as before. A dispatch that arrives while every slot is busy waits for the next free slot and goes out with the others that are waiting, in one Redis call. A caller never waits for company that is not already there, and nothing waits on a timer.
+
+Every dispatch in a group still has its own command ID, receipt and event. Resending one later, alone or in another group, returns its original job. If the reply to a group is lost, each caller gets the usual "outcome unknown" for its own dispatch and resolves it as before. Dispatches with uniqueness keys, concurrency scopes or rate scopes always go alone. Delayed dispatches can be grouped. Cancelling a call that is still waiting leaves nothing behind. Cancelling after the group was sent cannot undo it, and the caller gets the real result.
+
+Grouping only helps when many callers dispatch at the same time. It needs `ProducerOptions.MaxConcurrentCalls` above 1 to have anything to group.
 
 ## What Runwick checks
 

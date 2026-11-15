@@ -27,6 +27,22 @@ public sealed class RedisOptions
 
     /// <summary>How often the profile and topology check runs while the process runs (5 s – 5 min).</summary>
     public TimeSpan ProfileRecheckInterval { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Opt-in producer grouping (default off). Plain dispatches that arrive while a send is in flight wait briefly and go to Redis
+    /// in one script call, each with its own command identity, receipt and event. A caller that finds a free send slot goes out alone
+    /// at once and never waits for company. Dispatches with uniqueness keys, concurrency or rate scopes always go alone.
+    /// </summary>
+    public bool GroupDispatches { get; set; }
+
+    /// <summary>Most dispatches in one grouped call (2 – 16, default 8). Only used with <see cref="GroupDispatches"/>.</summary>
+    public int MaxGroupItems { get; set; } = 8;
+
+    /// <summary>Most estimated request bytes in one grouped call (16 KiB – 128 KiB, default 128 KiB). Larger dispatches go alone.</summary>
+    public int MaxGroupBytes { get; set; } = 131_072;
+
+    /// <summary>Grouped or single sends that may be in flight at once per application (1 – 16, default 2).</summary>
+    public int MaxGroupsInFlight { get; set; } = 2;
 }
 
 public static class RunwickRedisBuilderExtensions
@@ -61,6 +77,12 @@ public static class RunwickRedisBuilderExtensions
         if (options.ProfileRecheckInterval < TimeSpan.FromSeconds(5) || options.ProfileRecheckInterval > TimeSpan.FromMinutes(5))
         {
             builder.EarlyErrors.Add(new ConfigurationError(RunwickErrorCodes.InvalidPolicy, "redis", "ProfileRecheckInterval must be 5 s – 5 min."));
+        }
+
+        if (options.GroupDispatches && (options.MaxGroupItems is < 2 or > 16 || options.MaxGroupBytes is < 16_384 or > 131_072 || options.MaxGroupsInFlight is < 1 or > 16))
+        {
+            builder.EarlyErrors.Add(new ConfigurationError(RunwickErrorCodes.InvalidPolicy, "redis",
+                "MaxGroupItems must be 2 – 16, MaxGroupBytes 16 KiB – 128 KiB and MaxGroupsInFlight 1 – 16."));
         }
 
         builder.AddStoreProvider(new RedisStoreRegistration(parsed, options));

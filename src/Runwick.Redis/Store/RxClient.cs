@@ -176,8 +176,11 @@ internal sealed class RxClient : IAsyncDisposable
     /// <summary>The prelude's ARGV 1–11 for a write command.</summary>
     public RedisValue[] Frame(RxOp op, Guid storeId, params RedisValue[] args)
     {
-        var floor = op.HasReceipt ? (long)Operations.RetentionFloor(op.Operation).TotalMilliseconds : 0;
-        var cap = (long)Operations.DeadlineCap(op.Operation).TotalMilliseconds;
+        // A grouped dispatch has no receipt of its own; its items get ordinary Dispatch receipts, so it carries Dispatch's limits.
+        var grouped = op.Operation == RedisStore.DispatchGroupOperation;
+        var limits = grouped ? Operations.Dispatch : op.Operation;
+        var floor = op.HasReceipt || grouped ? (long)Operations.RetentionFloor(limits).TotalMilliseconds : 0;
+        var cap = (long)Operations.DeadlineCap(limits).TotalMilliseconds;
         RedisValue[] frame =
         [
             FailAfter, Hex(op.ExpectedStoreId ?? storeId), op.Operation, Hex(op.CommandId),

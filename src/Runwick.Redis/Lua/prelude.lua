@@ -404,7 +404,7 @@ local function flush_events(m)
   local id = tonumber(m.nextevent or '1')
   for _, e in ipairs(EV) do
     if id > MAX_SCORE then U.abort('InvariantFault', 'counter_limit') end
-    local row = { eventId = id, jobId = e.job or NULL, attemptId = e.attempt or NULL, commandId = CMD, kind = e.kind,
+    local row = { eventId = id, jobId = e.job or NULL, attemptId = e.attempt or NULL, commandId = e.commandId or CMD, kind = e.kind,
       occurredAt = NOW, details = e.details, actorId = e.actor or NULL }
     U.zadd('events', id, U.S(id))
     U.hset('events:data', U.S(id), U.enc(row))
@@ -487,6 +487,18 @@ local function commit(m, r)
   local bytes = cmsgpack.pack(intent)
   if #bytes > MAX_BYTES then return U.noeffect('InvalidRequest', 'intent_too_large') end
   local budget = inline_budget(ops, keys, #bytes)
+  if OP == 'DispatchGroup' then
+    -- A grouped dispatch publishes inline only within measured shape limits; larger or slower shapes are declined
+    -- before the first write so the client sends each command alone with its own identity.
+    local args = 0
+    for _, op in ipairs(ops) do args = args + #op - 2 end
+    local t = redis.call('TIME')
+    local elapsed = (tonumber(t[1]) - tonumber(t0[1])) * 1000000 + tonumber(t[2]) - tonumber(t0[2])
+    if #ops > 80 or keys > 72 or #bytes > 262144 or args > 4096 or elapsed > 5000 then
+      return U.noeffect('InvalidRequest', 'group_fallback')
+    end
+    budget = #ops
+  end
   w('HSET', META, 'guard', CMD, 'intent', bytes, 'intentsha', redis.sha1hex(bytes), 'ipos', '1')
   local more = U.project(intent, 1, budget)
   if FAIL > 0 and writes >= FAIL then error('INJECTED reply lost after write ' .. writes) end
@@ -545,7 +557,11 @@ function U.run(M)
   end
   r.decided = r.decided or NOWS
   if r.effect ~= 'A' then return reply_array(r, false) end
-  if r.nocommit then return with_payloads(reply_array(r, false), r.payloads) end
+  if r.nocommit then
+    -- A replay-only group confirms its receipts like Dispatch replays do: a fresh write, no intent, no revision change.
+    for _, key in ipairs(r.confirmations or {}) do w('HSET', P .. key, 'confirmed', NOWS) end
+    return with_payloads(reply_array(r, false), r.payloads)
+  end
 
   if FP ~= '' then
     local na = NOT_AFTER

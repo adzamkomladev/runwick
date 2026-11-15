@@ -79,6 +79,24 @@ internal sealed class RxReply
         return reply;
     }
 
+    /// <summary>One item row of a grouped reply: the fields of a script reply as an array of strings (R status effect replayed code detail decided result conflict blocked resumeAt resumeJob).</summary>
+    public static RxReply FromRow(JsonArray row) => new()
+    {
+        Status = (string)row[1]!,
+        HasValue = (string)row[2]! == "A",
+        Replayed = (string)row[3]! == "1",
+        Code = Text(row[4]),
+        Detail = Text(row[5]),
+        Decided = Text(row[6]) is { } d ? T(d) : default,
+        Result = Text(row[7]) is { } json ? JsonNode.Parse(json)!.AsObject() : null,
+        Conflict = Text(row[8]) is { } c ? Guid.Parse(c) : null,
+        Blocked = Text(row[9]) is { } b ? Guid.Parse(b) : null,
+        ResumeAt = Text(row[10]) is { } r ? T(r) : null,
+        ResumeJob = Text(row[11]) is { } j ? Guid.Parse(j) : null,
+    };
+
+    static string? Text(JsonNode? n) => n?.GetValue<string>() is { Length: > 0 } s ? s : null;
+
     public StoreReply<T> Reject<T>() where T : class =>
         StoreReply<T>.NoEffect(StoreStatus, new StoreError(Code ?? "invariant_fault", null, Conflict, Blocked,
             ResumeJob is { } j ? new CandidateCursor(ResumeAt!.Value, j) : null,

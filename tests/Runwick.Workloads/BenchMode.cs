@@ -168,7 +168,17 @@ internal static class BenchMode
             // --redis-everysec: the opt-in appendfsync everysec profile (the server must run it); default is appendfsync always.
             var persistence = a.Has("redis-everysec") ? RedisPersistence.AofEverySecond : RedisPersistence.AofAlways;
             await RunwickRedisMigrations.MigrateAsync(redisCfg, persistence).ConfigureAwait(false);
-            useStore = r => r.UseRedis(redisCfg, o => o.Persistence = persistence);
+            // --redis-group [--group-items n]: the opt-in grouped producer dispatch (perf plan F); default off.
+            var group = a.Has("redis-group");
+            var groupItems = a.Int("group-items", 8);
+            var groupSlots = a.Int("group-slots", 2);
+            useStore = r => r.UseRedis(redisCfg, o =>
+            {
+                o.Persistence = persistence;
+                o.GroupDispatches = group;
+                o.MaxGroupItems = groupItems;
+                o.MaxGroupsInFlight = groupSlots;
+            });
         }
         else
         {
@@ -281,6 +291,8 @@ internal static class BenchMode
         var dispatchedAt = new ConcurrentDictionary<Guid, long>(); // steady: dispatch call start (clock ticks)
         var finishedAt = new ConcurrentDictionary<Guid, long>();   // steady: finish seen before the receipt returned
         var latency = new LatencyReservoir();
+        var enqueueCallLatency = new LatencyReservoir(); // steady: per accepted Dispatch call
+        var delayMs = a.Double("delay-ms", 0); // steady: each job is not eligible until this long after its offer (a delayed-job workload)
         // --trace: per-job stage gaps (reserved -> handler invoked -> finish confirmed) and per-call store phases.
         var trace = a.Has("trace");
         var stages = new Metrics();
@@ -653,7 +665,8 @@ internal static class BenchMode
                 var started = clock.ElapsedTicks;
                 try
                 {
-                    var receipt = await dispatcher.DispatchAsync(job).ConfigureAwait(false);
+                    var receipt = await dispatcher.DispatchAsync(job, delayMs > 0 ? new DispatchOptions { NotBefore = DateTimeOffset.UtcNow.AddMilliseconds(delayMs) } : null).ConfigureAwait(false);
+                    enqueueCallLatency.Add(Ms(clock.ElapsedTicks - started));
                     Interlocked.Increment(ref dispatched);
                     var id = receipt.JobId.Value;
                     if (finishedAt.TryRemove(id, out var done))
@@ -698,6 +711,9 @@ internal static class BenchMode
             result["completed"] = Interlocked.Read(ref finished);
             result["completedByEndOfOffers"] = completedByEndOfOffers;
             result["completionsPerSec"] = Math.Round(Interlocked.Read(ref finished) / elapsed, 1);
+            var ec = enqueueCallLatency.Summarize();
+            result["delayMs"] = delayMs;
+            result["enqueueLatencyMs"] = new JsonObject { ["p50"] = Math.Round(ec.P50Ms, 2), ["p95"] = Math.Round(ec.P95Ms, 2), ["p99"] = Math.Round(ec.P99Ms, 2) };
             result["latencyMs"] = new JsonObject
             {
                 ["p50"] = Math.Round(s.P50Ms, 2),
@@ -739,6 +755,15 @@ internal static class BenchMode
                 return snapshot;
             }
             result["latencySamples"] = s.Count;
+        }
+
+        if (driver is RedisStore groupStore && a.Has("redis-group"))
+        {
+            result["redisGroup"] = new JsonObject
+            {
+                ["calls"] = groupStore.GroupedCalls, ["members"] = groupStore.GroupedMembers, ["fallbacks"] = groupStore.GroupFallbacks,
+                ["meanGroupSize"] = groupStore.GroupedCalls == 0 ? 0 : Math.Round(groupStore.GroupedMembers / (double)groupStore.GroupedCalls, 2),
+            };
         }
 
         result["finishReplayed"] = Interlocked.Read(ref replayed);
