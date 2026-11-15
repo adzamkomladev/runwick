@@ -43,6 +43,16 @@ internal static class G2Roles
             G2Jobs.Register(r, a);
             r.AddScheduler(options =>
             {
+                if (a.Has("jobs-per-second"))
+                {
+                    options.JobsPerSecond = a.Int("jobs-per-second", options.JobsPerSecond);
+                }
+
+                if (a.Has("burst"))
+                {
+                    options.Burst = a.Int("burst", options.Burst);
+                }
+
                 if (groupSize > 1)
                 {
                     options.GroupMaterializations = true;
