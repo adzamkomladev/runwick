@@ -177,6 +177,14 @@ internal static class BenchMode
             await G2Orchestrator.ExecAsync(admin, $"CREATE DATABASE {database}").ConfigureAwait(false);
             await RunwickPostgresMigrations.MigrateAsync(new NpgsqlConnectionStringBuilder(adminCs)
                 { Database = database, ApplicationName = "bench:migrate", Pooling = false }.ConnectionString).ConfigureAwait(false);
+            if (a.Has("pg-no-events"))
+            {
+                // --pg-no-events: upper-bound probe for a lean-history mode. Event inserts are discarded by a rule; the run proves nothing about correctness.
+                await using var probe = new Npgsql.NpgsqlConnection(new NpgsqlConnectionStringBuilder(adminCs) { Database = database, Pooling = false }.ConnectionString);
+                await probe.OpenAsync().ConfigureAwait(false);
+                await using var rule = new Npgsql.NpgsqlCommand("CREATE RULE bench_no_events AS ON INSERT TO runwick.queue_events DO INSTEAD NOTHING", probe);
+                await rule.ExecuteNonQueryAsync().ConfigureAwait(false);
+            }
             var storeCs = new NpgsqlConnectionStringBuilder(adminCs)
             {
                 Database = database,
