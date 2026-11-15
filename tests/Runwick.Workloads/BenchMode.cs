@@ -179,11 +179,28 @@ internal static class BenchMode
                 { Database = database, ApplicationName = "bench:migrate", Pooling = false }.ConnectionString).ConfigureAwait(false);
             if (a.Has("pg-no-events"))
             {
-                // --pg-no-events: upper-bound probe for a lean-history mode. Event inserts are discarded by a rule; the run proves nothing about correctness.
+                // --pg-no-events: upper-bound probe for a lean-history mode. The event table keeps its rows (the SQL functions read them back) but loses
+                // its secondary indexes and its WAL logging, which is most of the per-event cost. The run proves nothing about correctness.
                 await using var probe = new Npgsql.NpgsqlConnection(new NpgsqlConnectionStringBuilder(adminCs) { Database = database, Pooling = false }.ConnectionString);
                 await probe.OpenAsync().ConfigureAwait(false);
-                await using var rule = new Npgsql.NpgsqlCommand("CREATE RULE bench_no_events AS ON INSERT TO runwick.queue_events DO INSTEAD NOTHING", probe);
-                await rule.ExecuteNonQueryAsync().ConfigureAwait(false);
+                var drops = new List<string>();
+                await using (var q = new Npgsql.NpgsqlCommand("SELECT indexname FROM pg_indexes WHERE schemaname = 'runwick' AND tablename = 'queue_events' AND indexname <> 'queue_events_pk'", probe))
+                await using (var rd = await q.ExecuteReaderAsync().ConfigureAwait(false))
+                {
+                    while (await rd.ReadAsync().ConfigureAwait(false))
+                    {
+                        drops.Add(rd.GetString(0));
+                    }
+                }
+
+                foreach (var ix in drops)
+                {
+                    await using var drop = new Npgsql.NpgsqlCommand($"DROP INDEX runwick.\"{ix}\"", probe);
+                    await drop.ExecuteNonQueryAsync().ConfigureAwait(false);
+                }
+
+                await using var unlogged = new Npgsql.NpgsqlCommand("ALTER TABLE runwick.queue_events SET UNLOGGED", probe);
+                await unlogged.ExecuteNonQueryAsync().ConfigureAwait(false);
             }
             var storeCs = new NpgsqlConnectionStringBuilder(adminCs)
             {
