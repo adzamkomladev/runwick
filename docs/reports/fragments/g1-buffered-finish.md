@@ -30,11 +30,20 @@ A worker that dies while finishes are still only in its memory has not told the 
 
 Paired default against buffered drain runs, alternating order, 4,000 jobs of 512 bytes, 4 and 16 workers, on SQLite and PostgreSQL 18 (docker, same host). Every run took `flock /tmp/runwick-bench.lock`. The host is shared with the running SP-029 qualification and other agents' work, so the numbers are informational. Raw files: `artifacts/perf/round-two/g1-buffered-finish/` in the G1 worktree.
 
-**Results are not in yet.** The 40 runs (2 stores × 2 worker counts × 5 pairs × 2 arms) are queued behind other agents' benchmarks on the shared lock. `artifacts/perf/round-two/g1-buffered-finish/pairs.sh` runs them and writes `run.done` when finished. `python3 summarize.py` in that folder then writes `summary.json` with the medians and the per-pair ratios. Replace this paragraph with that table, and say plainly if the ratios straddle 1.0.
+All 40 runs finished (exit 0) and every run reconciled: all 4,000 jobs drained, finished and invoked once.
+
+| Store, workers | Default (jobs/s, median) | Buffered (jobs/s, median) | Median paired ratio | Ratio in each pair |
+|---|---|---|---|---|
+| SQLite, 4 | 50.7 | 70.4 | 1.34 | 1.82, 1.08, 1.34, 1.32, 1.71 |
+| SQLite, 16 | 147.1 | 171.6 | 1.17 | 0.98, 1.17, 2.06, 1.03, 1.24 |
+| PostgreSQL, 4 | 49.1 | 59.1 | 1.17 | 1.17, 1.32, 1.23, 1.05, 1.00 |
+| PostgreSQL, 16 | 106.0 | 125.2 | 1.18 | 1.14, 1.77, 0.69, 1.34, 1.18 |
+
+Reading it honestly: buffered finish was faster in 18 of 20 pairs, and the median gain is 17% to 34%. At four workers the slot is the limit, so the gain is largest and most consistent (never below 1.0). At sixteen workers the pairs are spread widely (0.69 to 2.06), so the gain there is likely real but the size is not pinned down. These are low absolute rates because the host was busy with the SP-029 qualification and other benchmarks, so only the paired ratios mean anything, and they are informational. No arm was run on Redis.
 
 ### Open
 
-- Redis was not benchmarked for G1; its contract tests pass.
+- Redis was not benchmarked for G1; its contract tests pass. The 16-worker pairs are too spread out to fix the size of the gain; a quiet host would help.
 - A hard-kill test of a real worker process is not done.
 - Interaction with auto-concurrency: the scaler sees lower occupancy during the finish round trip. Not measured.
 - Whether to make this a per-queue setting instead of per worker. Today it applies to every pool of the worker.
