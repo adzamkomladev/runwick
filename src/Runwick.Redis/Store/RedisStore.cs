@@ -45,6 +45,11 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        foreach (var grouper in _groupers.Values)
+        {
+            grouper.Close();
+        }
+
         if (_recheck is not null)
         {
             await _recheck.DisposeAsync().ConfigureAwait(false);
@@ -67,7 +72,7 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
     /// <summary>Creation operations (03 §10.1 capability gate); others are allowed while draining or not.</summary>
     static char GateOf(string operation) => operation switch
     {
-        Operations.Dispatch or Operations.DispatchMany or Operations.Reserve or Operations.ReserveAndBegin or Operations.Begin
+        Operations.Dispatch or Operations.DispatchMany or DispatchGroupOperation or Operations.Reserve or Operations.ReserveAndBegin or Operations.Begin
             or Operations.RegisterQueue or Operations.RegisterScope or OutboxOperations.ReceiveOutbox or Operations.ManagementDispatch => 'c',
         _ when ScheduleOperations.IsCreation(operation) => 'c',
         Operations.Renew or Operations.RenewMany or Operations.Finish or Operations.FinishMany or Operations.Recover or Operations.ReleaseReservation

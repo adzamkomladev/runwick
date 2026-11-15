@@ -32,7 +32,12 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
 
     // ------------------------------------------------------------------ Dispatch/1, DispatchMany/1
 
-    public async Task<StoreReply<DispatchResult>> DispatchAsync(StoreCommand<DispatchRequest> command, CancellationToken ct)
+    public Task<StoreReply<DispatchResult>> DispatchAsync(StoreCommand<DispatchRequest> command, CancellationToken ct) =>
+        options.GroupDispatches && DispatchGrouper.Eligible(command.Body.Item)
+            ? Grouper(command.Application).SubmitAsync(command, ct)
+            : DispatchSingleAsync(command, ct);
+
+    internal async Task<StoreReply<DispatchResult>> DispatchSingleAsync(StoreCommand<DispatchRequest> command, CancellationToken ct)
     {
         var r = await DispatchCallAsync(command.Application, command.CommandId, Operations.Dispatch, command.NotAfter, command.Body.CommandFingerprint,
             command.Body.StoreId, [command.Body.Item], many: false, continueOnConflict: false, "initial", null, ct).ConfigureAwait(false);
@@ -96,7 +101,7 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
         ["maximumDelay"] = r.MaximumDelayMs,
     };
 
-    static JsonObject ItemJson(DispatchItem item)
+    internal static JsonObject ItemJson(DispatchItem item)
     {
         var i = item.Intent;
         return new JsonObject
