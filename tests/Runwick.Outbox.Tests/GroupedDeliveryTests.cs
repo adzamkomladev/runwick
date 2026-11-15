@@ -181,6 +181,46 @@ public sealed class GroupedDeliveryTests
     [Theory]
     [MemberData(nameof(OutboxData.Sources), MemberType = typeof(OutboxData))]
     [Trait("Category", "Fault")]
+    public async Task Lost_delivered_marks_after_a_group_are_repaired_by_the_mappings_without_a_second_job(SourceKind kind)
+    {
+        await using var o = await OutboxFixture.StartAsync("ogroup7", kind);
+        var stager = await o.OpenHost(identity: "stager", start: false);
+        var staged = new List<StagedOutboxMessage>();
+        for (var i = 0; i < 6; i++)
+        {
+            staged.Add(await o.StageAsync(stager, new PingJob("mark" + i)));
+        }
+
+        // Three marks are written and their replies lost, two never reach the source: the destination already holds all six mappings.
+        FaultySource? source = null;
+        await using var relay = await o.OpenHost(identity: "relay", relay: r =>
+        {
+            r.MaxInFlight = 6;
+            r.DeliveryGroupSize = 6;
+        }, wrapSource: inner =>
+        {
+            source = new FaultySource(inner);
+            source.LoseMarksAfter(3);
+            source.LoseMarksBefore(2);
+            return source;
+        });
+        foreach (var message in staged)
+        {
+            await o.WaitStateAsync(message.MessageId, "delivered", TimeSpan.FromSeconds(60));
+        }
+
+        Assert.Equal(6, await o.JobsAsync());
+        Assert.Equal(6, await o.MappingsAsync());
+        foreach (var message in staged)
+        {
+            Assert.Equal(message.ProposedJobId.Value, await o.DeliveredJobAsync(message.MessageId));
+            Assert.Equal(1, await o.MappingsFor(message.MessageId));
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(OutboxData.Sources), MemberType = typeof(OutboxData))]
+    [Trait("Category", "Fault")]
     public async Task A_message_that_cannot_be_delivered_blocks_alone_and_its_group_mates_are_confirmed(SourceKind kind)
     {
         await using var o = await OutboxFixture.StartAsync("ogroup5", kind);
