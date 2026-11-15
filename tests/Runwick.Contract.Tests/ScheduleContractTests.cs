@@ -130,7 +130,9 @@ public sealed class ScheduleContractTests
         var store = Store(c);
         var grouped = Assert.IsAssignableFrom<IScheduleGroupStore>(store);
         var due = (await store.StoreNowAsync(Ct)).AddSeconds(-1);
-        foreach (var key in new[] { "fresh", "occupied" })
+        string[] additionalKeys = ["extra-a", "extra-b", "extra-c", "extra-d", "extra-e", "extra-f"];
+        string[] keys = ["fresh", "occupied", .. additionalKeys];
+        foreach (var key in keys)
         {
             Assert.Equal(StoreStatus.Applied, (await RegisterAsync(c, key, declaration =>
             {
@@ -157,16 +159,28 @@ public sealed class ScheduleContractTests
         {
             Occurrences = [occupiedPlan.Occurrences[0] with { ProposedJobId = Guid.CreateVersion7() }],
         });
-        f.ArmFault(FaultPoint.AfterCommitBeforeReply, FaultSpec.DropReply, FaultTarget.Command(fresh.CommandId));
-        await Assert.ThrowsAsync<StoreOutcomeUnknownException>(() => grouped.MaterializeGroupAsync([fresh, conflicting], Ct));
+        var commands = new List<StoreCommand<MaterializeRequest>> { fresh, conflicting };
+        foreach (var key in additionalKeys)
+        {
+            commands.Add(c.Command((await PlanAsync(c, key)).Plan!));
+        }
 
-        var replay = await grouped.MaterializeGroupAsync([fresh, conflicting], Ct);
+        Assert.Equal(8, commands.Count);
+        f.ArmFault(FaultPoint.AfterCommitBeforeReply, FaultSpec.DropReply, FaultTarget.Command(fresh.CommandId));
+        await Assert.ThrowsAsync<StoreOutcomeUnknownException>(() => grouped.MaterializeGroupAsync(commands, Ct));
+
+        var replay = await grouped.MaterializeGroupAsync(commands, Ct);
         Assert.True(replay.Value!.Grouped);
         Assert.True(replay.Value.Outcomes[0].Replayed);
         Assert.Equal(freshPlan.Occurrences[0].ProposedJobId, Assert.Single(replay.Value.Outcomes[0].Value!.Occurrences).JobId);
         Assert.Equal("occurrence_exists", replay.Value.Outcomes[1].Error?.Code);
-        Assert.Equal(2, await Jobs(f));
-        Assert.Equal(2, await Occurrences(f));
+        Assert.All(replay.Value.Outcomes.Skip(2), item =>
+        {
+            Assert.Equal(StoreStatus.Applied, item.Status);
+            Assert.True(item.Replayed);
+        });
+        Assert.Equal(8, await Jobs(f));
+        Assert.Equal(8, await Occurrences(f));
         Assert.Equal(0, await Count(f, "SELECT count(*) FROM runwick.storage_commands WHERE command_id = @id", ("id", conflicting.CommandId)));
     }
 

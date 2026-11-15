@@ -2,6 +2,12 @@
 
 **Sources:** [scheduling-internals.md](../architecture/scheduling-internals.md) §2–§10 (primary); [scheduler-evaluator-and-defaults.md](../architecture/scheduler-evaluator-and-defaults.md) §3, §5; [postgres-schema-and-operations.md](../architecture/postgres-schema-and-operations.md) §4–§6; [storage-command-protocol.md](../architecture/storage-command-protocol.md); [management-retention-defaults.md](../architecture/management-retention-defaults.md) (command lifetimes, schedule retention); [public-api-contract.md](../architecture/public-api-contract.md) §9, §18; 12 (evaluator); 08 (actor, audit, events, receipts); 10 (rate scopes, capability activation pattern); 03 §3, §8.
 
+## Changes (2026-11-15, pipelined pages)
+
+With grouping on, the loop reads the next due page while the current page's groups commit, and carries groups that are still in flight into the next page instead of waiting for them at each page boundary. A plan is prepared while both group slots are busy; only its send waits for a free slot. At most two groups are in flight and one group of plans is held ready, so memory stays bounded. A prefetched page keeps its own store time as its planning cutoff and its own read start as the anchor for next-scan delays. The loop settles every carried group before it idles or retries, and a failed carried group is handled like a failed page. Without grouping the loop is unchanged.
+
+Measured replica contention (2026-11-15, short PostgreSQL runs at equal aggregate allowance): two schedulers sent about 40% more plans than there were occurrences and four sent about 2.6 times as many, the extra plans ending in `revision_conflict`. Occurrence identity held. Revision checks remain the only coordination between schedulers; no ownership protocol exists.
+
 ## Changes (2026-11-11, durable due hints)
 
 An empty read at the head of the due index returns the earliest eligible future `scan_after_at`. The scheduler bounds idle waits by that instant and any next scan times already known from its own commands. Store delays are anchored to the local monotonic clock before the read, so read and materialization time count toward the wait. The poll cap still bounds discovery of changes made after the read.
@@ -243,7 +249,7 @@ Occurrence detail is retained 30 days after materialization (cleanup is SP-021).
 |---|---|
 | Due read | ≤ 32 schedules per pass, ordered `(scan_after_at, schedule_id)` |
 | Polling | Continue promptly after a full productive page. Base poll 1 s after a short productive page. Unproductive pages and failures back off to 5 s (15 s with a healthy schedule listener), × (1 ± 0.10). Idle waits respect the earliest known durable scan time. |
-| Materializations in flight | 1 per scheduler/store group |
+| Materializations in flight | 1 per scheduler/store group by default. PostgreSQL opt-in grouping allows up to 2 concurrent groups of independent single-occurrence plans. Group size defaults to 4 and can be configured from 2 to 8, with up to 2 MiB combined job payload per group. |
 | Local allowance | 100 jobs/s, burst 32 per scheduler/store group |
 | Request / resolution budget | 5 s / 30 s |
 | Plan | ≤ 32 jobs, ≤ 2 MiB payload |

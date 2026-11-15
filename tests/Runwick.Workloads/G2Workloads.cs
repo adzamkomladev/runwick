@@ -495,10 +495,11 @@ internal static class G2Workloads
         DateTimeOffset stopped, long expected, double targetSeconds)
     {
         var acknowledged = new Dictionary<(Guid Schedule, long Scheduled), long>();
-        var path = Path.Combine(directory, "scheduler.ack.csv");
+        // Replicas (scheduler-r2, ...) acknowledge disjoint occurrences; the earliest acknowledgment of a key counts.
+        var paths = Directory.GetFiles(directory, "scheduler.ack.csv").Concat(Directory.GetFiles(directory, "scheduler-r*.ack.csv")).ToArray();
         var startMs = start.ToUnixTimeMilliseconds();
         var endMs = end.ToUnixTimeMilliseconds();
-        foreach (var line in File.Exists(path) ? File.ReadLines(path) : [])
+        foreach (var line in paths.SelectMany(File.ReadLines))
         {
             var fields = line.Split(',');
             var scheduled = long.Parse(fields[1], CultureInfo.InvariantCulture);
@@ -564,7 +565,15 @@ internal static class G2Workloads
         var run = await RunOnceAsync(db, root, spec, async c =>
         {
             var store = c.StoreConnection("wl:script");
-            c.Start("scheduler", "scheduler", ["--schedules", I(schedules)], seedTimeout);
+            // Equal aggregate allowance: each replica gets 1/N of the default 100 jobs/s and burst 32.
+            var replicas = a.Int("scheduler-replicas", 1);
+            string[] allowance = replicas > 1 ? ["--jobs-per-second", I(100 / replicas), "--burst", I(Math.Max(1, 32 / replicas))] : [];
+            c.Start("scheduler", "scheduler", ["--schedules", I(schedules), .. allowance], seedTimeout);
+            for (var r = 2; r <= replicas; r++)
+            {
+                c.Start("scheduler-r" + I(r), "scheduler", ["--schedules", I(schedules), .. allowance], seedTimeout);
+            }
+
             c.Mark("schedulerReady");
             await c.WaitAsync(Min(a, "warmup-min", 3)).ConfigureAwait(false);
             await c.Inner.ResetAsync().ConfigureAwait(false);
@@ -573,6 +582,11 @@ internal static class G2Workloads
             c.Mark("measureEnd");
             await c.WaitAsync(TimeSpan.FromSeconds(a.Double("lag-tail-s", 60))).ConfigureAwait(false);
             await c.StopAsync("scheduler", TimeSpan.FromMinutes(2)).ConfigureAwait(false);
+            for (var r = 2; r <= replicas; r++)
+            {
+                await c.StopAsync("scheduler-r" + I(r), TimeSpan.FromMinutes(2)).ConfigureAwait(false);
+            }
+
             c.Mark("schedulerStopped");
             if (occurrences <= 0)
             {
@@ -740,7 +754,7 @@ internal static class G2Workloads
             }
 
             var schedulerSummaries = new JsonObject();
-            foreach (var name in new[] { "scheduler", "scheduler-seed", "scheduler-restart" })
+            foreach (var name in new[] { "scheduler", "scheduler-r2", "scheduler-r3", "scheduler-r4", "scheduler-seed", "scheduler-restart" })
             {
                 var path = Path.Combine(c.Dir, name + ".summary.json");
                 schedulerSummaries[name] = File.Exists(path) ? JsonNode.Parse(File.ReadAllText(path)) : null;

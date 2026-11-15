@@ -9,6 +9,10 @@ Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retent
 ## Changes (2026-11-15, grouped outbox delivery)
 
 - Migration `0023_outbox_group`, schema revision 23, adds the driver-only function `receive_outbox_group_v1` and its item type. It adds no protocol operation and does not change the manifest except its schema revision. It takes the store and application gate once, checks the shape of the whole group before any receipt, orders items by command ID, and runs each through `receive_outbox_v3` inside its own savepoint, so every item keeps its own receipt, mapping and reply. A refused item rolls back with its receipt placeholder. A failure of the transaction rolls back the group, and the relay resends the same commands alone.
+## Changes (2026-11-13, eight-plan schedule groups)
+
+- Migration `0024_schedule_groups_eight`, schema revision 24, adds `materialize_schedule_group_v2` for five to eight plans from the driver. It uses the revision 22 materialization body and preserves the group lock order, per-item savepoints, and receipt identity. The manifest changes only its schema revision. The driver uses `materialize_schedule_group_v1` for groups of two to four plans.
+- With `SchedulerOptions.GroupMaterializations` enabled, set `SchedulerOptions.MaterializationGroupSize` to 8 to use the new limit. The default group size remains four, with at most two groups in flight and 2 MiB of combined job payload per group.
 
 ## Changes (2026-11-11, grouped schedule materialization)
 
