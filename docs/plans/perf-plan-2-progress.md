@@ -1,6 +1,6 @@
 # Round two performance handoff
 
-Updated 2026-11-14 UTC. Start here when resuming in a new model or session. Keep this file current after each result, decision, failed run, or change to the work queue. Keep detailed results in the report and raw evidence in the artifact directory.
+Updated 2026-11-15 UTC. Start here when resuming in a new model or session. Keep this file current after each result, decision, failed run, or change to the work queue. Keep detailed results in the report and raw evidence in the artifact directory.
 
 - Scope and acceptance gates: [perf-plan-2.md](perf-plan-2.md).
 - Remaining implementation and qualification: [perf-plan-2-remaining.md](perf-plan-2-remaining.md).
@@ -37,6 +37,10 @@ The public PostgreSQL bulk cap is now 1,000 items with the 2 MiB batch envelope 
 
 G5 landed as `WorkerOptions.UseFewerLeaseRenewals()` (5 minute lease, 90 s renewals, a sixth of the renewal commands in a fake-time test; real-store sweep, outage and crash-detection measurements are open). G4 landed as the Redis everysec persistence profile (see the report section "Redis appendfsync everysec profile (G4)"): 1.5× drain in ten of ten pairs, with SIGKILL survival tested and OS-crash loss not simulated. G1, G2 and G3 are not started: they change finish buffering, the replay horizon and per-job events across all three stores and need their own designs and migrations.
 
+## Full qualification run and parallel work (2026-11-15)
+
+The full SP-029 profile started at 18:02 UTC on 2026-11-14 from a pinned worktree of `153e812` (`/root/work/Spindle-sp029`; launcher `artifacts/sp029/launch-20261114.sh`; output `artifacts/sp029/reference-20261114`). The host is shared and the database runs in local containers, so verdicts are informational. P-01 to P-06s finished with exit 0; the 24-hour soak is last. Because this run is informational and the owner asked for the remaining work to go ahead meanwhile, other work now runs on the same host: every timing run takes `flock /tmp/runwick-bench.lock`, and results carry that caveat. In-flight worktree branches: B1 grouped admission, Redis F, G1 buffered finish, Outbox D and Scheduler S. Each writes its report to `docs/reports/fragments/` and is merged here after review.
+
 ## Host reboot recovery (completed)
 
 The host rebooted about 21:05 local on 2026-11-13 and killed every queued session. Recovery used root scripts instead of agent sessions: `sp029-integrated-short/resume.sh` finished P-08a to P-10, and `chain.sh` then ran Q6, C5, R3 and F3. R3 and F3 first failed with exit 127 because `rg` was missing from `PATH` after the reboot. Their outputs are kept under `failed-no-rg/`, a symlink `/usr/local/bin/rg` was added, and `chain3.sh` reran them successfully. `chain2.sh` ran the Laravel comparison, and `laravel-queues/sqlite84.sh` reran its SQLite half. All markers are written. Check `pgrep -f "chain|laravel-queues|suites.sh"` before starting anything new, and confirm `rg --version` works after any future reboot. The Contract and Outbox suites also need a Redis server with AOF always on `127.0.0.1:56379` (`RUNWICK_TEST_REDIS` overrides it), which does not survive a reboot.
@@ -53,7 +57,7 @@ The host rebooted about 21:05 local on 2026-11-13 and killed every queued sessio
 ## Remaining work
 
 - Laravel follow-ups, only if wanted: rerun the PostgreSQL arm on PHP 8.4 for one runtime across both databases (the stock image lacks `pdo_pgsql`, so it needs a small derived image), and rerun the SQLite Runwick arm with the wake patch. The harness is `eng/bench-compare/laravel/` and is also wired into `shootout.py` as `laravel-sqlite` and `laravel-pg`.
-- Commit the working-tree changes after review: the SQLite wake patch and test, the readiness analysis fix, the Laravel harness, `shootout.py` configs, the report and this file. Nothing is committed yet.
+- Done 2026-11-14: the SQLite wake patch, the readiness analysis fix, the Laravel harness and the report are committed and pushed (`5813e91`, `e3bfd95`, `c2e4eb7`, `2bfd751`).
 - Done 2026-11-14: the Core allocation test failure was a missing warm-up in the test, not a product regression (see Current state).
 - B1 transport finished. The corrected Npgsql proof passed, and all 29,952 jobs reconciled. At 16 callers, groups of eight had median paired throughput ratios of 1.17× at 1 KiB and 1.13× at 64 KiB. Both ranges crossed parity. Eight callers and oversized 1 MiB groups regressed. Keep the experiment isolated. If continuing B1, test byte-bounded small groups with realistic collection and cancellation before changing production admission. Reproducer, results, and the archived deadline and build failures are under `pg-b1/transport/`.
 - Keep the P-01 and P-09 gates, scheduler p99 gate, strict Sentinel and Cluster authority, and full SP-029 and quiet-host soak open until qualified. See the plan and report for the remaining implementation work and owner decisions.
