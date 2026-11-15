@@ -88,8 +88,13 @@ builder.Services.AddRunwick(runwick =>
 | Option | Default | Notes |
 |---|---|---|
 | `PostgresOptions.Schema` | `runwick` | Only `runwick` is supported in this release. Any other value is refused at startup. |
+| `PostgresOptions.GroupProducerAdmission` | `false` | Opt in to commit concurrent plain dispatches together. See below. |
 
 An empty connection string fails at startup with `missing_store`.
+
+### Grouping concurrent dispatches (opt-in)
+
+With `GroupProducerAdmission` on, calls to `DispatchAsync` that arrive while another dispatch from the same process is being sent wait briefly and then commit together in one transaction, up to 8 jobs and 2 MiB at a time. A single caller is never held back and sends at once. Each job keeps its own operation ID, receipt, deadline and result, so resending after a lost reply returns the original receipt exactly as it does without grouping. Jobs with uniqueness keys, concurrency or rate scopes, schedules, batches, and dispatches inside your own transaction are not grouped. It is off by default and not yet recommended: in measurements on a busy shared host it lost throughput with 8 concurrent callers and only helped with 16, so measure it on your own workload before relying on it. It needs schema revision 23, so run the migration first.
 
 ### Connections
 

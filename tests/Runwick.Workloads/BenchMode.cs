@@ -185,7 +185,12 @@ internal static class BenchMode
                 MaxPoolSize = Math.Max(100, workers + 16),
                 Options = a.Has("trace") ? "-c track_functions=all" : null, // --trace: per-function server time in pg_stat_user_functions
             }.ConnectionString;
-            useStore = r => r.UsePostgres(storeCs);
+            // --pg-group: the opt-in grouped producer admission (PF2-B1); --pg-group-inflight n groups in flight (default 1).
+            useStore = r => r.UsePostgres(storeCs, o =>
+            {
+                o.GroupProducerAdmission = a.Has("pg-group");
+                o.GroupMaxInFlight = a.Int("pg-group-inflight", 1);
+            });
         }
 
         var sc = new ServiceCollection();
@@ -390,6 +395,14 @@ internal static class BenchMode
                 ["p95"] = Math.Round(es.P95Ms, 2),
                 ["p99"] = Math.Round(es.P99Ms, 2),
             };
+            if (driver is Runwick.Postgres.Store.PgStore { Group: { } group })
+            {
+                result["pgGroup"] = new JsonObject
+                {
+                    ["groups"] = group.Groups, ["groupedCommands"] = group.GroupedCommands, ["fallbacks"] = group.Fallbacks,
+                    ["meanGroupSize"] = group.Groups == 0 ? 0 : Math.Round((double)group.GroupedCommands / group.Groups, 2),
+                };
+            }
 
             Task EnqueueAsync(int count, LatencyReservoir? timings)
             {
