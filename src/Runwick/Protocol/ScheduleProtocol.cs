@@ -70,7 +70,8 @@ internal static class ScheduleBounds
     public static readonly TimeSpan MaxCatchUpAge = TimeSpan.FromDays(31);
     public static readonly TimeSpan CatchUpPacing = TimeSpan.FromMilliseconds(250);
     public const int DueReadLimit = 32;
-    public const int MaxGroupPlans = 4;
+    public const int DefaultGroupPlans = 4;
+    public const int MaxGroupPlans = 8;
 
     public static bool CanGroup(ScheduleDefinitionRecord definition, MaterializeRequest plan) =>
         !definition.Serialize && definition.Template.ActiveKey is null && definition.Template.Scopes.Count == 0

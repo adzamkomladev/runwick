@@ -33,15 +33,22 @@ internal static class G2Roles
         var count = a.Int("schedules", 1000);
         var groupSize = a.Int("scheduler-group-size", 1);
         var groupsInFlight = a.Int("scheduler-groups", 1);
-        if ((groupSize, groupsInFlight) is not ((1, 1) or (ScheduleBounds.MaxGroupPlans, 2)))
+        if ((groupSize, groupsInFlight) is not ((1, 1) or (>= 2 and <= ScheduleBounds.MaxGroupPlans, 2)))
         {
-            throw new ArgumentException("Use scheduler group size 1 and one group, or size 4 and two groups.");
+            throw new ArgumentException("Use scheduler group size 1 and one group, or size 2–8 and two groups.");
         }
         sc.AddRunwick(r =>
         {
             r.Application(a.Str("app")).UsePostgres(a.Str("conn"));
             G2Jobs.Register(r, a);
-            r.AddScheduler(options => options.GroupMaterializations = groupSize > 1);
+            r.AddScheduler(options =>
+            {
+                if (groupSize > 1)
+                {
+                    options.GroupMaterializations = true;
+                    options.MaterializationGroupSize = groupSize;
+                }
+            });
             for (var i = 0; i < count; i++)
             {
                 var key = "s" + i.ToString("D4", CultureInfo.InvariantCulture);

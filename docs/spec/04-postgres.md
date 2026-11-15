@@ -6,6 +6,11 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-13, eight-plan schedule groups)
+
+- Migration `0023_schedule_groups_eight`, schema revision 23, adds `materialize_schedule_group_v2` for five to eight plans from the driver. It uses the revision 22 materialization body and preserves the group lock order, per-item savepoints, and receipt identity. The manifest changes only its schema revision. The driver uses `materialize_schedule_group_v1` for groups of two to four plans.
+- With `SchedulerOptions.GroupMaterializations` enabled, set `SchedulerOptions.MaterializationGroupSize` to 8 to use the new limit. The default group size remains four, with at most two groups in flight and 2 MiB of combined job payload per group.
+
 ## Changes (2026-11-11, grouped schedule materialization)
 
 - Migration `0022_schedule_groups`, schema revision 22, adds a shared materialization body for the driver-owned single and grouped entry points. Each item uses the existing `MaterializeOccurrences/1` fingerprint, receipt, deadline and decision time. The group takes its application gate once, then locks receipts by command ID and schedules by schedule ID, and inserts jobs by job ID. A refused item rolls back to its savepoint. A transaction failure rolls back the group and the caller can resend the same commands, including after a lost reply.

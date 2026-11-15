@@ -243,7 +243,7 @@ Occurrence detail is retained 30 days after materialization (cleanup is SP-021).
 |---|---|
 | Due read | ≤ 32 schedules per pass, ordered `(scan_after_at, schedule_id)` |
 | Polling | Continue promptly after a full productive page. Base poll 1 s after a short productive page. Unproductive pages and failures back off to 5 s (15 s with a healthy schedule listener), × (1 ± 0.10). Idle waits respect the earliest known durable scan time. |
-| Materializations in flight | 1 per scheduler/store group |
+| Materializations in flight | 1 per scheduler/store group by default. PostgreSQL opt-in grouping allows up to 2 concurrent groups of independent single-occurrence plans. Group size defaults to 4 and can be configured from 2 to 8, with up to 2 MiB combined job payload per group. |
 | Local allowance | 100 jobs/s, burst 32 per scheduler/store group |
 | Request / resolution budget | 5 s / 30 s |
 | Plan | ≤ 32 jobs, ≤ 2 MiB payload |

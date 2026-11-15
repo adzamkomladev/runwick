@@ -139,12 +139,21 @@ public sealed class SchedulerIdleTests
         return (e, store, e.Services.GetRequiredService<SchedulerService>());
     }
 
-    [Fact]
+    [Theory]
+    [InlineData(null, 4)]
+    [InlineData(8, 8)]
     [Trait("Case", "S3")]
-    public async Task The_loop_limits_groups_and_sends_unsupported_plans_separately()
+    public async Task The_loop_limits_groups_and_sends_unsupported_plans_separately(int? configuredSize, int expectedSize)
     {
         var count = ScheduleBounds.DueReadLimit + 2;
-        var (fixture, store, scheduler) = DueFixture(count, configure: options => options.GroupMaterializations = true);
+        var (fixture, store, scheduler) = DueFixture(count, configure: options =>
+        {
+            options.GroupMaterializations = true;
+            if (configuredSize is { } size)
+            {
+                options.MaterializationGroupSize = size;
+            }
+        });
         await using var e = fixture;
         store.Due[^1] = store.Due[^1] with { Definition = store.Due[^1].Definition with { OverlapPolicy = ScheduleOperations.OverlapSerialize } };
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -164,8 +173,8 @@ public sealed class SchedulerIdleTests
 
         await e.RunUntilAsync(() => Interlocked.Read(ref scheduler.Materializations) == count,
             TimeSpan.FromSeconds(5), "all grouped and individual schedules materialized");
-        Assert.Equal(8, store.GroupSizes.Count);
-        Assert.All(store.GroupSizes, size => Assert.Equal(4, size));
+        Assert.Equal(ScheduleBounds.DueReadLimit / expectedSize, store.GroupSizes.Count);
+        Assert.All(store.GroupSizes, size => Assert.Equal(expectedSize, size));
         Assert.Equal(count - 2, Interlocked.Read(ref scheduler.GroupedCommands));
         await e.StopAsync();
     }

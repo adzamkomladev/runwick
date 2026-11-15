@@ -412,7 +412,7 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         CancellationToken ct)
     {
         const int groupsInFlight = 2;
-        const int groupSize = ScheduleBounds.MaxGroupPlans;
+        var groupSize = _declarations.Options.MaterializationGroupSize;
         var pending = new List<Task<bool>>(groupsInFlight);
         var buffer = new List<PreparedMaterialization>(groupSize);
         long payloadBytes = 0;

@@ -14,7 +14,7 @@ internal sealed partial class PgStore
             || commands.Select(c => c.CommandId).Distinct().Count() != commands.Count
             || commands.Select(c => c.Body.ScheduleId).Distinct().Count() != commands.Count)
         {
-            throw new ArgumentException("Expected two to four distinct schedule commands from one application.", nameof(commands));
+            throw new ArgumentException($"Expected two to {ScheduleBounds.MaxGroupPlans} distinct schedule commands from one application.", nameof(commands));
         }
 
         var plans = new JsonArray();
@@ -49,7 +49,10 @@ internal sealed partial class PgStore
 
         // The call envelope bounds transport for the group. Each plan retains its own deadline in SQL.
         var operation = firstOperation! with { NotAfter = commands.Max(c => c.NotAfter) };
-        var reply = await runner.CallAsync(operation, new PgCall("materialize_schedule_group_v1").Json("p_plans", plans), row =>
+        var function = commands.Count <= ScheduleBounds.DefaultGroupPlans
+            ? "materialize_schedule_group_v1"
+            : "materialize_schedule_group_v2";
+        var reply = await runner.CallAsync(operation, new PgCall(function).Json("p_plans", plans), row =>
             row.HasValue
                 ? row.Applied(new ScheduleGroupMaterialization(
                     [.. commands.Select(c => MapMaterialization(GroupItem(row.Result![c.CommandId.ToString("D")]!.AsObject())))],
