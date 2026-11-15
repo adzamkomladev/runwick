@@ -41,8 +41,11 @@ function M.decide()
       if r.effect == 'A' then
         applied = applied + 1
         local key = 'rcpt:' .. it.cmd
+        -- Encoded once: the receipt row and the reply item carry the same text.
+        local encoded = U.enc(r.result)
+        r.result = U.raw(encoded)
         local row = { cls = 'durable', op = 'Finish', ver = '1', fp = it.fp, notafter = U.S(it.na), retain = U.S(it.na + DURABLE_FLOOR),
-          status = 'Applied', code = '', detail = '', decided = NOWS, result = U.enc(r.result) }
+          status = 'Applied', code = '', detail = '', decided = NOWS, result = encoded }
         for f, v in pairs(row) do U.hset(key, f, v) end
         U.zadd('rcpt:exp:durable', it.na + DURABLE_FLOOR, it.cmd)
       end

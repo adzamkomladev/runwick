@@ -39,7 +39,12 @@ internal sealed partial class RedisStore : IReadinessDiagnostics
             .Select(n => new ReadyLane(new LaneKey(n!["queue"]!.GetValue<string>(), n["priority"]!.GetValue<string>()), At(n["at"]))).ToList();
         var unsupported = JsonNode.Parse((string)a[5]!)!.AsArray()
             .Select(n => new LaneKey(n![0]!.GetValue<string>(), n[1]!.GetValue<string>())).ToList();
-        return new ReadySnapshot(observed, ready) { Queues = queues, UnsupportedLanes = unsupported };
+        return new ReadySnapshot(observed, ready)
+        {
+            Queues = queues,
+            UnsupportedLanes = unsupported,
+            NextDueAt = a.Length > 6 && (string?)a[6] is { Length: > 0 } next ? RxReply.T(next) : (DateTimeOffset?)null,
+        };
     }
 
     public async Task<UnsupportedBacklog> ListUnsupportedBacklogAsync(string application, int samplePerLane, CancellationToken ct)

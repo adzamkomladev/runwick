@@ -22,10 +22,14 @@ for _, lane in ipairs(lanes) do
     end
   end
 end
+local nextdue = nil
 for _, lane in ipairs(lanes) do
   local c = controls[lane[1]]
   if c and not c.paused then
     local key = P .. 'ready:' .. lane[1] .. ':' .. lane[2]
+    -- The earliest job that is not due yet (a delayed or retrying one), so an idle worker can sleep until then.
+    local later = redis.call('ZRANGE', key, '(' .. NOWS, '+inf', 'BYSCORE', 'LIMIT', 0, 1, 'WITHSCORES')
+    if #later == 2 and (not nextdue or tonumber(later[2]) < nextdue) then nextdue = tonumber(later[2]) end
     local head = redis.call('ZRANGE', key, '-inf', NOWS, 'BYSCORE', 'LIMIT', 0, 1)
     if #head == 1 then
       local j = redis.call('HMGET', P .. 'job:' .. head[1], 'name', 'pver', 'profile', 'profver')
@@ -35,4 +39,4 @@ for _, lane in ipairs(lanes) do
     end
   end
 end
-return { 'OK', m.rev or '0', NOWS, U.enc(queues), U.enc(ready), U.enc(unsupported) }
+return { 'OK', m.rev or '0', NOWS, U.enc(queues), U.enc(ready), U.enc(unsupported), nextdue and U.S(nextdue) or '' }

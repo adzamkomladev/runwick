@@ -100,6 +100,8 @@ internal sealed class RxClient : IAsyncDisposable
         _admin = new(() => ConnectAsync("admin", admin: true));
     }
 
+    public string Application => _application;
+
     /// <summary>Test seam (22 §12): writes the scripts fail after; production always sends 0.</summary>
     internal int FailAfter { get; set; }
 
@@ -117,6 +119,73 @@ internal sealed class RxClient : IAsyncDisposable
         var mux = await ConnectionMultiplexer.ConnectAsync(o).ConfigureAwait(false);
         mux.ConnectionRestored += (_, _) => Reconnected?.Invoke();
         return mux;
+    }
+
+    /// <summary>
+    /// Listens to the application's wake channel (the scripts publish the queue name when a job falls due) until <paramref name="ct"/> ends.
+    /// A hint only: <paramref name="onLost"/> reports a lost session, <paramref name="onSubscribed"/> every (re)subscription, and a failed
+    /// subscribe is retried after a back-off (1 s doubling to 30 s).
+    /// </summary>
+    public async Task SubscribeWakeAsync(Action<string> onWake, Action onSubscribed, Action onLost, CancellationToken ct)
+    {
+        var channel = RedisChannel.Literal(KeyPrefix(_application) + "wake");
+        var backoff = TimeSpan.FromSeconds(1);
+        while (!ct.IsCancellationRequested)
+        {
+            ConnectionMultiplexer? mux = null;
+            EventHandler<ConnectionFailedEventArgs> failed = (_, _) => onLost();
+            EventHandler<ConnectionFailedEventArgs> restored = (_, _) => onSubscribed();
+            try
+            {
+                mux = await _control.Value.ConfigureAwait(false);
+                mux.ConnectionFailed += failed;
+                mux.ConnectionRestored += restored; // the library resubscribes by itself; the pool looks once more for what it missed
+                await mux.GetSubscriber().SubscribeAsync(channel, (_, value) =>
+                {
+                    if (value.HasValue)
+                    {
+                        onWake((string)value!);
+                    }
+                }).ConfigureAwait(false);
+                backoff = TimeSpan.FromSeconds(1);
+                onSubscribed();
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex) when (ex is RedisException or IOException or TimeoutException or InvalidOperationException)
+            {
+                onLost();
+                try
+                {
+                    await Task.Delay(backoff, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+
+                backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, TimeSpan.FromSeconds(30).Ticks));
+            }
+            finally
+            {
+                if (mux is not null)
+                {
+                    mux.ConnectionFailed -= failed;
+                    mux.ConnectionRestored -= restored;
+                    try
+                    {
+                        await mux.GetSubscriber().UnsubscribeAsync(channel).ConfigureAwait(false);
+                    }
+                    catch (Exception)
+                    {
+                        // Stopping or already disconnected: nothing is left to unsubscribe.
+                    }
+                }
+            }
+        }
     }
 
     public async Task<IDatabase> DbAsync(RxLane lane)

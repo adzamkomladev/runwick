@@ -43,8 +43,8 @@ function U.inc(s)
   return '1' .. out
 end
 
--- Bytewise a < b (never Lua '<' on strings: it follows the server's LC_COLLATE).
-function U.blt(a, b)
+-- Bytewise a < b (Lua '<' on strings follows the server's LC_COLLATE, so it is used only after the probe below).
+local function bytewise_lt(a, b)
   local n = math.min(#a, #b)
   for i = 1, n do
     local x, y = string.byte(a, i), string.byte(b, i)
@@ -53,10 +53,17 @@ function U.blt(a, b)
   return #a < #b
 end
 
+-- Lua's '<' on strings is the server's LC_COLLATE order. These single-byte pairs are in byte order in the C locale and out of
+-- order in any collation that ranks punctuation, digits or letter case differently (en_US and its relatives), so when all of them
+-- hold the native comparison is the bytewise one and is used instead of the Lua loop.
+local NATIVE = ('9' < ':') and ('@' < 'A') and ('Z' < '[') and ('Z' < 'a') and ('A' < 'a') and ('_' < 'a') and ('z' < '{')
+  and ('/' < '0') and ('\0' < '\1') and ('a' < '\200') and ('\200' < '\255') and ('a' < 'b') and ('B' < 'a')
+U.blt = NATIVE and function(a, b) return a < b end or bytewise_lt
+
 function U.sorted(t)
   local k = {}
   for key in pairs(t) do k[#k + 1] = key end
-  table.sort(k, U.blt)
+  table.sort(k, not NATIVE and bytewise_lt or nil)
   return k
 end
 
@@ -68,25 +75,33 @@ function U.raw(s) return { __raw = s } end
 function U.nn(v) if v == nil or v == cjson.null or v == NULL then return nil end return v end
 
 local esc = { ['"'] = '\\"', ['\\'] = '\\\\', ['\n'] = '\\n', ['\r'] = '\\r', ['\t'] = '\\t' }
+local sfind, sformat, sgsub, concat = string.find, string.format, string.gsub, table.concat
+local function escape(c) return esc[c] or sformat('\\u%04x', string.byte(c)) end
 function U.str(s)
-  return '"' .. string.gsub(s, '[%c"\\]', function(c) return esc[c] or string.format('\\u%04x', string.byte(c)) end) .. '"'
+  if not sfind(s, '[%c"\\]') then return '"' .. s .. '"' end -- ids, names and hex need no escaping
+  return '"' .. sgsub(s, '[%c"\\]', escape) .. '"'
 end
 
 -- JSON with integers only (no float formatting), object keys in byte order, U.raw for preformatted values.
+local CJNULL = cjson.null
 function U.enc(v)
-  if v == nil or v == NULL or v == cjson.null then return 'null' end
   local t = type(v)
   if t == 'string' then return U.str(v) end
-  if t == 'number' then return string.format('%d', v) end
+  if t == 'number' then return sformat('%d', v) end
+  if v == nil or v == NULL or v == CJNULL then return 'null' end
   if t == 'boolean' then return v and 'true' or 'false' end
   if v.__raw then return v.__raw end
   local parts = {}
   if getmetatable(v) == ARR then
     for i = 1, (v.n or #v) do parts[i] = U.enc(v[i]) end
-    return '[' .. table.concat(parts, ',') .. ']'
+    return '[' .. concat(parts, ',') .. ']'
   end
-  for _, k in ipairs(U.sorted(v)) do parts[#parts + 1] = U.str(k) .. ':' .. U.enc(v[k]) end
-  return '{' .. table.concat(parts, ',') .. '}'
+  local keys = U.sorted(v)
+  for i = 1, #keys do
+    local k = keys[i]
+    parts[i] = U.str(k) .. ':' .. U.enc(v[k])
+  end
+  return '{' .. concat(parts, ',') .. '}'
 end
 
 -- ------------------------------------------------------------------ refusals inside the decision (before any write)
@@ -319,9 +334,19 @@ end
 
 -- ------------------------------------------------------------------ gates (03 §10.1) and receipt (03 §8.2)
 
+-- The encoded result, computed once: the receipt, the stored intent and the final reply all carry the same text.
+function U.rjson(r)
+  local s = r.rj
+  if s == nil then
+    s = type(r.result) == 'table' and U.enc(r.result) or (r.result or '')
+    r.rj = s
+  end
+  return s
+end
+
 local function reply_array(r, replayed)
   local a = { 'R', r.status, r.effect, replayed and '1' or '0', r.code or '', r.detail or '', r.decided or '',
-    type(r.result) == 'table' and U.enc(r.result) or (r.result or ''),
+    U.rjson(r),
     r.conflict or '', r.blocked or '', r.resumeAt and U.S(r.resumeAt) or '', r.resumeJob or '' }
   return a
 end
@@ -404,10 +429,12 @@ local function flush_events(m)
   local id = tonumber(m.nextevent or '1')
   for _, e in ipairs(EV) do
     if id > MAX_SCORE then U.abort('InvariantFault', 'counter_limit') end
-    local row = { eventId = id, jobId = e.job or NULL, attemptId = e.attempt or NULL, commandId = e.commandId or CMD, kind = e.kind,
-      occurredAt = NOW, details = e.details, actorId = e.actor or NULL }
+    -- The row, written key by key in byte order so it is the text U.enc gives the same table, without sorting it per event.
+    local row = '{"actorId":' .. U.enc(e.actor) .. ',"attemptId":' .. U.enc(e.attempt) .. ',"commandId":' .. U.enc(e.commandId or CMD)
+      .. ',"details":' .. U.enc(e.details) .. ',"eventId":' .. sformat('%d', id) .. ',"jobId":' .. U.enc(e.job) .. ',"kind":' .. U.enc(e.kind)
+      .. ',"occurredAt":' .. NOWS .. '}'
     U.zadd('events', id, U.S(id))
-    U.hset('events:data', U.S(id), U.enc(row))
+    U.hset('events:data', U.S(id), row)
     id = id + 1
   end
   U.hset('meta', 'nextevent', U.S(id))
@@ -448,6 +475,27 @@ local function build_ops()
   return ops, keys
 end
 
+-- Tells listening workers which queues just received a job that is due now: a hint published once the intent is whole (never
+-- required; workers keep polling). Sent with redis.call directly, so it is not counted as a write of the intent.
+function U.wake(ops)
+  local seen = {}
+  for i = 1, #ops do
+    local op = ops[i]
+    if op[1] == 'Z' and string.sub(op[2], 1, 6) == 'ready:' then
+      for k = 3, #op, 2 do
+        if tonumber(op[k]) <= NOW then
+          local queue = string.match(op[2], '^ready:(.*):[^:]*$')
+          if queue and not seen[queue] then
+            seen[queue] = true
+            redis.call('PUBLISH', P .. 'wake', queue)
+          end
+          break
+        end
+      end
+    end
+  end
+end
+
 -- Publishes intent batches from position pos; returns the next position or nil when published.
 function U.project(intent, pos, budget)
   local last = math.min(#intent.ops, pos + budget - 1)
@@ -457,6 +505,7 @@ function U.project(intent, pos, budget)
     return last + 1
   end
   w('HSET', META, 'rev', intent.rev, 'guard', '', 'intent', '', 'intentsha', '', 'ipos', '')
+  U.wake(intent.ops)
   return nil
 end
 
@@ -575,7 +624,7 @@ function U.run(M)
     U.hset('rcpt:' .. CMD, 'code', r.code or '')
     U.hset('rcpt:' .. CMD, 'detail', r.detail or '')
     U.hset('rcpt:' .. CMD, 'decided', r.decided)
-    U.hset('rcpt:' .. CMD, 'result', type(r.result) == 'table' and U.enc(r.result) or r.result)
+    U.hset('rcpt:' .. CMD, 'result', r.result ~= nil and U.rjson(r) or nil)
     U.zadd('rcpt:exp:' .. CLS, na + FLOOR, CMD)
   end
 
