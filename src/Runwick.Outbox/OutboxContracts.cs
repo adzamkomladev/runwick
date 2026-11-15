@@ -57,6 +57,13 @@ public sealed class OutboxRelayOptions
 
     public TimeSpan RetryMax { get; set; } = TimeSpan.FromSeconds(60);
 
+    /// <summary>
+    /// Plain messages claimed together are sent to the destination as one transaction of up to this many, each keeping its own
+    /// transport command, receipt and mapping (14 Changes 2026-11-15, D4). 1 (the default) sends each message alone. Only
+    /// destinations that implement grouped delivery honor it; others send alone.
+    /// </summary>
+    public int DeliveryGroupSize { get; set; } = 1;
+
     /// <summary>Transport command lifetime; at most 30 s and never beyond AcceptUntil.</summary>
     public TimeSpan TransportLifetime { get; set; } = TimeSpan.FromSeconds(30);
 
@@ -66,6 +73,11 @@ public sealed class OutboxRelayOptions
         if (MaxInFlight is < 1 or > 64)
         {
             errors.Add("MaxInFlight must be 1-64.");
+        }
+
+        if (DeliveryGroupSize is < 1 or > 16)
+        {
+            errors.Add("DeliveryGroupSize must be 1-16.");
         }
 
         if (LeaseDuration < TimeSpan.FromSeconds(5) || RenewalInterval <= TimeSpan.Zero || RenewalInterval * 3 > LeaseDuration)

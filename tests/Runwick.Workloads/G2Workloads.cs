@@ -801,7 +801,7 @@ internal static class G2Workloads
             }
 
             var trace = a.Has("trace");
-            List<string> relayArgs = ["--slots", I(a.Int("slots", 4))];
+            List<string> relayArgs = ["--slots", I(a.Int("slots", 4)), "--group", I(a.Int("group", 1))];
             if (trace)
             {
                 relayArgs.Add("--trace");

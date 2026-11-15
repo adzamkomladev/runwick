@@ -183,15 +183,18 @@ internal sealed class OutboxRelay(
                     var leases = await Call(c => source.ClaimWithTransportAsync(_owner, free, options.LeaseDuration, now, bound, c),
                         "OutboxClaim").ConfigureAwait(false);
                     failures = 0;
+                    var entries = new List<InFlight>(leases.Count);
                     foreach (var lease in leases)
                     {
                         var entry = new InFlight(lease, claimSentAt);
                         if (_inFlight.TryAdd(lease.MessageId, entry))
                         {
                             claimed++;
-                            _ = Task.Run(() => DeliverAsync(entry), CancellationToken.None);
+                            entries.Add(entry);
                         }
                     }
+
+                    StartDelivery(entries);
                 }
                 catch (Exception ex) when (!stop.IsCancellationRequested && ex is not OutOfMemoryException)
                 {
@@ -385,100 +388,254 @@ internal sealed class OutboxRelay(
         }
     }
 
+    /// <summary>One claimed message with its transport command built and its source lease still valid, ready to send.</summary>
+    sealed record Ready(InFlight Entry, string Application, OutboxSourceIdentity Identity, byte[] Fingerprint, StoreCommand<ReceiveOutboxRequest> Command);
+
+    /// <summary>Grouped destination calls sent (tests and diagnostics).</summary>
+    public long GroupSends;
+
+    /// <summary>Commands answered by a grouped destination call (tests and diagnostics).</summary>
+    public long GroupedCommands;
+
+    /// <summary>Grouped sends that fell back to one send per command (tests and diagnostics).</summary>
+    public long GroupFallbacks;
+
+    void StartDelivery(List<InFlight> entries)
+    {
+        var size = destination is IOutboxGroupDestinationStore ? options.DeliveryGroupSize : 1;
+        if (size <= 1 || entries.Count < 2)
+        {
+            foreach (var entry in entries)
+            {
+                _ = Task.Run(() => DeliverAsync(entry), CancellationToken.None);
+            }
+
+            return;
+        }
+
+        foreach (var chunk in entries.Chunk(size))
+        {
+            _ = Task.Run(() => DeliverGroupAsync(chunk), CancellationToken.None);
+        }
+    }
+
+    void Release(InFlight entry)
+    {
+        if (_inFlight.TryRemove(entry.Lease.MessageId, out _))
+        {
+            _slotFreed.Release();
+        }
+    }
+
     async Task DeliverAsync(InFlight entry)
     {
-        var lease = entry.Lease;
         try
         {
-            PreparedDispatch prepared;
-            try
+            if (await PrepareAsync(entry).ConfigureAwait(false) is { } ready)
             {
-                prepared = dispatcher.ImportPrepared(lease.Envelope);
+                await SendAndHandleAsync(ready).ConfigureAwait(false);
             }
-            catch (DispatchValidationException ex)
-            {
-                // Malformed intent, destination binding or policy/profile drift: visible, never rewritten (OUTBOX-05).
-                await BlockAsync(entry, ex.Code).ConfigureAwait(false);
-                return;
-            }
-
-            if (prepared.StoreId != lease.DestinationStoreId || !string.Equals(prepared.Application, lease.DestinationApplication, StringComparison.Ordinal))
-            {
-                await BlockAsync(entry, "destination_binding_mismatch").ConfigureAwait(false);
-                return;
-            }
-
-            // Contract drift: this host no longer registers the frozen job contract. Visible, never rewritten (14 §5.4).
-            if (runtime.Registry.ByName(prepared.Intent.JobName) is not { } job || !job.Routes.ContainsKey(prepared.Intent.PayloadVersion))
-            {
-                await BlockAsync(entry, "contract_not_registered").ConfigureAwait(false);
-                return;
-            }
-
-            var identity = new OutboxSourceIdentity(source.SourceStoreId, lease.MessageId);
-            var fingerprint = OutboxFingerprints.Delivery(prepared.StoreId, prepared.Application, identity, lease.AcceptUntil.ToUnixTimeMilliseconds(),
-                prepared.Intent, prepared.Digests);
-            if (!fingerprint.AsSpan().SequenceEqual(lease.DeliveryFingerprint))
-            {
-                await BlockAsync(entry, "delivery_fingerprint_mismatch").ConfigureAwait(false);
-                return;
-            }
-
-            if (time.GetUtcNow() >= lease.AcceptUntil)
-            {
-                await AfterHorizonAsync(entry, prepared.Application, identity, fingerprint).ConfigureAwait(false);
-                return;
-            }
-
-            // Reuse the persisted transport command while it is valid; otherwise persist a new one before sending.
-            var now = time.GetUtcNow();
-            Guid commandId;
-            DateTimeOffset notAfter;
-            if (lease.TransportCommandId is { } id && lease.TransportNotAfter is { } na && now < na)
-            {
-                (commandId, notAfter) = (id, na);
-            }
-            else
-            {
-                commandId = Guid.CreateVersion7();
-                var bound = now + options.TransportLifetime < lease.AcceptUntil ? now + options.TransportLifetime : lease.AcceptUntil;
-                notAfter = DateTimeOffset.FromUnixTimeMilliseconds(Fingerprints.FloorEpochMs(bound));
-                if (entry.Lost || !await Call(c => source.RecordTransportAsync(lease, commandId, notAfter, c), "OutboxRecordTransport").ConfigureAwait(false))
-                {
-                    Interlocked.Increment(ref LeaseLosses);
-                    return;
-                }
-            }
-
-            // Measure the lease from the claim or renewal's send time. A queued or delayed claim reply cannot
-            // authorize a first send after its conservatively measured lease lifetime.
-            if (entry.Lost || time.GetElapsedTime(Volatile.Read(ref entry.LeaseSentAt)) >= options.LeaseDuration)
-            {
-                return;
-            }
-
-            var command = new StoreCommand<ReceiveOutboxRequest>(prepared.Application, commandId, notAfter,
-                new ReceiveOutboxRequest(identity,
-                    new DispatchItem(prepared.Intent, prepared.Scopes, prepared.Digests) { Rates = preparer.RatesFor(prepared.Intent) }, lease.AcceptUntil, fingerprint, prepared.StoreId));
-            var reply = await SendAsync(command).ConfigureAwait(false);
-            if (reply is null)
-            {
-                await RetryLaterAsync(entry, "transport_unresolved").ConfigureAwait(false);
-                return;
-            }
-
-            await HandleAsync(entry, prepared.Application, identity, fingerprint, reply).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             // A source write failed or the host is stopping: leave the lease to expire; the mapping makes the retry safe.
-            logger.LogDebug(ex, "Runwick outbox delivery of {MessageId} did not complete.", lease.MessageId);
+            logger.LogDebug(ex, "Runwick outbox delivery of {MessageId} did not complete.", entry.Lease.MessageId);
         }
         finally
         {
-            _inFlight.TryRemove(lease.MessageId, out _);
-            _slotFreed.Release();
+            Release(entry);
         }
+    }
+
+    /// <summary>
+    /// D4: prepares every claimed message, sends the plain ones as one destination transaction (each with its own transport
+    /// command, receipt and mapping), then settles each message at the source under its own lease token. Anything the group
+    /// does not answer is sent alone with the same command, which the receipts make safe.
+    /// </summary>
+    async Task DeliverGroupAsync(InFlight[] entries)
+    {
+        var ready = new List<Ready>(entries.Length);
+        foreach (var entry in entries)
+        {
+            try
+            {
+                if (await PrepareAsync(entry).ConfigureAwait(false) is { } r)
+                {
+                    ready.Add(r);
+                    continue;
+                }
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                logger.LogDebug(ex, "Runwick outbox delivery of {MessageId} did not complete.", entry.Lease.MessageId);
+            }
+
+            Release(entry);
+        }
+
+        var grouped = ready.Where(r => IOutboxGroupDestinationStore.CanGroup(r.Command.Body)).ToList();
+        var alone = ready.Where(r => !grouped.Contains(r)).ToList();
+        IReadOnlyList<StoreReply<OutboxDelivery>>? replies = null;
+        if (grouped.Count >= 2)
+        {
+            try
+            {
+                replies = await TrySendGroupAsync(grouped).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                logger.LogDebug(ex, "Runwick outbox group send did not complete.");
+            }
+        }
+
+        var tasks = new List<Task>(ready.Count);
+        for (var i = 0; i < grouped.Count; i++)
+        {
+            tasks.Add(Settle(grouped[i], replies?[i]));
+        }
+
+        tasks.AddRange(alone.Select(r => Settle(r, null)));
+        await Task.WhenAll(tasks).ConfigureAwait(false);
+
+        async Task Settle(Ready r, StoreReply<OutboxDelivery>? reply)
+        {
+            try
+            {
+                if (reply is null)
+                {
+                    await SendAndHandleAsync(r).ConfigureAwait(false);
+                }
+                else
+                {
+                    await HandleAsync(r.Entry, r.Application, r.Identity, r.Fingerprint, reply).ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                logger.LogDebug(ex, "Runwick outbox delivery of {MessageId} did not complete.", r.Entry.Lease.MessageId);
+            }
+            finally
+            {
+                Release(r.Entry);
+            }
+        }
+    }
+
+    /// <summary>One grouped destination call, bounded like every provider call; null sends each command alone instead.</summary>
+    async Task<IReadOnlyList<StoreReply<OutboxDelivery>>?> TrySendGroupAsync(List<Ready> group)
+    {
+        var commands = group.Select(r => r.Command).ToArray();
+        try
+        {
+            Interlocked.Increment(ref GroupSends);
+            Interlocked.Add(ref Sends, commands.Length);
+            var reply = await Call(c => ((IOutboxGroupDestinationStore)destination!).ReceiveOutboxGroupAsync(commands, c), "ReceiveOutboxGroup")
+                .ConfigureAwait(false);
+            if (reply is { Status: StoreStatus.Applied, Value.Outcomes: { } outcomes } && outcomes.Count == commands.Length)
+            {
+                Interlocked.Add(ref GroupedCommands, commands.Length);
+                return outcomes;
+            }
+        }
+        catch (Exception ex) when (ex is StoreOutcomeUnknownException or StoreNotAppliedException
+            || (ex is OperationCanceledException && !_abort.IsCancellationRequested))
+        {
+            // Unknown or unavailable: the same commands go alone below; a receipt (or the mapping) answers if the group applied.
+            logger.LogDebug(ex, "Runwick outbox group of {Count} was not answered; sending each command alone.", commands.Length);
+        }
+
+        Interlocked.Increment(ref GroupFallbacks);
+        return null;
+    }
+
+    /// <summary>The ordinary single send of a prepared command and the source settlement of its reply.</summary>
+    async Task SendAndHandleAsync(Ready r)
+    {
+        var reply = await SendAsync(r.Command).ConfigureAwait(false);
+        if (reply is null)
+        {
+            await RetryLaterAsync(r.Entry, "transport_unresolved").ConfigureAwait(false);
+            return;
+        }
+
+        await HandleAsync(r.Entry, r.Application, r.Identity, r.Fingerprint, reply).ConfigureAwait(false);
+    }
+
+    /// <summary>Everything before the destination send; null when the message was settled (blocked, past its horizon) or lost its lease.</summary>
+    async Task<Ready?> PrepareAsync(InFlight entry)
+    {
+        var lease = entry.Lease;
+        PreparedDispatch prepared;
+        try
+        {
+            prepared = dispatcher.ImportPrepared(lease.Envelope);
+        }
+        catch (DispatchValidationException ex)
+        {
+            // Malformed intent, destination binding or policy/profile drift: visible, never rewritten (OUTBOX-05).
+            await BlockAsync(entry, ex.Code).ConfigureAwait(false);
+            return null;
+        }
+
+        if (prepared.StoreId != lease.DestinationStoreId || !string.Equals(prepared.Application, lease.DestinationApplication, StringComparison.Ordinal))
+        {
+            await BlockAsync(entry, "destination_binding_mismatch").ConfigureAwait(false);
+            return null;
+        }
+
+        // Contract drift: this host no longer registers the frozen job contract. Visible, never rewritten (14 §5.4).
+        if (runtime.Registry.ByName(prepared.Intent.JobName) is not { } job || !job.Routes.ContainsKey(prepared.Intent.PayloadVersion))
+        {
+            await BlockAsync(entry, "contract_not_registered").ConfigureAwait(false);
+            return null;
+        }
+
+        var identity = new OutboxSourceIdentity(source.SourceStoreId, lease.MessageId);
+        var fingerprint = OutboxFingerprints.Delivery(prepared.StoreId, prepared.Application, identity, lease.AcceptUntil.ToUnixTimeMilliseconds(),
+            prepared.Intent, prepared.Digests);
+        if (!fingerprint.AsSpan().SequenceEqual(lease.DeliveryFingerprint))
+        {
+            await BlockAsync(entry, "delivery_fingerprint_mismatch").ConfigureAwait(false);
+            return null;
+        }
+
+        if (time.GetUtcNow() >= lease.AcceptUntil)
+        {
+            await AfterHorizonAsync(entry, prepared.Application, identity, fingerprint).ConfigureAwait(false);
+            return null;
+        }
+
+        // Reuse the persisted transport command while it is valid; otherwise persist a new one before sending.
+        var now = time.GetUtcNow();
+        Guid commandId;
+        DateTimeOffset notAfter;
+        if (lease.TransportCommandId is { } id && lease.TransportNotAfter is { } na && now < na)
+        {
+            (commandId, notAfter) = (id, na);
+        }
+        else
+        {
+            commandId = Guid.CreateVersion7();
+            var bound = now + options.TransportLifetime < lease.AcceptUntil ? now + options.TransportLifetime : lease.AcceptUntil;
+            notAfter = DateTimeOffset.FromUnixTimeMilliseconds(Fingerprints.FloorEpochMs(bound));
+            if (entry.Lost || !await Call(c => source.RecordTransportAsync(lease, commandId, notAfter, c), "OutboxRecordTransport").ConfigureAwait(false))
+            {
+                Interlocked.Increment(ref LeaseLosses);
+                return null;
+            }
+        }
+
+        // Measure the lease from the claim or renewal's send time. A queued or delayed claim reply cannot
+        // authorize a first send after its conservatively measured lease lifetime.
+        if (entry.Lost || time.GetElapsedTime(Volatile.Read(ref entry.LeaseSentAt)) >= options.LeaseDuration)
+        {
+            return null;
+        }
+
+        var command = new StoreCommand<ReceiveOutboxRequest>(prepared.Application, commandId, notAfter,
+            new ReceiveOutboxRequest(identity,
+                new DispatchItem(prepared.Intent, prepared.Scopes, prepared.Digests) { Rates = preparer.RatesFor(prepared.Intent) }, lease.AcceptUntil, fingerprint, prepared.StoreId));
+        return new Ready(entry, prepared.Application, identity, fingerprint, command);
     }
 
     /// <summary>Sends one transport command; an unknown outcome resends the same command until its NotAfter (03 §4).</summary>

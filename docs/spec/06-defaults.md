@@ -284,6 +284,7 @@ Not in M2 (listed so no M2 component invents them): rate-policy bounds (1–100,
 | Mapping retention | ≥ AcceptUntil + 24 h | — | outbox_deliveries | 14 §6.4 |
 | Transport NotAfter | ≤ 30 s and ≤ AcceptUntil | — | ReceiveOutbox/1 | 14 §6.2 |
 | MaxInFlight / claim batch | 4 (1 – 64) | messages | Relay | 14 §4.2 |
+| DeliveryGroupSize | 1 (1 – 16) | messages per destination transaction | Relay | 14 §4.2 |
 | Source lease / renewal | 60 s / 15 s (lease ≥ 5 s, ≥ 3 × renewal) | s | Relay | 14 §4.2 |
 | Provider call timeout | 5 s (< renewal) | s | Relay | 14 §4.2 |
 | Idle poll | 1 s (5 s while the wake listener is healthy) | s | Relay | 14 §4.2 |

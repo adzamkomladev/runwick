@@ -107,6 +107,7 @@ A process that stages but should not deliver can turn the relay off: `relay: o =
 |---|---|---|
 | `Enabled` | `true` | |
 | `MaxInFlight` | 4 | 1 to 64 messages |
+| `DeliveryGroupSize` | 1 (off) | 1 to 16. With a PostgreSQL destination, plain messages claimed together are delivered in one destination transaction. Each keeps its own transport command, receipt and delivery mapping. |
 | `LeaseDuration` | 60 s | at least 5 s, and at least 3 × `RenewalInterval` |
 | `RenewalInterval` | 15 s | positive |
 | `ProviderCallTimeout` | 5 s | positive, shorter than `RenewalInterval` |

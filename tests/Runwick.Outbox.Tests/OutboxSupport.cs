@@ -117,7 +117,8 @@ internal sealed class OutboxFixture : IAsyncDisposable
     /// </summary>
     public async Task<OutboxHost> OpenHost(string identity = "relay", Action<OutboxRelayOptions>? relay = null, OutboxDestination? destination = null,
         string? application = null, TimeProvider? time = null, bool ensureReady = true, bool start = true,
-        Func<IOutboxSource, IOutboxSource>? wrapSource = null, Action<RunwickBuilder>? configure = null)
+        Func<IOutboxSource, IOutboxSource>? wrapSource = null, Action<RunwickBuilder>? configure = null,
+        Func<PgStore, IOutboxDestinationStore>? wrapDestination = null)
     {
         var services = new ServiceCollection();
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
@@ -139,6 +140,12 @@ internal sealed class OutboxFixture : IAsyncDisposable
                 configure(r);
             }
         });
+        if (wrapDestination is not null)
+        {
+            // Last registration wins: the relay sees the wrapper around the real PostgreSQL destination store.
+            services.AddSingleton<IOutboxDestinationStore>(sp => wrapDestination(sp.GetRequiredService<PgStore>()));
+        }
+
         Action<OutboxRelayOptions> options = o =>
         {
             Fast(o);
