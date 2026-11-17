@@ -107,6 +107,14 @@ public static class AcknowledgementProfiles
     /// up to about the last second of acknowledged writes. Opt-in (<c>RedisOptions.Persistence</c>).
     /// </summary>
     public const string RedisAofEverySecond = "redis.aof-everysec-single-primary-v1";
+
+    /// <summary>
+    /// A reply follows the script's writes being appended and fsynced under <c>appendfsync always</c> on a primary that a majority of the
+    /// configured Sentinels named and this process verified within the last authority lease (22 §2.5). Replication to replicas is
+    /// asynchronous: a promotion can lose writes acknowledged after the last verification, and a promotion that does not continue the
+    /// verified history stops all writes. Opt-in (<c>RedisOptions.Sentinel</c>).
+    /// </summary>
+    public const string RedisAofAlwaysSentinel = "redis.aof-always-sentinel-v1";
 }
 
 /// <summary>What staging reported inside a caller's transaction. Makes no durability claim.</summary>

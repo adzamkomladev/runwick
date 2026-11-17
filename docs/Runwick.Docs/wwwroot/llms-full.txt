@@ -259,7 +259,7 @@ redis-server --appendonly yes --appendfsync always --no-appendfsync-on-rewrite n
   --maxmemory-policy noeviction --aof-load-truncated no
 ```
 
-Replicas, Redis Cluster and Sentinel are refused.
+Replicas and Redis Cluster are refused. Sentinel is refused unless you turn on the [Sentinel option](/docs/redis#sentinel-a-primary-with-replicas-opt-in).
 
   </Tab>
 </Tabs>
@@ -545,7 +545,7 @@ All three stores give the same job behaviour: the same states, retries, receipts
 | Hosts | many, connected to the primary | one machine only | many, all reaching one primary |
 | Job or completion in the same transaction as your data | yes, same database | yes, same file | no, use the [outbox](/docs/outbox) |
 | How workers notice new jobs | LISTEN/NOTIFY wake-up, with polling as the fallback | polling | polling |
-| Refused at startup | nothing listed; replicas and proxies are simply not certified | a network share, an in-memory database, sync weaker than `FULL` | a replica, Cluster, Sentinel, wrong persistence settings |
+| Refused at startup | nothing listed; replicas and proxies are simply not certified | a network share, an in-memory database, sync weaker than `FULL` | a replica, Cluster, Sentinel (unless opted in), wrong persistence settings |
 | High availability | not certified | none | none |
 
 Runwick checks each store's durability settings when it starts and again while it runs. It refuses settings that could lose jobs rather than run on them.
@@ -600,7 +600,7 @@ runwick.Application("my-app").UseRedis("redis:6379");
 
 ### Redis
 
-- One primary, no high availability. Failover, Sentinel promotion and Cluster are not supported. A promoted replica may have lost jobs that were already acknowledged.
+- One primary, no high availability by default. An opt-in Sentinel mode follows a failover and stops writing when it cannot verify the primary, but a promoted replica may still have lost jobs that were acknowledged after the last check. Cluster is not supported.
 - The server must run with `appendonly yes`, `appendfsync always`, `no-appendfsync-on-rewrite no`, `maxmemory-policy noeviction` and `aof-load-truncated no`. Redis without `appendfsync always` is not a supported configuration.
 - One application lives in one hash slot. Its throughput is bounded by one server thread, and one very large command can delay everything else for that application.
 - Redis cannot join your business transaction. There is no same-transaction completion.
@@ -958,7 +958,7 @@ Runwick also captures the current trace context (`traceparent`, `tracestate`) at
 
 ## Batch dispatch
 
-`DispatchManyAsync` dispatches up to 100 jobs in **one** store transaction:
+`DispatchManyAsync` dispatches up to 100 jobs (1,000 on PostgreSQL) in **one** store transaction:
 
 ```csharp
 var items = invoices
@@ -975,7 +975,7 @@ foreach (var item in batch.Items)
 
 - Every item is created (or reused) or none is.
 - `Items` has one result per input, in input order (`Ordinal` is the 0-based index).
-- The limits are 100 items and 2 MiB for the whole batch. Split larger inputs yourself.
+- The limits are 100 items (1,000 on PostgreSQL) and 2 MiB for the whole batch, so 1,000 items fit only when they average under about 2 KiB. Split larger inputs yourself. On PostgreSQL, 100 per call is still the better size for many concurrent producers: in our test, 1,000-item calls were about 35% slower in total throughput with eight callers, and gained about 14% with one.
 - If any item is invalid, the whole batch is rejected before anything is written. The `DispatchValidationException` lists every bad ordinal in `ItemFailures`.
 - Duplicates inside one batch resolve as if dispatched one after another: a later item that matches an earlier one is `Reused`.
 
@@ -1837,6 +1837,8 @@ runwick.AddScheduler(s =>
 
 The values above are the defaults. `AddScheduler` may be called once.
 
+On PostgreSQL, set `s.GroupMaterializations = true` to group eligible single-occurrence plans. The scheduler sends up to two groups concurrently, each with up to 2 MiB of combined job payload. Set `s.MaterializationGroupSize = 8` to raise the default limit of four plans per group. Catch-up and serialized schedules continue to use individual materialization calls.
+
 ## Defining a schedule
 
 `AddSchedule(key, job)` takes a key and the job instance to create on each occurrence. The payload is frozen when the schedule is registered. The job type must be registered. Each key may be declared once.
@@ -2465,7 +2467,7 @@ public sealed class SignupService(NpgsqlDataSource db, IPostgresJobDispatcher jo
 }
 ```
 
-`StageAsync` returns a `StagedDispatch`, not a `DispatchReceipt`. Nothing is durable until you commit. Runwick never commits, rolls back or retries your transaction. If the transaction fails with a serialization error or a deadlock, retrying the whole transaction is your job. `StageManyAsync` stages a batch of up to 100 jobs the same way.
+`StageAsync` returns a `StagedDispatch`, not a `DispatchReceipt`. Nothing is durable until you commit. Runwick never commits, rolls back or retries your transaction. If the transaction fails with a serialization error or a deadlock, retrying the whole transaction is your job. `StageManyAsync` stages a batch of up to 1,000 jobs the same way.
 
 The other direction works too: a handler can mark its job as succeeded inside your transaction. [Transactions](/docs/transactions) covers both, with their rules and limits.
 
@@ -2664,7 +2666,7 @@ Redis is only safe for jobs with the right server settings, so Runwick checks th
 | Item | Requirement |
 |---|---|
 | Server | Redis 8.2 or newer |
-| Topology | One standalone primary. No Cluster, no Sentinel. |
+| Topology | One standalone primary. Optional: a Sentinel-managed primary with strict write authority (see below). No Cluster. |
 | Persistence | AOF with `appendfsync always` (see below) |
 | Package | `Runwick.Redis` (uses StackExchange.Redis) |
 
@@ -2687,6 +2689,25 @@ aof-load-truncated no
 | `no-appendfsync-on-rewrite no` | Keeps fsync on while the AOF is being rewritten. |
 | `maxmemory-policy noeviction` | Redis must never drop keys to free memory. A full server returns errors instead. |
 | `aof-load-truncated no` | A damaged AOF stops Redis at startup instead of quietly loading less data. |
+
+### Faster, less durable: `appendfsync everysec` (opt-in)
+
+If you can accept losing about the last second of confirmed writes after a machine crash, run Redis with `appendfsync everysec` and tell Runwick:
+
+```csharp
+builder.UseRedis(configuration, o => o.Persistence = RedisPersistence.AofEverySecond);
+```
+
+Use `RunwickRedisMigrations.MigrateAsync(configuration, RedisPersistence.AofEverySecond)` to install. Runwick checks the setting the same way: a server on `always` is refused under this option, and the default option refuses a server on `everysec`. Everything else in the table above still applies.
+
+| | `always` (default) | `everysec` (opt-in) |
+|---|---|---|
+| Redis process is killed | no confirmed write is lost | no confirmed write is lost |
+| Machine or operating system crashes | no confirmed write is lost | about the last second of confirmed writes can be lost |
+| Failover to a replica | only with the Sentinel option below | not supported |
+| Receipt's `ConfirmedAcknowledgementProfile` | `redis.aof-always-single-primary-v1` | `redis.aof-everysec-single-primary-v1` |
+
+In our drain test (20,000 jobs, 16 workers, one shared host) `everysec` drained about 1.5 times faster and inserted about 1.16 times faster, in every one of five pairs. A lost write after a crash looks like a dispatch that was confirmed but is not there, so use this only for work you can resend or regenerate.
 
 Size `maxmemory` with room to spare. With `noeviction`, a full server refuses writes, and dispatches fail until you free space.
 
@@ -2743,11 +2764,56 @@ builder.Services.AddRunwick(runwick =>
 });
 ```
 
-The configuration string is a StackExchange.Redis string. Runwick uses only the endpoint, credentials, TLS settings, `defaultDatabase` and `connectTimeout` from it, and never logs it. Several endpoints, or a Sentinel service name, are refused at startup with `topology_unsupported`.
+The configuration string is a StackExchange.Redis string. Runwick uses only the endpoint, credentials, TLS settings, `defaultDatabase` and `connectTimeout` from it, and never logs it. Several endpoints, or a Sentinel service name, are refused at startup with `topology_unsupported` unless you turn on the Sentinel option below.
 
 | Option | Default | Allowed | What it does |
 |---|---|---|---|
 | `ProfileRecheckInterval` | 30 s | 5 s to 5 min | How often the settings and topology check runs while the app runs. |
+| `Sentinel` | none | none or settings | Follow a Sentinel-managed primary with strict write authority. See below. |
+| `GroupDispatches` | off | on or off | Sends plain dispatches that arrive while another send is in flight together, in one Redis call. See below. |
+| `MaxGroupItems` | 8 | 2 to 16 | Most dispatches in one grouped call. |
+| `MaxGroupBytes` | 128 KiB | 16 to 128 KiB | Most request bytes in one grouped call. A larger dispatch goes alone. |
+| `MaxGroupsInFlight` | 2 | 1 to 16 | Sends per application that may be in flight at once. |
+
+### Grouped dispatch (opt-in)
+
+With `GroupDispatches` on, a dispatch that finds a free send slot goes out alone, at once, exactly as before. A dispatch that arrives while every slot is busy waits for the next free slot and goes out with the others that are waiting, in one Redis call. A caller never waits for company that is not already there, and nothing waits on a timer.
+
+Every dispatch in a group still has its own command ID, receipt and event. Resending one later, alone or in another group, returns its original job. If the reply to a group is lost, each caller gets the usual "outcome unknown" for its own dispatch and resolves it as before. Dispatches with uniqueness keys, concurrency scopes or rate scopes always go alone. Delayed dispatches can be grouped. Cancelling a call that is still waiting leaves nothing behind. Cancelling after the group was sent cannot undo it, and the caller gets the real result.
+
+Grouping only helps when many callers dispatch at the same time. It needs `ProducerOptions.MaxConcurrentCalls` above 1 to have anything to group.
+
+## Sentinel: a primary with replicas (opt-in)
+
+Runwick can follow a primary that Redis Sentinel manages. The aim is simple: **Runwick only writes to a primary it has just checked, and stops writing the moment it cannot tell.** It does not try to keep working through a failover at any cost.
+
+```csharp
+builder.UseRedis(
+    "sentinel1:26379,sentinel2:26379,sentinel3:26379,serviceName=mymaster,password=data-password,sentinelPassword=sentinel-password",
+    o => o.Sentinel = new RedisSentinelOptions());
+```
+
+List your Sentinels and the service name, not the data servers. Use `user` and `password` for the data servers and `sentinelUser` and `sentinelPassword` for the Sentinels (the TLS setting applies to both). Every data server must run the same settings as above, `appendfsync always` included; `everysec` cannot be combined with Sentinel. Run `RunwickRedisMigrations.MigrateAsync` against the current primary's address.
+
+| Option | Default | Allowed | What it does |
+|---|---|---|---|
+| `AuthorityRecheckInterval` | 1 s | 250 ms to 10 s | How often the primary is checked again. |
+| `AuthorityTtl` | 4 s | 1 s to 30 s, at least twice the recheck interval | How long one successful check lets commands go out. |
+
+**What Runwick checks each time.** A majority of your Sentinels must name the same primary and report it healthy. That primary must pass the settings check above. If it is a different server from the one Runwick used before (a failover), it must also continue the same history: the Sentinel promoted a replica that had everything Runwick saw at its last check. And the store's identity and revisions must not have gone backwards.
+
+**What happens when something is wrong:**
+
+| Situation | What Runwick does |
+|---|---|
+| A Sentinel majority is unreachable (you cannot reach them, they disagree) | Keeps writing until the 4 s lease runs out, then stops sending anything. Starts again as soon as a check passes. |
+| A Sentinel reports the primary down, or a failover has started; the connection to the primary breaks | Stops sending anything at once and checks again. |
+| A failover finished and the new primary continues the old history | Moves to the new primary and resumes. Jobs and receipts written before are intact. |
+| The new primary does not cover the history Runwick last saw (a replica that was behind), or the store identity or revision went backwards | **Blocked.** Every call fails as incompatible until you reconcile the histories and restart the process. |
+
+Calls that are stopped are never sent, so they have no effect. A call that was already in flight when the primary failed has the usual "outcome unknown"; resend it with the same command and it is answered from its receipt, if the receipt survived the failover. The Store page shows the state, the primary, how many Sentinels agree, and the recent changes this process saw. Set `AuthorityTtl` well under your Sentinels' `down-after-milliseconds`, so that a process left connected to an old primary stops before another node is promoted.
+
+**What this does not promise.** Redis copies writes to replicas after it replies. A failover can lose writes confirmed after Runwick's last check, which is at most a recheck interval plus the lease. The check proves the new primary has everything Runwick saw at its last check, not that nothing was lost. Runwick stops itself; it cannot stop other programs that write to a cut-off former primary. Receipts carry `redis.aof-always-sentinel-v1`. Redis Cluster is not supported.
 
 ## What Runwick checks
 
@@ -2762,7 +2828,7 @@ At startup, on every reconnect and every `ProfileRecheckInterval`, Runwick check
 | At startup | The app does not start. The error names the setting and the value it saw, for example `appendfsync=everysec`. |
 | While running | Runwick stops sending new work: no new claims, dispatches or schedule runs. Health reports the store as unhealthy (`store_profile_mismatch`) until a later check passes. Calls already sent finish as usual. |
 
-Replicas attached to the primary are allowed and reported. But a replica promoted to primary is a different history, and Runwick does not follow a failover.
+Replicas attached to the primary are allowed and reported. But a replica promoted to primary is a different history, and without the Sentinel option Runwick does not follow a failover.
 
 ### History checks
 
@@ -2784,7 +2850,7 @@ There are no wake-up notifications between processes. Workers find new jobs by p
 
 ## What Redis does not promise
 
-- No high availability. Failover, Sentinel promotion and Cluster are not supported. A promoted replica may have lost acknowledged jobs.
+- No high availability by default. With the Sentinel option, a failover is followed and checked, but a promoted replica may have lost jobs confirmed after Runwick's last check. Cluster is not supported.
 - Durability is the primary's disk and `appendfsync always`. Restoring an AOF or RDB file is a break in history.
 - Running Redis without `appendfsync always` is not a supported configuration, even for benchmarks.
 - Results on Redis say nothing about speed compared with PostgreSQL.
@@ -2818,7 +2884,7 @@ Redis cannot join a business transaction. With Redis, or with a business databas
 | | PostgreSQL | SQLite |
 |---|---|---|
 | Stage a job | `IPostgresJobDispatcher.StageAsync` | `ISqliteJobDispatcher.StageAsync` |
-| Stage a batch | `StageManyAsync` (up to 100 jobs) | `StageManyAsync` (up to 100 jobs) |
+| Stage a batch | `StageManyAsync` (up to 1,000 jobs) | `StageManyAsync` (up to 100 jobs) |
 | Complete the current job | `IPostgresJobCompletion.CompleteInTransactionAsync` | `ISqliteJobCompletion.CompleteInTransactionAsync` |
 | Transaction type | `NpgsqlTransaction` | `SqliteTransaction` |
 | Namespace | `Runwick.Postgres` | `Runwick.Sqlite` |
@@ -3052,6 +3118,7 @@ A process that stages but should not deliver can turn the relay off: `relay: o =
 |---|---|---|
 | `Enabled` | `true` | |
 | `MaxInFlight` | 4 | 1 to 64 messages |
+| `DeliveryGroupSize` | 1 (off) | 1 to 16. With a PostgreSQL destination, plain messages claimed together are delivered in one destination transaction. Each keeps its own transport command, receipt and delivery mapping. |
 | `LeaseDuration` | 60 s | at least 5 s, and at least 3 × `RenewalInterval` |
 | `RenewalInterval` | 15 s | positive |
 | `ProviderCallTimeout` | 5 s | positive, shorter than `RenewalInterval` |
@@ -4499,6 +4566,8 @@ A handler can run again when:
 
 In each case Runwick runs the job again rather than risk losing it. So write handlers that are safe to repeat.
 
+With the opt-in [buffered finish](/docs/configuration) mode (`UseBufferedFinish()`), the first case gets wider. A worker starts its next job before the store has confirmed the previous one finished, so a crash can rerun jobs that already completed in the last few tens of milliseconds, up to the size of the buffer. A normal shutdown sends the buffer first.
+
 ### When a dispatch is confirmed
 
 `DispatchAsync` returns a `DispatchReceipt` only after the store has confirmed the write. The receipt's `ConfirmedAcknowledgementProfile` says what "confirmed" means for that store:
@@ -4507,7 +4576,7 @@ In each case Runwick runs the job again rather than risk losing it. So write han
 |---|---|
 | PostgreSQL | the transaction committed |
 | SQLite | the commit is on disk, with WAL and `synchronous=FULL` |
-| Redis | the write is in the append-only file and synced, under `appendfsync always` |
+| Redis | the write is in the append-only file and synced, under `appendfsync always`. With the opt-in `appendfsync everysec` profile it is in the file but may not be synced yet, so a machine crash can lose about the last second |
 
 If `DispatchAsync` throws an error whose `Disposition` is `KnownNotApplied`, nothing was written. If it throws `DispatchOutcomeUnknownException` (codes `outcome_unknown`, `cancelled_after_send` or `expired_unknown`), the write may or may not have happened.
 
@@ -4658,6 +4727,10 @@ Set with `runwick.AddWorker(w => w.Configure(o => ...))`. Most apps never touch 
 | `ShutdownDrain` / `ShutdownCancellation` / `ShutdownFinalization` | 15 s / 5 s / 5 s | The three shutdown stages; their sum must fit in `ShutdownBudget` |
 | `RecordResourceUsage` | `true` | Store CPU time, allocations and working set per attempt |
 
+**Fewer lease renewals.** `o.UseFewerLeaseRenewals()` inside `Configure` sets a 5-minute lease renewed about every 90 s, so each running job sends about a sixth of the renewal calls. Fencing is unchanged. The cost is slower recovery when a worker crashes: its jobs stay claimed until the lease expires, up to 5 minutes instead of 1.
+
+**Buffered finish.** `o.UseBufferedFinish()` inside `Configure` lets a worker start the next job as soon as the previous handler returns, instead of waiting for the database to confirm that the previous job finished. Finishes wait in a bounded buffer (256 jobs or 4 MiB, by default) and go to the store together about every 25 ms. A job keeps its lease, its concurrency and rate permits until the store has accepted its finish. If a worker is killed while finishes are still in memory, those jobs run again once their leases expire, so handlers must be safe to run twice. A normal shutdown sends the buffer first. When the buffer is full, slots are held until finishes settle, as without the option. Use it when the finish round trip, not the handler, limits how many jobs a worker completes.
+
 Keep the host's shutdown timeout (`HostOptions.ShutdownTimeout`, 30 s by default in .NET) above `ShutdownBudget`. Runwick does not change it for you.
 
 ### Pools
@@ -4737,6 +4810,7 @@ Per schedule: misfire policy `RunOnce` with 60 s grace (up to 24 h); catch-up at
 |---|---|---|
 | `Enabled` | `true` | |
 | `MaxInFlight` | 4 | 1 to 64 |
+| `DeliveryGroupSize` | 1 | 1 to 16; groups plain messages into one PostgreSQL destination transaction |
 | `LeaseDuration` / `RenewalInterval` | 60 s / 15 s | lease at least 5 s and at least 3 renewals |
 | `ProviderCallTimeout` | 5 s | shorter than `RenewalInterval` |
 | `IdlePoll` | 1 s | positive |
@@ -4773,7 +4847,7 @@ These cannot be configured.
 | Job names | 1 to 200 characters, same characters |
 | Uniqueness and resource keys | 1 to 512 bytes of UTF-8 |
 | Business metadata | 16 KiB and 32 entries |
-| Batch dispatch | 100 items or 2 MiB |
+| Batch dispatch | 100 items or 2 MiB (PostgreSQL: 1,000 items or 2 MiB) |
 | Rate limit | 1 to 100,000 per window; window 1 s to 24 h; at most 8 rate scopes per job |
 
 ## Startup validation

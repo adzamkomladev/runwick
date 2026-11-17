@@ -134,7 +134,7 @@ const aofStatus = value => value === 'Ok' ? 'OK' : 'Error'
 
 function RedisDetails({ stats }) {
   const { sampledAt, ...facts } = stats
-  const { memory, activity, aof, replication, intentRecovery } = facts
+  const { memory, activity, aof, replication, intentRecovery, authority } = facts
   const stale = Object.values(facts).some(fact => fact.status === 'Stale')
   return (
     <Card>
@@ -143,6 +143,15 @@ function RedisDetails({ stats }) {
         <CardDescription>Connected server and current application. {sampledAt && <>Sampled <ObservationTime value={sampledAt} /></>}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {authority.status !== 'Unsupported' && <RedisSection title="Write authority (Sentinel)" fact={authority}>{v => <>
+          <RedisMetric label="Authority" value={v.state} format={a => ({ verified: 'Verified', unresolved: 'Unresolved: no commands are sent', blocked: 'Blocked: an operator must reconcile and restart' })[a] ?? a} />
+          {v.reason && <RedisMetric label="Reason" value={v.reason} format={r => <code>{r}</code>} />}
+          <RedisMetric label="Primary" value={v.primary} format={p => <code>{p}</code>} />
+          <RedisMetric label="Verification epoch" value={v.epoch} />
+          <RedisMetric label="Sentinels agreeing" value={v.sentinelsAgreeing} format={n => `${n} of ${v.sentinelsConfigured}`} />
+          <Row label="Last verified"><ObservationTime value={v.verifiedAt} /></Row>
+          {v.recent.length > 0 && <Row label="Recent changes"><ul className="space-y-1">{v.recent.slice().reverse().map((e, i) => <li key={i}><time className="tabular-nums text-muted-foreground" dateTime={e.at}>{time(e.at)}</time> {e.text}</li>)}</ul></Row>}
+        </>}</RedisSection>}
         <RedisSection title="Application recovery" fact={intentRecovery}>{v => <>
           <RedisMetric label="Pending intent" value={v.pending} format={yesNo} />
           {v.pending && <RedisMetric label="Next after-image index" value={v.nextProjectionIndex} />}
@@ -290,7 +299,7 @@ export default function Store({ snapshot }) {
                     <Fact fact={snapshot.serverVersion}><span className="mr-2 tabular-nums">{snapshot.serverVersion.value}</span></Fact>
                     {snapshot.serverVersion.status === 'Stale' && <State value="Stale" />}
                   </Row>
-                  <Row label="Topology"><State value={snapshot.topology.status} /></Row>
+                  <Row label="Topology"><Fact fact={snapshot.topology}>{snapshot.topology.value}</Fact></Row>
                 </dl>
               </CardContent>
             </Card>

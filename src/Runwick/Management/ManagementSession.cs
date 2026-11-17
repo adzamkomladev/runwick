@@ -612,6 +612,7 @@ internal sealed class ManagementSession(
             AcknowledgementProfiles.SqliteWalFull => AcknowledgementProfiles.SqliteWalFull,
             AcknowledgementProfiles.RedisAofAlways => AcknowledgementProfiles.RedisAofAlways,
             AcknowledgementProfiles.RedisAofEverySecond => AcknowledgementProfiles.RedisAofEverySecond,
+            AcknowledgementProfiles.RedisAofAlwaysSentinel => AcknowledgementProfiles.RedisAofAlwaysSentinel,
             _ => null,
         };
         var migration = retained?.MigrationMode is "normal" or "expand" or "maintenance" ? retained.MigrationMode : "unknown";
@@ -663,7 +664,7 @@ internal sealed class ManagementSession(
             new(provider == "sqlite" ? StoreSnapshotScope.Process : StoreSnapshotScope.ProviderNode,
                 engineVersion is null ? StoreSnapshotStatus.Unavailable : availability, engineVersion),
             new(StoreSnapshotScope.Store, StoreSnapshotStatus.Unavailable, null),
-            new(StoreSnapshotScope.ProviderNode, provider == "sqlite" ? StoreSnapshotStatus.Unsupported : StoreSnapshotStatus.Unavailable, null))
+            TopologyFact(provider, redis, redisFresh && fresh))
         {
             RecentChecks = checks,
             Trend = trend,
@@ -688,9 +689,27 @@ internal sealed class ManagementSession(
                 {
                     IntentRecovery = Diagnostic(redis?.IntentRecovery, StoreSnapshotScope.Application,
                         redisFresh && (fresh || recovering)),
+                    Authority = Diagnostic(redis?.Authority, StoreSnapshotScope.Process, redisFresh),
                     SampledAt = redisAt,
                 } : null,
         });
+    }
+
+    /// <summary>The common topology line: Redis reports its Sentinel authority; others have none yet.</summary>
+    static StoreSnapshotFact<string> TopologyFact(string provider, RedisStoreDiagnostics? redis, bool fresh)
+    {
+        if (provider == "sqlite")
+        {
+            return new(StoreSnapshotScope.ProviderNode, StoreSnapshotStatus.Unsupported, null);
+        }
+
+        if (provider == "redis" && redis?.Authority is { Status: StoreSnapshotStatus.Available, Value: { } a })
+        {
+            var text = $"Sentinel-managed primary {a.Primary ?? "unknown"}: authority {a.State}" + (a.Reason is null ? "" : $" ({a.Reason})");
+            return new(StoreSnapshotScope.ProviderNode, fresh ? StoreSnapshotStatus.Available : StoreSnapshotStatus.Stale, text);
+        }
+
+        return new(StoreSnapshotScope.ProviderNode, StoreSnapshotStatus.Unavailable, null);
     }
 
     public async Task<ManagementSettings> GetSettingsAsync(ManagementCaller caller, CancellationToken cancellationToken = default)
