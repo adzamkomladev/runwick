@@ -351,9 +351,11 @@ internal static class Analysis
         // resolve may or may not have applied, so it widens the bound by one and nothing more.
         var accepted = producer?["accepted"]?.GetValue<long>();
         var unresolved = producer?["outcomeUnresolved"]?.GetValue<long>() ?? 0;
-        if (accepted is { } n && (jobs < n || jobs > n + unresolved))
+        // P-07 clones terminal jobs into the store before measuring; the producer never sent them, so they are added to the bound.
+        var seeded = c.Extra["seed"]?["seeded"]?.GetValue<long>() ?? 0;
+        if (accepted is { } n && (jobs < n + seeded || jobs > n + seeded + unresolved))
         {
-            violations.Add($"producer accepted {n} dispatches ({unresolved} unresolved outcomes) but the store holds {jobs} jobs");
+            violations.Add($"producer accepted {n} dispatches ({unresolved} unresolved outcomes, {seeded} seeded) but the store holds {jobs} jobs");
         }
 
         var open = model.Jobs.Count(j => j.State is "pending" or "retrying" or "reserved" or "running");
