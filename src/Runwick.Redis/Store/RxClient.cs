@@ -170,6 +170,10 @@ internal sealed class RxClient : IAsyncDisposable
         }
     }
 
+    /// <summary>The admin connection of the bound generation if it is bound to <paramref name="endpoint"/> (the authority reuses it), else null.</summary>
+    internal Task<(IServer Server, IDatabase Db)>? TryBoundAdmin(EndPoint endpoint) =>
+        _gen is { Endpoint: { } e } && e.ToString() == endpoint.ToString() ? AdminAsync() : null;
+
     Generation Current()
     {
         _authority?.Require();
@@ -201,7 +205,14 @@ internal sealed class RxClient : IAsyncDisposable
         if (_authority is { } authority && !admin)
         {
             // A lost connection to the verified primary is evidence that authority may have ended: close it and verify again.
-            mux.ConnectionFailed += (_, _) => authority.Invalidate("connection_to_primary_failed");
+            // Dropping an old generation on purpose, or an old primary's socket after a switch, is not.
+            mux.ConnectionFailed += (_, e) =>
+            {
+                if (e.FailureType != ConnectionFailureType.ConnectionDisposed && _gen?.Endpoint?.ToString() == endpoint?.ToString())
+                {
+                    authority.Invalidate("connection_to_primary_failed");
+                }
+            };
         }
 
         return mux;

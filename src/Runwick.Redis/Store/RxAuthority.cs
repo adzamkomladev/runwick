@@ -51,8 +51,11 @@ internal sealed class RxAuthority : IAsyncDisposable
     readonly ConcurrentDictionary<string, Lazy<Task<ConnectionMultiplexer>>> _sentinels = new(StringComparer.Ordinal);
     readonly List<RxAuthorityEvent> _events = [];
     readonly CancellationTokenSource _stop = new();
+    readonly TimeSpan _fullEvery;
     RxClient? _client;
     Task? _loop;
+    DateTimeOffset _lastFull = DateTimeOffset.MinValue;
+    IReadOnlyDictionary<string, string> _lastFacts = new Dictionary<string, string>();
     RxAuthorityState _state;
     string? _reason;
     string? _primary;
@@ -63,8 +66,10 @@ internal sealed class RxAuthority : IAsyncDisposable
     DateTimeOffset? _expiresAt;
     (string Primary, string RunId, string ReplId, long Offset)? _last;
 
-    public RxAuthority(RxSentinelSeeds seeds, RedisSentinelOptions options, TimeProvider time, ConfigurationOptions data, RedisPersistence persistence)
+    public RxAuthority(RxSentinelSeeds seeds, RedisSentinelOptions options, TimeProvider time, ConfigurationOptions data, RedisPersistence persistence,
+        TimeSpan? fullCheckEvery = null)
     {
+        _fullEvery = fullCheckEvery ?? TimeSpan.FromSeconds(30);
         _seeds = seeds;
         _options = options;
         _time = time;
@@ -116,6 +121,7 @@ internal sealed class RxAuthority : IAsyncDisposable
     {
         lock (_lock)
         {
+            _lastFull = DateTimeOffset.MinValue; // a lost connection may mean a restart: the next check is the full one
             if (_state == RxAuthorityState.Verified)
             {
                 _state = RxAuthorityState.Unresolved;
@@ -210,6 +216,7 @@ internal sealed class RxAuthority : IAsyncDisposable
     public async Task<RxAuthoritySnapshot> VerifyAsync(CancellationToken ct)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
+        Probe? probe = null; // the candidate's own connection, kept until the verification ends (the history check uses it)
         try
         {
             if (Snapshot().State == RxAuthorityState.Blocked)
@@ -236,17 +243,64 @@ internal sealed class RxAuthority : IAsyncDisposable
                 SetUnresolved("sentinels_name_a_different_primary", closeNow: true, clean.Count());
             }
 
-            var probe = await ProbeAsync(primary, ct).ConfigureAwait(false);
-            await using var _ = probe.ConfigureAwait(false);
-            var report = await RxProfile.CheckAsync(probe.Server, probe.Db, _persistence, sentinel: true).ConfigureAwait(false);
-            OnReport?.Invoke(report);
-            if (!report.Verified)
+            // The bound connection is reused while the same node stays primary; a new candidate gets a connection of its own and the full check.
+            var endpoint = ParseEndPoint(primary);
+            IReadOnlyDictionary<string, string> facts;
+            IDatabase db;
+            try
             {
-                SetUnresolved($"{report.FailureCode}: {report.Failure}", closeNow: true, clean.Count());
+                IServer server;
+                if (_client?.TryBoundAdmin(endpoint) is { } bound)
+                {
+                    (server, db) = await bound.ConfigureAwait(false);
+                }
+                else
+                {
+                    probe = await ProbeAsync(primary, ct).ConfigureAwait(false);
+                    (server, db) = (probe.Server, probe.Db);
+                }
+
+                var now = _time.GetUtcNow();
+                if (probe is not null || now - _lastFull >= _fullEvery)
+                {
+                    var report = await RxProfile.CheckAsync(server, db, _persistence, sentinel: true).ConfigureAwait(false);
+                    OnReport?.Invoke(report);
+                    if (!report.Verified)
+                    {
+                        SetUnresolved($"{report.FailureCode}: {report.Failure}", closeNow: true, clean.Count());
+                        return Snapshot();
+                    }
+
+                    _lastFull = now;
+                    _lastFacts = facts = report.Facts;
+                }
+                else
+                {
+                    // Between full checks: the node must still be a primary, and the lineage fields are read fresh.
+                    var info = await RxProfile.InfoAsync(db, "replication").ConfigureAwait(false);
+                    if (info.GetValueOrDefault("role") != "master")
+                    {
+                        SetUnresolved("topology_unsupported: role=" + info.GetValueOrDefault("role", "<missing>"), closeNow: true, clean.Count());
+                        return Snapshot();
+                    }
+
+                    var merged = new Dictionary<string, string>(_lastFacts, StringComparer.Ordinal);
+                    foreach (var key in new[] { "master_replid", "master_replid2", "master_repl_offset", "second_repl_offset", "connected_slaves" })
+                    {
+                        merged[key] = info.GetValueOrDefault(key, "");
+                    }
+
+                    merged["replicas"] = merged["connected_slaves"];
+                    _lastFacts = facts = merged;
+                    OnReport?.Invoke(new RxProfileReport(null, null, merged));
+                }
+            }
+            catch (Exception ex) when (ex is RedisException or TimeoutException)
+            {
+                SetUnresolved("primary_unreachable: " + ex.GetType().Name, closeNow: true, clean.Count());
                 return Snapshot();
             }
 
-            var facts = report.Facts;
             var runId = facts.GetValueOrDefault("run_id", "");
             var replId = facts.GetValueOrDefault("master_replid", "");
             var offset = long.TryParse(facts.GetValueOrDefault("master_repl_offset"), NumberStyles.None, CultureInfo.InvariantCulture, out var o) ? o : 0;
@@ -262,9 +316,20 @@ internal sealed class RxAuthority : IAsyncDisposable
                 }
             }
 
-            if (HistoryCheck is { } history && await history(probe.Db).ConfigureAwait(false) is { } failure)
+            string? historyFailure;
+            try
             {
-                SetBlocked(failure);
+                historyFailure = HistoryCheck is { } history ? await history(db).ConfigureAwait(false) : null;
+            }
+            catch (Exception ex) when (ex is RedisException or TimeoutException or ObjectDisposedException)
+            {
+                SetUnresolved("primary_unreachable: " + ex.GetType().Name, closeNow: true, clean.Count());
+                return Snapshot();
+            }
+
+            if (historyFailure is not null)
+            {
+                SetBlocked(historyFailure);
                 return Snapshot();
             }
 
@@ -297,6 +362,11 @@ internal sealed class RxAuthority : IAsyncDisposable
         }
         finally
         {
+            if (probe is not null)
+            {
+                await probe.DisposeAsync().ConfigureAwait(false);
+            }
+
             _gate.Release();
         }
     }

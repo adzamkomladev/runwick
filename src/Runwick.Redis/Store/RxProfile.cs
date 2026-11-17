@@ -132,9 +132,9 @@ internal static class RxProfile
         return new RxProfileReport(failure, code, facts);
     }
 
-    public static async Task<Dictionary<string, string>> InfoAsync(IDatabase db)
+    public static async Task<Dictionary<string, string>> InfoAsync(IDatabase db, string section = "everything")
     {
-        var text = (string)(await db.ExecuteAsync("INFO", "everything").ConfigureAwait(false))!;
+        var text = (string)(await db.ExecuteAsync("INFO", section).ConfigureAwait(false))!;
         var d = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var line in text.Split('\n'))
         {

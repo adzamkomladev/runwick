@@ -122,7 +122,9 @@ public sealed class RedisSentinelTests
             }
         }
 
-        Assert.True(resumed, "writes never resumed on the new primary");
+        var seen = store.AuthoritySnapshot!;
+        Assert.True(resumed, $"writes never resumed on the new primary; authority {seen.State} ({seen.Reason}) primary {seen.Primary}; events: "
+            + string.Join(" | ", seen.Recent.Select(e => e.Text)) + "; last refusal: " + (refusals.Count > 0 ? refusals[^1][..Math.Min(300, refusals[^1].Length)] : ""));
         Assert.Contains(refusals, r => r.Contains("store_authority_unverified", StringComparison.Ordinal));
         var after = store.AuthoritySnapshot!;
         Assert.Equal(RxAuthorityState.Verified, after.State);

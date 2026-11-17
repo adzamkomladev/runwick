@@ -151,7 +151,7 @@ internal sealed class RedisStoreRegistration(StackExchange.Redis.ConfigurationOp
             sp.GetRequiredService<JobRegistry>().Application, sp.GetRequiredService<ProducerOptions>().MaxConcurrentCalls)
         {
             Authority = seeds is null || options.Sentinel is null ? null
-                : new RxAuthority(seeds, options.Sentinel, sp.GetRequiredService<TimeProvider>(), configuration!, options.Persistence),
+                : new RxAuthority(seeds, options.Sentinel, sp.GetRequiredService<TimeProvider>(), configuration!, options.Persistence, options.ProfileRecheckInterval),
         });
         services.AddSingleton(sp => new RxRunner(sp.GetRequiredService<RxClient>(), sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<IFaultInjector>()));
         services.AddSingleton(sp => new RedisStore(sp.GetRequiredService<RxRunner>(), options, sp.GetRequiredService<TimeProvider>()));
