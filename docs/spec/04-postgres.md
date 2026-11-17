@@ -6,6 +6,10 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-17, keyed claim)
+
+- Migration `0025_claim_keyed`, schema revision 25, adds `reserve_and_begin_v3`. For both a fresh claim and a receipt replay, it looks up each payload’s job creation timestamp by application and job ID. The lookup stays correlated when application row estimates are stale. The receipt still determines the order of returned jobs, and the claim uses its existing locks and ownership checks.
+
 ## Changes (2026-11-15, grouped outbox delivery)
 
 - Migration `0023_outbox_group`, schema revision 23, adds the driver-only function `receive_outbox_group_v1` and its item type. It adds no protocol operation and does not change the manifest except its schema revision. It takes the store and application gate once, checks the shape of the whole group before any receipt, orders items by command ID, and runs each through `receive_outbox_v3` inside its own savepoint, so every item keeps its own receipt, mapping and reply. A refused item rolls back with its receipt placeholder. A failure of the transaction rolls back the group, and the relay resends the same commands alone.

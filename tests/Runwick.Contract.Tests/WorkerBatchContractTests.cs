@@ -124,7 +124,7 @@ public sealed class WorkerBatchContractTests
         {
             await f.ExecAsync(operation == Operations.FinishMany
                 ? "ALTER FUNCTION runwick.finish_many_v2 RENAME TO finish_many_v2_hidden"
-                : "ALTER FUNCTION runwick.reserve_and_begin_v2 RENAME TO reserve_and_begin_v2_hidden");
+                : "ALTER FUNCTION runwick.reserve_and_begin_v3 RENAME TO reserve_and_begin_v3_hidden");
         }
         else
         {

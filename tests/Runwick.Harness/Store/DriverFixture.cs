@@ -270,7 +270,7 @@ internal sealed class DriverFixture : IAsyncDisposable
 
     /// <summary>After startup, make a PostgreSQL worker fall back to separate Reserve and Begin commands.</summary>
     public Task HidePostgresBatchClaimAsync() =>
-        ExecAsync("ALTER FUNCTION runwick.reserve_and_begin_v2 RENAME TO reserve_and_begin_v2_hidden");
+        ExecAsync("ALTER FUNCTION runwick.reserve_and_begin_v3 RENAME TO reserve_and_begin_v3_hidden");
 
     /// <summary>Runs admin SQL against the per-test database (setup only; never used to fake protocol effects under test).</summary>
     public async Task ExecAsync(string sql, params (string Name, object Value)[] parameters)

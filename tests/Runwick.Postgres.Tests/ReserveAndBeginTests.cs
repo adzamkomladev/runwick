@@ -278,10 +278,18 @@ public sealed class ReserveAndBeginTests
         var replay = await c.ReserveAndBeginAsync(3, commandId: id, notAfter: notAfter);
         Assert.Equal((StoreStatus.Applied, true), (replay.Status, replay.Replayed));
         var o = replay.Value!.Outcomes;
+        Assert.Equal(ids, o.Select(x => x.JobId));
         Assert.Equal([StoreStatus.Applied, StoreStatus.CapacityBlocked, StoreStatus.Applied], o.Select(x => x.Status));
         var attempts = await TextAsync(f, "SELECT attempt_id::text FROM runwick.job_attempts ORDER BY attempt_id");
         Assert.Equal(attempts, o.Where(x => x.Begun is not null).Select(x => x.Begun!.Lease.Handle.AttemptId.ToString()).Order());
-        Assert.All(o.Where(x => x.Reserved is not null), x => Assert.NotEmpty(x.Reserved!.PayloadUtf8));
+        var expectedPayloads = await TextAsync(f, """
+            SELECT concat(j.job_id, ':', encode(p.payload_utf8, 'hex'), ':', (extract(epoch FROM j.created_at) * 1000)::bigint)
+            FROM runwick.job_payloads AS p JOIN runwick.jobs AS j USING (application, job_id)
+            WHERE j.application = @app AND j.job_id = ANY(@ids)
+            ORDER BY j.job_id
+            """, ("app", f.Application), ("ids", new[] { ids[0], ids[2] }));
+        Assert.Equal(expectedPayloads, o.Where(x => x.Reserved is not null).OrderBy(x => x.JobId).Select(x =>
+            FormattableString.Invariant($"{x.JobId}:{Convert.ToHexStringLower(x.Reserved!.PayloadUtf8)}:{x.Reserved.CreatedAt.ToUnixTimeMilliseconds()}")));
         Assert.Equal(1, await Receipts(f, id));
         Assert.Equal(JobStates.Pending, await StateAsync(f, ids[1]));
 
@@ -436,7 +444,7 @@ public sealed class ReserveAndBeginTests
         await w.StartAsync();
 
         // After startup's schema check, before any claim: the store now answers 42883 for the batched claim.
-        await f.ExecAsync("ALTER FUNCTION runwick.reserve_and_begin_v2 RENAME TO reserve_and_begin_v2_hidden");
+        await f.ExecAsync("ALTER FUNCTION runwick.reserve_and_begin_v3 RENAME TO reserve_and_begin_v3_hidden");
         const int jobs = 12;
         await w.Dispatcher.DispatchManyAsync([.. Enumerable.Range(0, jobs).Select(n => new BatchDispatchItem(new Runwick.Harness.Engine.WorkJob("j" + n)))]);
         await Runwick.Harness.Engine.WorkerHost.WaitUntil(() => f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE state = 'succeeded'").Result == jobs,
@@ -449,6 +457,61 @@ public sealed class ReserveAndBeginTests
         Assert.True(w.Engine.AdmissionOpen);
         Assert.Contains(w.Engine.Health().Diagnostics, d => d.Contains("ReserveAndBegin returned UnsupportedVersion", StringComparison.Ordinal));
         Assert.Empty(await f.HistoryViolations());
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    [Trait("Item", "PF-06")]
+    [Trait("Case", "RAB-12")]
+    public async Task A_claim_reaches_its_jobs_by_key_even_when_statistics_have_not_seen_the_backlog()
+    {
+        // 04 Changes (2026-11-17, keyed claim): after the statistics were taken with no ready job and a backlog arrived, the
+        // claim must still read only the jobs it claims, not every ready job once per statement.
+        await using var f = await DriverFixture.StartAsync(Ns("rab12"));
+        await using var w = Host(f, concurrency: 8);
+        await f.ExecAsync("ANALYZE runwick.jobs");
+        for (var batch = 0; batch < 15; batch++)
+        {
+            await w.Dispatcher.DispatchManyAsync([.. Enumerable.Range(0, 100).Select(n => new BatchDispatchItem(new Runwick.Harness.Engine.WorkJob($"j{batch}-{n}")))]);
+        }
+
+        await using var conn = new NpgsqlConnection(f.AdminConnectionString);
+        await conn.OpenAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+        var command = Guid.CreateVersion7();
+        var worker = Guid.CreateVersion7();
+        var tokens = Enumerable.Range(0, 8).Select(_ => Guid.CreateVersion7()).ToArray();
+        var fingerprint = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+
+        async Task<long> Scalar(string sql)
+        {
+            await using var cmd = new NpgsqlCommand(sql, conn, tx);
+            cmd.Parameters.AddWithValue("app", f.Application);
+            cmd.Parameters.AddWithValue("cmd", command);
+            cmd.Parameters.AddWithValue("worker", worker);
+            cmd.Parameters.AddWithValue("tokens", tokens);
+            cmd.Parameters.AddWithValue("fp", fingerprint);
+            return Convert.ToInt64(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        const string FetchedSql = "SELECT coalesce(max(idx_tup_fetch), 0) FROM pg_stat_xact_user_tables WHERE relname = 'jobs'";
+        var before = await Scalar(FetchedSql);
+        var applied = await Scalar("""
+            SELECT count(*) FROM runwick.reserve_and_begin_v3(@app, @cmd, 'ReserveAndBegin', runwick.ms_floor(clock_timestamp() + interval '30 seconds'), @fp,
+                'ownership', interval '60 seconds', NULL, ARRAY[(SELECT schema_revision FROM runwick.store_metadata)],
+                (SELECT protocol_epoch FROM runwick.store_metadata), '{"rw:harness": 1}'::jsonb, false, false, false,
+                'default', (SELECT min(priority) FROM runwick.jobs), NULL, NULL,
+                ARRAY(SELECT DISTINCT job_name::text FROM runwick.jobs), ARRAY(SELECT DISTINCT payload_version FROM runwick.jobs),
+                ARRAY(SELECT DISTINCT serializer_profile_id::text FROM runwick.jobs), ARRAY(SELECT DISTINCT serializer_profile_version FROM runwick.jobs),
+                interval '30 seconds', @worker, @tokens, interval '250 milliseconds', array_fill(0, ARRAY[8])) AS r
+            WHERE r.status = 'Applied'
+            """);
+        var fetched = await Scalar(FetchedSql) - before;
+        Assert.True(applied >= 1);
+        Assert.Equal(8, await Scalar("SELECT count(*) FROM runwick.job_attempts WHERE worker_instance_id = @worker"));
+        // 1,500 ready jobs: reading them all (twice) is at least 3,000 fetches; claiming 8 and reading their payloads is a few dozen.
+        Assert.True(fetched < 300, $"the claim fetched {fetched} job rows through indexes");
+        await tx.RollbackAsync();
     }
 
     [Fact]
@@ -488,7 +551,7 @@ public sealed class ReserveAndBeginTests
     }
 
     /// <summary>
-    /// Calls reserve_and_begin_v2 directly in a transaction that is rolled back, so both paths start from the same rows.
+    /// Calls reserve_and_begin_v3 directly in a transaction that is rolled back, so both paths start from the same rows.
     /// Returns the reply and every row the claim writes as normalized JSON, and the calls of the three claim functions.
     /// </summary>
     static async Task<(string Dump, (long Plain, long Reserve, long Begin) Calls)> ClaimInRolledBackTransactionAsync(
@@ -514,7 +577,7 @@ public sealed class ReserveAndBeginTests
 
         // The backend's unflushed function counts may include an earlier transaction's: count the difference.
         const string CallsSql = """
-            SELECT concat_ws(',', coalesce(pg_stat_get_xact_function_calls('runwick.rw_claim_plain_v1'::regproc), 0),
+            SELECT concat_ws(',', coalesce(pg_stat_get_xact_function_calls('runwick.rw_claim_plain_v2'::regproc), 0),
                 coalesce(pg_stat_get_xact_function_calls('runwick.rw_reserve_job_v1'::regproc), 0),
                 coalesce(pg_stat_get_xact_function_calls('runwick.rw_begin_job_v1'::regproc), 0))
             """;
@@ -523,7 +586,7 @@ public sealed class ReserveAndBeginTests
         var before = Parse(await Scalar(CallsSql));
         var reply = await Scalar("""
             SELECT jsonb_pretty(jsonb_agg(to_jsonb(r) ORDER BY r.status = 'Payload', r.conflicting_job_id))
-            FROM runwick.reserve_and_begin_v2(@app, @cmd, 'ReserveAndBegin', runwick.ms_floor(clock_timestamp() + interval '30 seconds'), @fp,
+            FROM runwick.reserve_and_begin_v3(@app, @cmd, 'ReserveAndBegin', runwick.ms_floor(clock_timestamp() + interval '30 seconds'), @fp,
                 'ownership', interval '60 seconds', NULL, ARRAY[(SELECT schema_revision FROM runwick.store_metadata)],
                 (SELECT protocol_epoch FROM runwick.store_metadata), '{"rw:harness": 1}'::jsonb, false, false, false,
                 'default', (SELECT min(priority) FROM runwick.jobs WHERE job_id = ANY (@ids)), NULL, NULL,
