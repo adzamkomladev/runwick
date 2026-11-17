@@ -236,7 +236,7 @@ internal sealed class RxClient : IAsyncDisposable
             EventHandler<ConnectionFailedEventArgs> restored = (_, _) => onSubscribed();
             try
             {
-                mux = await _control.Value.ConfigureAwait(false);
+                mux = await Current().Control.Value.ConfigureAwait(false); // follows the verified primary in Sentinel mode
                 mux.ConnectionFailed += failed;
                 mux.ConnectionRestored += restored; // the library resubscribes by itself; the pool looks once more for what it missed
                 await mux.GetSubscriber().SubscribeAsync(channel, (_, value) =>
@@ -254,7 +254,7 @@ internal sealed class RxClient : IAsyncDisposable
             {
                 return;
             }
-            catch (Exception ex) when (ex is RedisException or IOException or TimeoutException or InvalidOperationException)
+            catch (Exception ex) when (ex is RedisException or IOException or TimeoutException or InvalidOperationException or StoreNotAppliedException)
             {
                 onLost();
                 try
