@@ -8,7 +8,7 @@ SP-024 ships `Runwick.Dashboard`: a web UI for people who run Runwick. It shows 
 
 - **No second backend.** Every page reads through `IManagementSession` (16), in the same process. The dashboard adds one read (scaling history, §6). Everything else already exists.
 - **Same login, same permissions.** The dashboard uses the authentication schemes, grant mapping and actor mapping of `AddRunwickManagement` (16 §5). A page or button is shown only when the caller's grants allow it, and the server checks again on every request.
-- **Built on the spike.** Each dashboard mount is an Inertia.Net 1.7.0 named mount. Runwick keeps the six pieces the spike had to add (sp-023, "Gaps Runwick still covers"). The React client is built ahead of time and embedded in the package. Users never need Node.
+- **Built on the spike.** Each dashboard mount is an Inertia.Net 1.9.4 named mount. Runwick keeps the six pieces the spike had to add (sp-023, "Gaps Runwick still covers"). The React client is built ahead of time and embedded in the package. Users never need Node.
 - **Embedded or standalone.** Embedded: mounted at a path inside an existing ASP.NET Core app. Standalone: an app that has only Runwick, management and the dashboard, with no worker or scheduler. The code is the same.
 - **Polling only.** Pages refresh by polling, at most every 5 s, paused when the tab is hidden. There is no live push channel in v1.
 
@@ -75,7 +75,7 @@ Not in SP-024: server-side rendering, a live push channel (SSE or WebSocket), qu
 |---|---|
 | Project | `src/Runwick.Dashboard/Runwick.Dashboard.csproj`, packable, `net10.0` |
 | Runwick dependency | `Runwick.AspNetCore` only (00 §6) |
-| External dependency | Inertia.Net 1.7.0 (contentHash pinned in `packages.lock.json`, see sp-023 "Pinned versions") |
+| External dependency | Inertia.Net 1.9.4 (raised from 1.7.0 on 2026-11-17; contentHash pinned in `packages.lock.json`) |
 | Embedded resources | `dist/**`, logical name `runwick-dashboard/{path}` |
 | Client source | `src/Runwick.Dashboard/ClientApp/` (not packed) |
 | Namespaces | `Runwick.Dashboard` for types; extension methods in `Microsoft.Extensions.DependencyInjection` and `Microsoft.AspNetCore.Builder`, as `Runwick.AspNetCore` does |
@@ -288,7 +288,7 @@ Rules for every page:
 
 ### 4.3 Prop kinds
 
-Props use Inertia.Net 1.7.0's factories; the permission check of §3.6 runs first on every request.
+Props use Inertia.Net 1.9.4's factories; the permission check of §3.6 runs first on every request.
 
 | Page | Prop | Kind |
 |---|---|---|

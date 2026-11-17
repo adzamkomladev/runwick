@@ -5,7 +5,7 @@
     <SpaRoot>ClientApp\</SpaRoot>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Inertia.Net" Version="1.7.0" />
+    <PackageReference Include="Inertia.Net" Version="1.9.4" />
   </ItemGroup>
   <ItemGroup>
     <Content Remove="node_modules\**;ClientApp\**;ssr\**;package*.json;tsconfig*.json;vite.config.ts;code-themes.ts;scripts\**" />

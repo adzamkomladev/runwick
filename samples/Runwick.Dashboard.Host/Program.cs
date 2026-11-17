@@ -39,6 +39,7 @@ builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
 builder.Services.AddInertia(o =>
 {
     o.Version = "host-1";
+    o.TypeScript.OutputPath = "inertia-host.d.ts"; // the host writes types; the Runwick dashboard mount must not make --inertia-types fail
     o.Share("hostUser", _ => "host-secret-user");
 });
 builder.Services.AddRunwick(r =>

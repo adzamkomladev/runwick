@@ -39,6 +39,13 @@ public static partial class DashboardServiceCollectionExtensions
         {
             o.Version = options.Assets.Version;
             o.EncryptHistory = true; // an extra layer: props are already safe DTOs
+            // SPA only, spelled out so a host's or a later Inertia.Net default never changes it. Disabled is a kill switch:
+            // no per-response WithSsr can turn it on, and no Node process or SSR URL is ever touched for this mount.
+            o.Ssr.Mode = SsrMode.Disabled;
+            // The client's types are hand-written and prebuilt into dist/. Null = write nothing, so a host's
+            // `dotnet run -- --inertia-types` has nothing to do for this mount (and, with 1.9.4, no failure to report).
+            o.TypeScript.OutputPath = null;
+            o.TypeScript.RoutesOutputPath = null;
         });
         return services;
     }

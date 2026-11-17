@@ -4,22 +4,22 @@
     "net10.0": {
       "Inertia.Net": {
         "type": "Direct",
-        "requested": "[1.7.0, )",
-        "resolved": "1.7.0",
-        "contentHash": "oSlTk81hVNyyrTUQ18fCIiCqYL/kVio2REbdmZeiZCCvqEU7QXha4bc+5akPsqkodkkfpTkQ8Vh9fluEkom5nw=="
+        "requested": "[1.9.4, )",
+        "resolved": "1.9.4",
+        "contentHash": "KkkNO8eAWxb6CxV4+X+fS7tY53NG48C/PwLwnt3ntafU5FG4TzYYt2Zyv3Uy1ggrZJXWY+wGjbb3/tUIUqtFzg=="
       },
       "runwick": {
         "type": "Project",
         "dependencies": {
           "Cronos": "[0.13.0, )",
           "NodaTime": "[3.3.7, )",
-          "Runwick.Contracts": "[0.1.3, )"
+          "Runwick.Contracts": "[0.1.4, )"
         }
       },
       "runwick.aspnetcore": {
         "type": "Project",
         "dependencies": {
-          "Runwick": "[0.1.3, )"
+          "Runwick": "[0.1.4, )"
         }
       },
       "runwick.contracts": {

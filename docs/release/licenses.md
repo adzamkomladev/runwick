@@ -26,7 +26,7 @@ Anything else (GPL, LGPL, MPL, AGPL, SSPL, "custom", missing) is not allowed aut
 
 NuGet, grouped by licence:
 
-- MIT: Cronos 0.13.0, Inertia.Net 1.7.0, Microsoft.Data.Sqlite and .Core 10.0.14, Microsoft.Extensions.* (Configuration, DependencyInjection, Diagnostics, FileProviders, Hosting, Logging, Options, Primitives; 10.0.0 to 10.0.14), RESPite 3.4.20, StackExchange.Redis 3.4.20, System.IO.Hashing 10.0.13.
+- MIT: Cronos 0.13.0, Inertia.Net 1.9.4, Microsoft.Data.Sqlite and .Core 10.0.14, Microsoft.Extensions.* (Configuration, DependencyInjection, Diagnostics, FileProviders, Hosting, Logging, Options, Primitives; 10.0.0 to 10.0.14), RESPite 3.4.20, StackExchange.Redis 3.4.20, System.IO.Hashing 10.0.13.
 - Apache-2.0: NodaTime 3.3.7, OpenTelemetry, OpenTelemetry.Api, OpenTelemetry.Api.ProviderBuilderExtensions 1.20.1, SQLitePCLRaw.bundle_e_sqlite3, .core, .lib.e_sqlite3, .provider.e_sqlite3 2.1.13.
 - PostgreSQL: Npgsql 10.0.3.
 

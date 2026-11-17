@@ -33,8 +33,8 @@
     <PackageVersion Include="Testcontainers" Version="4.16.0" />
     <!-- SP-018 prototype tests; D-09 client baseline, also the future Runwick.Redis pin. -->
     <PackageVersion Include="StackExchange.Redis" Version="3.4.20" />
-    <!-- SP-023 dashboard: the Inertia adapter (named mounts since 1.7.0). -->
-    <PackageVersion Include="Inertia.Net" Version="1.7.0" />
+    <!-- SP-023 dashboard: the Inertia adapter (named mounts since 1.7.0; 1.9.4 skips mounts without a TypeScript output path when generating types). -->
+    <PackageVersion Include="Inertia.Net" Version="1.9.4" />
     <!-- SP-022 telemetry tests (test projects only); same release as the OpenTelemetry pin. -->
     <PackageVersion Include="OpenTelemetry.Exporter.InMemory" Version="1.20.1" />
   </ItemGroup>
