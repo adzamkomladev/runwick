@@ -743,3 +743,486 @@ Read these with four caveats:
 
 **Not done.** Measuring real loss under an OS crash or power cut, a quiet-host rerun, and the paired comparison against BullMQ under the everysec setting (the delayed BullMQ comparison remains under `always`).
 
+## Buffered finish (G1)
+
+**Status 2026-11-15:** landed as an opt-in worker profile, `WorkerOptions.UseBufferedFinish()`. Off by default. The default behaviour and every default value are unchanged.
+
+### What it does
+
+Today a job holds its worker slot until the database has confirmed that the job finished. With buffered finish, the slot goes back to the pool the moment the handler returns and the finish is queued. The finishes are then sent to the store together, about every 25 ms, or sooner when 32 have collected. The next job starts while the previous finish is still on its way.
+
+The job itself is not treated as finished until the store says so. While its finish is waiting, the job keeps everything that fences it: its entry in the worker, its lease, its concurrency and rate permits, and its unique key. Only the local slot is reused. This is what the plan asked for ("remote permits remain held until storage accepts the finish").
+
+### Limits, so memory and risk stay bounded
+
+- At most 256 unsettled buffered finishes (setting: 1 to 4,096).
+- At most 4 MiB of estimated finish size, counting error text (setting: 64 KiB to 64 MiB).
+- If the oldest buffered finish is more than 1 s old, no more slots are given back until it settles.
+- When any limit is hit the slot is simply kept until the finish settles, which is exactly what the default does. That is how refilling stops. Nothing is dropped or queued without bound.
+- A partial batch never waits past its flush interval (25 ms by default, 1 ms to 1 s), and it is sent at once if the worker is shutting down or any collected job is within about 13 seconds of its local authority deadline.
+
+### What it can lose
+
+A worker that dies while finishes are still only in its memory has not told the store those jobs finished. Their leases run out, recovery returns them to retry, and the handler runs again. This is the same at-least-once behaviour Runwick always has, but the window is wider: up to the buffer, a few tens of milliseconds of completed work. Handlers must be safe to run twice. A normal shutdown sends the buffer first. If the store does not answer during shutdown, the outcome is unresolved, just as without the option.
+
+### Tests
+
+- Core (fake time, scripted store with `FinishMany`): off by default and its limits are validated (V-22); a held store lets later jobs start only with the option on (1 job against 6); the count limit stops slot reuse at the bound and everything settles once the store accepts (4 of 10 started while held, 10 of 10 settled after); the byte limit holds; simultaneous finishes go out in one call and a lone finish waits only the interval; a drain flushes at once; a buffered attempt stays tracked in `Finishing`, fenced and unretired until accepted; finishes that never reach the store leave the job to expire and be recovered with no finish recorded. 8 of 8 pass; the Core project passes 449 of 449.
+- Contract, SQLite, PostgreSQL and Redis: 60 jobs settle once each with one Finish receipt each and the buffer empties; a full buffer (limit 2, 8 slots) keeps slots and loses nothing; a graceful stop sends 16 buffered finishes; on SQLite and Redis, a worker whose finishes never reached the store leaves 8 jobs that another worker recovers and runs again (each job then has two attempts). 11 of 11 pass. The neighbouring finish-batching and worker contract tests (45) still pass.
+- Not covered on a real store: a hard kill of the worker process (the crash case stops the first worker normally while its finishes are held; PostgreSQL has no equivalent hold in the harness).
+
+### Measurement
+
+Paired default against buffered drain runs, alternating order, 4,000 jobs of 512 bytes, 4 and 16 workers, on SQLite and PostgreSQL 18 (docker, same host). Every run took `flock /tmp/runwick-bench.lock`. The host is shared with the running SP-029 qualification and other agents' work, so the numbers are informational. Raw files: `artifacts/perf/round-two/g1-buffered-finish/` in the G1 worktree.
+
+All 40 runs finished (exit 0) and every run reconciled: all 4,000 jobs drained, finished and invoked once.
+
+| Store, workers | Default (jobs/s, median) | Buffered (jobs/s, median) | Median paired ratio | Ratio in each pair |
+|---|---|---|---|---|
+| SQLite, 4 | 50.7 | 70.4 | 1.34 | 1.82, 1.08, 1.34, 1.32, 1.71 |
+| SQLite, 16 | 147.1 | 171.6 | 1.17 | 0.98, 1.17, 2.06, 1.03, 1.24 |
+| PostgreSQL, 4 | 49.1 | 59.1 | 1.17 | 1.17, 1.32, 1.23, 1.05, 1.00 |
+| PostgreSQL, 16 | 106.0 | 125.2 | 1.18 | 1.14, 1.77, 0.69, 1.34, 1.18 |
+
+Reading it honestly: buffered finish was faster in 18 of 20 pairs, and the median gain is 17% to 34%. At four workers the slot is the limit, so the gain is largest and most consistent (never below 1.0). At sixteen workers the pairs are spread widely (0.69 to 2.06), so the gain there is likely real but the size is not pinned down. These are low absolute rates because the host was busy with the SP-029 qualification and other benchmarks, so only the paired ratios mean anything, and they are informational. No arm was run on Redis.
+
+### Open
+
+- Redis was not benchmarked for G1; its contract tests pass. The 16-worker pairs are too spread out to fix the size of the gain; a quiet host would help.
+- A hard-kill test of a real worker process is not done.
+- Interaction with auto-concurrency: the scaler sees lower occupancy during the finish round trip. Not measured.
+- Whether to make this a per-queue setting instead of per worker. Today it applies to every pool of the worker.
+
+## PostgreSQL grouped producer admission (B1)
+
+### What was built
+
+`PostgresOptions.GroupProducerAdmission` (default off) lets one process commit several independent `DispatchAsync` calls in one PostgreSQL transaction.
+
+- **How callers are grouped.** A caller that finds nothing in flight sends its own command at once and waits for no one. Callers that arrive while a send is in flight wait in a small queue (at most 8 commands and 2 MiB, counting each payload plus 2 KiB) and leave together when the slot frees. There is no timer, so the "at most 2 ms collection wait" in the plan is never spent: the queue fills while the previous send is on the wire. A command that does not fit the queue takes the ordinary path. The number of groups in flight is 1 by default; 2 is available for measurement through an internal setting.
+- **What is grouped.** Only plain `Dispatch/1`: no uniqueness key, no concurrency or rate scope, no schedule header. Batches, calls on your own transaction, the outbox, schedules and management dispatch never join a group.
+- **The database side.** Migration `0023_dispatch_group` (schema revision 23) adds `dispatch_group_v1`. It takes the gates once, then checks each command's receipt in command-ID order with the existing receipt helper. A replay, a conflict, an expired deadline, a bad request or an unregistered queue answers for that command alone, and the placeholder it inserted is removed. The rest share one decision time and insert their jobs, payloads, first generation and one event each, in the same shape a single dispatch writes. A parity test compares the stored rows of a grouped job with a single job's, apart from IDs and times.
+- **Receipts and recovery.** Every command keeps its own operation ID, receipt, deadline and result. If anything fails before COMMIT is sent (including a member reaching its deadline after the writes, or a job ID collision), the whole group rolls back and every command retries alone with its original identity. If COMMIT was sent and the reply is lost, each command gets an outcome-unknown error carrying its own command ID, and `ResolveAsync` or a resend returns the original receipt.
+- **Cancellation.** A caller that cancels while queued leaves the queue and nothing is sent for it. A caller that cancels after its group was sent stops waiting with its recoverable operation ID, and the transaction still settles its receipt.
+- **Shutdown.** Disposing the store fails queued commands as not applied and drains groups already sent (cancelled after 10 seconds).
+
+### Tests
+
+Nine focused tests in `GroupedAdmissionTests` pass: one group with single-dispatch row parity and individual replays; a lone caller never forms a group; six mixed outcomes in one group (fresh, replay, conflict, expired, unregistered queue, fresh) with no receipt left for refused members; a job-ID collision rolling the group back and three commands retrying alone; cancellation while queued; cancellation after submission and resolving by ID; a lost reply giving outcome unknown to all members and replays on resend; disposal; and non-plain commands skipping the queue. The whole PostgreSQL project passes (403 tests; two timed out under the host's heavy load and passed alone), the Contract project passes 480 of 480, and the migration tests cover the new migration. The Core project passes 440 of 441; the one failure (`WorkerEngineTests.Hung_disposal_latches_unconfirmed_completion_without_a_retryable_finish`) also fails on the main checkout's build, so it does not come from this change.
+
+### Measurement
+
+Single-job `DispatchAsync` from 1, 8 and 16 callers, grouping off against on with one group in flight (g1) and with two (g2), alternating arm order for each pair, 3 pairs at 1 KiB and 2 pairs at 64 KiB and 1 MiB. Every run took `/tmp/runwick-bench.lock`.
+
+**These numbers are informational and very noisy.** The host was running the SP-029 qualification and other agents' work, with a load average between 19 and 54 on 8 cores, and a single caller managed only 40 to 50 jobs/s. Rates are the median of the pairs; the ratio is the median of the per-pair grouped ÷ off ratios, with each pair in brackets.
+
+| Payload | Callers | Off (jobs/s) | g1 (jobs/s), mean group | g1 ÷ off | g2 (jobs/s), mean group | g2 ÷ off |
+|---|---|---|---|---|---|---|
+| 1 KiB | 1 | 48.8 | 39.2, none formed | 0.92 [1.26, 0.62, 0.92] | n/a | n/a |
+| 1 KiB | 8 | 187.1 | 113.3, 4.5 | 0.63 [0.63, 0.90, 0.58] | 108.8, 4.9 | 0.60 [0.60, 1.04, 0.56] |
+| 1 KiB | 16 | 231.8 | 212.5, 8.0 | 0.66 [0.57, 1.04, 0.66] | 322.8, 5.6 | 1.57 [1.66, 1.57, 0.87] |
+| 64 KiB | 1 | 40.8 | 44.9, none formed | 1.10 [1.09, 1.12] | n/a | n/a |
+| 64 KiB | 8 | 167.4 | 99.3, 4.1 | 0.60 [0.72, 0.47] | 124.5, 3.4 | 0.74 [0.55, 0.93] |
+| 64 KiB | 16 | 168.3 | 132.7, 8.0 | 0.79 [0.81, 0.77] | 185.2, 5.5 | 1.12 [1.29, 0.94] |
+| 1 MiB | 8 | 36.5 | 31.7, none formed | 0.88 [0.60, 1.16] | 36.0, none formed | 0.98 [1.06, 0.91] |
+
+A 1 MiB payload leaves room for one command in the 2 MiB queue, so no group ever formed there and those rows only show the cost of the extra bookkeeping. WAL per job is not reported: the host-wide WAL counter included other databases' writes.
+
+### Reading
+
+- Grouping with one group in flight lost throughput at 8 callers (a ratio of 0.58 to 0.90 at 1 KiB, 0.47 to 0.72 at 64 KiB) and at 16 callers with one group in flight (a median of 0.66 at 1 KiB). The off arm has up to 8 or 16 connections committing at once, and one group at a time serializes them.
+- Two groups in flight did better at 16 callers: 1.57 times at 1 KiB (two pairs near 1.6, one at 0.87) and 1.12 times at 64 KiB (1.29 and 0.94). That is the only cell where grouping looks useful, and three pairs on a loaded host cannot confirm it. At 8 callers two in flight still lost (0.60 and 0.74).
+- A lone caller was neither helped nor held back beyond noise: no group formed, and the ratio at 1 KiB moved between 0.62 and 1.26 pair to pair.
+- No fallbacks happened in any run, so the rollback path costs nothing in the measured mix.
+
+### What stays open
+
+- The measurement needs a quiet host with a separate database host before grouped admission is recommended. Until then it stays off by default and unrecommended; the plan's gate (lower SQL or commit cost under concurrency with no singleton latency regression) is not met at 8 callers.
+- Whether two groups in flight is the right default at 16 or more callers, and whether the producer lane size should change with it.
+- Server-side fault points (`BeforeFirstMutation`, `AfterMutation`) are not wired into the group function. Tests use the client fault points before, at and after COMMIT, applied to the group's first command.
+- The admission lease still belongs to the caller. A caller that stops waiting releases its lease while its group is in flight. The abandoned work is bounded (at most 8 commands, one or two groups) rather than tracked per caller.
+- Storage telemetry records one `Dispatch` operation per group, not one per command.
+- Raw runs: `artifacts/perf/round-two/pg-b1-group/` in the worktree (`pairs.sh`, `summarize.py`, `summary.json`, the 46 result files). Git ignores it.
+
+## Grouped outbox delivery (D4)
+
+**What changed.** The relay can now send several messages it claimed together to the destination as one transaction. Each message keeps everything that made single delivery safe: its own transport command ID and deadline, its own receipt, its own delivery mapping and its own reply. After the destination answers, the relay marks each message delivered at the source under that message's own lease token, as before. Only the connection, the transaction and the commit are shared.
+
+It is off by default. `OutboxRelayOptions.DeliveryGroupSize` is 1 (each message alone, exactly the old behavior); 2 to 16 turns grouping on. Only plain messages are grouped (no uniqueness key, no concurrency scope, no rate limit), so a group never takes a row lock that another group might also want. Every other message in the same claim is sent alone at the same time.
+
+**PostgreSQL destination.** Migration `0023_outbox_group` (schema revision 23) adds one driver-only function, `receive_outbox_group_v1`. It checks the shape of the whole group first (2 to 16 items, no repeated command or message identity, no keyed item, at most 2 MiB of payload) before it creates any receipt. It then runs each item through the existing `receive_outbox_v3` in its own subtransaction, in command-ID order. An item that is refused (conflict, expired command, passed horizon, invalid) rolls back with its receipt placeholder and reports its own reply, and the others commit. No protocol operation was added, and the manifest changes only its schema revision. The migration file may need a different number when it is merged with the other PostgreSQL migration in this round.
+
+**SQLite destination.** No relay change was needed. SQLite already commits concurrent producer calls together (up to 8 calls or 1 MiB queued at the same moment, each in its own savepoint). `ReceiveOutbox/1` now goes through that same path, so relay slots that send at the same time share one commit.
+
+**Redis destination.** Not changed. It does not implement the grouped call, so the option is ignored and every message is sent alone. A grouped Redis script would be a separate change.
+
+**If a group fails.** Any answer that is not a complete, applied group reply (a lost reply, an unreachable destination, a timeout, a refusal of the whole group) makes the relay send each command alone with its original command ID. The per-command receipts and the delivery mapping answer the ones the group already applied, so no second job can appear. This is covered by a test that applies the group and then loses the reply.
+
+**Tests.** Seven new test methods in `GroupedDeliveryTests` (11 runs, counting both source adapters), all passing:
+
+- a protocol-level group with fresh, replayed, conflicting and expired commands, each getting its own reply and receipt, with no leftover receipt for the refused ones;
+- groups the store refuses before any effect (one command, a repeated command, a repeated message identity);
+- the relay delivering twelve messages as groups, one job and one mapping each, on both source adapters;
+- a lost group reply followed by single resends (one receipt per command, no second job);
+- one message that blocks at the relay while its claim mates are delivered and confirmed;
+- delivered marks lost after a group (written but reply lost, and never written), repaired by the mappings;
+- the option having no effect on a SQLite destination.
+
+The whole Outbox project passed 57 of 57 before the last test was added (the last test passed on its own, 2 of 2), the SQLite project passes (54 of 54), and the PostgreSQL migration, operation-version, round-trip-budget, wake-notification and batch-cap cases pass (83 of 83) with the revision 23 golden manifest. The outbox and relay contract cases in the Contract project pass (14 of 14).
+
+**What is not done.**
+
+- P-09 numbers: see the measurement section below; they are informational because the host is shared.
+- Batched source marks (D2) are not part of this change; the mark of each message is still its own source call.
+- The earlier isolated destination-wake candidate (`p09-d4/receive-wake.patch`) was not adopted here. It adds its own migration and entry point that would have to be reconciled with `0023_outbox_group`.
+- Grouping on Redis.
+
+### P-09 measurement (informational, shared host)
+
+Setup: the P-09 workload (`--rate 100`, 8 business writers, 1 KiB intents, 30 s warm-up, 60 s measurement, 2 min drain), PostgreSQL 18 source and destination in a fresh pinned container with fsync, synchronous commit and full-page writes on. The same build runs both arms: group size 1 against group size 4 at 4 relay slots. The host was shared with the SP-029 qualification run and several other agents' builds and benchmarks, so absolute rates are far below earlier quiet-host numbers and only the paired comparison means anything.
+
+Three alternating pairs each at 4 slots (group 4) and 16 slots (group 8), same build, group size 1 against the group size:
+
+| Config | Pair | Confirmed/s off → on | Destination commit mean per call off → on | Avg group |
+|---|---|---|---|---|
+| 4 slots, group 4 | 1 | 19.5 → 25.3 | 72.8 → 44.0 ms | 2.3 |
+| | 2 | 27.0 → 21.6 | 41.3 → 55.9 ms | 2.3 |
+| | 3 | 33.1 → 38.3 | 29.6 → 24.1 ms | 2.3 |
+| 16 slots, group 8 | 1 | 60.4 → 69.5 | 85.1 → 61.7 ms | 2.9 |
+| | 2 | 54.4 → 69.3 | 94.8 → 50.9 ms | 2.9 |
+| | 3 | 49.8 → 46.6 | 103.0 → 117.6 ms | 2.9 |
+
+Medians: at 4 slots 27.0 → 25.3 confirmed/s (paired median ratio 1.16, with one pair worse); at 16 slots 54.4 → 69.3/s (paired median ratio 1.15, with one pair worse). Ready-to-confirm p99 at 16 slots was 35.3 s off and 39.3 s on (ratio 1.11, so no better). At 4 slots most runs never drained and report no p99. There were no fallbacks, and every message that was delivered had one mapping, one job and no mark mismatch in all twelve runs. Groups were small (2.3 and 2.9 commands on average) because a claim only returns as many messages as there are free slots, so a larger group size does nothing until the claim itself is larger.
+
+**Reading.** Grouping cuts destination commits per delivery in most pairs and helps median throughput by about 15%, but two of six pairs went the other way, the host was loaded by other work, and the tail did not improve. **P-09 is not met at either slot count** (100 deliveries/s and p99 at most 2 s), so grouped delivery stays opt-in and the default stays 1. The remaining cost sits at the source (one claim, one transport write and one delivered mark per message) and in the small claim size, not only in destination commits. The next steps with a real chance are batched source marks (D2) and claiming more messages per call than there are free slots, measured on a quiet host.
+
+Raw results: `artifacts/perf/round-two/outbox-d4/slots4-g4/` and `slots16-g8/` in the worktree (git-ignored); `python3 summarize.py <dir>` prints the paired medians.
+
+## Scheduler work area S: round-two follow-up (2026-11-15)
+
+Everything here ran on the shared host while the SP-029 qualification and four other agents were also running. The host load average was 17 to 50 on eight cores. Treat every timing as informational. The correctness checks are not affected by load: every run acknowledged all 3,000 expected occurrences, with no duplicate instants, no orphan occurrences, no shared jobs and no lease losses.
+
+### What changed
+
+1. **Group sizes 2 to 8 are now an option** (`SchedulerOptions.MaterializationGroupSize`, default 4, PostgreSQL migration 0023, additive). This is the isolated eight-plan candidate from the earlier report, landed with its tests: Core scheduling 181, PostgreSQL migrations 72 and the schedule contracts 73 (SQLite, PostgreSQL and Redis) all passed. Migration 0023 takes the next free number, so it will need renumbering if another change lands a migration first.
+2. **The grouped loop is pipelined.** It reads the next due page while the current page commits, keeps groups in flight across the page boundary, and prepares the next group while both slots are busy. Before this, each page of 32 schedules drained both groups, then waited for a read, then waited for the first new group to fill. Two new Core tests cover it: the second page is read before any group commits, and shutdown leaves no group running after a full page. Spec 13 has a dated note.
+3. **The P-06s workload gained `--scheduler-replicas N`** (equal aggregate allowance: 100/N jobs/s and burst 32/N per replica) and `--jobs-per-second` / `--burst` for the scheduler process.
+
+### Pipelining, paired short runs (one round)
+
+Same 1,000 schedules, 100 jobs/s allowance, two groups in flight, two minutes of warm-up, three of measurement, a fresh PostgreSQL 18.6 container per run. "Base" is commit 295acb9 and "pipelined" is a85849f. Post-commit acknowledgment lag:
+
+| Arm | p50 | p95 | p99 | Mean due-read wait | Mean function per group |
+|---|---:|---:|---:|---:|---:|
+| Four plans, no pipelining | 9.55 s | 17.40 s | 18.61 s | 36.7 ms | 90.8 ms |
+| Eight plans, no pipelining | 8.96 s | 20.44 s | 22.18 s | 48.1 ms | 146.4 ms |
+| Eight plans, pipelined | 8.89 s | 20.28 s | 22.42 s | 6.6 ms | 154.7 ms |
+
+Pipelining did what it was meant to do: the loop now almost never waits on a due read (48 ms down to 6.6 ms per page). It did not move p99 here. At this host load the database function took 146 to 155 ms per group of eight, against 95 ms on the quiet host, so two groups in flight give about 70 plans/s, below the 100/s allowance. The run is limited by the database, not by the loop. One pair is not enough to separate a small gain from noise, and the later rounds were cancelled to free the shared benchmark lock. The earlier quiet-host eight-plan runs (p99 12.47 and 13.86 s) remain the closest evidence for the 13 s gate, and the pipelined loop needs a quiet-host repeat before it can be called better.
+
+Why the 13 s gate is still open: per plan, the database function costs 12 to 16 ms at every group size, so grouping saves round trips and commits but not the per-plan work (job and payload insert, two events, the occurrence row, the schedule update, the receipt). That work is the next lever, and any change to it needs its own replay and rollback proofs. I did not touch it.
+
+### S6: replica contention at equal aggregate allowance
+
+One run each, eight-plan pipelined groups, 1,000 schedules, aggregate 100 jobs/s split evenly:
+
+| Schedulers | Plans sent for 6,000 occurrences | Revision conflicts | p50 | p99 |
+|---:|---:|---:|---:|---:|
+| 1 | 6,000 | 0 | 8.65 s | 16.86 s |
+| 2 | 8,405 | 1,464 | 11.19 s | 21.63 s |
+| 4 | 15,650 | 7,240 | 20.08 s | 39.32 s |
+
+Contention is material. Every replica reads the same ordered head of the due index, so they plan the same schedules, and the loser of each race wastes a plan and a lock wait. Two replicas send 40% more plans than needed and four send 2.6 times as many. Correctness holds (zero duplicates), but adding replicas makes lag worse, not better, at a fixed aggregate allowance. Revision checks remain the safety mechanism. Conflict counts do not depend on host load, so this conclusion is sturdier than the lag figures.
+
+I did not build an ownership protocol. The plan asks for crash recovery, rebalance and abandoned-claim tests for that, and it is a design of its own. The cheapest direction to evaluate is a short claim written through the existing revision check (advance a schedule's scan time by a few seconds before planning it), so a second replica skips it; the cost is one more write per schedule.
+
+### Decisions on the other S items
+
+- **S2 (overlap independent plans):** superseded by the grouped S3 path, which already keeps two groups in flight. Four pending commands queue behind the two-slot PostgreSQL background lane, so the lane is the cap.
+- **S4 (durable due hints):** landed earlier; unchanged.
+- **S5 (cache compiled recurrences):** not justified. Evaluation costs 0.064 ms per plan on average (0.4 ms at p99), against about 12 ms of database work per plan.
+
+### What is still open
+
+- A quiet-host P-06s repeat of the four- against eight-plan, pipelined and not, including the 15-minute steady window and the 1,000-occurrence catch-up.
+- The per-plan database cost (see above).
+- A replica ownership design, if running more than one scheduler matters for P-06.
+
+Raw runs: `artifacts/sched-s/arms/` and `artifacts/sched-s/replicas/` in the worktree (git ignores them), with `run-arms.sh`, `run-replicas.sh` and `summarize.py` beside them.
+
+## Redis grouped dispatch and the BullMQ comparison (work area F)
+
+Written 2026-11-15. Informational: every number below was measured on the shared host, with the full SP-029 matrix and other agents' test suites running at the same time (load average 20 to 60 on 8 cores). Benchmarks ran one at a time under a shared lock, alternating arms inside each round, so each pair saw the same neighbours. They still carry host noise. They do not replace a quiet-host run.
+
+### What was built
+
+An opt-in way to send several plain dispatches to Redis in one call (`RedisOptions.GroupDispatches`, default off, with `MaxGroupItems`, `MaxGroupBytes` and `MaxGroupsInFlight`). It is the F3 proof wired into the client.
+
+- A caller that finds a free send slot goes out alone at once, as before. A caller that arrives while every slot is busy waits in a small bounded queue and goes out with the others waiting, when the next slot frees. Nothing waits on a timer. If the queue is full, or one dispatch is larger than a group may carry, that dispatch goes alone.
+- Each member keeps its own command ID, fingerprint, deadline, receipt and event. Resending one later, alone or in another group, returns its original job. Delayed dispatches can be grouped. Dispatches with uniqueness keys, concurrency scopes, rate scopes or schedule headers never are.
+- The Lua script decides each member alone. When it cannot group a set (repeated command ID, an unsupported shape, too many keys or writes, too large, or slow to decide) it says `group_fallback` before writing anything, and the client sends each member alone with its original ID.
+- A lost reply gives every member an "outcome unknown" for its own command, to resolve or resend as before. A caller cancelled while waiting leaves nothing behind. A caller cancelled after the group was sent gets the real outcome. Shutdown fails never-sent members as not applied.
+- No layout revision, no manifest change. Groups write the ordinary job, receipt and event rows.
+
+Tests: 10 new (`RedisGroupedDispatchTests`) cover concurrent grouping with one event per command, lone callers never grouping, delayed members, queued cancel, cancel after send, a lost group reply, every write prefix of a group (the injected-failure sweep, 3 members, until a run completes) with recovery and resend, a declined group, a mixed group (replay, fresh, expired) and a kill and restart of Redis with 160 grouped dispatches all confirmed afterwards. The whole Redis project passes 86 of 86 (1.49 hours, including the kill-and-restart cases). The Contract project passes 480 of 480.
+
+### Does it help? Mostly no, on this host
+
+Five alternating pairs at 16 producer calls, 10,000 one-kilobyte dispatches each (median):
+
+| Arm | Jobs/s | Enqueue p95 / p99 (ms) |
+|---|---|---|
+| Runwick, grouping off | 432 | 75 / 142 |
+| Runwick, grouping on (2 slots, groups of about 6) | 360 | 97 / 191 |
+| BullMQ 6.7.2 | 897 | 40 / 86 |
+
+Grouping on was 0.81× of grouping off (paired ratios 0.79 to 1.03). Runwick without grouping was 0.49× of BullMQ.
+
+Three alternating pairs at 64 producer calls:
+
+| Arm | Jobs/s | Enqueue p99 (ms) |
+|---|---|---|
+| Runwick, grouping off | 684 | 277 |
+| Grouping on, 2 slots (groups of 8) | 559 | 409 |
+| Grouping on, 4 slots | 532 | 452 |
+| BullMQ | 2,491 | 81 |
+
+Three more pairs with more sends in flight (64 callers): off 705 jobs/s, 8 slots 761 (paired median 1.19×, pairs 1.19, 0.78, 1.24), 16 slots of 4 items 718 (1.14×). So grouping can break even or gain a little when enough sends are in flight, but the effect sits inside this host's noise.
+
+### Why: the script costs too much per job, not the number of calls
+
+- Redis reports 1,213 µs per single dispatch script call against 157 µs for a BullMQ add (same run, same host). Redis spent 12.7 s of CPU on 10,500 Runwick dispatches and 2.0 s on 10,500 BullMQ adds.
+- With phase marks inside the real script (single dispatch, microseconds): reading the application and checking the gates 146, deciding 184, preparing events 90, ordering the writes 170, packing the intent 69, writing the guard 41, writing the data 218; about 1,000 in total. A group of 6 costs about 650 to 700 per job: the fixed part is shared, the rest is per job.
+- Without the .NET client, over plain sockets, eight connections get about 280 to 350 jobs/s with single dispatches and about 900 to 920 jobs/s with groups of 8 (script time 1.3 to 1.9 ms per single call, 2.5 to 2.6 ms per group of 8). With `appendfsync always`, one fsync covers everything in an event-loop pass, so the number of jobs in flight decides throughput. That is why grouping can triple the raw ceiling.
+- Through the .NET client the gain disappears. Grouping lowers the jobs in flight when few sends are allowed (2 slots of 8 is 16 jobs in flight against 64 callers sending alone), and it adds a queue hop, one reply parse per group and a thread-pool switch. With enough slots it roughly breaks even.
+
+The 90% of BullMQ target needs script work per job to fall several times, not only fewer calls. That means changing what the dispatch writes (per-job events, receipts, indexes and the stored intent that is then written again), which is a protocol change, not a client change.
+
+### Steady, delayed and drain workloads
+
+Three alternating pairs each, 16 callers and workers, 1 KiB payloads.
+
+- **Steady 500 offers/s.** Both systems are overloaded. Runwick accepted a median 256 jobs/s (7,331 refused locally of 15,000), grouping on 201, BullMQ 441 (1,775 refused). Runwick's due-to-handler p99 was 31.7 s (backlog: workers finish about 160 jobs/s) against BullMQ's offer-to-finish p99 of 0.5 s. This is a worker and finish-path limit, not a dispatch limit.
+- **Delayed 100 offers/s, 5 s ahead.** Throughput is at parity: 100.0 against 96.6 jobs/s (BullMQ refused 102 locally, Runwick none). Enqueue p99: Runwick 233 ms, grouping on 265, BullMQ 290. Due-to-handler p95/p99: Runwick 494/689 ms, grouping on 888/1,348, BullMQ 691/864. Paired Runwick/BullMQ p99 ratios were 0.74, 1.71 and 1.43 (median 1.43), better than the earlier five-pair run (3.43×) but still outside the 10% band. Grouping did not help this workload.
+- **Drain of 20,000 pre-seeded jobs, 16 workers.** Runwick 159 jobs/s, BullMQ 664 jobs/s (0.23×, pairs 0.25, 0.22, 0.23). Grouping does not apply: this is the claim and finish path.
+
+### Verdict against the targets
+
+Not met. At matched `appendfsync always`, saturated enqueue is 0.28× to 0.49× of BullMQ, drain 0.23×, steady 500 is 0.59× accepted, and delayed pickup p99 is 1.4× BullMQ's. Throughput at 100 delayed offers/s meets the 90% band. Grouped dispatch is correct and tested, but it is not a reason to turn on by default, and it should not be described as a way to reach the BullMQ target.
+
+### Work hints, pipeline depth and intent encoding
+
+- **Pipeline depth.** The right number of sends in flight depends on the fsync time and the caller count, not on a fixed small value. With 4 slots or fewer the grouped path under-fills Redis; with 8 to 16 it breaks even. Left at 2 by default because it is opt-in and conservative.
+- **Intent encoding.** The script stores each command's after-images as a packed intent, then writes the same data a second time as it projects. Packing costs about 70 µs per job and the guard write 40 µs. Cutting both needs the recovery model to change; not attempted.
+- **Ordering writes.** The bytewise comparator used to order hash fields costs about 80 to 110 µs per job. Replacing it with Lua's built-in string order saves about 12% of a single dispatch (992 to 876 µs) and 21% of a grouped one (697 to 551 µs per job), but built-in order follows the server's locale, so it is only safe if the script proves a bytewise locale or keeps its own comparator. Not applied.
+- **Work hints.** The due-to-handler gap on delayed jobs comes from the worker's idle polling and its snapshot of ready work (up to two seconds old), which is shared engine behaviour across stores, not Redis script time. Not changed here.
+
+### Evidence
+
+Runner, raw results, the profile script and the raw-socket test are under `artifacts/perf/round-two/redis-f-grouped/` in the worktree for this branch (git ignores artifacts). Commands: `pairs.sh <workload> <rounds> [arms]`, `profile.py`, `rawthroughput.py`.
+
+## Redis dispatch script diet (work area F follow-up)
+
+Written 2026-11-15. Informational: measured on the shared host while other agents' test suites ran (load average well above the core count). Benchmarks ran one at a time under the shared bench lock, with arms alternating inside each round. Host noise is large, so read the end-to-end numbers as direction, not as exact gains.
+
+### What was asked
+
+The Redis F report found the dispatch script costs about 1.2 ms per job inside Redis, against 0.16 ms for a BullMQ add. This follow-up looks for script work that the guarantees (receipt, event, uniqueness, generation, fences) do not need, without changing what is stored, what is replied, or what a receipt says.
+
+### What changed (3598d4c)
+
+All changes keep the stored data and the replies identical. No layout change, so no migration.
+
+- **Fields are written in order, not sorted.** The script wrote each hash's fields in bytewise order, which meant sorting them at the end of every dispatch. A new job hash has 28 fields and a receipt has 11. They are now written from fixed lists that are already in bytewise order (`U.JOB_FIELDS`, `RECEIPT_FIELDS`, through a new `U.hset_sorted`). Any later write to the same hash in the same command drops the shortcut and falls back to sorting, so a hash that was changed twice is still ordered correctly.
+- **The event row is built directly.** Its eight keys are fixed, so the JSON text is assembled in bytewise key order instead of building a table and sorting its keys. The output text is the same as before.
+- **The result is encoded once.** The receipt, the stored intent's reply and the final reply each encoded the same result table. It is now encoded once per command.
+- **A cheaper bytewise comparator.** `U.blt` settles the first byte before entering its loop, and sorts of one item skip the sort. The ordering is the same (it is still an explicit byte comparison; no locale is involved).
+- **Not adopted: Lua's built-in string order.** Measured at 11 µs against 104 µs for the 28 job fields, but it follows the server's locale, and the Redis spec (22, the Text row of the encoding table) says scripts never compare strings with Lua `<`. Nothing here proves the server runs a bytewise locale in every deployment, so ordering stayed explicit. A bucket-by-first-byte variant (66 µs) was also tried; the fixed lists beat it by removing the sort rather than speeding it up.
+
+### Where the time goes in a single dispatch (microseconds, before the change)
+
+Reading the application and gates 140, deciding 175, events 85, ordering writes 175, packing the intent 65, writing the guard 42, writing the data 195, about 940 to 1,000 in total. After the change: events 52, ordering 78, packing 46, the rest unchanged.
+
+A finer profile (new `DEEP=1` mode of `profile.py`) shows what is left and cannot be cut without protocol changes:
+
+- About 100 µs is spent before the script's own code runs: building the chunk's roughly 75 top-level functions for every call (prelude about 60, jobs about 40). Bisecting the prelude by section showed no single part dominating; it is the number of closures. Fixing it means shipping fewer, shared functions or caching them, which touches the claim and finish scripts another agent is editing, so it was not attempted.
+- Reading the meta hash and checking gates, about 50 to 75 µs.
+- Writing the data, about 200 µs for 11 Redis commands per dispatch (job, payload, 3 created indexes, jobtypes, ready index, receipt, receipt expiry, events, meta).
+- Packing and storing the intent, then writing the same data again, about 110 µs. Cutting this needs the recovery model to change, not attempted.
+
+### Script time, paired (`profile.py`, old Lua against new Lua, same Redis, back to back)
+
+| | before | after | change |
+|---|---|---|---|
+| single dispatch, µs per job | 1,136 to 1,214 | 978 to 1,044 | about 13 to 15 percent less |
+| group of 6, µs per job | 801 to 818 | 662 to 677 | about 17 percent less |
+
+### End to end (bench harness, 10,000 enqueues, fresh AOF-always Redis 8.2 per run, grouping off)
+
+Arms: `base` (tree before the change), `off` (this change), `bullmq`. Five rounds at 16 callers, three at 64.
+
+| callers | base jobs/s (median) | this change | BullMQ | change / base | change / BullMQ |
+|---|---|---|---|---|---|
+| 16 | 375 | 401 | 559 | 1.07 by medians, per-round ratios 0.8 to 1.2 | 0.67 |
+| 64 | 531 | 671 | 1,851 | 1.26 by medians, per-round ratios 1.06 to 1.30 | 0.36 |
+
+Redis CPU seconds per run (user plus system): 16 callers, base 13.3 to 15.4, this change 10.5 to 13.3, BullMQ 3.0 to 4.0. At 64 callers, base 11.2 to 12.3, this change 8.9 to 9.9, BullMQ 1.9 to 3.3. So Redis does about 20 percent less work for the same ten thousand jobs. At 16 callers the throughput gain is within the noise (one round went the other way); the drop in Redis CPU is the steadier signal. BullMQ's own rounds varied by almost a factor of two (541 to 994 at 16 callers; 783 to 1,981 at 64), which shows how loaded the host was.
+
+The gap to BullMQ is still large: the diet takes script time per dispatch from about 1.2 ms to about 1.0 ms, and the 90 percent target needs about 0.2 ms.
+
+### Tests
+
+- New `RedisDispatchLayoutTests`: the two pre-ordered lists are bytewise sorted and equal to the lists in the Lua source (so a field added in one place fails), a real dispatch writes every field of a job and receipt, the event row's keys are in bytewise order, and a resend replays the same job.
+- Full Redis project (RUNWICK_TEST_REDIS, redis:8.2): 87 passed, 1 failed. The failure is `RedisSoakTests.Eight_connections_run_1200_mixed_commands...`: `ScheduleEvaluationException: The 250 ms evaluation budget elapsed` inside the C# cron planner, on a heavily loaded host. It is client-side schedule evaluation, not script code; re-run alone with the other Redis tests finished, the soak class passed (3 of 3).
+- Contract project (with RUNWICK_TEST_REDIS set, so the Redis cases ran): 488 passed, 3 failed. All three failures are the Postgres case (`TelemetryPeerContractTests.A_peer_killed_after_Finish...`, `ManagementContractTests.A_read_the_caller_cancels...`, `BufferedFinishContractTests.A_graceful_stop_sends_the_buffered_finishes`), none the Redis case. This change touches only Redis Lua, so they are not caused by it, but I did not run the unchanged tree to prove they fail there too.
+
+### Not done
+
+- Chunk setup cost (about 100 µs per call) and the intent write-twice cost are the two remaining large items; both need work shared with the claim and finish scripts or a recovery-model change.
+- No quiet-host run. No AOF bytes comparison was made: the stored commands are the same, only their order of construction changed, but the byte count was not measured.
+- Grouped dispatch (`--redis-group`) end to end was not re-run; only its script time was (table above).
+
+### Tools
+
+`eng/bench-compare/redis-group/profile.py` gained `DEEP=1` (finer phase marks) and `LUA_DIR=<path>` (profile another checkout's scripts back to back). `pairs.sh` gained an arm `base` that runs a workload binary given by `BASE_DLL`.
+
+## Redis worker path: where the time goes and what was cut (work area F follow-up)
+
+Written 2026-11-15. Informational. Every timing below was taken on the shared host while other agents' suites and the SP-029 matrix were running (load average 10 to 22 on 8 cores). Runs were alternated inside each round and held the shared bench lock, so each trio saw the same neighbours, but the numbers are still noisy. Script CPU numbers use `os.clock` (the script's own CPU time), so host load does not distort them.
+
+### Short answer
+
+The worker-side Lua scripts now cost about 40% less CPU per job, and drained throughput rose from 136 to 180 jobs/s (1.32×) on the host disk and from 155 to 248 jobs/s (1.6×) with the log kept in memory. That is not close to the targets. BullMQ drained 697 and 843 jobs/s in the same rounds, so Runwick is at 0.26× and 0.29× of it. The ≥90% throughput target is **not met**, and the ≤10% p95/p99 target is **not met** (steady 500 and delayed 100 are both still far off).
+
+Closing the rest means making a drained job cost roughly five times less in Redis (about 1.1 ms now against about 0.2 ms for BullMQ). That needs a protocol change to what each job writes, not more script tuning. Details are in "What is left".
+
+### Where the time went (one drained job, claim plus finish)
+
+Script CPU per job, microseconds, `profile_worker.py`, 40 calls per size, median:
+
+| Batch size | Claim before | Claim after | Finish before | Finish after |
+|---|---|---|---|---|
+| 1 | 1,953 | 1,154 | 1,156 | 837 |
+| 8 | 1,244 | 696 | 730 | 421 |
+| 16 | 1,320 | 591 | 806 | 446 |
+
+At batch 8 a job costs 1,974 µs before and 1,117 µs after (43% less). Redis's own time per script call, from `INFO commandstats`, went from 14,245 µs to 6,256 µs per call over a whole drain (this includes the bulk insert calls, the read-only probes and the AOF write).
+
+Where the claim cost sat before (single claim, µs): reading the application and deciding about 340, events 200, building the write list 280, packing the stored intent 430, writing the guard 40, applying the writes 270. Encoding the three copies of the result and sorting object keys with a byte-by-byte comparator written in Lua sat inside those steps; the changes below target them, and the after-numbers are the measure.
+
+### What was changed (no stored data or reply changes)
+
+All of it is in `src/Runwick.Redis/Lua` and was checked with a differential run (`diffcheck.py`): the same fixed dispatch, claim, finish-many and finish sequence goes through the old and the new scripts and every stored key is compared (36 keys, timestamps and the time-derived part of attempt IDs masked). Result: 0 differences. Replies and receipts are unchanged.
+
+1. **Encode each result once.** The receipt, the stored intent and the final reply all carried the same JSON, which was built three times. It is now built once and reused (`U.rjson`, and `finish_many.lua`).
+2. **Native byte-order sort when it is provably the same.** Lua's `<` on strings follows the server's locale, which is why the old code used its own loop. The prelude now checks 13 byte pairs that are in byte order in the C locale and out of order in the usual other collations. If all hold it uses the built-in comparison, otherwise the old loop. The probe costs a few microseconds per script call.
+3. **A quicker JSON string writer** (no `gsub` when nothing needs escaping) and a shorter path in the encoder.
+4. **Event rows written directly** in key order, instead of building a table and sorting its keys for every event.
+5. **Begin reuses the reserved job inside `ReserveAndBegin`**, instead of reading the job hash again after Reserve just built it.
+6. **Wake hints.** After an intent is whole, the script publishes the queue name on `<prefix>wake` for each due-now job it made ready (a plain `PUBLISH`, not part of the intent). `RedisStore` now implements `IWakeNotificationSource` for the work channel, so an idle worker usually starts within milliseconds of a due-now dispatch. Redis keeps no message for a listener that was not there, so polling stays the way correctness is guaranteed, as before.
+7. **Idle sleep until the next due job.** The readiness probe now returns `NextDueAt`, the earliest job in the probed lanes that is not due yet, and an idle pool sleeps until then (never under the 50 ms probe spacing) instead of its idle back-off. PostgreSQL and SQLite leave it empty, so nothing changes for them.
+
+Spec and public page: `docs/spec/22-redis.md`, `docs/spec/05-worker-engine.md`, `docs/Runwick.Docs/content/docs/redis.mdx`.
+
+### Measured and left alone
+
+- **Claim size and finish batching.** Both already batch up to 32. Batch size changes cost per job only a little (table above, 8 against 16), so a larger claim does not help; the fixed part per call is small now.
+- **Claim plus begin in one call.** It already exists (`ReserveAndBegin`).
+- **Round trips per job.** About 0.17 claim calls per drained job (3,455 for 20,000) and about 0.22 finish and probe calls (about 4,500), so the call count is not the problem.
+- **Fsync.** On this host's disk one `appendfsync always` write takes about 7 to 10 ms, and many clients share one fsync (about 4,100 SETs/s with 50 clients, 143/s with one). Putting the log on tmpfs raised drain throughput only from 180 to 248 jobs/s, so fsync is a real cost but not the main one.
+- **A hand-built reply for the claim result** (skipping the table that is then encoded) would save perhaps another 10% of script CPU but couples the script to the reply layout; not done.
+
+### Drain of 20,000 jobs, 16 workers (three alternating rounds each, jobs/s)
+
+| Log on | Runwick before | Runwick after | BullMQ 6.7.2 | After ÷ before | After ÷ BullMQ |
+|---|---|---|---|---|---|
+| host disk, fsync always | 136 (146, 134, 136) | 180 (180, 220, 171) | 697 (769, 546, 697) | 1.32× | 0.26× |
+| tmpfs, fsync always (no disk wait) | 155 (155, 172, 152) | 248 (246, 289, 248) | 843 (809, 971, 843) | 1.60× | 0.29× |
+
+Every "after" round beat its paired "before" round. The stored AOF size per run was the same before and after (about 354 MB, 17.7 KB per job) against 56 MB (2.8 KB per job) for BullMQ.
+
+By an estimate from the run's command statistics, Redis was about 40% busy during the drain in the tmpfs "after" runs (about 25 s of script time in a 65 s drain), so the 16 workers are mostly waiting on claim and finish calls to come back rather than Redis being saturated. This is an inference, not a separate measurement: with 16 jobs in flight and a claim plus a finish taking tens of milliseconds each, the cycle time bounds throughput. BullMQ's scripts cost about 200 µs per call and its commands are tiny, so its calls return quickly and 16 workers keep Redis busy.
+
+### Steady 500 offers/s and delayed 100 offers/s
+
+Two and three alternating rounds, 16 callers and 16 workers. These are the noisiest numbers here; during the steady runs the host load average was above 20, and the "before" arm itself ran at 72 to 96 jobs/s, below the 160 jobs/s of the earlier report.
+
+- **Steady 500.** Completions: before 96 and 73 (median 84), after 84 and 107 (median 96). Due-to-handler p99: before 35.8 s and 47.2 s, after 54.5 s and 30.4 s. BullMQ refused 5,900 to 7,700 of 15,000 locally and its offer-to-finish p99 was 1.0 to 1.2 s. No usable gain can be claimed; both Runwick arms are overloaded and far behind BullMQ.
+- **Delayed 100, 5 s ahead.** Completions per second: before 81 (81, 85, 75), after 85 (85, 86, 61). Due-to-handler p99: before 4.95 s, 2.24 s, 5.94 s; after 1.94 s, 5.55 s, 7.37 s. The pickup lag spread is wider than any difference between arms, and round 3 of the "after" arm ran while the host was also running other suites (it fell behind its own offer rate and its enqueue p99 was 1.6 s). The mechanism (an idle pool now sleeps to the next due time) is tested and works, but this host could not show a stable gain in the lag, so none is claimed. BullMQ's offer-to-finish p99 was 0.6 to 0.7 s (this excludes the 5 s delay, which Runwick's "latencyMs" includes), so the comparison there is not like for like; the due-to-handler stage is the fair one.
+
+### Tests
+
+- New: `RedisWorkerPathTests` (2: the probe names the earliest not-yet-due job, and only a due-now dispatch publishes a wake) and one Core case (`A_store_that_names_the_next_due_job_ends_the_idle_wait_at_that_time`). The scripted store gained a `NextDueIn` switch.
+- Results for the full Redis, Core and Contract projects are in the final message of this task and in `artifacts/perf/round-two/redis-worker-diet/tests-*.log`.
+
+### What is left
+
+- **Per-job script cost is still about five times BullMQ's.** What remains is the model, not the code: each command stores its after-images as a packed intent, then writes the same data again as it projects, and each job writes a receipt, an event and several index rows. That is why a job costs 17.7 KB of log against 2.8 KB. Cutting it needs the recovery model to change (for example intents only for commands that cannot finish inline, or an event stream that is not a hash plus a sorted set per event).
+- **A claim that returns the next jobs together with the finish of the previous ones** (one call per settle) would halve the calls per job once scripts are cheaper. It changes `ReserveAndBegin` and `FinishMany` replies and the engine's slot logic, so it was not attempted here.
+- **A quiet-host rerun** of steady 500 and delayed 100 is needed before any claim about the pickup lag.
+
+### Evidence
+
+Runner scripts, raw results and logs are in `artifacts/perf/round-two/redis-worker-diet/` in the worktree (git ignores artifacts); the profile, differential and paired-run scripts are tracked in `eng/bench-compare/redis-group/` (`profile_worker.py`, `diffcheck.py`, `pairs-worker.sh`, see its README).
+
+## PostgreSQL claim reads its jobs by key (A/C and worker B recheck)
+
+Written 2026-11-17. Informational: every timing was taken on the shared host while the SP-029 run and other test suites were running (load average 20 to 40 on 8 cores). Arms alternated inside each pair so both saw the same neighbours. The plan comparisons and the read counts do not depend on load.
+
+**Short answer.** The recheck against retained data found a real cost in the worker's claim that the earlier empty-table runs could not see. When a backlog arrives after the table statistics were last taken, the batched claim reads the whole ready backlog twice per call. That is fixed by reading and updating the claimed jobs by their key. In five paired drains on a copy of a 205,000-job retained database the fixed claim drained 1.46 times faster (median, every pair at least 1.23). The change is a new migration (`0025_claim_keyed`, schema revision 25), kept on its branch for review.
+
+### What the nested plans showed
+
+Setup: a PostgreSQL 18.7 server of its own (fsync, synchronous_commit and full_page_writes on), a database holding 205,000 succeeded `bench` jobs (the source drain's 5,000 real jobs, cloned with new identities and times spread over 30 days, then `ANALYZE`), and a copy of it for every run. Each run drained 5,000 new 512-byte jobs with 16 workers while `auto_explain` logged 2% of statements, nested ones included, with buffers and WAL. The claim function's set-based statement (`rw_claim_plain_v1`, inside `reserve_and_begin_v2`) was the only statement reading many rows:
+
+| | Baseline (`v1`) | Keyed (`v2`) |
+|---|---:|---:|
+| Sampled claim statements | 15 | 19 |
+| Mean statement time (loaded host) | 39.1 ms | 13.7 ms |
+| Mean shared buffers hit per statement | 2,764 | 403 |
+| Scans of the ready index (`jobs_ready`) | 30, up to 4,918 rows each | none |
+| One sampled plan | 49.9 ms | 3.6 ms |
+
+Why: the statistics were taken while no job was waiting, so the planner expected one ready job. Its plan scanned the ready index (every waiting job, 4,918 rows near the start of the drain) and, for each, looked in the claim's job list. The claim runs that scan once to read the jobs and again to update them. So a claim cost grows with the backlog, and a retained, bursty store (statistics rarely refreshed, big backlogs) pays most. The earlier A6 and C1 runs used small, fresh tables where the two plans cost almost the same.
+
+The other statements in the claim and finish paths read their jobs by key in this fixture. The attempt-close usage update (the A4 candidate's target) took 4.6 ms and 207 buffers on average over 6 sampled calls, so it is not the first change to make. The finish-path plans showed no application-wide scans on retained data. The earlier `jobs_name_list` scans came from small, stale fixtures.
+
+### The change
+
+`rw_claim_plain_v2` is `rw_claim_plain_v1` with two changes to how rows are reached, none to what is written:
+
+1. The claimed jobs are read through a lateral lookup by (application, job ID) with `OFFSET 0`, and the state test is applied to what it returns. This keeps the ready index out of the plan.
+2. The jobs update drops its state test. The row was read in the same statement as pending or retrying, the candidate claim holds its lock, and every change to a job raises its revision, so `revision = s.revision` already means the state is unchanged. A row that no longer matches is not updated, the count check fails and the whole command rolls back, as before.
+
+`reserve_and_begin_v3` is `reserve_and_begin_v2` calling it, with the correlated payload lookup from the earlier C1 candidate (`OFFSET 0` on the creation-time lookup). Released functions stay in place and the worker now calls `v3`. No table or index changes. Spec 04 has the dated change text.
+
+### Tests
+
+- PostgreSQL project: 400 of 400 passed before the final test was added (24 minutes), including the migration kill-and-resume cases with `0025_claim_keyed` expand, validate and activate, the manifest at revision 25, the set-based versus per-job claim equality test, the lost-reply and fault tests, and the plan tests.
+- New `A_claim_reaches_its_jobs_by_key_even_when_statistics_have_not_seen_the_backlog` (RAB-12): statistics taken on an empty table, 1,500 jobs dispatched, one claim of eight in a rolled-back transaction. The keyed claim fetched fewer than 300 job rows through indexes (passes). The same test pointed at `reserve_and_begin_v2` fetched 3,024 and failed, as expected.
+- Contract project: 491 of 491 passed (20 minutes), including the batched-claim, fallback and worker contracts that hide `reserve_and_begin_v3`.
+
+### Paired drains
+
+Each pair: a fresh copy of the 205,000-job template per arm (both arms start from the same data), 5,000 jobs, 16 workers, order alternating, every arm reconciled all 5,000 jobs with no diagnostics. Baseline is the branch point; candidate adds the migration. WAL is the server's growth after the copy, so it includes the checkpoint after the copy.
+
+| Pair | Baseline jobs/s | Keyed jobs/s | Ratio | Baseline WAL MB | Keyed WAL MB |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 49.2 | 61.4 | 1.25 | 189.4 | 178.1 |
+| 2 | 56.5 | 69.5 | 1.23 | 183.2 | 172.9 |
+| 3 | 59.6 | 129.2 | 2.17 | 182.3 | 151.2 |
+| 4 | 80.8 | 118.3 | 1.46 | 169.6 | 152.4 |
+| 5 | 62.7 | 115.2 | 1.84 | 179.1 | 155.6 |
+| Median | 59.6 | 115.2 | 1.46 | 182.3 | 155.6 |
+
+Control on a fresh, empty database (three pairs, no retained data): median 77.9 against 108.3 jobs/s, ratios 1.25, 1.15 and 1.57, WAL equal (63.7 against 63.0 MB). The fixed claim is not slower on a small table either.
+
+### Reading and limits
+
+- The gain should grow with the backlog and with retained data, and shrink when the statistics are fresh. Both arms here start from statistics that show no ready jobs, which is how a store looks right after a burst of enqueues. The runs do not show how often a production store is in that state. Autovacuum may refresh statistics during a long backlog. A quiet-host rerun with a 100,000-job backlog would size the effect.
+- Absolute rates are low because the host was loaded. Compare ratios, not rates. The per-pair spread (1.23 to 2.17) is the host's noise.
+- The WAL difference is probably the shorter run with fewer checkpoint full-page images, not a change in what the claim writes. The statement's own WAL per sampled call was similar.
+- The A4 attempt-close candidate (usage written in the same update as the close) was not rebuilt on the current schema. Its earlier result was 2.8% less WAL with a throughput change inside the noise (median +1.0%), and the plans above show the usage update is small. It stays isolated.
+- Not done: index narrowing on `jobs` (every update inserts into the six always-on indexes and the partial ones; the plans did not make any one of them a clear first drop), replay-proof-gated receipt compaction, combined finish and claim, finish batching.
+
+Raw results: `artifacts/perf/round-two/pg-keyed-claim/` (retained plans, paired runs, control, scripts: `plans.sh`, `pairs.sh`, `seed.py`, `summ.py`, `summarize.py`). The `--db-reuse` bench flag runs a bench against an existing database (a copy of a template).
