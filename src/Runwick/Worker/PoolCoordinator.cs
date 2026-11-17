@@ -157,13 +157,19 @@ internal sealed class PoolCoordinator
             if (choice is null)
             {
                 ticket.Return();
+                TimeSpan? untilDue = null;
                 if (ages.Count == 0)
                 {
-                    // Nothing claimable in this hint: the next opportunity probes afresh.
+                    // Nothing claimable in this hint: the next opportunity probes afresh. A store that can name the next job to
+                    // fall due lets the pool sleep until then instead of on its idle backoff.
                     _engine.Readiness.Invalidate();
+                    if (view.Snapshot.NextDueAt is { } due)
+                    {
+                        untilDue = due - view.Snapshot.ObservedAt - (now - view.ReceivedAt);
+                    }
                 }
 
-                await IdleAsync(stop).ConfigureAwait(false);
+                await IdleAsync(stop, untilDue).ConfigureAwait(false);
                 continue;
             }
 
@@ -206,13 +212,21 @@ internal sealed class PoolCoordinator
 
     /// <summary>
     /// Idle backoff: 100 ms doubling to the cap, ±20 %; a wake hint ends it early (05 §7.2). The cap is 10 s while the
-    /// wake listener is healthy and 2 s otherwise (05 Changes 2026-11-02, idle caps), read at each wait.
+    /// wake listener is healthy and 2 s otherwise (05 Changes 2026-11-02, idle caps), read at each wait. A store that names the next
+    /// due job (<paramref name="untilDue"/>) ends it at that time if sooner.
     /// </summary>
-    async Task IdleAsync(CancellationToken stop)
+    async Task IdleAsync(CancellationToken stop, TimeSpan? untilDue = null)
     {
         var nominal = TimeSpan.FromTicks(Math.Min(_engine.IdleBackoffCap.Ticks, WorkerSettings.IdleBackoffBase.Ticks << Math.Min(_idleStep, 10)));
         _idleStep++;
-        if (await Wake.WaitAsync(_engine.Clock, EngineClock.Jitter(nominal), stop).ConfigureAwait(false))
+        var wait = EngineClock.Jitter(nominal);
+        if (untilDue is { } due && due < wait)
+        {
+            // Never below the probe spacing, so a lane that is due but not claimable cannot make a probe loop.
+            wait = TimeSpan.FromTicks(Math.Max(due.Ticks, WorkerSettings.ProbeSpacing.Ticks));
+        }
+
+        if (await Wake.WaitAsync(_engine.Clock, wait, stop).ConfigureAwait(false))
         {
             _idleStep = 0;
             // A cached lane can have been set aside after NoWork while another lane is cooling. A fresh

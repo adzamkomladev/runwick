@@ -1245,6 +1245,20 @@ public sealed class WorkerEngineTests
 
     [Fact]
     [Trait("Category", "Pure")]
+    public async Task A_store_that_names_the_next_due_job_ends_the_idle_wait_at_that_time()
+    {
+        // Without the hint the idle backoff climbs to 2 s, so 12 s of idleness is about ten probes. A probe that says the next job falls
+        // due 600 ms later makes the pool sleep exactly that long (never under the 50 ms probe spacing), so it probes about every 0.6 s.
+        await using var e = EngineFixture.Create();
+        e.Step = TimeSpan.FromMilliseconds(20);
+        e.Store.NextDueIn = TimeSpan.FromMilliseconds(600);
+        await e.StartAsync();
+        await e.AdvanceAsync(TimeSpan.FromSeconds(12));
+        Assert.InRange(e.Engine.Readiness.Probes, 15, 25);
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
     public async Task A_notification_reactivates_an_excluded_lane_while_another_queue_is_cooling()
     {
         await using var e = EngineFixture.Create(configure: r => r.Queue("other"), pool: p => p.Queue("other", 1));

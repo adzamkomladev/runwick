@@ -159,9 +159,11 @@ The cost: one application's throughput is bounded by one Redis server thread, an
 
 Redis cannot join your business database's transaction. There is no `StageAsync` and no transactional completion on Redis. To create a job only when your business data commits, write it to an [outbox](/docs/outbox) in your business database; the relay delivers it to the Redis store.
 
-## Polling
+## Wake-ups and polling
 
-There are no wake-up notifications between processes. Workers find new jobs by polling. Within one process, a commit wakes that process's own workers.
+When a job that is due now becomes whole in the store, the write also publishes the queue's name on a Redis channel (`rw:{...}:wake`). Workers subscribe to it, so an idle worker usually starts a new job within milliseconds instead of waiting for its next poll. This is a hint only: a worker that loses its subscription goes back to polling every two seconds at most, and Redis does not keep a message nobody was listening for, so polling stays the way correctness is guaranteed.
+
+For jobs that are delayed or waiting to retry, no message is sent when they fall due. Instead, each readiness check tells the worker when the next such job is due, and an idle worker sleeps until then (never less than 50 ms) rather than on its usual back-off.
 
 ## What Redis does not promise
 

@@ -24,7 +24,7 @@ function M.decide()
     else
       if r.effect ~= 'A' then U.abort(r.status, r.code) end
       reserved = true
-      local b = U.begin_job(U.lease_of(r.result), jitters[i])
+      local b = U.begin_job(U.lease_of(r.result), jitters[i], r.j)
       if b.effect ~= 'A' then U.abort(b.status, b.code) end
       if b.status == 'Applied' then begun[#begun + 1] = cand.id end
       items[#items + 1] = { ordinal = i - 1, jobId = cand.id, status = b.status, code = b.code or NULL, reserve = r.result, begin = b.result }

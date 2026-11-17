@@ -536,6 +536,12 @@ internal sealed record ReadySnapshot(DateTimeOffset ObservedAt, IReadOnlyList<Re
     public IReadOnlyList<QueueReadiness> Queues { get; init; } = [];
 
     public IReadOnlyList<LaneKey> UnsupportedLanes { get; init; } = [];
+
+    /// <summary>
+    /// The store time of the earliest job that becomes due after <see cref="ObservedAt"/> in the probed lanes, when the driver can say
+    /// (null = unknown). An idle worker may sleep until then instead of polling on its backoff; losing it costs latency, never correctness.
+    /// </summary>
+    public DateTimeOffset? NextDueAt { get; init; }
 }
 
 internal sealed record ExpiredLease(Guid JobId, Guid AttemptId, Guid OwnershipToken, string State, DateTimeOffset LeaseExpiresAt);

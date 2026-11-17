@@ -189,7 +189,7 @@ function U.reserve_job(id, leaseMs, worker, token, entropy)
     cursor = { eligibleAt = U.raw(j.eligible), jobId = id },
     policy = U.policy_json(j),
     fences = fences,
-  })
+  }, nil, nil, { j = j }) -- the job as this command left it, for a Begin that follows in the same command
 end
 
 -- ------------------------------------------------------------------ Begin (rw_begin_job_v1, 10 §4)
@@ -246,8 +246,8 @@ local function rate_step(j, lease, jitter)
     blockingScopes = blocked }, 'RateLimited', 'rate_limited', { detail = U.S(eligible) })
 end
 
-function U.begin_job(lease, jitter)
-  local j = U.job(lease.job)
+function U.begin_job(lease, jitter, job)
+  local j = job or U.job(lease.job)
   local plan = 'authorize'
   if j then
     if j.cancelat then plan = 'cancel'

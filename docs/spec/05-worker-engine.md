@@ -93,6 +93,7 @@ New **§9.6 Batched claim**, used when the store offers `ReserveAndBegin/1` (03 
 
 ## Changes (2026-10-31, SP-012)
 
+- §7.2: a probe may carry `NextDueAt`, the store time of the earliest job that is not due yet in the probed lanes (null when the store cannot say; PostgreSQL and SQLite leave it null). An idle pool with nothing claimable sleeps until then instead of its idle back-off, never less than the 50 ms probe spacing, and probes afresh when it wakes. Losing it costs latency only.
 - §7.2: probe starts are ≥ 50 ms apart per group, enforced in the coordinator (it was a stated rule only).
 - §8.6: probe/2 queue evidence excludes a saturated queue's lanes for the snapshot's life; a changed queue control revision clears that queue's cooldowns; a retiring local attempt lifts its queue's exclusion (09 §4.2).
 - §14 / §17: the first presence publication is retried 3 times; failing publication makes readiness `Degraded` (09 §3.2).
