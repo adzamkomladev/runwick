@@ -16,6 +16,8 @@ internal static class RxProfile
 
     public const string EverySecondName = "redis-aof-everysec-single-primary-v1";
 
+    public const string SentinelName = "redis-aof-always-sentinel-v1";
+
     static (string Name, string Value)[] Required(RedisPersistence persistence) =>
     [
         ("appendonly", "yes"), ("appendfsync", persistence == RedisPersistence.AofEverySecond ? "everysec" : "always"), ("no-appendfsync-on-rewrite", "no"),
@@ -27,11 +29,12 @@ internal static class RxProfile
     /// <summary>The newest version a conformance report covers (00 §9 rule 10); newer ones are accepted, uncertified.</summary>
     public static readonly Version CertifiedVersion = new(8, 2, 11);
 
-    public static async Task<RxProfileReport> CheckAsync(IServer server, IDatabase db, RedisPersistence persistence = RedisPersistence.AofAlways)
+    public static async Task<RxProfileReport> CheckAsync(IServer server, IDatabase db, RedisPersistence persistence = RedisPersistence.AofAlways, bool sentinel = false)
     {
         var facts = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["driver"] = "redis", ["profile"] = persistence == RedisPersistence.AofEverySecond ? EverySecondName : Name, ["topology"] = "standalone-primary",
+            ["driver"] = "redis", ["profile"] = sentinel ? SentinelName : persistence == RedisPersistence.AofEverySecond ? EverySecondName : Name,
+            ["topology"] = sentinel ? "sentinel-primary" : "standalone-primary",
             ["limits"] = "keys=256,afterImages=1024,intentBytes=4194304",
         };
         string? failure = null;
@@ -78,6 +81,15 @@ internal static class RxProfile
         }
 
         facts["replicas"] = facts["connected_slaves"];
+        if (sentinel)
+        {
+            // The lineage fields the authority compares after a promotion (22 §2.5).
+            foreach (var key in new[] { "master_replid", "master_replid2", "master_repl_offset", "second_repl_offset" })
+            {
+                facts[key] = info.GetValueOrDefault(key, "");
+            }
+        }
+
         if (!Version.TryParse(facts["redis_version"], out var version) || version < MinimumVersion)
         {
             Fail($"redis_version={facts["redis_version"]}", "engine_version_unsupported");
@@ -120,9 +132,9 @@ internal static class RxProfile
         return new RxProfileReport(failure, code, facts);
     }
 
-    public static async Task<Dictionary<string, string>> InfoAsync(IDatabase db)
+    public static async Task<Dictionary<string, string>> InfoAsync(IDatabase db, string section = "everything")
     {
-        var text = (string)(await db.ExecuteAsync("INFO", "everything").ConfigureAwait(false))!;
+        var text = (string)(await db.ExecuteAsync("INFO", section).ConfigureAwait(false))!;
         var d = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var line in text.Split('\n'))
         {

@@ -14,7 +14,7 @@ Redis is only safe for jobs with the right server settings, so Runwick checks th
 | Item | Requirement |
 |---|---|
 | Server | Redis 8.2 or newer |
-| Topology | One standalone primary. No Cluster, no Sentinel. |
+| Topology | One standalone primary. Optional: a Sentinel-managed primary with strict write authority (see below). No Cluster. |
 | Persistence | AOF with `appendfsync always` (see below) |
 | Package | `Runwick.Redis` (uses StackExchange.Redis) |
 
@@ -52,7 +52,7 @@ Use `RunwickRedisMigrations.MigrateAsync(configuration, RedisPersistence.AofEver
 |---|---|---|
 | Redis process is killed | no confirmed write is lost | no confirmed write is lost |
 | Machine or operating system crashes | no confirmed write is lost | about the last second of confirmed writes can be lost |
-| Failover to a replica | not supported | not supported |
+| Failover to a replica | only with the Sentinel option below | not supported |
 | Receipt's `ConfirmedAcknowledgementProfile` | `redis.aof-always-single-primary-v1` | `redis.aof-everysec-single-primary-v1` |
 
 In our drain test (20,000 jobs, 16 workers, one shared host) `everysec` drained about 1.5 times faster and inserted about 1.16 times faster, in every one of five pairs. A lost write after a crash looks like a dispatch that was confirmed but is not there, so use this only for work you can resend or regenerate.
@@ -112,11 +112,12 @@ builder.Services.AddRunwick(runwick =>
 });
 ```
 
-The configuration string is a StackExchange.Redis string. Runwick uses only the endpoint, credentials, TLS settings, `defaultDatabase` and `connectTimeout` from it, and never logs it. Several endpoints, or a Sentinel service name, are refused at startup with `topology_unsupported`.
+The configuration string is a StackExchange.Redis string. Runwick uses only the endpoint, credentials, TLS settings, `defaultDatabase` and `connectTimeout` from it, and never logs it. Several endpoints, or a Sentinel service name, are refused at startup with `topology_unsupported` unless you turn on the Sentinel option below.
 
 | Option | Default | Allowed | What it does |
 |---|---|---|---|
 | `ProfileRecheckInterval` | 30 s | 5 s to 5 min | How often the settings and topology check runs while the app runs. |
+| `Sentinel` | none | none or settings | Follow a Sentinel-managed primary with strict write authority. See below. |
 | `GroupDispatches` | off | on or off | Sends plain dispatches that arrive while another send is in flight together, in one Redis call. See below. |
 | `MaxGroupItems` | 8 | 2 to 16 | Most dispatches in one grouped call. |
 | `MaxGroupBytes` | 128 KiB | 16 to 128 KiB | Most request bytes in one grouped call. A larger dispatch goes alone. |
@@ -129,6 +130,38 @@ With `GroupDispatches` on, a dispatch that finds a free send slot goes out alone
 Every dispatch in a group still has its own command ID, receipt and event. Resending one later, alone or in another group, returns its original job. If the reply to a group is lost, each caller gets the usual "outcome unknown" for its own dispatch and resolves it as before. Dispatches with uniqueness keys, concurrency scopes or rate scopes always go alone. Delayed dispatches can be grouped. Cancelling a call that is still waiting leaves nothing behind. Cancelling after the group was sent cannot undo it, and the caller gets the real result.
 
 Grouping only helps when many callers dispatch at the same time. It needs `ProducerOptions.MaxConcurrentCalls` above 1 to have anything to group.
+
+## Sentinel: a primary with replicas (opt-in)
+
+Runwick can follow a primary that Redis Sentinel manages. The aim is simple: **Runwick only writes to a primary it has just checked, and stops writing the moment it cannot tell.** It does not try to keep working through a failover at any cost.
+
+```csharp
+builder.UseRedis(
+    "sentinel1:26379,sentinel2:26379,sentinel3:26379,serviceName=mymaster,password=data-password,sentinelPassword=sentinel-password",
+    o => o.Sentinel = new RedisSentinelOptions());
+```
+
+List your Sentinels and the service name, not the data servers. Use `user` and `password` for the data servers and `sentinelUser` and `sentinelPassword` for the Sentinels (the TLS setting applies to both). Every data server must run the same settings as above, `appendfsync always` included; `everysec` cannot be combined with Sentinel. Run `RunwickRedisMigrations.MigrateAsync` against the current primary's address.
+
+| Option | Default | Allowed | What it does |
+|---|---|---|---|
+| `AuthorityRecheckInterval` | 1 s | 250 ms to 10 s | How often the primary is checked again. |
+| `AuthorityTtl` | 4 s | 1 s to 30 s, at least twice the recheck interval | How long one successful check lets commands go out. |
+
+**What Runwick checks each time.** A majority of your Sentinels must name the same primary and report it healthy. That primary must pass the settings check above. If it is a different server from the one Runwick used before (a failover), it must also continue the same history: the Sentinel promoted a replica that had everything Runwick saw at its last check. And the store's identity and revisions must not have gone backwards.
+
+**What happens when something is wrong:**
+
+| Situation | What Runwick does |
+|---|---|
+| A Sentinel majority is unreachable (you cannot reach them, they disagree) | Keeps writing until the 4 s lease runs out, then stops sending anything. Starts again as soon as a check passes. |
+| A Sentinel reports the primary down, or a failover has started; the connection to the primary breaks | Stops sending anything at once and checks again. |
+| A failover finished and the new primary continues the old history | Moves to the new primary and resumes. Jobs and receipts written before are intact. |
+| The new primary does not cover the history Runwick last saw (a replica that was behind), or the store identity or revision went backwards | **Blocked.** Every call fails as incompatible until you reconcile the histories and restart the process. |
+
+Calls that are stopped are never sent, so they have no effect. A call that was already in flight when the primary failed has the usual "outcome unknown"; resend it with the same command and it is answered from its receipt, if the receipt survived the failover. The Store page shows the state, the primary, how many Sentinels agree, and the recent changes this process saw. Set `AuthorityTtl` well under your Sentinels' `down-after-milliseconds`, so that a process left connected to an old primary stops before another node is promoted.
+
+**What this does not promise.** Redis copies writes to replicas after it replies. A failover can lose writes confirmed after Runwick's last check, which is at most a recheck interval plus the lease. The check proves the new primary has everything Runwick saw at its last check, not that nothing was lost. Runwick stops itself; it cannot stop other programs that write to a cut-off former primary. Receipts carry `redis.aof-always-sentinel-v1`. Redis Cluster is not supported.
 
 ## What Runwick checks
 
@@ -143,7 +176,7 @@ At startup, on every reconnect and every `ProfileRecheckInterval`, Runwick check
 | At startup | The app does not start. The error names the setting and the value it saw, for example `appendfsync=everysec`. |
 | While running | Runwick stops sending new work: no new claims, dispatches or schedule runs. Health reports the store as unhealthy (`store_profile_mismatch`) until a later check passes. Calls already sent finish as usual. |
 
-Replicas attached to the primary are allowed and reported. But a replica promoted to primary is a different history, and Runwick does not follow a failover.
+Replicas attached to the primary are allowed and reported. But a replica promoted to primary is a different history, and without the Sentinel option Runwick does not follow a failover.
 
 ### History checks
 
@@ -167,7 +200,7 @@ For jobs that are delayed or waiting to retry, no message is sent when they fall
 
 ## What Redis does not promise
 
-- No high availability. Failover, Sentinel promotion and Cluster are not supported. A promoted replica may have lost acknowledged jobs.
+- No high availability by default. With the Sentinel option, a failover is followed and checked, but a promoted replica may have lost jobs confirmed after Runwick's last check. Cluster is not supported.
 - Durability is the primary's disk and `appendfsync always`. Restoring an AOF or RDB file is a break in history.
 - Running Redis without `appendfsync always` is not a supported configuration, even for benchmarks.
 - Results on Redis say nothing about speed compared with PostgreSQL.

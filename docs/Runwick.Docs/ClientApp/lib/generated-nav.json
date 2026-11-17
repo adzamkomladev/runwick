@@ -844,6 +844,11 @@
           "depth": 2
         },
         {
+          "id": "faster-less-durable-appendfsync-everysec-opt-in",
+          "text": "Faster, less durable: appendfsync everysec (opt-in)",
+          "depth": 3
+        },
+        {
           "id": "install-and-migrate",
           "text": "Install and migrate",
           "depth": 2
@@ -851,6 +856,16 @@
         {
           "id": "register-the-store",
           "text": "Register the store",
+          "depth": 2
+        },
+        {
+          "id": "grouped-dispatch-opt-in",
+          "text": "Grouped dispatch (opt-in)",
+          "depth": 3
+        },
+        {
+          "id": "sentinel-a-primary-with-replicas-opt-in",
+          "text": "Sentinel: a primary with replicas (opt-in)",
           "depth": 2
         },
         {

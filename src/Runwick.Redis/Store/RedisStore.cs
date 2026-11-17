@@ -31,12 +31,24 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
         this.options = options;
         this.time = time;
         runner.Client.Reconnected += () => _ = Task.Run(() => CheckProfileAsync(CancellationToken.None));
+        if (runner.Client.Authority is { } authority)
+        {
+            authority.HistoryCheck = HistoryFailureAsync;
+            authority.OnReport = report =>
+            {
+                EngineFacts = report.Facts;
+                runner.ProfileFailure = report.Verified ? null : $"{report.FailureCode}: {report.Failure}";
+            };
+        }
     }
+
+    /// <summary>The Sentinel authority's view of the primary (22 §2.5); null for a standalone primary.</summary>
+    internal RxAuthoritySnapshot? AuthoritySnapshot => runner.Client.Authority?.Snapshot();
 
     public Guid StoreId => runner.StoreId ?? throw new InvalidOperationException("Describe has not run yet.");
 
-    public string AcknowledgementProfile =>
-        options.Persistence == RedisPersistence.AofEverySecond ? AcknowledgementProfiles.RedisAofEverySecond : AcknowledgementProfiles.RedisAofAlways;
+    public string AcknowledgementProfile => options.Sentinel is not null ? AcknowledgementProfiles.RedisAofAlwaysSentinel
+        : options.Persistence == RedisPersistence.AofEverySecond ? AcknowledgementProfiles.RedisAofEverySecond : AcknowledgementProfiles.RedisAofAlways;
 
     internal RxRunner Runner => runner;
 
@@ -96,7 +108,10 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
                 throw new StoreIncompatibleException(failure);
             }
 
-            _recheck ??= time.CreateTimer(_ => _ = CheckProfileAsync(CancellationToken.None), null, options.ProfileRecheckInterval, options.ProfileRecheckInterval);
+            if (runner.Client.Authority is null)
+            {
+                _recheck ??= time.CreateTimer(_ => _ = CheckProfileAsync(CancellationToken.None), null, options.ProfileRecheckInterval, options.ProfileRecheckInterval);
+            }
         }
 
         HashEntry[] entries;
@@ -166,6 +181,28 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
         await _profileGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            if (runner.Client.Authority is { } authority)
+            {
+                var first = !EngineFacts.ContainsKey("profile_status");
+                var snapshot = await authority.VerifyAsync(ct).ConfigureAwait(false);
+                if (first)
+                {
+                    if (snapshot.State == RxAuthorityState.Blocked || runner.ProfileFailure is not null)
+                    {
+                        throw new StoreIncompatibleException(runner.ProfileFailure ?? snapshot.Reason ?? "authority_blocked");
+                    }
+
+                    if (snapshot.State != RxAuthorityState.Verified)
+                    {
+                        throw new StoreUnavailableException("No verified Sentinel-managed primary: " + (snapshot.Reason ?? "unverified"));
+                    }
+
+                    authority.Start();
+                }
+
+                return;
+            }
+
             RxProfileReport report;
             try
             {
@@ -212,17 +249,25 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
     /// <summary>22 §2.4: same store identity and no revision lower than one this process saw; otherwise authority is invalidated.</summary>
     internal async Task CheckHistoryAsync()
     {
+        var db = await runner.Client.DbAsync(RxLane.Background).ConfigureAwait(false);
+        if (await HistoryFailureAsync(db).ConfigureAwait(false) is { } failure)
+        {
+            runner.HistoryFailure = failure;
+        }
+    }
+
+    /// <summary>The §2.4 comparison against <paramref name="db"/> (the checked primary, or a Sentinel candidate before it takes commands).</summary>
+    async Task<string?> HistoryFailureAsync(IDatabase db)
+    {
         if (runner.StoreId is not { } id)
         {
-            return;
+            return null;
         }
 
-        var db = await runner.Client.DbAsync(RxLane.Background).ConfigureAwait(false);
         var store = await db.HashGetAsync(RedisMigrator.StoreKey, "store").ConfigureAwait(false);
         if (store.IsNull || (string)store! != Hex(id))
         {
-            runner.HistoryFailure = "store_identity_mismatch";
-            return;
+            return "store_identity_mismatch";
         }
 
         foreach (var (application, seen) in _revisions)
@@ -230,16 +275,16 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
             var m = await db.HashGetAsync(RxClient.Meta(application), ["store", "rev"]).ConfigureAwait(false);
             if (m[0].IsNull || (string)m[0]! != Hex(id))
             {
-                runner.HistoryFailure = "store_identity_mismatch";
-                return;
+                return "store_identity_mismatch";
             }
 
             if (BigInteger.Parse(m[1].IsNull ? "0" : (string)m[1]!, CultureInfo.InvariantCulture) < seen)
             {
-                runner.HistoryFailure = "history_discontinuity";
-                return;
+                return "history_discontinuity";
             }
         }
+
+        return null;
     }
 
     // ------------------------------------------------------------------ Register* (04 §7.1)

@@ -130,6 +130,16 @@ public sealed record RedisReplicationStats(RedisNodeRole? Role, long? ConnectedR
 
 public sealed record RedisIntentRecovery(bool Pending, int? NextProjectionIndex);
 
+/// <summary>One change this process observed in its write authority (a verification, a closed lease, a blocked promotion).</summary>
+public sealed record RedisAuthorityEvent(DateTimeOffset At, string Text);
+
+/// <summary>
+/// Sentinel write authority as this process sees it (22 §2.5): <c>State</c> is <c>verified</c>, <c>unresolved</c> (retries on its own) or
+/// <c>blocked</c> (an operator must reconcile the histories and restart). Observed by this process only; not a cluster-wide verdict.
+/// </summary>
+public sealed record RedisAuthorityObservation(string State, string? Reason, string? Primary, long Epoch, int SentinelsAgreeing, int SentinelsConfigured,
+    DateTimeOffset? VerifiedAt, IReadOnlyList<RedisAuthorityEvent> Recent);
+
 public sealed record RedisStoreDiagnostics(
     StoreSnapshotFact<RedisMemoryStats> Memory,
     StoreSnapshotFact<RedisActivityStats> Activity,
@@ -138,6 +148,10 @@ public sealed record RedisStoreDiagnostics(
 {
     public StoreSnapshotFact<RedisIntentRecovery> IntentRecovery { get; init; } =
         new(StoreSnapshotScope.Application, StoreSnapshotStatus.Unavailable, null);
+
+    /// <summary>Unsupported for a standalone primary.</summary>
+    public StoreSnapshotFact<RedisAuthorityObservation> Authority { get; init; } =
+        new(StoreSnapshotScope.Process, StoreSnapshotStatus.Unsupported, null);
 
     public DateTimeOffset? SampledAt { get; init; }
 }

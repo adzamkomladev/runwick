@@ -143,7 +143,7 @@ redis-server --appendonly yes --appendfsync always --no-appendfsync-on-rewrite n
   --maxmemory-policy noeviction --aof-load-truncated no
 ```
 
-Replicas, Redis Cluster and Sentinel are refused.
+Replicas and Redis Cluster are refused. Sentinel is refused unless you turn on the [Sentinel option](/docs/redis#sentinel-a-primary-with-replicas-opt-in).
 
   </Tab>
 </Tabs>

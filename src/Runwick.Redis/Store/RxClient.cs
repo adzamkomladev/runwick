@@ -86,18 +86,98 @@ internal sealed class RxClient : IAsyncDisposable
     readonly ConfigurationOptions _options;
     readonly string _application;
     readonly SemaphoreSlim[] _lanes;
-    readonly Lazy<Task<ConnectionMultiplexer>> _control;
-    readonly Lazy<Task<ConnectionMultiplexer>> _work;
-    readonly Lazy<Task<ConnectionMultiplexer>> _admin;
+    Generation? _gen;
+    RxAuthority? _authority;
 
     public RxClient(ConfigurationOptions options, string application, int producerCalls)
     {
         _options = options;
         _application = application;
         _lanes = [new(4, 4), new(4, 4), new(4, 4), new(Math.Max(1, producerCalls), Math.Max(1, producerCalls)), new(2, 2)];
-        _control = new(() => ConnectAsync("control", admin: false));
-        _work = new(() => ConnectAsync("work", admin: false));
-        _admin = new(() => ConnectAsync("admin", admin: true));
+        if (options.EndPoints.Count > 0)
+        {
+            _gen = new Generation(this, null);
+        }
+    }
+
+    /// <summary>Sentinel mode (22 §2.5): commands go only to the primary this authority has verified; null for a standalone primary.</summary>
+    internal RxAuthority? Authority
+    {
+        get => _authority;
+        set
+        {
+            _authority = value;
+            _authority?.Attach(this);
+            if (value is not null)
+            {
+                _gen = null; // nothing is bound until a primary is verified
+            }
+        }
+    }
+
+    /// <summary>The three connections of one bound primary: control and work lanes plus the admin connection (22 §5.1).</summary>
+    sealed class Generation
+    {
+        public Generation(RxClient owner, EndPoint? endpoint)
+        {
+            Endpoint = endpoint;
+            Control = new(() => owner.ConnectAsync("control", admin: false, endpoint));
+            Work = new(() => owner.ConnectAsync("work", admin: false, endpoint));
+            Admin = new(() => owner.ConnectAsync("admin", admin: true, endpoint));
+        }
+
+        public EndPoint? Endpoint { get; }
+
+        public Lazy<Task<ConnectionMultiplexer>> Control { get; }
+
+        public Lazy<Task<ConnectionMultiplexer>> Work { get; }
+
+        public Lazy<Task<ConnectionMultiplexer>> Admin { get; }
+
+        public async ValueTask DisposeAsync()
+        {
+            foreach (var lazy in new[] { Control, Work, Admin })
+            {
+                if (lazy.IsValueCreated)
+                {
+                    try
+                    {
+                        var mux = await lazy.Value.ConfigureAwait(false);
+                        await mux.DisposeAsync().ConfigureAwait(false);
+                    }
+                    catch (RedisConnectionException)
+                    {
+                        // Never connected.
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>Called by the authority after a verification: connections follow the verified primary and the old ones are dropped.</summary>
+    internal void Bind(EndPoint endpoint)
+    {
+        var old = _gen;
+        if (old?.Endpoint is { } e && e.ToString() == endpoint.ToString())
+        {
+            return;
+        }
+
+        _gen = new Generation(this, endpoint);
+        if (old is not null)
+        {
+            _ = Task.Run(async () => await old.DisposeAsync().ConfigureAwait(false));
+        }
+    }
+
+    /// <summary>The admin connection of the bound generation if it is bound to <paramref name="endpoint"/> (the authority reuses it), else null.</summary>
+    internal Task<(IServer Server, IDatabase Db)>? TryBoundAdmin(EndPoint endpoint) =>
+        _gen is { Endpoint: { } e } && e.ToString() == endpoint.ToString() ? AdminAsync() : null;
+
+    Generation Current()
+    {
+        _authority?.Require();
+        return _gen ?? throw new StoreNotAppliedException("store_authority_unverified");
     }
 
     public string Application => _application;
@@ -111,13 +191,32 @@ internal sealed class RxClient : IAsyncDisposable
     /// <summary>Raised after a reconnect so the profile and history checks run again (22 §2.3, §2.4).</summary>
     public event Action? Reconnected;
 
-    async Task<ConnectionMultiplexer> ConnectAsync(string role, bool admin)
+    async Task<ConnectionMultiplexer> ConnectAsync(string role, bool admin, EndPoint? endpoint)
     {
         var o = _options.Clone();
+        if (endpoint is not null)
+        {
+            o.EndPoints.Clear();
+            o.EndPoints.Add(endpoint);
+        }
+
         o.AllowAdmin = admin;
         o.ClientName = "runwick:" + _application + ":" + role;
         var mux = await ConnectionMultiplexer.ConnectAsync(o).ConfigureAwait(false);
         mux.ConnectionRestored += (_, _) => Reconnected?.Invoke();
+        if (_authority is { } authority && !admin)
+        {
+            // A lost connection to the verified primary is evidence that authority may have ended: close it and verify again.
+            // Dropping an old generation on purpose, or an old primary's socket after a switch, is not.
+            mux.ConnectionFailed += (_, e) =>
+            {
+                if (e.FailureType != ConnectionFailureType.ConnectionDisposed && _gen?.Endpoint?.ToString() == endpoint?.ToString())
+                {
+                    authority.Invalidate("connection_to_primary_failed");
+                }
+            };
+        }
+
         return mux;
     }
 
@@ -190,7 +289,8 @@ internal sealed class RxClient : IAsyncDisposable
 
     public async Task<IDatabase> DbAsync(RxLane lane)
     {
-        var mux = await (lane is RxLane.Renewal or RxLane.Settlement ? _control.Value : _work.Value).ConfigureAwait(false);
+        var g = Current();
+        var mux = await (lane is RxLane.Renewal or RxLane.Settlement ? g.Control.Value : g.Work.Value).ConfigureAwait(false);
         return mux.GetDatabase();
     }
 
@@ -230,7 +330,8 @@ internal sealed class RxClient : IAsyncDisposable
 
     public async Task<(IServer Server, IDatabase Db)> AdminAsync()
     {
-        var mux = await _admin.Value.ConfigureAwait(false);
+        var g = _gen ?? throw new StoreNotAppliedException("store_authority_unverified");
+        var mux = await g.Admin.Value.ConfigureAwait(false);
         var ep = mux.GetEndPoints(configuredOnly: true).Single();
         return (mux.GetServer(ep), mux.GetDatabase());
     }
@@ -336,24 +437,66 @@ internal sealed class RxClient : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        foreach (var lazy in new[] { _control, _work, _admin })
+        if (_authority is not null)
         {
-            if (lazy.IsValueCreated)
-            {
-                try
-                {
-                    var mux = await lazy.Value.ConfigureAwait(false);
-                    await mux.DisposeAsync().ConfigureAwait(false);
-                }
-                catch (RedisConnectionException)
-                {
-                    // Never connected.
-                }
-            }
+            await _authority.DisposeAsync().ConfigureAwait(false);
+        }
+
+        if (_gen is not null)
+        {
+            await _gen.DisposeAsync().ConfigureAwait(false);
         }
     }
 
     // ------------------------------------------------------------------ configuration (22 §2.1, §5.2)
+
+    /// <summary>
+    /// Sentinel mode (22 §2.5): the string lists the Sentinel endpoints and <c>serviceName</c>. Returns the data-node options (no endpoint:
+    /// the authority supplies the verified primary) and the Sentinel seeds. Everything else is fixed as in <see cref="Options"/>.
+    /// </summary>
+    public static (ConfigurationOptions Data, RxSentinelSeeds Seeds) SentinelOptions(string configuration, TimeSpan asyncTimeout)
+    {
+        if (configuration.Contains('$', StringComparison.Ordinal))
+        {
+            throw new RxProfileException("invalid_policy", "Command renames are not accepted in the Redis configuration.");
+        }
+
+        ConfigurationOptions parsed;
+        try
+        {
+            parsed = ConfigurationOptions.Parse(configuration);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new RxProfileException("invalid_policy", "The Redis configuration string could not be parsed: " + ex.GetType().Name);
+        }
+
+        if (parsed.EndPoints.Count == 0 || string.IsNullOrEmpty(parsed.ServiceName))
+        {
+            throw new RxProfileException("topology_unsupported", "Sentinel mode needs the Sentinel endpoints and a serviceName in the configuration string.");
+        }
+
+        var connectTimeout = Math.Min(parsed.ConnectTimeout, 5000);
+        var data = new ConfigurationOptions
+        {
+            User = parsed.User,
+            Password = parsed.Password,
+            Ssl = parsed.Ssl,
+            SslHost = parsed.SslHost,
+            SslProtocols = parsed.SslProtocols,
+            DefaultDatabase = parsed.DefaultDatabase,
+            ConnectTimeout = connectTimeout,
+            AbortOnConnectFail = false,
+            BacklogPolicy = BacklogPolicy.FailFast,
+            AsyncTimeout = (int)asyncTimeout.TotalMilliseconds,
+            SyncTimeout = (int)asyncTimeout.TotalMilliseconds,
+            AllowAdmin = false,
+            ConnectRetry = 1,
+        };
+        var seeds = new RxSentinelSeeds([.. parsed.EndPoints], parsed.ServiceName, parsed.SentinelUser ?? parsed.User, parsed.SentinelPassword ?? parsed.Password,
+            parsed.Ssl, parsed.SslHost, parsed.SslProtocols ?? default, connectTimeout);
+        return (data, seeds);
+    }
 
     /// <summary>
     /// Takes only the endpoint, user, password, TLS settings, defaultDatabase and connectTimeout (capped at 5 s) from the

@@ -9,7 +9,7 @@ All three stores give the same job behaviour (same states, retries, receipts, un
 | Deployment shapes (embedded, external, mixed workers) | All five | All five, if every process is on that machine | All five |
 | Commit a job or completion with your own data | Yes (same database) | Yes (same file) | No; use the outbox |
 | New-work wake-up between processes | Polling | Polling | Polling |
-| Refused at startup | Replica or proxy profiles are not certified | Network share, in-memory database, weaker-than-FULL sync | Replica, Cluster, Sentinel, wrong AOF settings |
+| Refused at startup | Replica or proxy profiles are not certified | Network share, in-memory database, weaker-than-FULL sync | Replica, Cluster, Sentinel (unless opted in), wrong AOF settings |
 
 ## Limits you should plan around
 
@@ -17,7 +17,7 @@ All three stores give the same job behaviour (same states, retries, receipts, un
 
 **SQLite.** One file on one machine. There is no multi-host support and no high availability. Durability is whatever your disk and its fsync give you; restoring the file from a backup is a break in history. Only one write happens at a time across all processes, and nothing here says SQLite matches PostgreSQL's throughput. A process being killed is not a power-loss test.
 
-**Redis.** One primary, no high availability. Failover, Sentinel promotion and Cluster are not supported, and a promoted replica may have lost acknowledged jobs. Durability is the primary's disk and `appendfsync always`. One application lives in one hash slot, so its throughput is bounded by one server thread and one very large command can delay everything else for that application. Redis cannot join your business transaction. Results say nothing about speed relative to PostgreSQL, and Redis without `appendfsync always` is not a supported configuration.
+**Redis.** One primary, no high availability by default. An opt-in Sentinel mode follows a failover with strict write authority (it stops writing when it cannot verify the primary), but a promoted replica may still have lost jobs acknowledged after the last check; Cluster is not supported. Durability is the primary's disk and `appendfsync always`. One application lives in one hash slot, so its throughput is bounded by one server thread and one very large command can delay everything else for that application. Redis cannot join your business transaction. Results say nothing about speed relative to PostgreSQL, and Redis without `appendfsync always` is not a supported configuration.
 
 ## Roles are configuration, not separate programs
 

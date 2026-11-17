@@ -1,5 +1,6 @@
 using System.Globalization;
 using Runwick.Management;
+using Runwick.Protocol;
 using StackExchange.Redis;
 
 namespace Runwick.Redis.Store;
@@ -19,8 +20,24 @@ internal sealed partial class RedisStore : IRedisStoreDiagnosticsSource
         {
             diagnostics = MissingDiagnostics(StoreSnapshotStatus.PermissionDenied);
         }
+        catch (Exception ex) when (ex is StoreNotAppliedException or StoreIncompatibleException)
+        {
+            // No verified primary to read from; the authority fact below says why.
+            diagnostics = MissingDiagnostics(StoreSnapshotStatus.Unavailable);
+        }
 
-        return diagnostics with { IntentRecovery = await ObserveIntentAsync(ct).ConfigureAwait(false) };
+        return diagnostics with { IntentRecovery = await ObserveIntentAsync(ct).ConfigureAwait(false), Authority = ObserveAuthority() };
+    }
+
+    StoreSnapshotFact<RedisAuthorityObservation> ObserveAuthority()
+    {
+        if (AuthoritySnapshot is not { } a)
+        {
+            return new(StoreSnapshotScope.Process, StoreSnapshotStatus.Unsupported, null);
+        }
+
+        return new(StoreSnapshotScope.Process, StoreSnapshotStatus.Available, new(a.State.ToString().ToLowerInvariant(), a.Reason, a.Primary, a.Epoch,
+            a.SentinelsAgreeing, a.SentinelsConfigured, a.VerifiedAt, [.. a.Recent.Select(e => new RedisAuthorityEvent(e.At, e.Text))]));
     }
 
     async Task<StoreSnapshotFact<RedisIntentRecovery>> ObserveIntentAsync(CancellationToken ct)
@@ -50,7 +67,7 @@ internal sealed partial class RedisStore : IRedisStoreDiagnosticsSource
         {
             return new(scope, StoreSnapshotStatus.PermissionDenied, null);
         }
-        catch (RedisException)
+        catch (Exception ex) when (ex is RedisException or StoreNotAppliedException or StoreIncompatibleException)
         {
             return new(scope, StoreSnapshotStatus.Unavailable, null);
         }
