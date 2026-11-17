@@ -60,7 +60,7 @@ Support all five modes with the same engine and handler contracts:
 - Dashboard coverage: jobs and attempts, queues, workers and capacity, schedules, scaling, settings, and retention.
 - OpenTelemetry traces and metrics; polling plus optional real-time updates.
 
-Durable workflows, chains, batches, DAGs, checkpoints/replay, compensation, and workflow visualization remain v2 work. Preserve useful identities and metadata without introducing a workflow engine in v1.
+Durable workflows were moved into v1 on 2026-11-17; the agreed design is in [proposals/durable-workflows.md](proposals/durable-workflows.md). A declarative DAG definition and a visual builder remain out of scope.
 
 ## Architecture recommendations for review
 

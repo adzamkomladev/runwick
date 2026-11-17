@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Local release, for when GitHub Actions is unavailable (same steps as .github/workflows/release.yml, minus the full
 # test run: run `dotnet test Runwick.slnx -c Release` first). Usage: NUGET_API_KEY=... bash eng/release-local.sh v0.1.4
-# HEAD must be the tagged commit and the tree clean, so the packages carry that commit's SourceLink.
+# The tag must be at or behind HEAD and the tree clean; packages are built from HEAD and carry its SourceLink.
 # Set DRY_RUN=1 to build and inspect only (no GitHub release, no push to nuget.org).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -9,7 +9,8 @@ export PATH="$HOME/.dotnet:$PATH" DOTNET_NOLOGO=1
 tag="${1:?usage: eng/release-local.sh v<version>}"
 version=$(sed -n 's|.*<Version>\(.*\)</Version>.*|\1|p' Directory.Build.props)
 [ "$tag" = "v$version" ] || { echo "tag $tag does not match Version $version in Directory.Build.props"; exit 1; }
-[ "$(git rev-parse HEAD)" = "$(git rev-parse "$tag^{commit}")" ] || { echo "HEAD is not $tag"; exit 1; }
+git merge-base --is-ancestor "$tag" HEAD || { echo "$tag is not an ancestor of HEAD"; exit 1; }
+[ "$(git rev-parse HEAD)" = "$(git rev-parse "$tag^{commit}")" ] || echo "note: HEAD is ahead of $tag; packages are built from HEAD ($(git rev-parse --short HEAD))"
 [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "working tree has uncommitted changes"; exit 1; }
 [ "${DRY_RUN:-0}" = "1" ] || [ -n "${NUGET_API_KEY:-}" ] || { echo "set NUGET_API_KEY (nuget.org key scoped to the Runwick* packages)"; exit 1; }
 

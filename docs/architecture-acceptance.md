@@ -21,7 +21,7 @@ These are carried-forward requirements/working directions, not a request to reop
 - Concurrency and rate controls remain distinct. Proposed rate algorithm and tuning still require review.
 - Optional embedded/standalone Inertia.NET dashboard, Basic/host/OIDC integration, scoped authorization, audit and telemetry.
 - At-least-once recovery: expiry cannot physically stop user code; downstream fencing requires resource participation; no exactly-once external-side-effect promise.
-- Runtime implementation follows architecture review; workflows/DAGs remain v2.
+- Runtime implementation follows architecture review; durable workflows moved into v1 on 2026-11-17 ([proposal](proposals/durable-workflows.md)); declarative DAGs remain out of scope.
 
 The final baseline selects API spelling, algorithms, defaults and dependency baselines as engineering decisions. User-selected requirements remain distinct from those selections. Neither design selection nor acceptance is proof that an implementation works.
 
