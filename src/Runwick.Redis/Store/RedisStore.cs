@@ -48,6 +48,7 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
     public Guid StoreId => runner.StoreId ?? throw new InvalidOperationException("Describe has not run yet.");
 
     public string AcknowledgementProfile => options.Sentinel is not null ? AcknowledgementProfiles.RedisAofAlwaysSentinel
+        : options.Cluster is not null ? AcknowledgementProfiles.RedisAofAlwaysCluster
         : options.Persistence == RedisPersistence.AofEverySecond ? AcknowledgementProfiles.RedisAofEverySecond : AcknowledgementProfiles.RedisAofAlways;
 
     internal RxRunner Runner => runner;
@@ -194,7 +195,8 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
 
                     if (snapshot.State != RxAuthorityState.Verified)
                     {
-                        throw new StoreUnavailableException("No verified Sentinel-managed primary: " + (snapshot.Reason ?? "unverified"));
+                        throw new StoreUnavailableException((options.Cluster is not null ? "No verified owner of the application's cluster slot: " : "No verified Sentinel-managed primary: ")
+                            + (snapshot.Reason ?? "unverified"));
                     }
 
                     authority.Start();
@@ -264,10 +266,14 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
             return null;
         }
 
-        var store = await db.HashGetAsync(RedisMigrator.StoreKey, "store").ConfigureAwait(false);
-        if (store.IsNull || (string)store! != Hex(id))
+        // In a cluster rw:store lives on whichever node owns its slot, not on the candidate: each application's own meta (same slot) is the identity proof.
+        if (options.Cluster is null)
         {
-            return "store_identity_mismatch";
+            var store = await db.HashGetAsync(RedisMigrator.StoreKey, "store").ConfigureAwait(false);
+            if (store.IsNull || (string)store! != Hex(id))
+            {
+                return "store_identity_mismatch";
+            }
         }
 
         foreach (var (application, seen) in _revisions)

@@ -7,7 +7,7 @@ using StackExchange.Redis;
 
 namespace Runwick.Redis.Store;
 
-/// <summary>The Sentinel endpoints, service name and Sentinel credentials taken from the configuration string (22 §2.5).</summary>
+/// <summary>The Sentinel endpoints (or, in Cluster mode, the cluster nodes that vote) and their credentials from the configuration string (22 §2.5, §2.6).</summary>
 internal sealed record RxSentinelSeeds(
     IReadOnlyList<EndPoint> Endpoints, string ServiceName, string? User, string? Password, bool Ssl, string? SslHost, SslProtocols SslProtocols, int ConnectTimeoutMs);
 
@@ -28,21 +28,25 @@ internal enum RxAuthorityState
 
 internal sealed record RxAuthorityEvent(DateTimeOffset At, string Text);
 
+/// <summary>One cluster node as a voting node reports it (22 §2.6): its address, role, health word and how many slots it owns.</summary>
+internal sealed record RxClusterNode(string Address, string Role, string Health, int Slots, bool OwnsApplicationSlot, bool MovingApplicationSlot);
+
 internal sealed record RxAuthoritySnapshot(
     RxAuthorityState State, string? Reason, string? Primary, string? RunId, long Epoch, int SentinelsAgreeing, int SentinelsConfigured,
-    DateTimeOffset? VerifiedAt, DateTimeOffset? ExpiresAt, IReadOnlyList<RxAuthorityEvent> Recent);
+    DateTimeOffset? VerifiedAt, DateTimeOffset? ExpiresAt, IReadOnlyList<RxAuthorityEvent> Recent,
+    string Mode = "sentinel", int? Slot = null, IReadOnlyList<RxClusterNode>? Nodes = null);
 
 /// <summary>
-/// Strict write authority for a Sentinel-managed primary (22 §2.5). Commands are sent only to a primary that a majority of the configured
-/// Sentinels named, whose profile was checked and whose history continues the one this process last verified; each success is good for
-/// <see cref="RedisSentinelOptions.AuthorityTtl"/>. Evidence of trouble (a different primary, failover flags, a lost connection) closes
+/// Strict write authority for a Sentinel-managed primary (22 §2.5) or for the owner of the application's slot in a Cluster (22 §2.6).
+/// Commands are sent only to a primary that a majority of the configured Sentinels (or cluster nodes) named, whose profile was checked and whose history continues the one this process last verified; each success is good for
+/// <see cref="RedisAuthorityOptions.AuthorityTtl"/>. Evidence of trouble (a different primary, failover flags, a lost connection) closes
 /// authority at once; silence closes it when the lease runs out, so a process cut off from the Sentinels stops writing to a former primary.
 /// </summary>
 internal sealed class RxAuthority : IAsyncDisposable
 {
     const int MaxEvents = 16;
     readonly RxSentinelSeeds _seeds;
-    readonly RedisSentinelOptions _options;
+    readonly RedisAuthorityOptions _options;
     readonly TimeProvider _time;
     readonly ConfigurationOptions _data;
     readonly RedisPersistence _persistence;
@@ -52,6 +56,10 @@ internal sealed class RxAuthority : IAsyncDisposable
     readonly List<RxAuthorityEvent> _events = [];
     readonly CancellationTokenSource _stop = new();
     readonly TimeSpan _fullEvery;
+    readonly bool _cluster;
+    readonly int _slot;
+    Lazy<Task<ConnectionMultiplexer>>? _clusterMux;
+    IReadOnlyList<RxClusterNode>? _nodes;
     RxClient? _client;
     Task? _loop;
     DateTimeOffset _lastFull = DateTimeOffset.MinValue;
@@ -66,9 +74,11 @@ internal sealed class RxAuthority : IAsyncDisposable
     DateTimeOffset? _expiresAt;
     (string Primary, string RunId, string ReplId, long Offset)? _last;
 
-    public RxAuthority(RxSentinelSeeds seeds, RedisSentinelOptions options, TimeProvider time, ConfigurationOptions data, RedisPersistence persistence,
-        TimeSpan? fullCheckEvery = null)
+    public RxAuthority(RxSentinelSeeds seeds, RedisAuthorityOptions options, TimeProvider time, ConfigurationOptions data, RedisPersistence persistence,
+        TimeSpan? fullCheckEvery = null, int? clusterSlot = null)
     {
+        _cluster = clusterSlot is not null;
+        _slot = clusterSlot ?? 0;
         _fullEvery = fullCheckEvery ?? TimeSpan.FromSeconds(30);
         _seeds = seeds;
         _options = options;
@@ -95,7 +105,8 @@ internal sealed class RxAuthority : IAsyncDisposable
             var now = _time.GetUtcNow();
             var state = _state == RxAuthorityState.Verified && now >= _expiresAt ? RxAuthorityState.Unresolved : _state;
             var reason = state != _state ? "authority_lease_expired" : _reason;
-            return new(state, reason, _primary, _runId, _epoch, _agreeing, _seeds.Endpoints.Count, _verifiedAt, _expiresAt, [.. _events]);
+            return new(state, reason, _primary, _runId, _epoch, _agreeing, _seeds.Endpoints.Count, _verifiedAt, _expiresAt, [.. _events],
+                _cluster ? "cluster" : "sentinel", _cluster ? _slot : null, _nodes);
         }
     }
 
@@ -224,7 +235,7 @@ internal sealed class RxAuthority : IAsyncDisposable
                 return Snapshot();
             }
 
-            var votes = await AskSentinelsAsync(ct).ConfigureAwait(false);
+            var votes = _cluster ? await AskClusterAsync(ct).ConfigureAwait(false) : await AskSentinelsAsync(ct).ConfigureAwait(false);
             var needed = _seeds.Endpoints.Count / 2 + 1;
             var clean = votes.Where(v => v.Primary is not null && !v.Troubled).GroupBy(v => v.Primary!, StringComparer.Ordinal).OrderByDescending(g => g.Count()).FirstOrDefault();
             if (clean is null || clean.Count() < needed)
@@ -232,7 +243,9 @@ internal sealed class RxAuthority : IAsyncDisposable
                 // Evidence (a Sentinel reports the primary down or a failover) closes authority now; mere silence waits for the lease.
                 var troubled = votes.Any(v => v.Troubled);
                 var split = votes.Select(v => v.Primary).Where(p => p is not null).Distinct(StringComparer.Ordinal).Count() > 1;
-                SetUnresolved(troubled ? "primary_reported_down_or_failing_over" : split ? "sentinels_disagree" : "sentinel_majority_unreachable", troubled || split, clean?.Count() ?? 0);
+                SetUnresolved(_cluster
+                    ? troubled ? "slot_owner_failing_or_moving" : split ? "cluster_nodes_disagree" : "cluster_majority_unreachable"
+                    : troubled ? "primary_reported_down_or_failing_over" : split ? "sentinels_disagree" : "sentinel_majority_unreachable", troubled || split, clean?.Count() ?? 0);
                 return Snapshot();
             }
 
@@ -240,7 +253,7 @@ internal sealed class RxAuthority : IAsyncDisposable
             var current = Snapshot();
             if (current.State == RxAuthorityState.Verified && current.Primary != primary)
             {
-                SetUnresolved("sentinels_name_a_different_primary", closeNow: true, clean.Count());
+                SetUnresolved(_cluster ? "slot_owner_changed" : "sentinels_name_a_different_primary", closeNow: true, clean.Count());
             }
 
             // The bound connection is reused while the same node stays primary; a new candidate gets a connection of its own and the full check.
@@ -263,7 +276,7 @@ internal sealed class RxAuthority : IAsyncDisposable
                 var now = _time.GetUtcNow();
                 if (probe is not null || now - _lastFull >= _fullEvery)
                 {
-                    var report = await RxProfile.CheckAsync(server, db, _persistence, sentinel: true).ConfigureAwait(false);
+                    var report = await RxProfile.CheckAsync(server, db, _persistence, _cluster ? RxTopology.Cluster : RxTopology.Sentinel).ConfigureAwait(false);
                     OnReport?.Invoke(report);
                     if (!report.Verified)
                     {
@@ -277,7 +290,7 @@ internal sealed class RxAuthority : IAsyncDisposable
                 else
                 {
                     // Between full checks: the node must still be a primary, and the lineage fields are read fresh.
-                    var info = await RxProfile.InfoAsync(db, "replication").ConfigureAwait(false);
+                    var info = await RxProfile.InfoAsync(server, "replication").ConfigureAwait(false);
                     if (info.GetValueOrDefault("role") != "master")
                     {
                         SetUnresolved("topology_unsupported: role=" + info.GetValueOrDefault("role", "<missing>"), closeNow: true, clean.Count());
@@ -304,7 +317,12 @@ internal sealed class RxAuthority : IAsyncDisposable
             var runId = facts.GetValueOrDefault("run_id", "");
             var replId = facts.GetValueOrDefault("master_replid", "");
             var offset = long.TryParse(facts.GetValueOrDefault("master_repl_offset"), NumberStyles.None, CultureInfo.InvariantCulture, out var o) ? o : 0;
-            if (_last is { } last && last.Primary != primary)
+            // A slot moved by migration leaves the old owner a healthy primary that every voter still lists: the data moved key by key, so the
+            // history check below (store identity, revisions) is the continuity proof. After a failover the old owner is down or demoted, and the
+            // promoted node must descend from the verified replication history (22 §2.6).
+            var migrated = _cluster && _last is { } was && was.Primary != primary
+                && votes.Where(v => v.Primary == primary && v.Nodes is not null).All(v => v.Nodes!.Any(n => n.Address == was.Primary && n.Role == "primary" && n.Health == "ok"));
+            if (_last is { } last && last.Primary != primary && !migrated)
             {
                 // A different node: it must descend from the history this process last verified and cover everything seen then.
                 var replId2 = facts.GetValueOrDefault("master_replid2", "");
@@ -356,6 +374,7 @@ internal sealed class RxAuthority : IAsyncDisposable
                 _verifiedAt = _time.GetUtcNow();
                 _expiresAt = _verifiedAt + _options.AuthorityTtl;
                 _last = (primary, runId, replId, offset);
+                _nodes = clean.Select(v => v.Nodes).FirstOrDefault(n => n is not null);
             }
 
             return Snapshot();
@@ -371,7 +390,7 @@ internal sealed class RxAuthority : IAsyncDisposable
         }
     }
 
-    sealed record Vote(string? Primary, bool Troubled);
+    internal sealed record Vote(string? Primary, bool Troubled, IReadOnlyList<RxClusterNode>? Nodes = null);
 
     async Task<Vote[]> AskSentinelsAsync(CancellationToken ct)
     {
@@ -409,6 +428,117 @@ internal sealed class RxAuthority : IAsyncDisposable
                 return new Vote(null, false);
             }
         })).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Asks every listed cluster node who owns the application's slot (22 §2.6). A node's answer is its own view, so each vote is one
+    /// <c>CLUSTER NODES</c> reply read on that node; the authority needs the same answer from a majority of the listed nodes.
+    /// </summary>
+    async Task<Vote[]> AskClusterAsync(CancellationToken ct)
+    {
+        var timeout = TimeSpan.FromMilliseconds(Math.Min(1500, Math.Max(250, _options.AuthorityTtl.TotalMilliseconds / 2)));
+        var lazy = _clusterMux ??= new(ConnectClusterAsync);
+        ConnectionMultiplexer mux;
+        try
+        {
+            mux = await lazy.Value.WaitAsync(timeout, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is RedisException or TimeoutException or ObjectDisposedException)
+        {
+            _clusterMux = null;
+            return [.. _seeds.Endpoints.Select(_ => new Vote(null, false))];
+        }
+
+        return await Task.WhenAll(_seeds.Endpoints.Select(async ep =>
+        {
+            try
+            {
+                var text = await mux.GetServer(ep).ClusterNodesRawAsync().WaitAsync(timeout, ct).ConfigureAwait(false);
+                return ParseClusterView(text ?? "", ep, _slot);
+            }
+            catch (Exception ex) when (ex is RedisException or TimeoutException or ObjectDisposedException or InvalidOperationException)
+            {
+                return new Vote(null, false);
+            }
+        })).ConfigureAwait(false);
+    }
+
+    async Task<ConnectionMultiplexer> ConnectClusterAsync()
+    {
+        var o = _data.Clone();
+        o.AllowAdmin = true;
+        o.ClientName = "runwick:cluster-authority";
+        o.ConnectTimeout = Math.Min(o.ConnectTimeout, 2000);
+        o.AsyncTimeout = 2000;
+        o.SyncTimeout = 2000;
+        return await ConnectionMultiplexer.ConnectAsync(o).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// One node's <c>CLUSTER NODES</c> text as a vote on the owner of <paramref name="slot"/>: the owner is the healthy-looking primary whose ranges
+    /// hold the slot. The vote is troubled when the owner is flagged failing, or when any node lists the slot as migrating or importing.
+    /// </summary>
+    internal static Vote ParseClusterView(string text, EndPoint seed, int slot)
+    {
+        var nodes = new List<RxClusterNode>();
+        string? owner = null;
+        var ownerFailing = false;
+        var moving = false;
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var f = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (f.Length < 8)
+            {
+                continue;
+            }
+
+            var addr = f[1];
+            var cut = addr.IndexOf('@', StringComparison.Ordinal);
+            addr = cut >= 0 ? addr[..cut] : addr.Split(',')[0];
+            if (addr.StartsWith(':'))
+            {
+                addr = (seed is IPEndPoint ip ? ip.Address.ToString() : ((DnsEndPoint)seed).Host) + addr;
+            }
+
+            var flags = f[2].Split(',');
+            var primary = flags.Contains("master");
+            var health = flags.Contains("fail") ? "fail" : flags.Contains("fail?") ? "fail?" : flags.Contains("handshake") || flags.Contains("noaddr") ? "unknown" : "ok";
+            var owns = false;
+            var slots = 0;
+            var movingHere = false;
+            foreach (var token in f.Skip(8))
+            {
+                if (token.StartsWith('['))
+                {
+                    var n = token.TrimStart('[').Split('-')[0];
+                    if (int.TryParse(n, NumberStyles.None, CultureInfo.InvariantCulture, out var movingSlot) && movingSlot == slot)
+                    {
+                        movingHere = true;
+                    }
+
+                    continue;
+                }
+
+                var parts = token.Split('-');
+                if (int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var lo)
+                    && int.TryParse(parts[^1], NumberStyles.None, CultureInfo.InvariantCulture, out var hi))
+                {
+                    slots += hi - lo + 1;
+                    owns |= slot >= lo && slot <= hi;
+                }
+            }
+
+            moving |= movingHere;
+            if (primary && owns)
+            {
+                owner = addr;
+                ownerFailing = health != "ok";
+            }
+
+            nodes.Add(new RxClusterNode(addr, primary ? "primary" : "replica", health, slots, primary && owns, movingHere));
+        }
+
+        return new Vote(owner, ownerFailing || moving, nodes);
     }
 
     async Task<ConnectionMultiplexer> ConnectSentinelAsync(EndPoint ep)
@@ -476,6 +606,18 @@ internal sealed class RxAuthority : IAsyncDisposable
             catch (OperationCanceledException)
             {
                 // Stopped.
+            }
+        }
+
+        if (_clusterMux is { IsValueCreated: true } cm)
+        {
+            try
+            {
+                await (await cm.Value.ConfigureAwait(false)).DisposeAsync().ConfigureAwait(false);
+            }
+            catch (RedisException)
+            {
+                // Never connected.
             }
         }
 

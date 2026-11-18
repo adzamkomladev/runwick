@@ -20,20 +20,35 @@ public enum RedisPersistence
     AofEverySecond,
 }
 
-/// <summary>
-/// Sentinel high availability (opt-in, profile <c>redis-aof-always-sentinel-v1</c>, 22 §2.5). Runwick writes only to a primary that a
-/// majority of the configured Sentinels name and whose profile and history it has just verified; otherwise it stops sending commands.
-/// </summary>
-public sealed class RedisSentinelOptions
+/// <summary>The write-authority timing shared by the Sentinel and Cluster modes (22 §2.5, §2.6).</summary>
+public abstract class RedisAuthorityOptions
 {
     /// <summary>How often the primary is verified again (250 ms – 10 s, default 1 s).</summary>
     public TimeSpan AuthorityRecheckInterval { get; set; } = TimeSpan.FromSeconds(1);
 
     /// <summary>
     /// How long one successful verification lets commands go out (1 s – 30 s, default 4 s, at least twice the recheck interval). A process
-    /// cut off from the Sentinels stops writing when this runs out, so keep it well under the Sentinels' <c>down-after-milliseconds</c>.
+    /// cut off from the Sentinels (or the cluster) stops writing when this runs out, so keep it well under the failure-detection time of
+    /// the Sentinels (<c>down-after-milliseconds</c>) or the cluster (<c>cluster-node-timeout</c>).
     /// </summary>
     public TimeSpan AuthorityTtl { get; set; } = TimeSpan.FromSeconds(4);
+}
+
+/// <summary>
+/// Sentinel high availability (opt-in, profile <c>redis-aof-always-sentinel-v1</c>, 22 §2.5). Runwick writes only to a primary that a
+/// majority of the configured Sentinels name and whose profile and history it has just verified; otherwise it stops sending commands.
+/// </summary>
+public sealed class RedisSentinelOptions : RedisAuthorityOptions
+{
+}
+
+/// <summary>
+/// Redis Cluster (opt-in, profile <c>redis-aof-always-cluster-v1</c>, 22 §2.6). All of an application's keys share one hash slot, so one
+/// primary owns the whole application. Runwick writes only while a majority of the listed nodes name the same healthy owner for that slot
+/// and its profile and history are verified; while the slot is moving or the owner is failing it stops sending commands.
+/// </summary>
+public sealed class RedisClusterOptions : RedisAuthorityOptions
+{
 }
 
 public sealed class RedisOptions
@@ -43,6 +58,12 @@ public sealed class RedisOptions
     /// the data nodes' credentials and <c>sentinelUser</c>/<c>sentinelPassword</c> the Sentinels'. Needs <c>appendfsync always</c>.
     /// </summary>
     public RedisSentinelOptions? Sentinel { get; set; }
+
+    /// <summary>
+    /// Opt-in Cluster mode. The configuration string then lists the cluster's nodes (list every primary), <c>user</c>/<c>password</c> are the
+    /// nodes' credentials, and the cluster needs <c>appendfsync always</c> on every primary. Cannot be combined with <see cref="Sentinel"/>.
+    /// </summary>
+    public RedisClusterOptions? Cluster { get; set; }
 
     /// <summary>Which persistence profile the server must run. A server on the other profile is refused with <c>store_profile_mismatch</c>.</summary>
     public RedisPersistence Persistence { get; set; } = RedisPersistence.AofAlways;
@@ -73,7 +94,7 @@ public static class RunwickRedisBuilderExtensions
     /// Uses one Redis primary under <c>redis-aof-always-single-primary-v1</c> as the store (22 §2.1). Runwick takes only the
     /// endpoint, credentials, TLS settings, <c>defaultDatabase</c> and <c>connectTimeout</c> from the configuration string and
     /// never logs it. Several endpoints or a Sentinel service name are refused with <c>topology_unsupported</c> unless
-    /// <see cref="RedisOptions.Sentinel"/> is set.
+    /// <see cref="RedisOptions.Sentinel"/> or <see cref="RedisOptions.Cluster"/> is set.
     /// </summary>
     public static RunwickBuilder UseRedis(this RunwickBuilder builder, string configuration, Action<RedisOptions>? configure = null)
     {
@@ -90,7 +111,16 @@ public static class RunwickRedisBuilderExtensions
         {
             try
             {
-                if (options.Sentinel is null)
+                if (options.Sentinel is not null && options.Cluster is not null)
+                {
+                    throw new RxProfileException("invalid_policy", "Sentinel and Cluster cannot both be set.");
+                }
+
+                if (options.Cluster is not null)
+                {
+                    (parsed, seeds) = RxClient.ClusterOptions(configuration, TimeSpan.FromSeconds(5));
+                }
+                else if (options.Sentinel is null)
                 {
                     parsed = RxClient.Options(configuration, TimeSpan.FromSeconds(5));
                 }
@@ -110,7 +140,7 @@ public static class RunwickRedisBuilderExtensions
             builder.EarlyErrors.Add(new ConfigurationError(RunwickErrorCodes.InvalidPolicy, "redis", "ProfileRecheckInterval must be 5 s – 5 min."));
         }
 
-        if (options.Sentinel is { } sentinel)
+        if (((RedisAuthorityOptions?)options.Sentinel ?? options.Cluster) is { } sentinel)
         {
             if (sentinel.AuthorityRecheckInterval < TimeSpan.FromMilliseconds(250) || sentinel.AuthorityRecheckInterval > TimeSpan.FromSeconds(10)
                 || sentinel.AuthorityTtl < TimeSpan.FromSeconds(1) || sentinel.AuthorityTtl > TimeSpan.FromSeconds(30)
@@ -122,7 +152,7 @@ public static class RunwickRedisBuilderExtensions
 
             if (options.Persistence != RedisPersistence.AofAlways)
             {
-                builder.EarlyErrors.Add(new ConfigurationError(RunwickErrorCodes.InvalidPolicy, "redis", "The Sentinel profile needs appendfsync always."));
+                builder.EarlyErrors.Add(new ConfigurationError(RunwickErrorCodes.InvalidPolicy, "redis", "The Sentinel and Cluster profiles need appendfsync always."));
             }
         }
 
@@ -150,8 +180,10 @@ internal sealed class RedisStoreRegistration(StackExchange.Redis.ConfigurationOp
         services.AddSingleton(sp => new RxClient(configuration ?? new StackExchange.Redis.ConfigurationOptions(),
             sp.GetRequiredService<JobRegistry>().Application, sp.GetRequiredService<ProducerOptions>().MaxConcurrentCalls)
         {
-            Authority = seeds is null || options.Sentinel is null ? null
-                : new RxAuthority(seeds, options.Sentinel, sp.GetRequiredService<TimeProvider>(), configuration!, options.Persistence, options.ProfileRecheckInterval),
+            Cluster = options.Cluster is not null,
+            Authority = seeds is null || ((RedisAuthorityOptions?)options.Sentinel ?? options.Cluster) is not { } authority ? null
+                : new RxAuthority(seeds, authority, sp.GetRequiredService<TimeProvider>(), configuration!, options.Persistence, options.ProfileRecheckInterval,
+                    options.Cluster is null ? null : RxClient.SlotOf(sp.GetRequiredService<JobRegistry>().Application)),
         });
         services.AddSingleton(sp => new RxRunner(sp.GetRequiredService<RxClient>(), sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<IFaultInjector>()));
         services.AddSingleton(sp => new RedisStore(sp.GetRequiredService<RxRunner>(), options, sp.GetRequiredService<TimeProvider>()));

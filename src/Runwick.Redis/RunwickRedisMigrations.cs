@@ -22,6 +22,13 @@ namespace Runwick
         public static Task<RedisMigrationResult> MigrateAsync(string configuration, CancellationToken cancellationToken = default) =>
             Runwick.Redis.Migrations.RedisMigrator.RunAsync(configuration, cancellationToken);
 
+        /// <summary>
+        /// As <see cref="MigrateAsync(string, CancellationToken)"/> for a Redis Cluster (22 §2.6): <paramref name="configuration"/> lists the
+        /// cluster's nodes, every primary is checked against the cluster profile, and <c>rw:store</c> is written once.
+        /// </summary>
+        public static Task<RedisMigrationResult> MigrateClusterAsync(string configuration, CancellationToken cancellationToken = default) =>
+            Runwick.Redis.Migrations.RedisMigrator.RunAsync(configuration, cancellationToken, cluster: true);
+
         /// <summary>As above, checking the server against the given persistence profile (G4).</summary>
         public static Task<RedisMigrationResult> MigrateAsync(string configuration, RedisPersistence persistence, CancellationToken cancellationToken = default) =>
             Runwick.Redis.Migrations.RedisMigrator.RunAsync(configuration, cancellationToken, persistence);
@@ -40,17 +47,18 @@ namespace Runwick.Redis.Migrations
         /// <summary>Test seam (REDIS-14): how long to wait for the migration lock.</summary>
         internal static TimeSpan LockWait { get; set; } = TimeSpan.FromSeconds(60);
 
-        public static Task<RedisMigrationResult> RunAsync(string configuration, CancellationToken ct, RedisPersistence persistence = RedisPersistence.AofAlways) =>
-            WithLockAsync(configuration, (db, server) => ApplyAsync(db, server, ct), ct, persistence);
+        public static Task<RedisMigrationResult> RunAsync(string configuration, CancellationToken ct, RedisPersistence persistence = RedisPersistence.AofAlways,
+            bool cluster = false) =>
+            WithLockAsync(configuration, (db, server) => ApplyAsync(db, server, cluster, ct), ct, persistence, cluster);
 
         /// <summary>Connects as admin, checks the profile and runs <paramref name="body"/> under the migration lock (22 §9.2).</summary>
         internal static async Task<T> WithLockAsync<T>(string configuration, Func<IDatabase, IServer, Task<T>> body, CancellationToken ct,
-            RedisPersistence persistence = RedisPersistence.AofAlways)
+            RedisPersistence persistence = RedisPersistence.AofAlways, bool cluster = false)
         {
             ConfigurationOptions options;
             try
             {
-                options = RxClient.Options(configuration, TimeSpan.FromSeconds(5));
+                options = cluster ? RxClient.ClusterOptions(configuration, TimeSpan.FromSeconds(5)).Data : RxClient.Options(configuration, TimeSpan.FromSeconds(5));
             }
             catch (RxProfileException ex)
             {
@@ -77,20 +85,23 @@ namespace Runwick.Redis.Migrations
                 }
 
                 var db = mux.GetDatabase();
-                var server = mux.GetServer(mux.GetEndPoints(configuredOnly: true).Single());
-                RxProfileReport report;
-                try
+                var server = cluster ? PrimariesOf(mux).First() : mux.GetServer(mux.GetEndPoints(configuredOnly: true).Single());
+                foreach (var node in cluster ? PrimariesOf(mux) : [server]) // a cluster is checked primary by primary
                 {
-                    report = await RxProfile.CheckAsync(server, db, persistence).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex is RedisException)
-                {
-                    throw new RedisMigrationException("store_unavailable", "Could not read the Redis profile.", ex);
-                }
+                    RxProfileReport report;
+                    try
+                    {
+                        report = await RxProfile.CheckAsync(node, db, persistence, cluster ? RxTopology.Cluster : RxTopology.Standalone).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is RedisException)
+                    {
+                        throw new RedisMigrationException("store_unavailable", "Could not read the Redis profile.", ex);
+                    }
 
-                if (!report.Verified)
-                {
-                    throw new RedisMigrationException(report.FailureCode!, "The Redis server is outside the profile: " + report.Failure);
+                    if (!report.Verified)
+                    {
+                        throw new RedisMigrationException(report.FailureCode!, "The Redis server is outside the profile: " + report.Failure);
+                    }
                 }
 
                 var token = Guid.NewGuid().ToString("N");
@@ -117,7 +128,13 @@ namespace Runwick.Redis.Migrations
             }
         }
 
-        static async Task<RedisMigrationResult> ApplyAsync(IDatabase db, IServer server, CancellationToken ct)
+        static IServer[] PrimariesOf(IConnectionMultiplexer mux)
+        {
+            var primaries = mux.GetServers().Where(n => !n.IsReplica && n.IsConnected).ToArray();
+            return primaries.Length > 0 ? primaries : throw new RedisMigrationException("store_unavailable", "No connected cluster primary.");
+        }
+
+        static async Task<RedisMigrationResult> ApplyAsync(IDatabase db, IServer server, bool cluster, CancellationToken ct)
         {
             var (manifest, digest) = Manifest();
             var existing = await db.HashGetAllAsync(StoreKey).ConfigureAwait(false);
@@ -138,11 +155,14 @@ namespace Runwick.Redis.Migrations
                 return new RedisMigrationResult(Guid.Parse(map["store"]), CurrentLayout, []);
             }
 
-            await foreach (var key in server.KeysAsync(db.Database, "rw:*", 1000).WithCancellation(ct).ConfigureAwait(false))
+            foreach (var node in cluster ? PrimariesOf(db.Multiplexer) : [server])
             {
-                if (key != "rw:migration-lock")
+                await foreach (var key in node.KeysAsync(db.Database, "rw:*", 1000).WithCancellation(ct).ConfigureAwait(false))
                 {
-                    throw new RedisMigrationException("schema_not_empty", "The Redis database has rw:* keys but no rw:store.");
+                    if (key != "rw:migration-lock")
+                    {
+                        throw new RedisMigrationException("schema_not_empty", "The Redis database has rw:* keys but no rw:store.");
+                    }
                 }
             }
 

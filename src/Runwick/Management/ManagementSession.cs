@@ -613,6 +613,7 @@ internal sealed class ManagementSession(
             AcknowledgementProfiles.RedisAofAlways => AcknowledgementProfiles.RedisAofAlways,
             AcknowledgementProfiles.RedisAofEverySecond => AcknowledgementProfiles.RedisAofEverySecond,
             AcknowledgementProfiles.RedisAofAlwaysSentinel => AcknowledgementProfiles.RedisAofAlwaysSentinel,
+            AcknowledgementProfiles.RedisAofAlwaysCluster => AcknowledgementProfiles.RedisAofAlwaysCluster,
             _ => null,
         };
         var migration = retained?.MigrationMode is "normal" or "expand" or "maintenance" ? retained.MigrationMode : "unknown";
@@ -705,7 +706,8 @@ internal sealed class ManagementSession(
 
         if (provider == "redis" && redis?.Authority is { Status: StoreSnapshotStatus.Available, Value: { } a })
         {
-            var text = $"Sentinel-managed primary {a.Primary ?? "unknown"}: authority {a.State}" + (a.Reason is null ? "" : $" ({a.Reason})");
+            var text = (a.Mode == "cluster" ? $"Cluster slot {a.Slot} owner {a.Primary ?? "unknown"}" : $"Sentinel-managed primary {a.Primary ?? "unknown"}")
+                + $": authority {a.State}" + (a.Reason is null ? "" : $" ({a.Reason})");
             return new(StoreSnapshotScope.ProviderNode, fresh ? StoreSnapshotStatus.Available : StoreSnapshotStatus.Stale, text);
         }
 
