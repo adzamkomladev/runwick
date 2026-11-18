@@ -43,6 +43,16 @@ internal sealed class ReadinessCoordinator(WorkerEngine engine, IReadOnlyList<La
         }
     }
 
+    /// <summary>The current snapshot when it is younger than the hint age, without probing (finish-and-claim never starts a probe).</summary>
+    public bool TryGetFresh([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ReadyView? view)
+    {
+        lock (_lock)
+        {
+            view = _current is { } c && engine.Clock.Now - c.ReceivedAt < WorkerSettings.HintMaxAge ? c : null;
+            return view is not null;
+        }
+    }
+
     /// <summary>Queues the current snapshot reports saturated (probe/2 evidence; empty without one).</summary>
     public HashSet<string> SaturatedQueues()
     {

@@ -170,6 +170,15 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
             () => ((IFinishManyStore)Driver).FinishManyAsync(cmd, CancellationToken.None));
     }
 
+    /// <summary>One ReserveAndBegin/1 command as FinishAndClaim carries it (its own ID and NotAfter); not sent, not recorded.</summary>
+    internal StoreCommand<ReserveAndBeginRequest> ClaimCommand(int maxJobs, string queue = "default", string priority = "medium",
+        TimeSpan? lease = null, CandidateCursor? after = null, Guid? commandId = null, DateTimeOffset? notAfter = null) =>
+        Command(new ReserveAndBeginRequest(WorkerInstanceId, queue, priority, Contracts, after, lease ?? TimeSpan.FromSeconds(30), maxJobs), commandId, notAfter);
+
+    /// <summary>FinishAndClaim (05 §12.7): prepared Finish commands and a prepared claim in one call; not recorded in the history.</summary>
+    internal Task<StoreReply<FinishedAndClaimed>> FinishAndClaimAsync(IReadOnlyList<StoreCommand<FinishRequest>> finishes, StoreCommand<ReserveAndBeginRequest> claim) =>
+        ((IFinishAndClaimStore)Driver).FinishAndClaimAsync(new FinishAndClaimRequest(finishes, claim), CancellationToken.None);
+
     internal Task<StoreReply<FinishedAttempt>> RecoverAsync(ExpiredLease expired, Guid? commandId = null, DateTimeOffset? notAfter = null)
     {
         var cmd = Command(new RecoverRequest(expired.JobId, expired.AttemptId, expired.OwnershipToken), commandId, notAfter);

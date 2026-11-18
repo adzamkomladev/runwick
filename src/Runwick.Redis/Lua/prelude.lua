@@ -543,7 +543,7 @@ local function inline_budget(ops, keys, bytes)
   if #ops <= INLINE or #ops > BATCH_INLINE_OPS or keys > BATCH_INLINE_KEYS or bytes > BATCH_INLINE_BYTES then
     return INLINE
   end
-  if OP ~= 'DispatchMany' and OP ~= 'FinishMany' then return INLINE end
+  if OP ~= 'DispatchMany' and OP ~= 'FinishMany' and not U.batchy then return INLINE end
 
   -- A single after-image can carry hundreds of hash fields or sorted-set members.
   local arguments = 0
@@ -649,7 +649,7 @@ function U.run(M)
     local na = NOT_AFTER
     U.hset_sorted('rcpt:' .. CMD, RECEIPT_FIELDS, { cls = CLS, op = OP, ver = '1', fp = FP, notafter = U.S(na), retain = U.S(na + FLOOR),
       status = r.status, code = r.code or '', detail = r.detail or '', decided = r.decided,
-      result = result_text(r) })
+      result = r.rcpt_text or result_text(r) })
     U.zadd('rcpt:exp:' .. CLS, na + FLOOR, CMD)
   end
 

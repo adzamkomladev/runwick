@@ -264,6 +264,11 @@ internal static class BenchMode
                     {
                         o.UseBufferedFinish();
                     }
+
+                    if (a.Has("combined-finish-claim")) // 05 §12.7: the finish of a job and the claim of its replacement in one call
+                    {
+                        o.UseCombinedFinishClaim();
+                    }
                 }));
         });
         await using var provider = sc.BuildServiceProvider();

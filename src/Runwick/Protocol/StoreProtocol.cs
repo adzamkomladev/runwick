@@ -414,6 +414,33 @@ internal interface IFinishManyStore
     Task<StoreReply<FinishedMany>> FinishManyAsync(StoreCommand<FinishManyRequest> command, CancellationToken ct);
 }
 
+/// <summary>
+/// FinishAndClaim (opt-in, 05 §12.7): the Finish/1 commands of <see cref="Finishes"/> and one ReserveAndBegin/1 command
+/// <see cref="Claim"/> sent in one call. Every command keeps its own ID, receipt and rules; the call only saves a round trip.
+/// </summary>
+internal sealed record FinishAndClaimRequest(IReadOnlyList<StoreCommand<FinishRequest>> Finishes, StoreCommand<ReserveAndBeginRequest> Claim);
+
+/// <summary>
+/// Value of an Applied FinishAndClaim. <see cref="Finished"/> holds one reply per finish, as FinishMany/1 does; it is null for a
+/// replayed claim (the finishes are then resolved one by one from their own receipts). <see cref="Claim"/> is exactly the reply
+/// ReserveAndBegin/1 would give the claim command at the same decision time (NoWork, QueuePaused and CapacityBlocked included).
+/// </summary>
+internal sealed record FinishedAndClaimed(FinishedMany? Finished, StoreReply<ClaimedJobs> Claim);
+
+/// <summary>
+/// Optional combined finish and claim (05 §12.7). Applied means the call was decided as a whole: the finishes are decided as in
+/// FinishMany/1 and the claim as in ReserveAndBegin/1, in one transaction, finishes first (so a permit a finish frees can serve
+/// the claim). Any other reply status and any transport failure applied nothing that the commands' own receipts do not record, so
+/// each command is resolved alone by resubmitting it.
+/// </summary>
+internal interface IFinishAndClaimStore
+{
+    /// <summary>The most finishes one call may carry.</summary>
+    const int MaxFinishes = IReserveAndBeginStore.MaxJobs;
+
+    Task<StoreReply<FinishedAndClaimed>> FinishAndClaimAsync(FinishAndClaimRequest request, CancellationToken ct);
+}
+
 internal sealed record RecoverRequest(Guid JobId, Guid ExpectedAttemptId, Guid ExpectedOwnershipToken);
 
 internal sealed record ReleaseRequest(LeaseHandle Lease);

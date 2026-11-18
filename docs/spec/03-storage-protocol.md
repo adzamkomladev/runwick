@@ -6,6 +6,15 @@ This file defines the driver-neutral storage contract: internal records and inte
 
 Scope is M1 + M2 (PostgreSQL execution through gate G-1). Items marked **not in M2** are named only so that interfaces and records leave room for them; an M2 driver rejects them (§11).
 
+## Changes (2026-11-17, combined finish and claim)
+
+An optional operation, `FinishAndClaim` (`IFinishAndClaimStore.FinishAndClaimAsync`, 05 §12.7). It carries up to 32 complete `Finish/1` commands and one complete `ReserveAndBegin/1` command (`FinishAndClaimRequest`), all of one application, with distinct command IDs and distinct job IDs.
+
+- **Decision.** The finishes are decided as `FinishMany/1` decides them (each item its own receipt and reply), then the claim as `ReserveAndBegin/1` decides it, in one transaction, so a permit a finish frees is visible to the claim. A call applies as a whole or not at all.
+- **Receipts.** The call has no receipt of its own. Each finish has its own durable `Finish` receipt. The claim has its own `ReserveAndBegin` ownership receipt, written only when at least one job was claimed, and holding only the claim result, so a plain `ReserveAndBegin/1` resend of the same command replays it. A no-effect claim (no work, paused, capacity blocked) leaves no receipt, like any no-effect claim.
+- **Reply.** Applied: `FinishedAndClaimed(Finished, Claim)`. `Claim` is the reply `ReserveAndBegin/1` gives that command (NoWork, QueuePaused and CapacityBlocked included, each with no effect on the finishes). `Finished` has one reply per finish in request order; it is null when the claim replayed (the finishes resolve from their own receipts). Any other status (gates, an invalid call, a fault) applied nothing that the receipts do not record.
+- **Lost reply.** Each finish is resolved by resubmitting its own command; the claim by resubmitting its own command (alone, or in another combined call).
+
 ## Changes (2026-11-08, SP-025)
 
 The Redis spike (SP-018, [docs/reports/sp-018.md](../reports/sp-018.md) "Spec changes needed") asks for a store-level "Recovering" outcome and new stable codes. They are added here for every driver; only the Redis store ([22-redis.md](22-redis.md)) produces the Redis-specific ones.

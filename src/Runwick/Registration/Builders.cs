@@ -495,6 +495,24 @@ public sealed class WorkerOptions
         return this;
     }
 
+    /// <summary>
+    /// Combined finish and claim (05 §12.7). Off by default. When on and the store supports it (Redis today), a finished attempt's
+    /// Finish and the claim of the next jobs for its freed slot go to the store in one call, so a job's finish and its replacement's
+    /// start share one round trip instead of two. Every command keeps its own ID, receipt and rules; a call that is refused, fails or
+    /// has no work to claim falls back to the ordinary separate calls, and the claim is used only when the pool's cached readiness hint
+    /// shows exactly one claimable lane. Nothing is held back or kept in memory: a worker that crashes loses nothing it would not
+    /// lose without the option. Do not combine it with <see cref="UseBufferedFinish"/> expecting both effects: a buffered finish has
+    /// already given its slot back, so only slots still held are claimed into.
+    /// </summary>
+    public WorkerOptions UseCombinedFinishClaim()
+    {
+        CombinedFinishClaim = true;
+        return this;
+    }
+
+    /// <summary>Combined finish and claim switch; see <see cref="UseCombinedFinishClaim"/>. Default off.</summary>
+    public bool CombinedFinishClaim { get; set; }
+
     /// <summary>Buffered finish (G1) switch; see <see cref="UseBufferedFinish"/>. Default off.</summary>
     public bool BufferedFinish { get; set; }
 
