@@ -2818,7 +2818,7 @@ Calls that are stopped are never sent, so they have no effect. A call that was a
 
 ## Cluster: many nodes, one owner per application (opt-in)
 
-Every key of one application sits in one hash slot, so one cluster node (the slot's owner) holds the whole application and every script runs on that node. Different applications usually land on different nodes, so a cluster spreads applications, not the work of one application. The Cluster option keeps the same rule as Sentinel: **Runwick only writes to the node it has just checked as the slot's owner, and stops writing the moment it cannot tell.**
+Every key of one application sits in one hash slot, so one cluster node (the slot's owner) holds the whole application and every script runs on that node. Different applications usually land on different nodes, so a cluster spreads applications, not the work of one application. Set `cluster-require-full-coverage no` on the nodes if you want one failing node to stop only its own applications: with the default `yes`, the whole cluster stops answering from the moment a node is seen as failed until its replica takes over. The Cluster option keeps the same rule as Sentinel: **Runwick only writes to the node it has just checked as the slot's owner, and stops writing the moment it cannot tell.**
 
 ```csharp
 builder.UseRedis(

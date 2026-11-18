@@ -8,7 +8,8 @@ namespace Runwick.Redis.Tests;
 /// <summary>
 /// Three primaries and one replica (of the first primary) of a Redis Cluster as throwaway containers on the host network (names
 /// <c>runwick-fork-cl-*</c>), so the addresses the nodes announce are reachable from the test process. Slots are split evenly:
-/// node 0 owns 0–5460, node 1 5461–10922, node 2 10923–16383. Only containers created here are touched.
+/// node 0 owns 0–5460, node 1 5461–10922, node 2 10923–16383. <c>cluster-require-full-coverage</c> is <c>no</c>, so a failing owner does not
+/// stop the slots the other primaries own. Only containers created here are touched.
 /// </summary>
 internal sealed class ClusterSet : IAsyncDisposable
 {
@@ -40,7 +41,7 @@ internal sealed class ClusterSet : IAsyncDisposable
                 var port = set.Ports[i].ToString(CultureInfo.InvariantCulture);
                 Ok(await RedisNode.Docker(["run", "-d", "--name", set._names[i], "--network", "host", RedisNode.Image, "redis-server",
                     "--port", port, "--bind", "127.0.0.1", "--cluster-enabled", "yes", "--cluster-config-file", "nodes.conf",
-                    "--cluster-node-timeout", "3000", "--cluster-announce-ip", "127.0.0.1", .. RedisNode.Profile]));
+                    "--cluster-node-timeout", "3000", "--cluster-announce-ip", "127.0.0.1", "--cluster-require-full-coverage", "no", .. RedisNode.Profile]));
                 set._containers.Add(set._names[i]);
             }
 
