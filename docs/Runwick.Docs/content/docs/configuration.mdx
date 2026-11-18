@@ -142,6 +142,9 @@ Per schedule: misfire policy `RunOnce` with 60 s grace (up to 24 h); catch-up at
 | `Enabled` | `true` | |
 | `MaxInFlight` | 4 | 1 to 64 |
 | `DeliveryGroupSize` | 1 | 1 to 16; groups plain messages into one PostgreSQL destination transaction |
+| `BatchDeliveredMarks` | false | write queued delivered marks in one statement (PostgreSQL source) |
+| `ClaimBatchMin` / `ClaimBatchWait` | 1 / 5 ms | 1 to `MaxInFlight` / up to 1 s; wait for several free slots so one claim carries a batch |
+| `ReleaseSlotAfterReply` | false | stop counting a message against `MaxInFlight` once the destination has answered (at most 2 × `MaxInFlight` leases) |
 | `LeaseDuration` / `RenewalInterval` | 60 s / 15 s | lease at least 5 s and at least 3 renewals |
 | `ProviderCallTimeout` | 5 s | shorter than `RenewalInterval` |
 | `IdlePoll` | 1 s | positive |

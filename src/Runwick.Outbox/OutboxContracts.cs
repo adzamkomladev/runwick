@@ -64,6 +64,30 @@ public sealed class OutboxRelayOptions
     /// </summary>
     public int DeliveryGroupSize { get; set; } = 1;
 
+    /// <summary>
+    /// The claim waits until at least this many of the <see cref="MaxInFlight"/> slots are free (or nothing is in flight, or
+    /// <see cref="ClaimBatchWait"/> has passed), so one source claim carries several messages instead of one per freed slot
+    /// (14 Changes 2026-11-17, D2). 1 (the default) claims as soon as any slot is free.
+    /// </summary>
+    public int ClaimBatchMin { get; set; } = 1;
+
+    /// <summary>The longest a claim waits for <see cref="ClaimBatchMin"/> slots to free. Ignored when <see cref="ClaimBatchMin"/> is 1.</summary>
+    public TimeSpan ClaimBatchWait { get; set; } = TimeSpan.FromMilliseconds(5);
+
+    /// <summary>
+    /// When true, a message stops counting against <see cref="MaxInFlight"/> once the destination has answered, so the next claim and
+    /// send overlap its source mark. The source lease is still held and renewed until the mark finishes, and shutdown still waits for it.
+    /// False (the default) keeps a slot until the mark is written (14 Changes 2026-11-17, D2).
+    /// </summary>
+    public bool ReleaseSlotAfterReply { get; set; }
+
+    /// <summary>
+    /// When true, delivered marks that queue behind one another on the source's single control connection are written in one
+    /// statement and one commit, each still guarded by its own lease token (14 Changes 2026-11-17, D2). Honored by the
+    /// PostgreSQL source; other sources ignore it. False (the default) writes one statement per mark.
+    /// </summary>
+    public bool BatchDeliveredMarks { get; set; }
+
     /// <summary>Transport command lifetime; at most 30 s and never beyond AcceptUntil.</summary>
     public TimeSpan TransportLifetime { get; set; } = TimeSpan.FromSeconds(30);
 
@@ -78,6 +102,11 @@ public sealed class OutboxRelayOptions
         if (DeliveryGroupSize is < 1 or > 16)
         {
             errors.Add("DeliveryGroupSize must be 1-16.");
+        }
+
+        if (ClaimBatchMin < 1 || ClaimBatchMin > MaxInFlight || ClaimBatchWait < TimeSpan.Zero || ClaimBatchWait > TimeSpan.FromSeconds(1))
+        {
+            errors.Add("ClaimBatchMin must be 1 to MaxInFlight and ClaimBatchWait 0 to 1 s.");
         }
 
         if (LeaseDuration < TimeSpan.FromSeconds(5) || RenewalInterval <= TimeSpan.Zero || RenewalInterval * 3 > LeaseDuration)

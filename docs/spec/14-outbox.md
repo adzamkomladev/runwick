@@ -2,6 +2,14 @@
 
 **Sources:** [transactional-outbox.md](../architecture/transactional-outbox.md) (all sections, OUTBOX-01 … OUTBOX-07); [storage-command-protocol.md](../architecture/storage-command-protocol.md) "Outbox destination extension"; [driver-contract-suite.md](../architecture/driver-contract-suite.md) §4 (TX), OUT-01, OUT-02, CMD-01 … CMD-05, ISO-01; [performance-acceptance-plan.md](../architecture/performance-acceptance-plan.md) (P-09); 02 §7–§9; 03 §2.1, §4, §10; 04 §5, §6, §8; 06 §1.4, §1.7; 07 §4 (CMD), §8 (TX), §9 (ISO-01); 15 §10–§11.
 
+## Changes (2026-11-17, D2 batched marks, claim batches, slot release)
+
+- **Why.** At four relay slots a message's whole life is claim, destination commit and source mark, and every source write waits for a single connection (the claim lane or the control lane). Marks, renewals and transport records share the control lane, so each mark waited behind the others. Throughput at four slots is bounded by slots divided by that life.
+- **Batched marks (PostgreSQL source, `OutboxRelayOptions.BatchDeliveredMarks`, default false).** Marks that queue behind the control lane are written by whoever holds the lane next, in one `UPDATE … FROM unnest(…)` and one commit (at most 64). Each row is still guarded by its own lease token and `state = 'leased'`: a mark whose token no longer matches reports `false` for that message only and the row does not move. A lone mark runs the original single-row statement. A caller whose deadline ends before its mark is taken writes nothing (its mark is skipped); a caller whose deadline ends while it holds the lane leaves its own mark unknown, exactly as for a single mark, and the other callers' marks wait for the next turn. A connection failure leaves every mark of the statement unknown, as for a single failed mark; the destination mapping makes the retry safe.
+- **Claim batches.** `OutboxRelayOptions.ClaimBatchMin` (default 1) and `ClaimBatchWait` (default 5 ms, at most 1 s). With a minimum above 1 and messages already in flight, the relay waits until that many slots are free or the wait ends before it claims, so one claim carries several messages. Nothing in flight means no wait.
+- **Slot release on reply.** `OutboxRelayOptions.ReleaseSlotAfterReply` (default false). When true, a message stops counting against `MaxInFlight` once the destination has answered, so the next claim and send overlap its source mark. The lease is still held and renewed until the mark finishes, shutdown still waits for it, and at most twice `MaxInFlight` messages hold leases.
+- **Unchanged.** Transport identity, receipts, the token-guarded mark, mixed outcomes, lost marks and reclaims behave exactly as in the sections below.
+
 ## Changes (2026-11-15, D4 grouped delivery)
 
 - **Option.** `OutboxRelayOptions.DeliveryGroupSize` (default 1, 1 – 16). At 1 every claimed message is sent alone, exactly as before. Above 1, the relay sends the plain messages of one claim to the destination as one transaction of up to that many. Plain means no active or window key, no scopes and no rates, so groups share no row locks other than their own; every other message is sent alone, at the same time. A destination that cannot group (SQLite, Redis) ignores the option.
@@ -182,6 +190,9 @@ The renewal loop renews every in-flight lease each `RenewalInterval`. A `false` 
 |---|---|---|
 | `MaxInFlight` (messages; also the claim batch) | 4 | 1 – 64 |
 | `DeliveryGroupSize` (plain messages sent to the destination in one transaction) | 1 (off) | 1 – 16 |
+| `BatchDeliveredMarks` (marks queued behind each other are written in one statement; PostgreSQL source) | false | — |
+| `ClaimBatchMin` / `ClaimBatchWait` (free slots to wait for before a claim, and the longest wait) | 1 (off) / 5 ms | 1 – `MaxInFlight` / 0 – 1 s |
+| `ReleaseSlotAfterReply` (a message stops holding a slot once the destination answers; at most 2 × `MaxInFlight` leases) | false | — |
 | `LeaseDuration` | 60 s | ≥ 5 s and ≥ 3 × `RenewalInterval` |
 | `RenewalInterval` | 15 s | > 0 |
 | `ProviderCallTimeout` (each source or destination call) | 5 s | > 0 and < `RenewalInterval` |
