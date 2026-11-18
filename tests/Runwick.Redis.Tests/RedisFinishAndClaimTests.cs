@@ -76,6 +76,33 @@ public sealed class RedisFinishAndClaimTests
     }
 
     [Fact]
+    [Trait("Case", "FC-08")]
+    public async Task The_claim_size_does_not_depend_on_how_many_finishes_ride_with_it()
+    {
+        // The pool's loop claims for its own free slots and carries whatever finishes wait: one finish may carry a claim of three, and three
+        // finishes a claim of one.
+        var (f, c) = await OpenAsync("fc08");
+        await using var _ = f;
+        var running = await RunningAsync(c, new PingJob("a"), new PingJob("b"), new PingJob("c"), new PingJob("d"));
+        await PendingAsync(c, new PingJob("e"), new PingJob("f"), new PingJob("g"), new PingJob("h"));
+
+        var one = await c.FinishAndClaimAsync([c.FinishCommand(running[0], AttemptOutcome.Succeeded)], c.ClaimCommand(3));
+        Assert.Equal(StoreStatus.Applied, one.Status);
+        Assert.Single(one.Value!.Finished!.Outcomes);
+        Assert.Equal(3, one.Value.Claim.Value!.Outcomes.Count(o => o.Status == StoreStatus.Applied));
+
+        var three = await c.FinishAndClaimAsync([.. running.Skip(1).Select(l => c.FinishCommand(l, AttemptOutcome.Succeeded))], c.ClaimCommand(1));
+        Assert.Equal(StoreStatus.Applied, three.Status);
+        Assert.All(three.Value!.Finished!.Outcomes, o => Assert.Equal(StoreStatus.Applied, o.Status));
+        Assert.Single(three.Value.Claim.Value!.Outcomes);
+
+        var model = await ModelAsync(f);
+        Assert.Equal(4, model.Jobs.Count(j => j.State == "succeeded"));
+        Assert.Equal(4, model.Jobs.Count(j => j.State == "running"));
+        Assert.Equal(4, model.Receipts.Count(r => r.Operation == "Finish"));
+    }
+
+    [Fact]
     [Trait("Case", "FC-02")]
     public async Task A_resent_call_replays_the_claim_alone_and_each_finish_replays_from_its_own_receipt()
     {

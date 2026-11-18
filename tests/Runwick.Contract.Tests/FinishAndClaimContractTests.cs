@@ -19,8 +19,9 @@ public sealed class FinishAndClaimContractTests
 {
     public static TheoryData<StoreKind> Kinds => CoreContractTests.Kinds;
 
-    static WorkerHost Host(DriverFixture f, int concurrency, Action<BatchStoreDouble>? made = null) =>
-        WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults, concurrency, options: o => o.UseCombinedFinishClaim(),
+    static WorkerHost Host(DriverFixture f, int concurrency, Action<BatchStoreDouble>? made = null, bool buffered = false) =>
+        WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults, concurrency,
+            options: o => (buffered ? o.UseBufferedFinish() : o).UseCombinedFinishClaim(),
             overrides: made is null ? null : s => s.AddSingleton<IRunwickStore>(sp =>
             {
                 var store = new BatchStoreDouble(sp.GetRequiredService<RedisStore>());
@@ -91,6 +92,66 @@ public sealed class FinishAndClaimContractTests
         Assert.Equal(40, w.Script.Invocations.Count);
         Assert.Equal(40, await FinishReceipts(f));
         Assert.Equal(1, store!.RepliesLost);
+        Assert.Empty(await History(f));
+    }
+
+    [Theory]
+    [MemberData(nameof(Kinds))]
+    [Trait("Case", "FC-13")]
+    public async Task With_buffered_finish_the_pool_claim_carries_the_waiting_finishes_and_every_job_settles_once(StoreKind kind)
+    {
+        await using var f = await DriverFixture.StartAsync(Ns("fc13"), kind);
+        await using var w = Host(f, 4, buffered: true);
+        await DispatchAsync(w, 80);
+        await w.StartAsync();
+        await WorkerHost.WaitUntil(() => SucceededAsync(f).Result == 80, TimeSpan.FromSeconds(120), "all 80 jobs settled");
+        Assert.Equal(80, w.Script.Invocations.Count);
+        Assert.Equal(80, await FinishReceipts(f));
+        Assert.Empty(await History(f));
+        Assert.DoesNotContain(w.Engine.Health().Diagnostics, d => d.Contains("unconfirmed outcome", StringComparison.Ordinal));
+        if (kind == StoreKind.Redis)
+        {
+            Assert.True(w.Engine.Completion.LoopCarriedCalls > 0, "the pool's claim never carried a finish");
+        }
+        else
+        {
+            Assert.Equal(0, w.Engine.Completion.LoopCarriedCalls);
+        }
+    }
+
+    [Fact]
+    [Trait("Case", "FC-14")]
+    public async Task A_lost_reply_of_a_carried_claim_resolves_each_command_and_nothing_runs_twice()
+    {
+        await using var f = await DriverFixture.StartAsync(Ns("fc14"), StoreKind.Redis);
+        BatchStoreDouble? store = null;
+        await using var w = Host(f, 4, s =>
+        {
+            store = s;
+            s.LoseNextFinishAndClaim();
+        }, buffered: true);
+        await DispatchAsync(w, 40);
+        await w.StartAsync();
+        await WorkerHost.WaitUntil(() => SucceededAsync(f).Result == 40, TimeSpan.FromSeconds(120), "all 40 jobs settled");
+        Assert.Equal(40, w.Script.Invocations.Count);
+        Assert.Equal(40, await FinishReceipts(f));
+        Assert.Equal(1, store!.RepliesLost);
+        Assert.True(w.Engine.Completion.LoopCarriedCalls > 0);
+        Assert.Empty(await History(f));
+    }
+
+    [Fact]
+    [Trait("Case", "FC-15")]
+    public async Task A_refused_carried_claim_stops_the_option_and_the_claim_is_sent_alone()
+    {
+        await using var f = await DriverFixture.StartAsync(Ns("fc15"), StoreKind.Redis);
+        await using var w = Host(f, 4, s => s.Refused.Add("FinishAndClaim"), buffered: true);
+        await DispatchAsync(w, 40);
+        await w.StartAsync();
+        await WorkerHost.WaitUntil(() => SucceededAsync(f).Result == 40, TimeSpan.FromSeconds(120), "all 40 jobs settled");
+        Assert.Equal(40, w.Script.Invocations.Count);
+        Assert.Equal(40, await FinishReceipts(f));
+        Assert.Equal(1, w.Engine.Completion.CombinedCalls);
         Assert.Empty(await History(f));
     }
 }

@@ -723,20 +723,37 @@ internal sealed class PoolCoordinator
         return ResolveAsync(command.CommandId, "Reserve", t => _engine.Store.TryReserveAsync(command, t));
     }
 
-    /// <summary>One ReserveAndBegin command for <paramref name="tickets"/>.Count slots, resolved as a Reserve is (05 §9.6).</summary>
-    Task<(StoreReply<ClaimedJobs>? Reply, TimeSpan SentAt)> BatchAsync(List<CapacityTicket> tickets, LaneKey lane, CandidateCursor? after)
+    /// <summary>
+    /// One ReserveAndBegin command for <paramref name="tickets"/>.Count slots, resolved as a Reserve is (05 §9.6). With finish-and-claim
+    /// on (05 §12.7) the claim first takes the Finishes waiting to be sent into one call; when that call gives no claim reply (refused,
+    /// lost or not sent) the same claim command is resolved alone, which replays a committed claim and applies an uncommitted one.
+    /// </summary>
+    async Task<(StoreReply<ClaimedJobs>? Reply, TimeSpan SentAt)> BatchAsync(List<CapacityTicket> tickets, LaneKey lane, CandidateCursor? after)
     {
         var store = (IReserveAndBeginStore)_engine.Store;
         var command = _engine.Command(new ReserveAndBeginRequest(_engine.WorkerInstanceId, lane.Queue, lane.Priority, _engine.Contracts, after,
             _engine.Options.LeaseDuration, tickets.Count));
-        return ResolveAsync(command.CommandId, "ReserveAndBegin", t => store.ReserveAndBeginAsync(command, t));
+        var maybeCommitted = false;
+        if (_engine.AdmissionOpen && !Suspended && await _engine.Completion.TryClaimWithFinishesAsync(command).ConfigureAwait(false) is { } carried)
+        {
+            if (carried.Reply is not null)
+            {
+                return (carried.Reply, carried.SentAt);
+            }
+
+            maybeCommitted = carried.MaybeCommitted;
+        }
+
+        return await ResolveAsync(command.CommandId, "ReserveAndBegin", t => store.ReserveAndBeginAsync(command, t), maybeCommitted).ConfigureAwait(false);
     }
 
-    async Task<(StoreReply<T>? Reply, TimeSpan SentAt)> ResolveAsync<T>(Guid commandId, string operation, Func<CancellationToken, Task<StoreReply<T>>> send)
+    // submitted: the command may already be committed (sent in a finish-and-claim call whose reply was lost), so it is resolved even
+    // when fresh admission has closed meanwhile.
+    async Task<(StoreReply<T>? Reply, TimeSpan SentAt)> ResolveAsync<T>(Guid commandId, string operation, Func<CancellationToken, Task<StoreReply<T>>> send,
+        bool submitted = false)
         where T : class
     {
         var first = _engine.Clock.Now;
-        var submitted = false;
         try
         {
             for (var attempt = 0; !_engine.ControlStop.IsCancellationRequested; attempt++)

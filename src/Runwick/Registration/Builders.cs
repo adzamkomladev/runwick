@@ -496,13 +496,14 @@ public sealed class WorkerOptions
     }
 
     /// <summary>
-    /// Combined finish and claim (05 §12.7). Off by default. When on and the store supports it (Redis today), a finished attempt's
-    /// Finish and the claim of the next jobs for its freed slot go to the store in one call, so a job's finish and its replacement's
-    /// start share one round trip instead of two. Every command keeps its own ID, receipt and rules; a call that is refused, fails or
-    /// has no work to claim falls back to the ordinary separate calls, and the claim is used only when the pool's cached readiness hint
-    /// shows exactly one claimable lane. Nothing is held back or kept in memory: a worker that crashes loses nothing it would not
-    /// lose without the option. Do not combine it with <see cref="UseBufferedFinish"/> expecting both effects: a buffered finish has
-    /// already given its slot back, so only slots still held are claimed into.
+    /// Combined finish and claim (05 §12.7). Off by default. When on and the store supports it (Redis today), finishes and claims share
+    /// store calls in both directions: whichever side is ready first carries the other. A finisher whose attempt still holds its slot
+    /// attaches the claim of the next job for that slot to its Finish; and the pool's claim loop, when it is about to claim free slots,
+    /// takes the Finishes that are waiting to be sent into the same call. The second direction pairs with <see cref="UseBufferedFinish"/>:
+    /// a buffered finish gives its slot back at once, so the loop claims while the finishes wait, and nearly every claim carries them.
+    /// Every command keeps its own ID, receipt and rules; a call that is refused or fails falls back to the ordinary separate calls, and
+    /// a finish never waits longer than it would without the option. Nothing is held back or kept in memory beyond what buffered finish
+    /// already holds: a worker that crashes loses nothing it would not lose without the option.
     /// </summary>
     public WorkerOptions UseCombinedFinishClaim()
     {

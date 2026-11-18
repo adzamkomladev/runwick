@@ -798,6 +798,8 @@ internal static class BenchMode
         result["combinedCalls"] = Interlocked.Read(ref engine.Completion.CombinedCalls);
         result["combinedClaimed"] = Interlocked.Read(ref engine.Completion.CombinedClaimed);
         result["combinedFallbacks"] = Interlocked.Read(ref engine.Completion.CombinedFallbacks);
+        result["loopCarriedCalls"] = Interlocked.Read(ref engine.Completion.LoopCarriedCalls);
+        result["loopCarriedFinishes"] = Interlocked.Read(ref engine.Completion.LoopCarriedFinishes);
         result["inlineDeclined"] = new JsonObject
         {
             ["busy"] = engine.Pools.Sum(p => Interlocked.Read(ref p.InlineDeclinedBusy)),

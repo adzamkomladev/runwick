@@ -4,6 +4,16 @@
 
 Numeric values are restated here where the engine behavior depends on them; [06-defaults.md](06-defaults.md) is the single table of defaults, derived formulas and startup inequalities. Where the two disagree, 06 is authoritative for the number and this file for the behavior.
 
+## Changes (2026-11-18, the pool's claim carries the waiting finishes)
+
+**§12.7** now works in both directions under the same switch (`UseCombinedFinishClaim()`; no new option, default still off): whichever side is ready first carries the other.
+
+- **Loop direction.** When the pool's opportunity loop is about to send a batched claim (`ReserveAndBegin/1`, §9.6) for its own free slots, and the store offers `FinishAndClaim`, it first takes the Finishes that wait to be sent: those a buffered collector (§12.6) is holding, oldest first, then those still in the ready channel, at most `MaxFinishes`. If any were taken, the Finishes and the claim go in one call. The claim's size is the loop's free slots, independent of how many Finishes ride with it, and Finishes of any pool may ride.
+- **Taken once.** A Finish is removed from the collector's batch under the buffer lock, or from the channel by the channel's own read, so exactly one side sends it. A collector whose whole batch was taken returns to waiting. The completion lane still flushes whatever was not taken (interval, full batch, drain, lease margin), so a Finish never waits longer than §12.6 allows, and drain flushes even when no claim is coming.
+- **Slots.** The claim fills the loop's own tickets; no slot moves between the halves. A carried Finish completes as soon as the reply is read (Applied items) or resolves alone in the background (any other item); the loop does not wait for those resolutions.
+- **Failure.** As in the finisher direction: a refused call stops combined calls for this worker, each Finish resolves alone, and the loop then sends the same claim command alone. A lost call resolves each Finish by its own command and the claim by resubmitting the same command, even if fresh admission closed meanwhile (it may already be committed).
+- **Pairing.** The loop direction is what makes the option useful with `UseBufferedFinish()`: a buffered finish gives its slot back at once, so the loop claims while the finishes wait, and the claim carries them. The finisher direction applies only to finishes that still hold their slot. Counters: `LoopCarriedCalls`, `LoopCarriedFinishes` (bench output `loopCarriedCalls`, `loopCarriedFinishes`).
+
 ## Changes (2026-11-17, combined finish and claim)
 
 New **§12.7 Combined finish and claim (perf round two)**, an opt-in mode (`WorkerOptions.UseCombinedFinishClaim()`, `CombinedFinishClaim`, default off). Without it §12.1 to §12.6 are unchanged.
@@ -13,7 +23,7 @@ New **§12.7 Combined finish and claim (perf round two)**, an opt-in mode (`Work
 - **Commands.** Every Finish keeps its own frozen command, receipt and budget; the claim is an ordinary `ReserveAndBegin/1` command with its own ID. The call is decided finishes first, then the claim, so a permit that a finish frees can serve the claim in the same call.
 - **Settlement of the claim half.** An Applied claim moves each used slot to the new attempt (the finishing attempt's later release of that slot is a no-op), and is settled before any finish in the call completes. A claim with no work, a paused queue or a capacity block updates the pool's lane state as the same reply to a claim of the loop would, and the finishes still apply. The slots then free as each finishing attempt retires.
 - **Failure.** A refused call (`UnsupportedVersion`, `InvalidRequest`) stops combined calls for this worker and every finish resolves alone. A failed or lost call resolves each finish by its own command (§12.2) and the claim by resubmitting the same claim command, which replays if the call committed and applies if it did not (§9.1). A replayed claim carries no finish results; each finish then resolves from its own receipt.
-- **What it does not change.** No job is held in memory, no lease is renewed less often, and a crashed worker loses what it would lose without the option. With `UseBufferedFinish()` a buffered finish has already given its slot back, so only slots still held are claimed into.
+- **What it does not change.** No job is held in memory, no lease is renewed less often, and a crashed worker loses what it would lose without the option. With `UseBufferedFinish()` a buffered finish has already given its slot back, so only slots still held are claimed into by the finisher; the pool's loop then carries those finishes instead (Changes 2026-11-18).
 
 ## Changes (2026-11-15, buffered finish)
 

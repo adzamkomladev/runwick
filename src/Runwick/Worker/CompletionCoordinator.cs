@@ -38,6 +38,9 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
     readonly PriorityGate _collector = new(1);
     readonly Lock _bufferLock = new();
     readonly Queue<AttemptEntry> _bufferedOrder = new();
+
+    /// <summary>The batch a buffered collector is filling (guarded by the buffer lock); a claim of the pool's loop may take it.</summary>
+    readonly List<AttemptEntry> _collecting = [];
     long _bufferedBytes;
     int _bufferedCount;
     int _diagnosticResolvers;
@@ -74,6 +77,9 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
 
     /// <summary>Applied finish-and-claim calls whose claim half started at least one job.</summary>
     public long CombinedClaimed;
+
+    /// <summary>Finish-and-claim calls the pool's claim loop sent carrying waiting Finishes, and the Finishes they carried (05 §12.7).</summary>
+    public long LoopCarriedCalls, LoopCarriedFinishes;
 
     /// <summary>Finish-and-claim calls that were refused or failed and left their finishes to be resolved one by one.</summary>
     public long CombinedFallbacks;
@@ -186,7 +192,12 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
                 {
                     if (_buffered)
                     {
-                        await CollectAsync(batch).ConfigureAwait(false);
+                        batch = await CollectAsync(first).ConfigureAwait(false);
+                        if (batch.Count == 0)
+                        {
+                            // A claim of the pool's loop took every Finish this worker was collecting (05 §12.7).
+                            continue;
+                        }
                     }
                     else
                     {
@@ -205,36 +216,51 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
     }
 
     /// <summary>
-    /// Fills <paramref name="batch"/> until it is full, the first Finish has waited the flush interval, the engine drains, or an
-    /// attempt is close to its lease safety margin: a partial batch never waits past those (plan §5.1 rule 5).
+    /// Collects a batch from <paramref name="first"/> until it is full, its oldest Finish has waited the flush interval, the engine
+    /// drains, or an attempt is close to its lease safety margin: a partial batch never waits past those (plan §5.1 rule 5). The batch
+    /// being filled is shared under the buffer lock, so a claim of the pool's loop can take it (<see cref="TakeWaiting"/>); an emptied
+    /// batch returns empty.
     /// </summary>
-    async Task CollectAsync(List<AttemptEntry> batch)
+    async Task<List<AttemptEntry>> CollectAsync(AttemptEntry first)
     {
-        var flushAt = batch[0].FinishPublishedAt!.Value + engine.Options.FinishFlushInterval;
-        while (batch.Count < IFinishManyStore.MaxItems)
+        lock (_bufferLock)
         {
-            if (_ready.Reader.TryRead(out var more))
-            {
-                batch.Add(more);
-                continue;
-            }
+            _collecting.Add(first);
+        }
 
-            var now = engine.Clock.Now;
-            if (engine.Draining || engine.ControlStop.IsCancellationRequested || NearLeaseMargin(batch, now))
+        while (true)
+        {
+            TimeSpan wait;
+            lock (_bufferLock)
             {
-                Interlocked.Increment(ref FlushesForced);
-                return;
-            }
+                while (_collecting.Count < IFinishManyStore.MaxItems && _ready.Reader.TryRead(out var more))
+                {
+                    _collecting.Add(more);
+                }
 
-            if (now >= flushAt)
-            {
-                Interlocked.Increment(ref FlushesByAge);
-                return;
+                if (_collecting.Count == 0)
+                {
+                    return [];
+                }
+
+                var now = engine.Clock.Now;
+                var flushAt = _collecting[0].FinishPublishedAt!.Value + engine.Options.FinishFlushInterval;
+                var full = _collecting.Count >= IFinishManyStore.MaxItems;
+                var forced = !full && (engine.Draining || engine.ControlStop.IsCancellationRequested || NearLeaseMargin(_collecting, now));
+                if (full || forced || now >= flushAt)
+                {
+                    Interlocked.Increment(ref full ? ref FlushesFull : ref forced ? ref FlushesForced : ref FlushesByAge);
+                    List<AttemptEntry> batch = [.. _collecting];
+                    _collecting.Clear();
+                    return batch;
+                }
+
+                wait = flushAt - now;
             }
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(engine.ControlStop);
             var arrival = _ready.Reader.WaitToReadAsync(cts.Token).AsTask();
-            var tick = engine.Clock.Delay(flushAt - now, cts.Token);
+            var tick = engine.Clock.Delay(wait, cts.Token);
             await Task.WhenAny(arrival, tick).ConfigureAwait(false);
             await cts.CancelAsync().ConfigureAwait(false);
             foreach (var t in new Task[] { arrival, tick })
@@ -248,8 +274,28 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
                 }
             }
         }
+    }
 
-        Interlocked.Increment(ref FlushesFull);
+    /// <summary>
+    /// Takes up to <paramref name="max"/> Finishes that wait to be sent (05 §12.7): first those a buffered collector is holding, oldest
+    /// first, then those still in the ready channel. Each is removed exactly once (under the buffer lock, or by the channel's own read),
+    /// so it is sent by the taker alone.
+    /// </summary>
+    List<AttemptEntry> TakeWaiting(int max)
+    {
+        var taken = new List<AttemptEntry>();
+        lock (_bufferLock)
+        {
+            var n = Math.Min(max, _collecting.Count);
+            taken.AddRange(_collecting.GetRange(0, n));
+            _collecting.RemoveRange(0, n);
+            while (taken.Count < max && _ready.Reader.TryRead(out var e))
+            {
+                taken.Add(e);
+            }
+        }
+
+        return taken;
     }
 
     bool NearLeaseMargin(List<AttemptEntry> batch, TimeSpan now)
@@ -330,11 +376,11 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
     TimeSpan BudgetEnd(AttemptEntry entry) => entry.FinishPublishedAt!.Value + engine.Options.CompletionResolutionBudget;
 
     /// <summary>
-    /// Finish-and-claim (05 §12.7). The Finishes of one pool that already wait, plus a claim of that many jobs for the slots they
-    /// are about to free, go to the store in one call. Returns the entries this method did not take (all of them when it declines:
-    /// not supported, no fresh readiness hint, a claim in flight, a lane shape the loop would not batch), which settle the ordinary way.
-    /// Each Finish keeps its own command and receipt and the claim keeps its own, so every failure resolves one command at a time: a
-    /// refused or lost call resolves each Finish alone and the claim by resubmitting the same command.
+    /// Finish-and-claim carried by a finisher (05 §12.7). The Finishes of one pool that already wait, plus a claim of that many jobs for
+    /// the slots they are about to free, go to the store in one call. Returns the entries this method did not take (all of them when it
+    /// declines: not supported, no fresh readiness hint, a claim in flight, a lane shape the loop would not batch), which settle the
+    /// ordinary way. Each Finish keeps its own command and receipt and the claim keeps its own, so every failure resolves one command at a
+    /// time: a refused or lost call resolves each Finish alone and the claim by resubmitting the same command.
     /// </summary>
     async Task<List<AttemptEntry>> TrySettleCombinedAsync(List<AttemptEntry> taken)
     {
@@ -355,130 +401,213 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
         var rest = taken.Except(members).ToList();
         var done = new TaskCompletionSource();
         pool.TrackClaim(done.Task);
-        var results = new Dictionary<AttemptEntry, SettlementResult>();
-        var fallback = new List<AttemptEntry>();
-        var retryDelay = false;
-        var skipClaim = false;
-        StoreReply<ClaimedJobs>? claimReply = null;
-        var sentAt = TimeSpan.Zero;
+        Combined? call = null;
         try
         {
-            var slots = new List<PriorityGate.Slot>();
-            StoreReply<FinishedAndClaimed>? reply = null;
-            try
-            {
-                // Entries of one call belong to distinct attempts (see SettleBatchAsync), so taking their arbiters in turn cannot deadlock.
-                foreach (var e in members)
-                {
-                    slots.Add(await e.Arbiter.AcquireAsync(ControlPriority.Settlement, engine.ControlStop).ConfigureAwait(false));
-                    e.SettlementInFlight = true;
-                    e.CommandUnresolved = true;
-                    Interlocked.Increment(ref e.FinishAttempts);
-                }
-
-                now = engine.Clock.Now;
-                var budgetEnd = members.Min(e => BudgetEnd(e));
-                if (budgetEnd > now)
-                {
-                    var request = new FinishAndClaimRequest(members.Select(e => e.FinishCommand!).ToList(), inline.Command);
-                    try
-                    {
-                        using (engine.Lease.TrackWait())
-                        {
-                            Interlocked.Add(ref engine.FinishesSent, members.Count);
-                            Interlocked.Increment(ref CombinedCalls);
-                            sentAt = engine.Clock.Now;
-                            reply = await engine.CallAsync(engine.SettlementIo, 0, WorkerEngine.Min(engine.Options.ControlRequestTimeout, budgetEnd - now),
-                                t => store.FinishAndClaimAsync(request, t)).ConfigureAwait(false);
-                        }
-                    }
-                    catch (Exception ex) when (!engine.ControlStop.IsCancellationRequested)
-                    {
-                        // Outcome unknown: each Finish resolves alone with its own command, and the claim by resubmitting its command.
-                        engine.Logger.LogDebug(ex, "Runwick FinishAndClaim {Command} of {Count} unresolved; resolving each command alone.", inline.Command.CommandId, members.Count);
-                        LastBatchFailure = ex.GetType().Name + ": " + ex.Message;
-                    }
-                }
-            }
-            finally
-            {
-                slots.ForEach(s => s.Dispose());
-            }
-
-            if (reply is { Status: StoreStatus.Applied, Value: { } value })
-            {
-                claimReply = value.Claim;
-                if (value.Finished is { } finished && finished.Outcomes.Count == members.Count)
-                {
-                    for (var i = 0; i < members.Count; i++)
-                    {
-                        if (Apply(members[i], finished.Outcomes[i]) is { } result)
-                        {
-                            Interlocked.Increment(ref BatchedItemsSettled);
-                            results[members[i]] = result;
-                        }
-                        else
-                        {
-                            fallback.Add(members[i]);
-                        }
-                    }
-                }
-                else
-                {
-                    // A replayed claim carries no finishes: each resolves from its own receipt.
-                    fallback.AddRange(members);
-                }
-
-                if (claimReply.Status == StoreStatus.Applied && claimReply.Value is { Outcomes: { } outcomes } && outcomes.Any(o => o.Status == StoreStatus.Applied))
-                {
-                    Interlocked.Increment(ref CombinedClaimed);
-                }
-            }
-            else
-            {
-                Interlocked.Increment(ref CombinedFallbacks);
-                fallback.AddRange(members);
-                if (reply is null)
-                {
-                    retryDelay = true;
-                    LastBatchFailure ??= "no reply";
-                }
-                else
-                {
-                    // A refused call applied nothing: no claim to settle. The operation missing or a refused request stops the combined calls.
-                    skipClaim = true;
-                    LastBatchFailure = $"{reply.Status} ({reply.Error?.Code})";
-                    if (reply.Status is StoreStatus.UnsupportedVersion or StoreStatus.InvalidRequest)
-                    {
-                        Volatile.Write(ref _combinedOff, true);
-                        engine.Diagnose($"FinishAndClaim returned {reply.Status} ({reply.Error?.Code}); finishing and claiming with separate calls");
-                    }
-                }
-            }
+            call = await SendCombinedAsync(store, members, inline.Command).ConfigureAwait(false);
 
             // The claim half is settled before any Finish completes, so a finisher's retirement finds its slot already moved.
-            if (!skipClaim && !engine.ControlStop.IsCancellationRequested)
+            if (!call.Refused && !engine.ControlStop.IsCancellationRequested)
             {
-                await pool.SettleInlineAsync(inline, claimReply, sentAt).ConfigureAwait(false);
+                await pool.SettleInlineAsync(inline, call.Claim, call.SentAt).ConfigureAwait(false);
             }
         }
         finally
         {
             inline.Dispose();
             done.TrySetResult();
-            foreach (var (entry, result) in results)
+            call?.CompleteSettled();
+        }
+
+        await ResolveAloneAsync(call.Fallback, call.RetryDelay).ConfigureAwait(false);
+        return rest;
+    }
+
+    /// <summary>
+    /// Finish-and-claim carried by the pool's loop (05 §12.7): the loop is about to send <paramref name="claim"/> for its own free slots
+    /// and takes the Finishes that wait (in a buffered collector or the ready channel) into the same call. Null when nothing waits or the
+    /// call is off, and the loop sends its claim alone. Otherwise the claim's reply as the loop's own claim would read it; a null reply
+    /// means the call was refused, lost or not sent, and the loop resolves the same claim command alone (<c>MaybeCommitted</c> when it
+    /// was sent and not refused). Taken Finishes complete here: Applied items at once, the rest resolve one by one in the background so
+    /// the loop is not held. The claim fills the loop's own free slots, so no slot moves between the two halves.
+    /// </summary>
+    internal async Task<(StoreReply<ClaimedJobs>? Reply, TimeSpan SentAt, bool MaybeCommitted)?> TryClaimWithFinishesAsync(
+        StoreCommand<ReserveAndBeginRequest> claim)
+    {
+        if (!_combined || Volatile.Read(ref _combinedOff) || engine.Store is not IFinishAndClaimStore store)
+        {
+            return null;
+        }
+
+        var taken = TakeWaiting(IFinishAndClaimStore.MaxFinishes);
+        if (taken.Count == 0)
+        {
+            return null;
+        }
+
+        var now = engine.Clock.Now;
+        var members = taken.Where(e => now < BudgetEnd(e)).ToList();
+        var alone = taken.Except(members).ToList();
+        Combined? call = null;
+        if (members.Count > 0)
+        {
+            Interlocked.Increment(ref LoopCarriedCalls);
+            Interlocked.Add(ref LoopCarriedFinishes, members.Count);
+            try
+            {
+                call = await SendCombinedAsync(store, members, claim).ConfigureAwait(false);
+            }
+            finally
+            {
+                call?.CompleteSettled();
+            }
+
+            alone.AddRange(call.Fallback);
+        }
+
+        // Not awaited: the loop goes on claiming; each Finish's own SettleAsync waits for its result, and drain waits for that.
+        _ = ResolveAloneAsync(alone, call?.RetryDelay ?? false);
+        return call is null ? null : (call.Claim, call.SentAt, call.Sent && !call.Refused);
+    }
+
+    /// <summary>Resolves each entry alone with its own frozen Finish command (05 §12.4).</summary>
+    async Task ResolveAloneAsync(List<AttemptEntry> entries, bool retryDelay)
+    {
+        if (entries.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await Task.WhenAll(entries.Select(async e => Complete(e, await ResolveAsync(e, detached: false, firstAttempt: retryDelay ? 1 : 0).ConfigureAwait(false))))
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (engine.ControlStop.IsCancellationRequested)
+        {
+        }
+    }
+
+    /// <summary>One finish-and-claim call's result: the claim reply, the Finishes it decided, and those left to resolve alone.</summary>
+    sealed class Combined
+    {
+        public StoreReply<ClaimedJobs>? Claim;
+        public TimeSpan SentAt;
+        public bool Sent, Refused, RetryDelay;
+        public readonly Dictionary<AttemptEntry, SettlementResult> Results = [];
+        public readonly List<AttemptEntry> Fallback = [];
+
+        public void CompleteSettled()
+        {
+            foreach (var (entry, result) in Results)
             {
                 entry.Settled.TrySetResult(result);
             }
         }
+    }
 
-        if (fallback.Count > 0)
+    /// <summary>
+    /// Sends one finish-and-claim call for <paramref name="members"/> and <paramref name="claim"/> (05 §12.7). Every member holds its own
+    /// arbiter slot for the call, as in FinishMany. A refused call (UnsupportedVersion, InvalidRequest) turns the call off for this worker.
+    /// </summary>
+    async Task<Combined> SendCombinedAsync(IFinishAndClaimStore store, List<AttemptEntry> members, StoreCommand<ReserveAndBeginRequest> claim)
+    {
+        var call = new Combined();
+        var slots = new List<PriorityGate.Slot>();
+        StoreReply<FinishedAndClaimed>? reply = null;
+        try
         {
-            await Task.WhenAll(fallback.Select(async e => Complete(e, await ResolveAsync(e, detached: false, firstAttempt: retryDelay ? 1 : 0).ConfigureAwait(false))))
-                .ConfigureAwait(false);
+            // Entries of one call belong to distinct attempts (see SettleBatchAsync), so taking their arbiters in turn cannot deadlock.
+            foreach (var e in members)
+            {
+                slots.Add(await e.Arbiter.AcquireAsync(ControlPriority.Settlement, engine.ControlStop).ConfigureAwait(false));
+                e.SettlementInFlight = true;
+                e.CommandUnresolved = true;
+                Interlocked.Increment(ref e.FinishAttempts);
+            }
+
+            var now = engine.Clock.Now;
+            var budgetEnd = members.Min(e => BudgetEnd(e));
+            if (budgetEnd > now)
+            {
+                var request = new FinishAndClaimRequest(members.Select(e => e.FinishCommand!).ToList(), claim);
+                try
+                {
+                    using (engine.Lease.TrackWait())
+                    {
+                        Interlocked.Add(ref engine.FinishesSent, members.Count);
+                        Interlocked.Increment(ref CombinedCalls);
+                        call.SentAt = engine.Clock.Now;
+                        call.Sent = true;
+                        reply = await engine.CallAsync(engine.SettlementIo, 0, WorkerEngine.Min(engine.Options.ControlRequestTimeout, budgetEnd - now),
+                            t => store.FinishAndClaimAsync(request, t)).ConfigureAwait(false);
+                    }
+                }
+                catch (Exception ex) when (!engine.ControlStop.IsCancellationRequested)
+                {
+                    // Outcome unknown: each Finish resolves alone with its own command, and the claim by resubmitting its command.
+                    engine.Logger.LogDebug(ex, "Runwick FinishAndClaim {Command} of {Count} unresolved; resolving each command alone.", claim.CommandId, members.Count);
+                    LastBatchFailure = ex.GetType().Name + ": " + ex.Message;
+                }
+            }
+        }
+        finally
+        {
+            slots.ForEach(s => s.Dispose());
         }
 
-        return rest;
+        if (reply is { Status: StoreStatus.Applied, Value: { } value })
+        {
+            call.Claim = value.Claim;
+            if (value.Finished is { } finished && finished.Outcomes.Count == members.Count)
+            {
+                for (var i = 0; i < members.Count; i++)
+                {
+                    if (Apply(members[i], finished.Outcomes[i]) is { } result)
+                    {
+                        Interlocked.Increment(ref BatchedItemsSettled);
+                        call.Results[members[i]] = result;
+                    }
+                    else
+                    {
+                        call.Fallback.Add(members[i]);
+                    }
+                }
+            }
+            else
+            {
+                // A replayed claim carries no finishes: each resolves from its own receipt.
+                call.Fallback.AddRange(members);
+            }
+
+            if (call.Claim.Status == StoreStatus.Applied && call.Claim.Value is { Outcomes: { } outcomes } && outcomes.Any(o => o.Status == StoreStatus.Applied))
+            {
+                Interlocked.Increment(ref CombinedClaimed);
+            }
+
+            return call;
+        }
+
+        Interlocked.Increment(ref CombinedFallbacks);
+        call.Fallback.AddRange(members);
+        if (reply is null)
+        {
+            call.RetryDelay = true;
+            LastBatchFailure ??= "no reply";
+        }
+        else
+        {
+            // A refused call applied nothing: no claim to settle. The operation missing or a refused request stops the combined calls.
+            call.Refused = true;
+            LastBatchFailure = $"{reply.Status} ({reply.Error?.Code})";
+            if (reply.Status is StoreStatus.UnsupportedVersion or StoreStatus.InvalidRequest)
+            {
+                Volatile.Write(ref _combinedOff, true);
+                engine.Diagnose($"FinishAndClaim returned {reply.Status} ({reply.Error?.Code}); finishing and claiming with separate calls");
+            }
+        }
+
+        return call;
     }
 
     /// <summary>

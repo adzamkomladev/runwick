@@ -361,6 +361,68 @@ internal class ScriptedStore(TimeProvider time) : IRunwickStore, IWakeNotificati
             return StoreReply<FinishedMany>.Applied(new FinishedMany(outcomes), now);
         }, ct);
 
+    /// <summary>ReserveAndBegin/1's decision (caller holds the lock): up to MaxJobs of the lane's next jobs reserved and begun.</summary>
+    private protected StoreReply<ClaimedJobs> ClaimCore(ReserveAndBeginRequest r, DateTimeOffset now)
+    {
+        var outcomes = new List<ClaimOutcome>();
+        while (outcomes.Count < r.MaxJobs && ReserveNext(r.WorkerInstanceId, r.Queue, r.Priority, r.SupportedContracts, r.LeaseDuration, now) is { } reserved)
+        {
+            var begun = BeginOwned(reserved.Lease.Handle, now).Reply.Value!;
+            outcomes.Add(new ClaimOutcome(reserved.Position.JobId, StoreStatus.Applied, null, reserved, begun, null, null));
+        }
+
+        return outcomes.Count > 0
+            ? StoreReply<ClaimedJobs>.Applied(new ClaimedJobs(outcomes), now)
+            : StoreReply<ClaimedJobs>.NoEffect(StoreStatus.NoWork, new StoreError("no_work"), now);
+    }
+
+    /// <summary>When true, FinishAndClaim is refused as a store without the call would refuse it (UnsupportedVersion), applying nothing.</summary>
+    public bool RefuseFinishAndClaim { get; set; }
+
+    /// <summary>
+    /// FinishAndClaim (05 §12.7): the finishes decided as FinishMany/1 items, then the claim as ReserveAndBegin/1, each with its own
+    /// receipt. A claim whose receipt exists replays alone (no finishes), as the Redis script does.
+    /// </summary>
+    private protected Task<StoreReply<FinishedAndClaimed>> FinishAndClaimCore(FinishAndClaimRequest request, CancellationToken ct) =>
+        Run("FinishAndClaim", Guid.NewGuid(), request, now =>
+        {
+            if (RefuseFinishAndClaim)
+            {
+                return Fail<FinishedAndClaimed>(StoreStatus.UnsupportedVersion, "unsupported_operation", now);
+            }
+
+            if (_receipts.TryGetValue(request.Claim.CommandId, out var claimed))
+            {
+                return StoreReply<FinishedAndClaimed>.Applied(new FinishedAndClaimed(null, Replay((StoreReply<ClaimedJobs>)claimed)), now);
+            }
+
+            var outcomes = new List<StoreReply<FinishedAttempt>>();
+            foreach (var item in request.Finishes)
+            {
+                if (_receipts.TryGetValue(item.CommandId, out var stored))
+                {
+                    outcomes.Add(Replay((StoreReply<FinishedAttempt>)stored));
+                    continue;
+                }
+
+                var reply = FinishCore(item.Body, now);
+                if (IsApplied(reply))
+                {
+                    _receipts[item.CommandId] = reply;
+                }
+
+                outcomes.Add(reply);
+            }
+
+            var claim = ClaimCore(request.Claim.Body, now);
+            if (IsApplied(claim))
+            {
+                _receipts[request.Claim.CommandId] = claim;
+            }
+
+            return StoreReply<FinishedAndClaimed>.Applied(new FinishedAndClaimed(new FinishedMany(outcomes), claim), now);
+        }, ct);
+
     public Task<StoreReply<FinishedAttempt>> RecoverAsync(StoreCommand<RecoverRequest> command, CancellationToken ct) =>
         Run(Operations.Recover, command.CommandId, command.Body, now =>
         {
@@ -446,26 +508,16 @@ internal class ScriptedStore(TimeProvider time) : IRunwickStore, IWakeNotificati
 internal class ScriptedBatchStore(TimeProvider time) : ScriptedStore(time), IReserveAndBeginStore
 {
     public Task<StoreReply<ClaimedJobs>> ReserveAndBeginAsync(StoreCommand<ReserveAndBeginRequest> command, CancellationToken ct) =>
-        Run(Operations.ReserveAndBegin, command.CommandId, command.Body, now =>
-        {
-            var r = command.Body;
-            var outcomes = new List<ClaimOutcome>();
-            while (outcomes.Count < r.MaxJobs && ReserveNext(r.WorkerInstanceId, r.Queue, r.Priority, r.SupportedContracts, r.LeaseDuration, now) is { } reserved)
-            {
-                var begun = BeginOwned(reserved.Lease.Handle, now).Reply.Value!;
-                outcomes.Add(new ClaimOutcome(reserved.Position.JobId, StoreStatus.Applied, null, reserved, begun, null, null));
-            }
-
-            return outcomes.Count > 0
-                ? StoreReply<ClaimedJobs>.Applied(new ClaimedJobs(outcomes), now)
-                : StoreReply<ClaimedJobs>.NoEffect(StoreStatus.NoWork, new StoreError("no_work"), now);
-        }, ct);
+        Run(Operations.ReserveAndBegin, command.CommandId, command.Body, now => ClaimCore(command.Body, now), ct);
 }
 
-/// <summary>The batch store that also offers FinishMany/1 (PF-06), for batched and buffered finish tests.</summary>
-internal sealed class ScriptedFinishManyStore(TimeProvider time) : ScriptedBatchStore(time), IFinishManyStore
+/// <summary>The batch store that also offers FinishMany/1 (PF-06) and FinishAndClaim (05 §12.7), for batched, buffered and combined finish tests.</summary>
+internal sealed class ScriptedFinishManyStore(TimeProvider time) : ScriptedBatchStore(time), IFinishManyStore, IFinishAndClaimStore
 {
     public Task<StoreReply<FinishedMany>> FinishManyAsync(StoreCommand<FinishManyRequest> command, CancellationToken ct) => FinishManyCore(command, ct);
+
+    /// <summary>Only used when a test turns on <c>UseCombinedFinishClaim</c>; off by default, so other tests never send it.</summary>
+    public Task<StoreReply<FinishedAndClaimed>> FinishAndClaimAsync(FinishAndClaimRequest request, CancellationToken ct) => FinishAndClaimCore(request, ct);
 }
 
 /// <summary>A scripted wake listener session: the test decides when it subscribes, loses its session and notifies.</summary>
