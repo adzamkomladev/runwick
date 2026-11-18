@@ -61,6 +61,9 @@ internal sealed class PoolCoordinator
     /// <summary>Applied ReserveAndBegin commands (05 §9.6), for diagnostics and tests.</summary>
     public long BatchClaims;
 
+    /// <summary>Finish-and-claim attempts the pool declined, by reason (diagnostics): claim in flight, admission closed, no fresh hint, lane shape.</summary>
+    public long InlineDeclinedBusy, InlineDeclinedClosed, InlineDeclinedStale, InlineDeclinedLane;
+
     /// <summary>Fresh claims stop while a Reserve or Begin of this pool is unresolved (05 §15.2).</summary>
     public bool Suspended => Volatile.Read(ref _suspensions) > 0 || _claimUnresolved;
 
@@ -251,23 +254,36 @@ internal sealed class PoolCoordinator
     /// </summary>
     internal InlineClaim? TryBeginInlineClaim(List<CapacityTicket> tickets)
     {
-        if (tickets.Count == 0 || _claimGate.TryAcquire() is not { } slot)
+        if (tickets.Count == 0)
         {
+            return null;
+        }
+
+        if (_claimGate.TryAcquire() is not { } slot)
+        {
+            Interlocked.Increment(ref InlineDeclinedBusy);
             return null;
         }
 
         InlineClaim? claim = null;
         try
         {
-            if (_batchOff || _engine.Store is not IReserveAndBeginStore || !_engine.AdmissionOpen || _engine.Draining || Suspended
-                || !_engine.Readiness.TryGetFresh(out var view))
+            if (_batchOff || _engine.Store is not IReserveAndBeginStore || !_engine.AdmissionOpen || _engine.Draining || Suspended)
             {
+                Interlocked.Increment(ref InlineDeclinedClosed);
+                return null;
+            }
+
+            if (!_engine.Readiness.TryGetFresh(out var view))
+            {
+                Interlocked.Increment(ref InlineDeclinedStale);
                 return null;
             }
 
             var choice = SelectLane(view, _engine.Clock.Now, out _);
             if (choice is null || choice.Aging || choice.EligibleQueues.Count != 1 || choice.EligibleLanes.Count != 1)
             {
+                Interlocked.Increment(ref InlineDeclinedLane);
                 return null;
             }
 

@@ -793,6 +793,18 @@ internal static class BenchMode
         result["batchClaims"] = engine.Pools.Sum(p => Interlocked.Read(ref p.BatchClaims));
         result["reservesSent"] = engine.Pools.Sum(p => Interlocked.Read(ref p.ReservesSent));
         result["invocations"] = Interlocked.Read(ref engine.Invocations);
+        result["finishesSent"] = Interlocked.Read(ref engine.FinishesSent);
+        result["finishManyCalls"] = Interlocked.Read(ref engine.Completion.BatchesSent);
+        result["combinedCalls"] = Interlocked.Read(ref engine.Completion.CombinedCalls);
+        result["combinedClaimed"] = Interlocked.Read(ref engine.Completion.CombinedClaimed);
+        result["combinedFallbacks"] = Interlocked.Read(ref engine.Completion.CombinedFallbacks);
+        result["inlineDeclined"] = new JsonObject
+        {
+            ["busy"] = engine.Pools.Sum(p => Interlocked.Read(ref p.InlineDeclinedBusy)),
+            ["closed"] = engine.Pools.Sum(p => Interlocked.Read(ref p.InlineDeclinedClosed)),
+            ["staleHint"] = engine.Pools.Sum(p => Interlocked.Read(ref p.InlineDeclinedStale)),
+            ["laneShape"] = engine.Pools.Sum(p => Interlocked.Read(ref p.InlineDeclinedLane)),
+        };
         if (sqlite is not null)
         {
             result["sqlite"] = new JsonObject
