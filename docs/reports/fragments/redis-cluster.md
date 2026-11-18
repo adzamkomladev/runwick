@@ -27,7 +27,7 @@ Written 2026-11-17. Scope of this change: an **opt-in Cluster mode** (`RedisOpti
 | Migrator | The standalone migrator refuses a cluster node (`topology_unsupported`); the cluster migrator installs once and a second run changes nothing; a primary on `appendfsync everysec` stops it (`store_profile_mismatch`) |
 | Parsing and options | A vote names the owner and is troubled when the owner is failing or the slot is migrating or importing; node lists parse; Cluster plus Sentinel, plus `everysec`, or a bad lease is refused at startup |
 
-Full Redis project and Redis-kind Contract results are in the final message of this work and below.
+**Whole-suite results.** Full Redis project: 112 of 113 in 3 h 11 m on a host at load 45 to 55; the one failure was the two-applications case above (fixed afterwards), and the cluster class then passed 15 of 15 (5 m 45 s). Redis-kind Contract cases: 162 of 164 (24 m); the two failures were `RateScalingContractTests` cases that passed 14 of 14 when rerun alone, so I treat them as load-sensitive. Dashboard bundle and Store snapshot tests: 8 of 8.
 
 ### What is not done
 
