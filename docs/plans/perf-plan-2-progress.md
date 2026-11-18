@@ -119,7 +119,7 @@ Use .NET SDK 10.0.403 with `DOTNET_ROOT=/root/.dotnet` and its directory on `PAT
 
 ## 2026-11-18 update
 
-- Merged to `main` and pushed (`b683a2d`): Redis Cluster write authority (opt-in `RedisOptions.Cluster`), Redis combined finish-and-claim (opt-in; its benchmark report is still to come), and Outbox D2 (opt-in `BatchDeliveredMarks`, `ClaimBatchMin`/`ClaimBatchWait`, `ReleaseSlotAfterReply`; median 1.27× over eight pairs, P-09 at four slots still not met).
+- Merged to `main` and pushed (`b683a2d`): Redis Cluster write authority (opt-in `RedisOptions.Cluster`), Redis combined finish-and-claim (opt-in; no clear gain: 0.76× to 1.33× over nine paired drains, BullMQ still 3× to 6× faster), and Outbox D2 (opt-in `BatchDeliveredMarks`, `ClaimBatchMin`/`ClaimBatchWait`, `ReleaseSlotAfterReply`; median 1.27× over eight pairs, P-09 at four slots still not met).
 - Tests on the merged tree: Redis project 120 of 120, Contract 496 of 496, Outbox 63 of 63, Core 452 of 453. The one Core failure, `Buffered_finish_sends_finishes_that_finish_together…`, depends on handlers finishing together and fails 3 of 5 runs on the pre-merge base `81a5662` at host load 25 to 30, so it is load flakiness and not caused by these merges.
 - Not merged: PostgreSQL B1 grouped producer admission stays on its branch.
-- Still open: the combined finish-and-claim benchmark on a quiet host, the Q6/Q7 and E review, quiet-host reruns, and the final qualification (soak excluded).
+- Still open: a quiet-host repeat of the combined finish-and-claim benchmark, the Q6/Q7 and E review, quiet-host reruns, and the final qualification (soak excluded).
