@@ -116,3 +116,10 @@ Use .NET SDK 10.0.403 with `DOTNET_ROOT=/root/.dotnet` and its directory on `PAT
 - Closed without building: G3 lean history (removing events did not speed up drain; WAL fell about 17%) and G2 reduced replay protection (receipt WAL is 8% to 12%). Both are recorded in the remaining-work file.
 - SP-029 rerun of P-08c and P-09 on the pinned revision `153e812` finished (`artifacts/sp029/reference-20261117-rest`). P-08c: exit 0, readiness 6.9 s after the store came back, admission paused, 0 violations. P-09: the relay confirmed 10.5 deliveries/s against 100 offered per second, left 61,466 deliveries unconfirmed (ready-to-confirm p50 45 minutes) and did not drain within 90 minutes; 0 correctness violations, 41 lost marks redelivered to the same mapping. P-09 is a miss, as the earlier outbox measurements predicted. This revision does not contain the grouped delivery (D4) merged later, and the host ran test suites and agents alongside, so the figure is informational. The soak (P-10) was not run.
 - Full Redis project on merged `main` (`ad4e072`): 98 of 98.
+
+## 2026-11-18 update
+
+- Merged to `main` and pushed (`b683a2d`): Redis Cluster write authority (opt-in `RedisOptions.Cluster`), Redis combined finish-and-claim (opt-in; its benchmark report is still to come), and Outbox D2 (opt-in `BatchDeliveredMarks`, `ClaimBatchMin`/`ClaimBatchWait`, `ReleaseSlotAfterReply`; median 1.27× over eight pairs, P-09 at four slots still not met).
+- Tests on the merged tree: Redis project 120 of 120, Contract 496 of 496, Outbox 63 of 63, Core 452 of 453. The one Core failure, `Buffered_finish_sends_finishes_that_finish_together…`, depends on handlers finishing together and fails 3 of 5 runs on the pre-merge base `81a5662` at host load 25 to 30, so it is load flakiness and not caused by these merges.
+- Not merged: PostgreSQL B1 grouped producer admission stays on its branch.
+- Still open: the combined finish-and-claim benchmark on a quiet host, the Q6/Q7 and E review, quiet-host reruns, and the final qualification (soak excluded).
