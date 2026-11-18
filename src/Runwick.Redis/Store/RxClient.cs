@@ -100,7 +100,10 @@ internal sealed class RxClient : IAsyncDisposable
         }
     }
 
-    /// <summary>Sentinel mode (22 §2.5): commands go only to the primary this authority has verified; null for a standalone primary.</summary>
+    /// <summary>Cluster mode (22 §2.6): the authority verifies the owner of the application's slot, and the connections route by slot.</summary>
+    internal bool Cluster { get; set; }
+
+    /// <summary>Sentinel or Cluster mode (22 §2.5, §2.6): commands go only to the primary this authority has verified; null for a standalone primary.</summary>
     internal RxAuthority? Authority
     {
         get => _authority;
@@ -208,13 +211,26 @@ internal sealed class RxClient : IAsyncDisposable
         {
             // A lost connection to the verified primary is evidence that authority may have ended: close it and verify again.
             // Dropping an old generation on purpose, or an old primary's socket after a switch, is not.
+            // A cluster connection also holds the other nodes: only the verified owner's socket counts.
             mux.ConnectionFailed += (_, e) =>
             {
-                if (e.FailureType != ConnectionFailureType.ConnectionDisposed && _gen?.Endpoint?.ToString() == endpoint?.ToString())
+                if (e.FailureType != ConnectionFailureType.ConnectionDisposed && _gen?.Endpoint?.ToString() == endpoint?.ToString()
+                    && (!Cluster || e.EndPoint?.ToString() == endpoint?.ToString()))
                 {
                     authority.Invalidate("connection_to_primary_failed");
                 }
             };
+            if (Cluster)
+            {
+                // A MOVED reply means the slot has a new owner: stop sending until that owner is verified (22 §2.6).
+                mux.HashSlotMoved += (_, _) =>
+                {
+                    if (_gen?.Endpoint?.ToString() == endpoint?.ToString())
+                    {
+                        authority.Invalidate("hash_slot_moved");
+                    }
+                };
+            }
         }
 
         return mux;
@@ -332,11 +348,28 @@ internal sealed class RxClient : IAsyncDisposable
     {
         var g = _gen ?? throw new StoreNotAppliedException("store_authority_unverified");
         var mux = await g.Admin.Value.ConfigureAwait(false);
-        var ep = mux.GetEndPoints(configuredOnly: true).Single();
+        // A cluster connection knows every node: the admin reads belong to the verified owner.
+        var ep = Cluster && g.Endpoint is { } owner ? owner : mux.GetEndPoints(configuredOnly: true).Single();
         return (mux.GetServer(ep), mux.GetDatabase());
     }
 
     public static RedisKey Meta(string application) => KeyPrefix(application) + "meta";
+
+    /// <summary>The cluster hash slot of every key of <paramref name="application"/> (22 §2.6): CRC16 (XMODEM) of the hash tag, modulo 16384.</summary>
+    public static int SlotOf(string application)
+    {
+        ushort crc = 0;
+        foreach (var b in Encoding.ASCII.GetBytes(Convert.ToHexStringLower(Encoding.UTF8.GetBytes(application))))
+        {
+            crc ^= (ushort)(b << 8);
+            for (var i = 0; i < 8; i++)
+            {
+                crc = (crc & 0x8000) != 0 ? (ushort)((crc << 1) ^ 0x1021) : (ushort)(crc << 1);
+            }
+        }
+
+        return crc % 16384;
+    }
 
     /// <summary>22 §2.2: the application's UTF-8 bytes as lowercase hex inside the hash tag.</summary>
     public static string KeyPrefix(string application) => "rw:{" + Convert.ToHexStringLower(Encoding.UTF8.GetBytes(application)) + "}:";
@@ -394,6 +427,14 @@ internal sealed class RxClient : IAsyncDisposable
                 }
                 catch (RedisServerException ex) when (attempt == 0 && ex.Message.StartsWith("NOSCRIPT", StringComparison.Ordinal))
                 {
+                    if (Cluster)
+                    {
+                        // Not run. An unkeyed SCRIPT LOAD would go to any node; sending the text by key loads it on the slot's owner (22 §2.6).
+                        var evaluated = (RedisResult[])(await db.ScriptEvaluateAsync(script.Text, [meta], args).ConfigureAwait(false))!;
+                        Traced?.Invoke(script, args, evaluated);
+                        return evaluated;
+                    }
+
                     // Not run: load it and resend once (22 §4.1).
                     await db.ExecuteAsync("SCRIPT", "LOAD", script.Text).ConfigureAwait(false);
                 }
@@ -496,6 +537,57 @@ internal sealed class RxClient : IAsyncDisposable
         var seeds = new RxSentinelSeeds([.. parsed.EndPoints], parsed.ServiceName, parsed.SentinelUser ?? parsed.User, parsed.SentinelPassword ?? parsed.Password,
             parsed.Ssl, parsed.SslHost, parsed.SslProtocols ?? default, connectTimeout);
         return (data, seeds);
+    }
+
+    /// <summary>
+    /// Cluster mode (22 §2.6): the string lists the cluster's nodes (list every primary; replicas may be listed too). Returns the data options
+    /// with every listed node as an endpoint and the same node list as the authority's voters. Everything else is fixed as in <see cref="Options"/>.
+    /// </summary>
+    public static (ConfigurationOptions Data, RxSentinelSeeds Seeds) ClusterOptions(string configuration, TimeSpan asyncTimeout)
+    {
+        if (configuration.Contains('$', StringComparison.Ordinal))
+        {
+            throw new RxProfileException("invalid_policy", "Command renames are not accepted in the Redis configuration.");
+        }
+
+        ConfigurationOptions parsed;
+        try
+        {
+            parsed = ConfigurationOptions.Parse(configuration);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new RxProfileException("invalid_policy", "The Redis configuration string could not be parsed: " + ex.GetType().Name);
+        }
+
+        if (parsed.EndPoints.Count == 0 || !string.IsNullOrEmpty(parsed.ServiceName))
+        {
+            throw new RxProfileException("topology_unsupported", "Cluster mode needs the cluster's node endpoints in the configuration string and no serviceName.");
+        }
+
+        var connectTimeout = Math.Min(parsed.ConnectTimeout, 5000);
+        var data = new ConfigurationOptions
+        {
+            User = parsed.User,
+            Password = parsed.Password,
+            Ssl = parsed.Ssl,
+            SslHost = parsed.SslHost,
+            SslProtocols = parsed.SslProtocols,
+            DefaultDatabase = parsed.DefaultDatabase,
+            ConnectTimeout = connectTimeout,
+            AbortOnConnectFail = false,
+            BacklogPolicy = BacklogPolicy.FailFast,
+            AsyncTimeout = (int)asyncTimeout.TotalMilliseconds,
+            SyncTimeout = (int)asyncTimeout.TotalMilliseconds,
+            AllowAdmin = false,
+            ConnectRetry = 1,
+        };
+        foreach (var ep in parsed.EndPoints)
+        {
+            data.EndPoints.Add(ep);
+        }
+
+        return (data, new RxSentinelSeeds([.. parsed.EndPoints], "", parsed.User, parsed.Password, parsed.Ssl, parsed.SslHost, parsed.SslProtocols ?? default, connectTimeout));
     }
 
     /// <summary>

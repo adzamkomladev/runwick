@@ -11,6 +11,7 @@ internal sealed partial class RedisStore : IOutboxDestinationStore
 {
     /// <summary>The delivered mark's confirmed profile on Redis (22 §7, 14 Implementation choice 4).</summary>
     string OutboxConfirmedProfile => options.Sentinel is not null ? "redis.aof-always-sentinel.v1"
+        : options.Cluster is not null ? "redis.aof-always-cluster.v1"
         : options.Persistence == RedisPersistence.AofEverySecond ? "redis.aof-everysec.v1" : "redis.aof-always.v1";
 
     static string OutboxField(OutboxSourceIdentity s) => Hex(s.SourceStoreId) + ":" + Hex(s.MessageId);

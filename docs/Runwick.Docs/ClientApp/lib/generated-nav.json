@@ -869,6 +869,11 @@
           "depth": 2
         },
         {
+          "id": "cluster-many-nodes-one-owner-per-application-opt-in",
+          "text": "Cluster: many nodes, one owner per application (opt-in)",
+          "depth": 2
+        },
+        {
           "id": "what-runwick-checks",
           "text": "What Runwick checks",
           "depth": 2
@@ -889,8 +894,8 @@
           "depth": 2
         },
         {
-          "id": "polling",
-          "text": "Polling",
+          "id": "wake-ups-and-polling",
+          "text": "Wake-ups and polling",
           "depth": 2
         },
         {

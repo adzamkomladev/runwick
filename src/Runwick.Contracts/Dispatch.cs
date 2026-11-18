@@ -115,6 +115,14 @@ public static class AcknowledgementProfiles
     /// verified history stops all writes. Opt-in (<c>RedisOptions.Sentinel</c>).
     /// </summary>
     public const string RedisAofAlwaysSentinel = "redis.aof-always-sentinel-v1";
+
+    /// <summary>
+    /// A reply follows the script's writes being appended and fsynced under <c>appendfsync always</c> on the owner of the application's hash
+    /// slot, which a majority of the listed cluster nodes named and this process verified within the last authority lease (22 §2.6).
+    /// Replication to replicas is asynchronous: a failover can lose writes acknowledged after the last verification, and a promotion that
+    /// does not continue the verified history stops all writes. Opt-in (<c>RedisOptions.Cluster</c>).
+    /// </summary>
+    public const string RedisAofAlwaysCluster = "redis.aof-always-cluster-v1";
 }
 
 /// <summary>What staging reported inside a caller's transaction. Makes no durability claim.</summary>

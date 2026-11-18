@@ -37,7 +37,8 @@ internal sealed partial class RedisStore : IRedisStoreDiagnosticsSource
         }
 
         return new(StoreSnapshotScope.Process, StoreSnapshotStatus.Available, new(a.State.ToString().ToLowerInvariant(), a.Reason, a.Primary, a.Epoch,
-            a.SentinelsAgreeing, a.SentinelsConfigured, a.VerifiedAt, [.. a.Recent.Select(e => new RedisAuthorityEvent(e.At, e.Text))]));
+            a.SentinelsAgreeing, a.SentinelsConfigured, a.VerifiedAt, [.. a.Recent.Select(e => new RedisAuthorityEvent(e.At, e.Text))],
+            a.Mode, a.Slot, a.Nodes is null ? null : [.. a.Nodes.Select(n => new RedisClusterNodeObservation(n.Address, n.Role, n.Health, n.Slots, n.OwnsApplicationSlot, n.MovingApplicationSlot))]));
     }
 
     async Task<StoreSnapshotFact<RedisIntentRecovery>> ObserveIntentAsync(CancellationToken ct)

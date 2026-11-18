@@ -133,12 +133,19 @@ public sealed record RedisIntentRecovery(bool Pending, int? NextProjectionIndex)
 /// <summary>One change this process observed in its write authority (a verification, a closed lease, a blocked promotion).</summary>
 public sealed record RedisAuthorityEvent(DateTimeOffset At, string Text);
 
+/// <summary>One cluster node as the voting nodes report it (22 §2.6): <c>Role</c> is <c>primary</c> or <c>replica</c>, <c>Health</c> is <c>ok</c>,
+/// <c>fail?</c>, <c>fail</c> or <c>unknown</c>, and <c>OwnsApplicationSlot</c> marks the node holding this application's slot.</summary>
+public sealed record RedisClusterNodeObservation(string Address, string Role, string Health, int Slots, bool OwnsApplicationSlot, bool MovingApplicationSlot);
+
 /// <summary>
-/// Sentinel write authority as this process sees it (22 §2.5): <c>State</c> is <c>verified</c>, <c>unresolved</c> (retries on its own) or
-/// <c>blocked</c> (an operator must reconcile the histories and restart). Observed by this process only; not a cluster-wide verdict.
+/// Write authority as this process sees it (22 §2.5, §2.6): <c>State</c> is <c>verified</c>, <c>unresolved</c> (retries on its own) or
+/// <c>blocked</c> (an operator must reconcile the histories and restart). <c>Mode</c> is <c>sentinel</c> or <c>cluster</c>; in Cluster mode
+/// <c>Slot</c> is the application's hash slot, <c>Nodes</c> the nodes the voters report, and the <c>Sentinels…</c> counts are the voting nodes.
+/// Observed by this process only; not a cluster-wide verdict.
 /// </summary>
 public sealed record RedisAuthorityObservation(string State, string? Reason, string? Primary, long Epoch, int SentinelsAgreeing, int SentinelsConfigured,
-    DateTimeOffset? VerifiedAt, IReadOnlyList<RedisAuthorityEvent> Recent);
+    DateTimeOffset? VerifiedAt, IReadOnlyList<RedisAuthorityEvent> Recent, string Mode = "sentinel", int? Slot = null,
+    IReadOnlyList<RedisClusterNodeObservation>? Nodes = null);
 
 public sealed record RedisStoreDiagnostics(
     StoreSnapshotFact<RedisMemoryStats> Memory,
