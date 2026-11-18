@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Do the changed scripts store byte-identical data? Runs the same dispatch / claim / finish sequence (fixed ids, tokens, entropy, draws) through the
+"""Do the changed scripts store byte-identical data and reply byte-identical text? Runs the same dispatch / claim / finish / finish-and-claim sequence (fixed ids, tokens, entropy, draws) through the
 baseline Lua and the checkout's Lua on two disposable Redis databases, dumps every key and compares them, with 13-digit millisecond times
 replaced by T. Usage: diffcheck.py --port P [--base DIR] [--new DIR]"""
 import argparse, json, re, socket, sys
@@ -48,12 +48,14 @@ def run(lua, port):
     rb = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/reserve_and_begin.lua").read_text())
     fm = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/finish_many.lua").read_text())
     fin = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/finish.lua").read_text())
+    fc = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/finish_and_claim.lua").read_text())
+    replies = []
 
     def dl(ahead):
         sec, usec = map(int, db.call("TIME"))
         return sec * 1000 + usec // 1000 + ahead
 
-    n = 5
+    n = 8
     for i in range(n):
         policy = dict(maxExec=3, maxUn=3, retry='{"initialDelay":100,"maximumDelay":1000}', uretry='{"initialDelay":100,"maximumDelay":1000}', timeout=None)
         body = dict(jobId=hexid(i, 1), name="test", queue="default", priority="medium", pver=1, profile="json", profver=1, notBefore=None,
@@ -62,11 +64,13 @@ def run(lua, port):
         r = db.call("EVALSHA", dispatch, 1, META, 0, STORE, "Dispatch", hexid(i, 2), hexid(i, 3) * 2, dl(300_000), 600_000, 86_400_000,
                     "durable", "c", "", 0, 0, "initial", "", 1, json.dumps(body), b"payload-%d" % i)
         assert r[1] == b"Applied", r
-    toks = json.dumps([hexid(i, 4) for i in range(n)])
-    ents = json.dumps([f"{i:020x}" for i in range(n)])
+        replies.append(r)
+    toks = json.dumps([hexid(i, 4) for i in range(5)])
+    ents = json.dumps([f"{i:020x}" for i in range(5)])
     r = db.call("EVALSHA", rb, 1, META, 0, STORE, "ReserveAndBegin", hexid(0, 5), hexid(0, 6) * 2, dl(30_000), 60_000, 600_000, "ownership", "c", "",
-                hexid(0, 7), "default", "medium", 600_000, toks, "", "", json.dumps([["test", 1, "json", 1]]), n, ents, json.dumps([0] * n))
+                hexid(0, 7), "default", "medium", 600_000, toks, "", "", json.dumps([["test", 1, "json", 1]]), 5, ents, json.dumps([0] * 5))
     assert r[1] == b"Applied", r
+    replies.append(r)
     items = json.loads(r[7])["items"]
     lease = lambda b: dict(jobId=b["jobId"], attemptId=b["attemptId"], workerInstanceId=b["workerInstanceId"], ownershipToken=b["ownershipToken"],
                            generation=b["generation"])
@@ -76,9 +80,23 @@ def run(lua, port):
         args += [hexid(i, 8), hexid(i, 9) * 2, dl(30_000), fbody(i, "succeeded"), 0.5]
     r = db.call("EVALSHA", fm, 1, META, 0, STORE, "FinishMany", hexid(0, 10), "", dl(30_000), 60_000, 0, "", "d", "", *args)
     assert r[1] == b"Applied", r
+    replies.append(r)
     r = db.call("EVALSHA", fin, 1, META, 0, STORE, "Finish", hexid(3, 8), hexid(3, 9) * 2, dl(30_000), 60_000, 86_400_000, "durable", "d", "",
                 fbody(3, "retryable_failure"), 0.5)
     assert r[1] == b"Applied", r
+    replies.append(r)
+    # FinishAndClaim: the last begun job finishes and three new jobs are claimed in one call; then a resend of the same call replays.
+    toks = json.dumps([hexid(i, 11) for i in range(3)])
+    ents = json.dumps([f"{i + 100:020x}" for i in range(3)])
+    fargs = [1, hexid(4, 8), hexid(4, 9) * 2, dl(30_000), fbody(4, "permanent_failure"), 0.5]
+    call = ["EVALSHA", fc, 1, META, 0, STORE, "ReserveAndBegin", hexid(1, 5), hexid(1, 6) * 2, dl(30_000), 60_000, 600_000, "ownership", "c", "",
+            hexid(1, 7), "default", "medium", 600_000, toks, "", "", json.dumps([["test", 1, "json", 1]]), 3, ents, json.dumps([0] * 3), *fargs]
+    r = db.call(*call)
+    assert r[1] == b"Applied" and len(json.loads(r[7])["items"]) == 3, r
+    replies.append(r)
+    r = db.call(*call)
+    assert r[3] == b"1", r
+    replies.append(r)
 
     dump = {}
     for key in db.call("KEYS", PREFIX + "*"):
@@ -93,6 +111,7 @@ def run(lua, port):
         else:
             val = (db.call("GET", key) or b"").decode("latin1")
         dump[key] = val
+    dump["(replies)"] = [[x.decode("latin1") if isinstance(x, bytes) else x for x in r] for r in replies]
     return dump
 
 
@@ -116,6 +135,11 @@ def main():
         if o is None or n is None:
             print("only in", "base" if n is None else "new", k)
             bad += 1
+        elif k == "(replies)":
+            for i, (ro, rn) in enumerate(zip(o, n)):
+                if norm(ro) != norm(rn):  # the exact reply text, byte for byte apart from times
+                    print("DIFF reply", i, "\n  base:", norm(ro)[:400], "\n  new: ", norm(rn)[:400])
+                    bad += 1
         elif isinstance(o, dict) and isinstance(n, dict):
             on = {norm(f): norm(v) for f, v in o.items()}
             nn = {norm(f): norm(v) for f, v in n.items()}
