@@ -442,7 +442,13 @@ internal sealed class OutboxRelay(
     int _unslotted;
 
     /// <summary>Slots not held by a message; with <see cref="OutboxRelayOptions.ReleaseSlotAfterReply"/> a message awaiting its mark holds none.</summary>
-    internal int FreeSlots() => options.MaxInFlight - (_inFlight.Count - Volatile.Read(ref _unslotted));
+    internal int FreeSlots()
+    {
+        var total = _inFlight.Count;
+        var free = options.MaxInFlight - (total - Volatile.Read(ref _unslotted));
+        // Messages awaiting their mark hold a lease but no slot; twice MaxInFlight leases is the most a slow mark path can pile up.
+        return options.ReleaseSlotAfterReply ? Math.Min(free, 2 * options.MaxInFlight - total) : free;
+    }
 
     void Release(InFlight entry)
     {

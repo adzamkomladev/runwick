@@ -2844,9 +2844,11 @@ The cost: one application's throughput is bounded by one Redis server thread, an
 
 Redis cannot join your business database's transaction. There is no `StageAsync` and no transactional completion on Redis. To create a job only when your business data commits, write it to an [outbox](/docs/outbox) in your business database; the relay delivers it to the Redis store.
 
-## Polling
+## Wake-ups and polling
 
-There are no wake-up notifications between processes. Workers find new jobs by polling. Within one process, a commit wakes that process's own workers.
+When a job that is due now becomes whole in the store, the write also publishes the queue's name on a Redis channel (`rw:{...}:wake`). Workers subscribe to it, so an idle worker usually starts a new job within milliseconds instead of waiting for its next poll. This is a hint only: a worker that loses its subscription goes back to polling every two seconds at most, and Redis does not keep a message nobody was listening for, so polling stays the way correctness is guaranteed.
+
+For jobs that are delayed or waiting to retry, no message is sent when they fall due. Instead, each readiness check tells the worker when the next such job is due, and an idle worker sleeps until then (never less than 50 ms) rather than on its usual back-off.
 
 ## What Redis does not promise
 
@@ -3119,6 +3121,8 @@ A process that stages but should not deliver can turn the relay off: `relay: o =
 | `Enabled` | `true` | |
 | `MaxInFlight` | 4 | 1 to 64 messages |
 | `DeliveryGroupSize` | 1 (off) | 1 to 16. With a PostgreSQL destination, plain messages claimed together are delivered in one destination transaction. Each keeps its own transport command, receipt and delivery mapping. |
+| `ClaimBatchMin` | 1 (off) | 1 to `MaxInFlight`. The relay waits until this many slots are free (at most `ClaimBatchWait`, 5 ms by default) before it claims, so one source claim carries several messages. |
+| `ReleaseSlotAfterReply` | false | When true, a message stops counting against `MaxInFlight` as soon as the destination has answered, so the next claim and send overlap its source mark. Its lease is still held and renewed until the mark is written, and at most twice `MaxInFlight` messages hold leases. |
 | `LeaseDuration` | 60 s | at least 5 s, and at least 3 × `RenewalInterval` |
 | `RenewalInterval` | 15 s | positive |
 | `ProviderCallTimeout` | 5 s | positive, shorter than `RenewalInterval` |
@@ -4811,6 +4815,8 @@ Per schedule: misfire policy `RunOnce` with 60 s grace (up to 24 h); catch-up at
 | `Enabled` | `true` | |
 | `MaxInFlight` | 4 | 1 to 64 |
 | `DeliveryGroupSize` | 1 | 1 to 16; groups plain messages into one PostgreSQL destination transaction |
+| `ClaimBatchMin` / `ClaimBatchWait` | 1 / 5 ms | 1 to `MaxInFlight` / up to 1 s; wait for several free slots so one claim carries a batch |
+| `ReleaseSlotAfterReply` | false | stop counting a message against `MaxInFlight` once the destination has answered (at most 2 × `MaxInFlight` leases) |
 | `LeaseDuration` / `RenewalInterval` | 60 s / 15 s | lease at least 5 s and at least 3 renewals |
 | `ProviderCallTimeout` | 5 s | shorter than `RenewalInterval` |
 | `IdlePoll` | 1 s | positive |

@@ -889,8 +889,8 @@
           "depth": 2
         },
         {
-          "id": "polling",
-          "text": "Polling",
+          "id": "wake-ups-and-polling",
+          "text": "Wake-ups and polling",
           "depth": 2
         },
         {
