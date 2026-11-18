@@ -132,6 +132,12 @@ internal sealed class CapacityTicket(LocalCapacityGate gate)
 
     public bool IsReleased => Volatile.Read(ref _released) == 1;
 
+    /// <summary>
+    /// Hands the slot to a new ticket (finish-and-claim, 05 §12.7): this one then counts as released without freeing the slot, so its
+    /// holder's later release is a no-op. Null when it was already released.
+    /// </summary>
+    public CapacityTicket? Transfer() => Interlocked.Exchange(ref _released, 1) == 0 ? new CapacityTicket(gate) : null;
+
     /// <summary>Released by a retiring holder: raises the refill wake.</summary>
     public void Release() => Release(refill: true);
 

@@ -535,3 +535,99 @@ end
 function U.uuid_text(hex)
   return string.sub(hex, 1, 8) .. '-' .. string.sub(hex, 9, 12) .. '-' .. string.sub(hex, 13, 16) .. '-' .. string.sub(hex, 17, 20) .. '-' .. string.sub(hex, 21, 32)
 end
+
+-- ------------------------------------------------------------------ shared decisions (FinishMany/1, ReserveAndBegin/1, FinishAndClaim)
+-- Each takes the position of its first argument, so one script call can run both (FinishAndClaim: one intent, one projection).
+
+U.DURABLE_FLOOR = 86400000
+function U.finish_item_json(cmd, r, replayed)
+  return { commandId = cmd, status = r.status, effect = r.effect == 'A' and 'Applied' or 'ObservedNoEffect', replayed = replayed,
+    code = r.code or NULL, decidedAt = r.decided and r.decided ~= '' and U.raw(r.decided) or NULL,
+    result = r.result and (type(r.result) == 'table' and r.result or U.raw(r.result)) or NULL }
+end
+
+-- ARGS(base) n, then per item: command id, fingerprint, NotAfter ms, body JSON, retry draw. Returns the item replies and the applied count.
+function U.finish_items(base)
+  local n = tonumber(ARGS(base))
+  local items, done, order = {}, {}, {}
+  for i = 1, n do
+    local b = base + 1 + (i - 1) * 5
+    items[i] = { cmd = ARGS(b), fp = ARGS(b + 1), na = tonumber(ARGS(b + 2)), body = cjson.decode(ARGS(b + 3)), draw = tonumber(ARGS(b + 4)) }
+    order[i] = i
+  end
+  table.sort(order, function(a, b) return U.blt(items[a].cmd, items[b].cmd) end)
+  for _, k in ipairs(order) do
+    local it = items[k]
+    local rc = redis.call('HMGET', P .. 'rcpt:' .. it.cmd, 'cls', 'op', 'ver', 'fp', 'status', 'code', 'decided', 'result')
+    if rc[1] then
+      if rc[1] ~= 'durable' or rc[2] ~= 'Finish' or rc[3] ~= '1' or rc[4] ~= it.fp then
+        done[k] = U.finish_item_json(it.cmd, U.noeffect('CommandConflict', 'command_conflict'), false)
+      else
+        -- 22 §4.5 marker for a replayed item: a fresh write, not part of any intent.
+        redis.call('HSET', P .. 'rcpt:' .. it.cmd, 'confirmed', NOWS)
+        done[k] = U.finish_item_json(it.cmd, { status = rc[5], effect = 'A', code = rc[6] ~= '' and rc[6] or nil, decided = rc[7], result = rc[8] }, true)
+      end
+    elseif NOW >= it.na then
+      done[k] = U.finish_item_json(it.cmd, U.noeffect('CommandExpired', 'command_expired', { decided = NOWS }), false)
+    elseif it.na - NOW > 60000 then
+      done[k] = U.finish_item_json(it.cmd, U.noeffect('InvalidRequest', 'deadline_too_far', { decided = NOWS }), false)
+    end
+  end
+  local applied = 0
+  for k, it in ipairs(items) do
+    if not done[k] then
+      local r = U.finish_job(it.body, it.draw)
+      r.decided = NOWS
+      if r.effect == 'A' then
+        applied = applied + 1
+        local key = 'rcpt:' .. it.cmd
+        -- Encoded once: the receipt row and the reply item carry the same text.
+        local encoded = U.enc(r.result)
+        r.result = U.raw(encoded)
+        local row = { cls = 'durable', op = 'Finish', ver = '1', fp = it.fp, notafter = U.S(it.na), retain = U.S(it.na + U.DURABLE_FLOOR),
+          status = 'Applied', code = '', detail = '', decided = NOWS, result = encoded }
+        for f, v in pairs(row) do U.hset(key, f, v) end
+        U.zadd('rcpt:exp:durable', it.na + U.DURABLE_FLOOR, it.cmd)
+      end
+      done[k] = U.finish_item_json(it.cmd, r, false)
+    end
+  end
+  local out = U.arr()
+  for k = 1, n do out[k] = done[k] end
+  return out, applied
+end
+
+-- ARGS(base..base+10): worker, queue, priority, lease ms, tokens JSON, after eligible, after job, contracts JSON, max jobs, entropies JSON,
+-- jitters JSON. Returns the Applied reply (result { items }, payloads) or a no-effect reply.
+function U.reserve_and_begin(base)
+  local function a(k) return ARGS(base + k - 1) end
+  local g = U.queue_gate(a(2))
+  if g then return g end
+  local afterAt = a(6) ~= '' and tonumber(a(6)) or nil
+  local c = U.candidates(a(2), a(3), afterAt, a(7), U.contract_set(a(8)), tonumber(a(9)))
+  if #c == 0 then return U.noeffect('NoWork', 'no_work') end
+  local tokens, entropy, jitters = cjson.decode(a(5)), cjson.decode(a(10)), cjson.decode(a(11))
+  local items, begun, firstBlocked, last, reserved = U.arr(), {}, nil, nil, false
+  for i, cand in ipairs(c) do
+    local r = U.reserve_job(cand.id, tonumber(a(4)), a(1), tokens[i], entropy[i])
+    if r.status == 'CapacityBlocked' then
+      firstBlocked = firstBlocked or r.blocked
+      last = cand
+      items[#items + 1] = { ordinal = i - 1, jobId = cand.id, status = 'CapacityBlocked', code = 'capacity_blocked', blockedScopeId = r.blocked,
+        cursor = { eligibleAt = cand.at, jobId = cand.id } }
+    else
+      if r.effect ~= 'A' then U.abort(r.status, r.code) end
+      reserved = true
+      local b = U.begin_job(U.lease_of(r.result), jitters[i], r.j)
+      if b.effect ~= 'A' then U.abort(b.status, b.code) end
+      if b.status == 'Applied' then begun[#begun + 1] = cand.id end
+      items[#items + 1] = { ordinal = i - 1, jobId = cand.id, status = b.status, code = b.code or NULL, reserve = r.result, begin = b.result }
+    end
+  end
+  if not reserved then
+    return U.noeffect('CapacityBlocked', 'capacity_blocked', { blocked = firstBlocked, resumeAt = last.at, resumeJob = last.id })
+  end
+  local r = U.applied({ items = items })
+  r.payloads = begun
+  return r
+end

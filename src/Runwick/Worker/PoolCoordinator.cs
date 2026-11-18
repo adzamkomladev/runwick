@@ -22,6 +22,7 @@ internal sealed class PoolCoordinator
     int _roundReserves;
     bool _claimUnresolved;
     bool _batchOff;
+    readonly PriorityGate _claimGate = new(1);
 
     public PoolCoordinator(WorkerEngine engine, PoolSettings settings)
     {
@@ -102,87 +103,255 @@ internal sealed class PoolCoordinator
                 continue;
             }
 
-            ReadyView view;
+            // The claim lock keeps a finish-and-claim call of the completion lane (05 §12.7) out of the selection and claim below.
+            (bool Idle, TimeSpan? Until) next;
+            PriorityGate.Slot claimSlot;
             try
             {
-                view = await _engine.Readiness.GetAsync(stop).ConfigureAwait(false);
+                claimSlot = await _claimGate.AcquireAsync(0, stop).ConfigureAwait(false);
             }
-            catch (Exception ex)
+            catch (OperationCanceledException)
             {
                 ticket.Return();
-                if (stop.IsCancellationRequested)
+                throw;
+            }
+
+            using (claimSlot)
+            {
+                next = await OpportunityAsync(ticket, stop).ConfigureAwait(false);
+            }
+
+            if (next.Idle)
+            {
+                await IdleAsync(stop, next.Until).ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>One opportunity with a ticket in hand: the probe view, the lane choice and the claim. Idle: the pool then waits (until the due time when known).</summary>
+    async Task<(bool Idle, TimeSpan? Until)> OpportunityAsync(CapacityTicket ticket, CancellationToken stop)
+    {
+        ReadyView view;
+        try
+        {
+            view = await _engine.Readiness.GetAsync(stop).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ticket.Return();
+            if (stop.IsCancellationRequested)
+            {
+                throw;
+            }
+
+            _engine.Logger.LogDebug(ex, "Runwick readiness probe failed.");
+            return (true, null);
+        }
+
+        if (!_engine.AdmissionOpen || Suspended)
+        {
+            ticket.Return();
+            return (false, null);
+        }
+
+        var now = _engine.Clock.Now;
+        var choice = SelectLane(view, now, out var readyLanes);
+        if (choice is null)
+        {
+            ticket.Return();
+            TimeSpan? untilDue = null;
+            if (readyLanes == 0)
+            {
+                // Nothing claimable in this hint: the next opportunity probes afresh. A store that can name the next job to
+                // fall due lets the pool sleep until then instead of on its idle backoff.
+                _engine.Readiness.Invalidate();
+                if (view.Snapshot.NextDueAt is { } due)
                 {
-                    throw;
+                    untilDue = due - view.Snapshot.ObservedAt - (now - view.ReceivedAt);
                 }
-
-                _engine.Logger.LogDebug(ex, "Runwick readiness probe failed.");
-                await IdleAsync(stop).ConfigureAwait(false);
-                continue;
             }
 
-            if (!_engine.AdmissionOpen || Suspended)
+            return (true, untilDue);
+        }
+
+        if (await LaneVisitAsync(choice, ticket).ConfigureAwait(false))
+        {
+            _idleStep = 0;
+        }
+
+        if (_roundReserves >= WorkerSettings.ReservesPerRound)
+        {
+            _roundReserves = 0;
+            await Task.Yield();
+        }
+
+        return (false, null);
+    }
+
+    /// <summary>
+    /// The lane the next claim is for, from a probe view: applies the probe exclusions, queue evidence and known releases, then asks
+    /// the selector. <paramref name="readyLanes"/> is how many lanes remained claimable before the selector's cooldowns.
+    /// </summary>
+    LaneChoice? SelectLane(ReadyView view, TimeSpan now, out int readyLanes)
+    {
+        if (!ReferenceEquals(view, _excludedFor))
+        {
+            _excluded.Clear();
+            _excludedFor = view;
+            ApplyQueueEvidence(view.Snapshot);
+        }
+
+        // A known release lifts both the probe exclusion and the queue-scope cooldown at once (09 §4.2).
+        while (_released.TryDequeue(out var releasedQueue))
+        {
+            _saturated.Remove(releasedQueue);
+            Selector.ReleaseQueue(releasedQueue);
+        }
+
+        var ages = view.Ages(now);
+        foreach (var lane in _excluded)
+        {
+            ages.Remove(lane);
+        }
+
+        foreach (var lane in ages.Keys.Where(l => _saturated.Contains(l.Queue)).ToList())
+        {
+            ages.Remove(lane);
+            Interlocked.Increment(ref SaturationSkips);
+        }
+
+        readyLanes = ages.Count;
+        return Selector.Choose(ages, now);
+    }
+
+    /// <summary>A claim prepared for a finish-and-claim call (05 §12.7); holds the pool's claim lock until disposed.</summary>
+    internal sealed class InlineClaim(PoolCoordinator pool, PriorityGate.Slot slot, LaneChoice choice, LaneKey lane, List<CapacityTicket> tickets,
+        StoreCommand<ReserveAndBeginRequest> command) : IDisposable
+    {
+
+        public LaneChoice Choice => choice;
+
+        public LaneKey Lane => lane;
+
+        /// <summary>The slots of the finishing attempts that the claim may fill, in outcome order.</summary>
+        public List<CapacityTicket> Tickets => tickets;
+
+        public StoreCommand<ReserveAndBeginRequest> Command => command;
+
+        public PoolCoordinator Pool => pool;
+
+        public void Dispose() => slot.Dispose();
+    }
+
+    /// <summary>
+    /// Prepares a claim of <paramref name="tickets"/>.Count jobs to ride on a finish call (05 §12.7), or null when the pool would not
+    /// claim right now with exactly this shape: admission closed or draining, a claim in flight (the lock is taken without waiting), no
+    /// fresh readiness hint (no probe is started), more than one claimable lane or an aging pick (shares divide admissions, so each
+    /// admission is its own selection), or no batched claim in the store.
+    /// </summary>
+    internal InlineClaim? TryBeginInlineClaim(List<CapacityTicket> tickets)
+    {
+        if (tickets.Count == 0 || _claimGate.TryAcquire() is not { } slot)
+        {
+            return null;
+        }
+
+        InlineClaim? claim = null;
+        try
+        {
+            if (_batchOff || _engine.Store is not IReserveAndBeginStore || !_engine.AdmissionOpen || _engine.Draining || Suspended
+                || !_engine.Readiness.TryGetFresh(out var view))
             {
-                ticket.Return();
-                continue;
+                return null;
             }
 
-            var now = _engine.Clock.Now;
-            if (!ReferenceEquals(view, _excludedFor))
+            var choice = SelectLane(view, _engine.Clock.Now, out _);
+            if (choice is null || choice.Aging || choice.EligibleQueues.Count != 1 || choice.EligibleLanes.Count != 1)
             {
-                _excluded.Clear();
-                _excludedFor = view;
-                ApplyQueueEvidence(view.Snapshot);
+                return null;
             }
 
-            // A known release lifts both the probe exclusion and the queue-scope cooldown at once (09 §4.2).
-            while (_released.TryDequeue(out var releasedQueue))
+            var lane = new LaneKey(choice.Queue, choice.Priority);
+            var command = _engine.Command(new ReserveAndBeginRequest(_engine.WorkerInstanceId, lane.Queue, lane.Priority, _engine.Contracts,
+                _cursors.GetValueOrDefault(lane), _engine.Options.LeaseDuration, tickets.Count));
+            claim = new InlineClaim(this, slot, choice, lane, tickets, command);
+            return claim;
+        }
+        finally
+        {
+            if (claim is null)
             {
-                _saturated.Remove(releasedQueue);
-                Selector.ReleaseQueue(releasedQueue);
+                slot.Dispose();
             }
+        }
+    }
 
-            var ages = view.Ages(now);
-            foreach (var lane in _excluded)
+    /// <summary>The call is still running or being resolved: shutdown waits for it as it does for a Reserve in flight.</summary>
+    internal void TrackClaim(Task task) => ClaimTask = task;
+
+    /// <summary>
+    /// Settles the claim half of a finish-and-claim call. A null reply is an unknown outcome: the same claim command is resubmitted
+    /// alone, as any claim is (05 §9.1), so a committed claim replays and an uncommitted one applies. Applied: each begun job takes the
+    /// slot of a finishing attempt (the slot moves to the new attempt, so the finisher's retirement no longer frees it). Anything else
+    /// leaves the finishing attempts' slots where they are, and the pool's state follows the reply as a claim of the loop's would.
+    /// </summary>
+    internal async Task SettleInlineAsync(InlineClaim claim, StoreReply<ClaimedJobs>? reply, TimeSpan sentAt)
+    {
+        if (reply is null)
+        {
+            var store = (IReserveAndBeginStore)_engine.Store;
+            (reply, sentAt) = await ResolveAsync(claim.Command.CommandId, "ReserveAndBegin", t => store.ReserveAndBeginAsync(claim.Command, t)).ConfigureAwait(false);
+            if (reply is null)
             {
-                ages.Remove(lane);
+                return;
             }
+        }
 
-            foreach (var lane in ages.Keys.Where(l => _saturated.Contains(l.Queue)).ToList())
+        if (reply.Status == StoreStatus.Applied && reply.Value is not null)
+        {
+            var moved = new List<CapacityTicket>();
+            foreach (var t in claim.Tickets)
             {
-                ages.Remove(lane);
-                Interlocked.Increment(ref SaturationSkips);
-            }
-
-            var choice = Selector.Choose(ages, now);
-            if (choice is null)
-            {
-                ticket.Return();
-                TimeSpan? untilDue = null;
-                if (ages.Count == 0)
+                if (t.Transfer() is { } slot)
                 {
-                    // Nothing claimable in this hint: the next opportunity probes afresh. A store that can name the next job to
-                    // fall due lets the pool sleep until then instead of on its idle backoff.
-                    _engine.Readiness.Invalidate();
-                    if (view.Snapshot.NextDueAt is { } due)
-                    {
-                        untilDue = due - view.Snapshot.ObservedAt - (now - view.ReceivedAt);
-                    }
+                    moved.Add(slot);
                 }
-
-                await IdleAsync(stop, untilDue).ConfigureAwait(false);
-                continue;
             }
 
-            if (await LaneVisitAsync(choice, ticket).ConfigureAwait(false))
+            if (Settle(claim.Choice, claim.Lane, moved, reply, sentAt) == BatchResult.Applied)
             {
                 _idleStep = 0;
             }
 
-            if (_roundReserves >= WorkerSettings.ReservesPerRound)
-            {
-                _roundReserves = 0;
-                await Task.Yield();
-            }
+            Wake.Set();
+            return;
+        }
+
+        var now = _engine.Clock.Now;
+        Selector.OnNotApplied(claim.Choice);
+        switch (reply.Status)
+        {
+            case StoreStatus.NoWork:
+                _cursors[claim.Lane] = null;
+                _excluded.Add(claim.Lane);
+                break;
+            case StoreStatus.QueuePaused:
+                Selector.CoolQueue(claim.Choice.Queue, now);
+                break;
+            case StoreStatus.CapacityBlocked:
+                Outcomes.Record(now, blocked: true);
+                _cursors[claim.Lane] = reply.Error?.ResumeAfter;
+                switch (Classify(reply.Error?.BlockedScopeId, claim.Lane))
+                {
+                    case BlockedScope.Queue:
+                        Selector.CoolQueue(claim.Choice.Queue, now);
+                        break;
+                    case BlockedScope.SingleTypeLane:
+                        Selector.CoolLane(claim.Choice.Queue, claim.Choice.Priority, now);
+                        break;
+                }
+
+                break;
         }
     }
 

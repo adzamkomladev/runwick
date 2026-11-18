@@ -4,6 +4,17 @@
 
 Numeric values are restated here where the engine behavior depends on them; [06-defaults.md](06-defaults.md) is the single table of defaults, derived formulas and startup inequalities. Where the two disagree, 06 is authoritative for the number and this file for the behavior.
 
+## Changes (2026-11-17, combined finish and claim)
+
+New **§12.7 Combined finish and claim (perf round two)**, an opt-in mode (`WorkerOptions.UseCombinedFinishClaim()`, `CombinedFinishClaim`, default off). Without it §12.1 to §12.6 are unchanged.
+
+- **What it does.** When the store offers `FinishAndClaim` (03 Changes 2026-11-17; Redis today) the completion worker that takes finished attempts from the ready channel may send their Finish commands and one `ReserveAndBegin/1` command for the same number of jobs in one call. The finished attempts' slots are the claim's slots, so a job's finish and its replacement's start share one round trip.
+- **When it is used.** Only when every condition the claim loop applies to a batched claim holds at that moment: the pool's cached readiness hint is younger than the hint age (no probe is started for it), exactly one lane is claimable and the pick is not an aging pick, admission is open, the engine is not draining, the pool is not suspended, and no claim of that pool is in flight (the call takes the pool's claim lock without waiting). Otherwise the finishes settle as §12.2 to §12.5 say.
+- **Commands.** Every Finish keeps its own frozen command, receipt and budget; the claim is an ordinary `ReserveAndBegin/1` command with its own ID. The call is decided finishes first, then the claim, so a permit that a finish frees can serve the claim in the same call.
+- **Settlement of the claim half.** An Applied claim moves each used slot to the new attempt (the finishing attempt's later release of that slot is a no-op), and is settled before any finish in the call completes. A claim with no work, a paused queue or a capacity block updates the pool's lane state as the same reply to a claim of the loop would, and the finishes still apply. The slots then free as each finishing attempt retires.
+- **Failure.** A refused call (`UnsupportedVersion`, `InvalidRequest`) stops combined calls for this worker and every finish resolves alone. A failed or lost call resolves each finish by its own command (§12.2) and the claim by resubmitting the same claim command, which replays if the call committed and applies if it did not (§9.1). A replayed claim carries no finish results; each finish then resolves from its own receipt.
+- **What it does not change.** No job is held in memory, no lease is renewed less often, and a crashed worker loses what it would lose without the option. With `UseBufferedFinish()` a buffered finish has already given its slot back, so only slots still held are claimed into.
+
 ## Changes (2026-11-15, buffered finish)
 
 New **§12.6 Buffered finish (perf round two, G1)**, an opt-in mode (`WorkerOptions.UseBufferedFinish()`, `BufferedFinish`, default off). Without it §12.1 to §12.5 are unchanged.

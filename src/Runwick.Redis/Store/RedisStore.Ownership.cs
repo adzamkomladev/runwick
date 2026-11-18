@@ -7,7 +7,7 @@ using StackExchange.Redis;
 
 namespace Runwick.Redis.Store;
 
-internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginStore, IFinishManyStore
+internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginStore, IFinishManyStore, IFinishAndClaimStore
 {
     // Dispatch, ownership and ResolveCommand (04 §7.2–§7.9, §7.13): argument building here, decisions in the Lua scripts.
 
@@ -267,27 +267,98 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
 
     public async Task<StoreReply<ClaimedJobs>> ReserveAndBeginAsync(StoreCommand<ReserveAndBeginRequest> command, CancellationToken ct)
     {
-        var request = command.Body;
-        var contracts = request.SupportedContracts.Distinct().ToArray();
-        if (request.LeaseDuration < MinLease || request.LeaseDuration > MaxLease || contracts.Length is < 1 or > 512
-            || request.MaxJobs is < 1 or > IReserveAndBeginStore.MaxJobs)
+        if (!ValidClaim(command.Body))
         {
             return Invalid<ClaimedJobs>("invalid_request", time);
         }
 
         var storeId = await EnsureStoreIdAsync(command.Application, ct).ConfigureAwait(false);
+        var (op, args) = ClaimFrame(command, storeId);
+        var r = await Write(op, "reserve_and_begin", ct, [.. args]).ConfigureAwait(false);
+        return r.HasValue ? r.Applied(ReadClaimed(r)) : r.Reject<ClaimedJobs>();
+    }
+
+    static bool ValidClaim(ReserveAndBeginRequest request) =>
+        request.LeaseDuration >= MinLease && request.LeaseDuration <= MaxLease && request.SupportedContracts.Distinct().Count() is >= 1 and <= 512
+        && request.MaxJobs is >= 1 and <= IReserveAndBeginStore.MaxJobs;
+
+    /// <summary>The frame and the 11 script arguments of one ReserveAndBegin command (tokens, entropy and jitter are drawn here, once per call).</summary>
+    (RxOp Op, List<RedisValue> Args) ClaimFrame(StoreCommand<ReserveAndBeginRequest> command, Guid storeId)
+    {
+        var request = command.Body;
+        var contracts = request.SupportedContracts.Distinct().ToArray();
         var fp = CommandEnvelopes.Fingerprint(storeId, command.Application, Operations.ReserveAndBegin, command.CommandId, command.NotAfter,
             CommandEnvelopes.ReserveAndBegin(request));
         var n = request.MaxJobs;
         var tokens = new JsonArray([.. Enumerable.Range(0, n).Select(_ => (JsonNode?)Hex(NewToken()))]);
         var entropy = new JsonArray([.. Enumerable.Range(0, n).Select(_ => (JsonNode?)Entropy())]);
         var jitters = new JsonArray([.. Enumerable.Range(0, n).Select(_ => (JsonNode?)Random.Shared.Next(0, MaxDeferJitterMs + 1))]);
-        var r = await Write(Op(command.Application, command.CommandId, Operations.ReserveAndBegin, command.NotAfter, fp, RxLane.Admission, 'c'),
-            "reserve_and_begin", ct,
+        var op = Op(command.Application, command.CommandId, Operations.ReserveAndBegin, command.NotAfter, fp, RxLane.Admission, 'c');
+        List<RedisValue> args =
+        [
             Hex(request.WorkerInstanceId), request.Queue, request.Priority, LeaseMs(request.LeaseDuration), Json(tokens),
             request.After is { } a ? Ms(a.EligibleAt) : "", request.After is { } b ? Hex(b.JobId) : "", Json(Contracts(contracts)), n, Json(entropy),
-            Json(jitters)).ConfigureAwait(false);
-        return r.HasValue ? r.Applied(ReadClaimed(r)) : r.Reject<ClaimedJobs>();
+            Json(jitters),
+        ];
+        return (op, args);
+    }
+
+    // ------------------------------------------------------------------ FinishAndClaim (opt-in, 05 §12.7)
+
+    public async Task<StoreReply<FinishedAndClaimed>> FinishAndClaimAsync(FinishAndClaimRequest request, CancellationToken ct)
+    {
+        var items = request.Finishes;
+        var claim = request.Claim;
+        if (items.Count is 0 or > IFinishAndClaimStore.MaxFinishes || !ValidClaim(claim.Body)
+            || items.Any(i => i.Application != claim.Application || i.Body.RequestedRetryDelay < TimeSpan.Zero)
+            || items.Select(i => i.CommandId).Append(claim.CommandId).Distinct().Count() != items.Count + 1
+            || items.Select(i => i.Body.Lease.JobId).Distinct().Count() != items.Count)
+        {
+            return Invalid<FinishedAndClaimed>("invalid_request", time);
+        }
+
+        var storeId = await EnsureStoreIdAsync(claim.Application, ct).ConfigureAwait(false);
+        var (op, args) = ClaimFrame(claim, storeId);
+        args.Add(items.Count);
+        foreach (var item in items)
+        {
+            args.Add(Hex(item.CommandId));
+            args.Add(Convert.ToHexStringLower(FinishFingerprint(storeId, item)));
+            args.Add(Ms(item.NotAfter));
+            args.Add(Json(FinishBody(item.Body)));
+            args.Add(Draw());
+        }
+
+        var r = await Write(op, "finish_and_claim", ct, [.. args]).ConfigureAwait(false);
+        if (!r.HasValue)
+        {
+            return r.Reject<FinishedAndClaimed>();
+        }
+
+        if (r.Replayed)
+        {
+            // A replayed claim holds only the claim: its finishes are resolved from their own receipts.
+            return r.Applied(new FinishedAndClaimed(null, r.Applied(ReadClaimed(r))));
+        }
+
+        var result = r.Result!;
+        var outcomes = ReadFinishItems(result["finished"]!.AsArray());
+        StoreReply<ClaimedJobs> claimed;
+        if (result["claim"] is JsonObject c)
+        {
+            var status = Enum.Parse<StoreStatus>(c["status"]!.GetValue<string>());
+            var cursor = c["resumeAt"] is { } at && c["resumeJob"] is { } job
+                ? new CandidateCursor(DateTimeOffset.FromUnixTimeMilliseconds(at.GetValue<long>()), Guid.Parse(job.GetValue<string>()))
+                : null;
+            var blocked = c["blocked"] is { } scope ? Guid.Parse(scope.GetValue<string>()) : (Guid?)null;
+            claimed = StoreReply<ClaimedJobs>.NoEffect(status, new StoreError(c["code"]?.GetValue<string>() ?? "invariant_fault", null, null, blocked, cursor), r.Decided);
+        }
+        else
+        {
+            claimed = r.Applied(ReadClaimed(r));
+        }
+
+        return r.Applied(new FinishedAndClaimed(new FinishedMany(outcomes), claimed));
     }
 
     static ClaimedJobs ReadClaimed(RxReply r)
@@ -393,8 +464,15 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
             return r.Applied(finished);
         }
 
+        var outcomes = ReadFinishItems(r.Result!["items"]!.AsArray());
+
+        return r.Applied(new FinishedMany(outcomes));
+    }
+
+    static List<StoreReply<FinishedAttempt>> ReadFinishItems(JsonArray nodes)
+    {
         var outcomes = new List<StoreReply<FinishedAttempt>>();
-        foreach (var node in r.Result!["items"]!.AsArray())
+        foreach (var node in nodes)
         {
             var item = node!.AsObject();
             var status = Enum.Parse<StoreStatus>(item["status"]!.GetValue<string>());
@@ -407,7 +485,7 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
                 : StoreReply<FinishedAttempt>.NoEffect(status, new StoreError(code ?? "invariant_fault"), decided));
         }
 
-        return r.Applied(new FinishedMany(outcomes));
+        return outcomes;
     }
 
     // ------------------------------------------------------------------ Recover/1, ReleaseReservation/1
