@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using Npgsql;
 using NpgsqlTypes;
@@ -242,18 +243,171 @@ internal sealed class PostgresOutboxSource : IOutboxSource, IOutboxWakeSource, I
             p.AddWithValue("not_after", NpgsqlDbType.TimestampTz, notAfter.UtcDateTime);
         }, requireLive: true, ct);
 
-    public Task<bool> MarkDeliveredAsync(OutboxLease lease, OutboxDelivered delivered, CancellationToken ct) =>
-        GuardedAsync(lease, "OutboxMarkDelivered", """
-            state = 'delivered', delivered_job_id = @job, delivered_disposition = @disposition, confirmed_profile = @profile,
-            delivered_at = @delivered_at, lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, last_error = NULL,
-            revision = revision + 1
-            """, p =>
+    const string MarkSet = """
+        state = 'delivered', delivered_job_id = @job, delivered_disposition = @disposition, confirmed_profile = @profile,
+        delivered_at = @delivered_at, lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, last_error = NULL,
+        revision = revision + 1
+        """;
+
+    static void MarkParameters(NpgsqlParameterCollection p, OutboxDelivered delivered)
+    {
+        p.AddWithValue("job", NpgsqlDbType.Uuid, delivered.JobId);
+        p.AddWithValue("disposition", NpgsqlDbType.Text, delivered.Disposition);
+        p.AddWithValue("profile", NpgsqlDbType.Text, delivered.ConfirmedProfile);
+        p.AddWithValue("delivered_at", NpgsqlDbType.TimestampTz, delivered.DeliveredAt.UtcDateTime);
+    }
+
+    /// <summary>
+    /// D2: when true, delivered marks that queue up behind the control lane are applied together in one statement and one commit,
+    /// each row still guarded by its own lease token. A lone mark runs the single-row statement unchanged.
+    /// </summary>
+    internal bool BatchMarks { get; set; }
+
+    /// <summary>The most marks one statement settles; the rest wait for the next turn on the lane.</summary>
+    internal const int MaxMarkBatch = 64;
+
+    readonly ConcurrentQueue<PendingMark> _marks = new();
+
+    sealed class PendingMark(OutboxLease lease, OutboxDelivered delivered)
+    {
+        public OutboxLease Lease { get; } = lease;
+
+        public OutboxDelivered Delivered { get; } = delivered;
+
+        public TaskCompletionSource<bool> Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public volatile bool Abandoned;
+    }
+
+    /// <summary>Marks applied by a multi-row statement and the statements that carried them (tests and diagnostics).</summary>
+    internal long BatchedMarks, MarkBatches;
+
+    public async Task<bool> MarkDeliveredAsync(OutboxLease lease, OutboxDelivered delivered, CancellationToken ct)
+    {
+        if (!BatchMarks)
         {
-            p.AddWithValue("job", NpgsqlDbType.Uuid, delivered.JobId);
-            p.AddWithValue("disposition", NpgsqlDbType.Text, delivered.Disposition);
-            p.AddWithValue("profile", NpgsqlDbType.Text, delivered.ConfirmedProfile);
-            p.AddWithValue("delivered_at", NpgsqlDbType.TimestampTz, delivered.DeliveredAt.UtcDateTime);
-        }, requireLive: false, ct);
+            return await GuardedAsync(lease, "OutboxMarkDelivered", MarkSet, p => MarkParameters(p, delivered), requireLive: false, ct).ConfigureAwait(false);
+        }
+
+        // Queue the mark, then take turns on the control lane: whoever holds it applies every mark queued so far, so marks that wait
+        // behind a slow one share its commit. A caller whose mark an earlier holder already applied finds it done and leaves.
+        var mine = new PendingMark(lease, delivered);
+        _marks.Enqueue(mine);
+        try
+        {
+            while (!mine.Done.Task.IsCompleted)
+            {
+                await OnLane(_controlLane, "OutboxMarkDelivered", connection => FlushMarksAsync(connection, mine, ct), ct).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            mine.Abandoned = true; // still queued: the next holder of the lane skips it
+            throw;
+        }
+
+        return await mine.Done.Task.ConfigureAwait(false);
+    }
+
+    async Task<bool> FlushMarksAsync(NpgsqlConnection connection, PendingMark mine, CancellationToken ct)
+    {
+        if (mine.Done.Task.IsCompleted)
+        {
+            return true;
+        }
+
+        var batch = new List<PendingMark>(MaxMarkBatch);
+        while (batch.Count < MaxMarkBatch && _marks.TryDequeue(out var next))
+        {
+            if (next.Abandoned)
+            {
+                next.Done.TrySetCanceled(CancellationToken.None); // its caller gave up before the mark was taken: nothing is written for it
+                continue;
+            }
+
+            batch.Add(next);
+        }
+
+        if (batch.Count == 0)
+        {
+            return true;
+        }
+
+        try
+        {
+            if (batch.Count == 1)
+            {
+                using var one = new NpgsqlCommand($"UPDATE runwick_outbox.outbox_messages SET {MarkSet} WHERE message_id = @m AND state = 'leased' AND lease_token = @token", connection);
+                one.Parameters.AddWithValue("m", NpgsqlDbType.Uuid, batch[0].Lease.MessageId);
+                one.Parameters.AddWithValue("token", NpgsqlDbType.Uuid, batch[0].Lease.Token);
+                MarkParameters(one.Parameters, batch[0].Delivered);
+                batch[0].Done.TrySetResult(await one.ExecuteNonQueryAsync(ct).ConfigureAwait(false) == 1);
+                return true;
+            }
+
+            batch.Sort((a, b) => a.Lease.MessageId.CompareTo(b.Lease.MessageId));
+            using var update = new NpgsqlCommand("""
+                UPDATE runwick_outbox.outbox_messages AS m
+                SET state = 'delivered', delivered_job_id = v.job, delivered_disposition = v.disposition, confirmed_profile = v.profile,
+                    delivered_at = v.at, lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, last_error = NULL,
+                    revision = m.revision + 1
+                FROM unnest(@ids, @tokens, @jobs, @dispositions, @profiles, @ats) AS v(id, token, job, disposition, profile, at)
+                WHERE m.message_id = v.id AND m.state = 'leased' AND m.lease_token = v.token
+                RETURNING m.message_id
+                """, connection);
+            update.Parameters.AddWithValue("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, batch.Select(b => b.Lease.MessageId).ToArray());
+            update.Parameters.AddWithValue("tokens", NpgsqlDbType.Array | NpgsqlDbType.Uuid, batch.Select(b => b.Lease.Token).ToArray());
+            update.Parameters.AddWithValue("jobs", NpgsqlDbType.Array | NpgsqlDbType.Uuid, batch.Select(b => b.Delivered.JobId).ToArray());
+            update.Parameters.AddWithValue("dispositions", NpgsqlDbType.Array | NpgsqlDbType.Text, batch.Select(b => b.Delivered.Disposition).ToArray());
+            update.Parameters.AddWithValue("profiles", NpgsqlDbType.Array | NpgsqlDbType.Text, batch.Select(b => b.Delivered.ConfirmedProfile).ToArray());
+            update.Parameters.AddWithValue("ats", NpgsqlDbType.Array | NpgsqlDbType.TimestampTz, batch.Select(b => b.Delivered.DeliveredAt.UtcDateTime).ToArray());
+            var applied = new HashSet<Guid>();
+            var r = await update.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            await using (r.ConfigureAwait(false))
+            {
+                while (await r.ReadAsync(ct).ConfigureAwait(false))
+                {
+                    applied.Add(r.GetGuid(0));
+                }
+
+                // The autocommit statement's commit is known only after ReadyForQuery; a failure here must not report any mark as applied.
+                await r.NextResultAsync(ct).ConfigureAwait(false);
+            }
+
+            Interlocked.Add(ref BatchedMarks, batch.Count);
+            Interlocked.Increment(ref MarkBatches);
+            foreach (var b in batch)
+            {
+                b.Done.TrySetResult(applied.Contains(b.Lease.MessageId));
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // This caller's own deadline ended the statement. Its mark is unknown, as for a single cancelled mark; the others were not
+            // cancelled, so they go back in the queue for the next turn (the token-guarded update is safe to repeat).
+            foreach (var b in batch)
+            {
+                if (ReferenceEquals(b, mine))
+                {
+                    b.Done.TrySetCanceled(ct);
+                }
+                else
+                {
+                    _marks.Enqueue(b);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // Outcome unknown for every mark in the batch, as for a single failed mark: the destination mapping makes a retry safe.
+            foreach (var b in batch)
+            {
+                b.Done.TrySetException(ex);
+            }
+        }
+
+        return true;
+    }
 
     public Task<bool> RetryLaterAsync(OutboxLease lease, TimeSpan delay, string error, CancellationToken ct) =>
         GuardedAsync(lease, "OutboxRetryLater", """

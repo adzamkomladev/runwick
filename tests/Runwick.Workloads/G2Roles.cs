@@ -158,10 +158,14 @@ internal static class G2Roles
         {
             o.MaxInFlight = a.Int("slots", 4);
             o.DeliveryGroupSize = a.Int("group", 1);
+            o.ClaimBatchMin = a.Int("claim-min", 1);
+            o.ClaimBatchWait = TimeSpan.FromMilliseconds(a.Int("claim-wait-ms", 5));
+            o.ReleaseSlotAfterReply = a.Int("release-slot", 0) == 1;
         });
         await using var log = new MarkLog(a.Str("out") + ".marks.csv");
         LossySource? lossy = null;
-        sc.AddSingleton<IOutboxSource>(_ => lossy = new LossySource(new PostgresOutboxSource(source), log));
+        PostgresOutboxSource? pg = null;
+        sc.AddSingleton<IOutboxSource>(_ => lossy = new LossySource(pg = new PostgresOutboxSource(source) { BatchMarks = a.Int("batch-marks", 0) == 1 }, log));
         await using var provider = sc.BuildServiceProvider();
         var hosted = provider.GetServices<IHostedService>().ToList();
         foreach (var h in hosted)
@@ -208,6 +212,9 @@ internal static class G2Roles
             ["groupedCommands"] = Interlocked.Read(ref relay.GroupedCommands),
             ["groupFallbacks"] = Interlocked.Read(ref relay.GroupFallbacks),
             ["marksLost"] = lossy?.Lost ?? 0,
+            ["batchedMarks"] = Interlocked.Read(ref pg!.BatchedMarks),
+            ["markBatches"] = Interlocked.Read(ref pg.MarkBatches),
+            ["claims"] = Interlocked.Read(ref relay.Claims),
             ["process"] = WorkerMode.ProcessStats(new TimerLag()),
         };
         if (trace)

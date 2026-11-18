@@ -52,6 +52,7 @@ internal sealed class OutboxRelay(
 
         public long LeaseSentAt = claimSentAt;
         public volatile bool Lost;
+        public int SlotReleased;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -170,7 +171,26 @@ internal sealed class OutboxRelay(
         failures = 0;
         while (!stop.IsCancellationRequested)
         {
-            var free = options.MaxInFlight - _inFlight.Count;
+            var free = FreeSlots();
+            if (options.ClaimBatchMin > 1 && free > 0 && free < options.ClaimBatchMin && !_inFlight.IsEmpty)
+            {
+                // Let more slots free so this claim carries a batch; a message already in flight needs no claim to make progress.
+                var deadline = time.GetTimestamp();
+                while (free < options.ClaimBatchMin && !_inFlight.IsEmpty && time.GetElapsedTime(deadline) < options.ClaimBatchWait)
+                {
+                    try
+                    {
+                        await _slotFreed.WaitAsync(options.ClaimBatchWait - time.GetElapsedTime(deadline), stop).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (stop.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    free = FreeSlots();
+                }
+            }
+
             var claimed = 0;
             if (free > 0 && !_renewalUncertain)
             {
@@ -204,7 +224,7 @@ internal sealed class OutboxRelay(
                 }
             }
 
-            if (claimed == 0 || _inFlight.Count >= options.MaxInFlight)
+            if (claimed == 0 || FreeSlots() <= 0)
             {
                 // Nothing claimed with a free slot: the idle poll, longer while the wake listener is healthy. A full or
                 // renewal-paused relay keeps IdlePoll (a freed slot ends the wait either way).
@@ -419,10 +439,30 @@ internal sealed class OutboxRelay(
         }
     }
 
+    int _unslotted;
+
+    /// <summary>Slots not held by a message; with <see cref="OutboxRelayOptions.ReleaseSlotAfterReply"/> a message awaiting its mark holds none.</summary>
+    internal int FreeSlots() => options.MaxInFlight - (_inFlight.Count - Volatile.Read(ref _unslotted));
+
     void Release(InFlight entry)
     {
         if (_inFlight.TryRemove(entry.Lease.MessageId, out _))
         {
+            if (Interlocked.Exchange(ref entry.SlotReleased, 1) == 1)
+            {
+                Interlocked.Decrement(ref _unslotted); // its slot was given up when the destination answered
+            }
+
+            _slotFreed.Release();
+        }
+    }
+
+    /// <summary>The destination answered: the message stops holding a slot while its source mark is written (opt-in).</summary>
+    void FreeSlotForMark(InFlight entry)
+    {
+        if (options.ReleaseSlotAfterReply && _inFlight.ContainsKey(entry.Lease.MessageId) && Interlocked.Exchange(ref entry.SlotReleased, 1) == 0)
+        {
+            Interlocked.Increment(ref _unslotted);
             _slotFreed.Release();
         }
     }
@@ -711,6 +751,7 @@ internal sealed class OutboxRelay(
 
     async Task MarkDeliveredAsync(InFlight entry, OutboxDelivery delivered)
     {
+        FreeSlotForMark(entry);
         var marked = await Call(c => source.MarkDeliveredAsync(entry.Lease,
             new OutboxDelivered(delivered.JobId, delivered.Disposition.ToString(), delivered.ConfirmedProfile, delivered.DeliveredAt), c),
             "OutboxMarkDelivered").ConfigureAwait(false);
