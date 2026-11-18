@@ -48,13 +48,18 @@ local PM = {}
 local C0 = os.clock()
 local function mark(n) PM[#PM + 1] = n .. ':' .. math.floor((os.clock() - C0) * 1000000) end
 U.ACC = {}
+local DEPTH = {}
 function U.wrap(name)
   local f = U[name]
+  DEPTH[name] = 0
   U[name] = function(...)
+    if DEPTH[name] > 0 then return f(...) end -- a recursive call (U.enc) is counted once, in its outermost call
+    DEPTH[name] = 1
     local c = os.clock()
-    local a = f(...)
+    local a, b = f(...)
     U.ACC[name] = (U.ACC[name] or 0) + (os.clock() - c)
-    return a
+    DEPTH[name] = 0
+    return a, b
   end
 end""")
     rep("  local ok, r = pcall(M.decide)", "  mark('pre_decide')\n  local ok, r = pcall(M.decide)\n  mark('decide')")
@@ -65,7 +70,9 @@ end""")
         "  if c and c.pending then return { 'P', CMD } end\n  mark('end')\n  for k, v in pairs(U.ACC) do PM[#PM + 1] = 'in_' .. k .. ':' .. math.floor(v * 1000000) end\n"
         "  redis.call('SET', 'prof:last', table.concat(PM, ','))\n  local pa = with_payloads(reply_array(r, false), r.payloads)\n  return pa")
     jobs = (lua / "jobs.lua").read_text()
-    wraps = "\nfor _, n in ipairs({'candidates', 'reserve_job', 'begin_job', 'finish_job'}) do U.wrap(n) end\n"
+    names = ['candidates', 'reserve_job', 'begin_job', 'finish_job'] + [n for n in os.environ.get("WRAPS", "").split(",") if n]
+    # WRAPS=enc,sorted,... also times those helpers (helpers that prelude locals captured before this line are not affected)
+    wraps = "\nfor _, n in ipairs({" + ", ".join("'%s'" % n for n in names) + "}) do U.wrap(n) end\n"
     return "\n".join([prelude, jobs, wraps, op])
 
 
@@ -76,6 +83,7 @@ def main():
     ap.add_argument("--k", default="1,4,16")
     ap.add_argument("--calls", type=int, default=40)
     ap.add_argument("--payload", type=int, default=1024)
+    ap.add_argument("--combined", action="store_true", help="also time finish_and_claim (k finishes + a claim of k) against the two calls")
     a = ap.parse_args()
     lua = Path(a.lua)
     db = Redis(a.port)
@@ -85,6 +93,7 @@ def main():
     dispatch = db.call("SCRIPT", "LOAD", (lua / "prelude.lua").read_text() + "\n" + (lua / "jobs.lua").read_text() + "\n" + (lua / "ops/dispatch.lua").read_text())
     rb = db.call("SCRIPT", "LOAD", patched(lua, (lua / "ops/reserve_and_begin.lua").read_text()))
     fm = db.call("SCRIPT", "LOAD", patched(lua, (lua / "ops/finish_many.lua").read_text()))
+    fc = db.call("SCRIPT", "LOAD", patched(lua, (lua / "ops/finish_and_claim.lua").read_text())) if a.combined else None
     payload = b"x" * a.payload
     def dl(ahead):
         sec, usec = map(int, db.call("TIME"))
@@ -120,13 +129,28 @@ def main():
         assert len(items) == k, (len(items), k)
         return [i["begin"] for i in items], marks(), len(r[7])
 
-    def finish(begun):
+    def finish_args(begun):
         args = [len(begun)]
         for b in begun:
             lease = dict(jobId=b["jobId"], attemptId=b["attemptId"], workerInstanceId=b["workerInstanceId"], ownershipToken=b["ownershipToken"],
                          generation=b["generation"])
             body = dict(lease=lease, outcome="succeeded", elapsed=1, requested=None, error=None, usage=None)
             args += [uuid4().hex, uuid4().hex + uuid4().hex, dl(30_000), json.dumps(body), 0.5]
+        return args
+
+    def combined(begun, k):
+        toks = json.dumps([uuid4().hex for _ in range(k)])
+        ents = json.dumps([uuid4().hex[:20] for _ in range(k)])
+        r = db.call("EVALSHA", fc, 1, META, 0, STORE, "ReserveAndBegin", uuid4().hex, uuid4().hex + uuid4().hex, dl(30_000), 60_000, FLOOR_OWN,
+                    "ownership", "c", "", uuid4().hex, "default", "medium", 600_000, toks, "", "", json.dumps([["test", 1, "json", 1]]), k, ents,
+                    json.dumps([0] * k), *finish_args(begun))
+        assert r[0] == b"R" and r[1] == b"Applied", r
+        res = json.loads(r[7])
+        assert len(res["items"]) == k and len(res["finished"]) == len(begun), res
+        return [i["begin"] for i in res["items"]], marks(), len(r[7])
+
+    def finish(begun):
+        args = finish_args(begun)
         r = db.call("EVALSHA", fm, 1, META, 0, STORE, "FinishMany", uuid4().hex, "", dl(30_000), 60_000, 0, "", "d", "", *args)
         assert r[0] == b"R" and r[1] == b"Applied", r
         return marks(), len(r[7])
@@ -176,6 +200,19 @@ def main():
         print(f"  reply bytes per call {statistics.median(creply):.0f}; server evalsha {claim_stat[0]:.0f} us per call = {claim_stat[0] / k:.0f} us per job")
         show("finish (FinishMany)", fmk, k)
         print(f"  reply bytes per call {statistics.median(freply):.0f}; server evalsha {finish_stat[0]:.0f} us per call = {finish_stat[0] / k:.0f} us per job")
+        if fc:
+            seed(k * (a.calls + 2))
+            begun = claim(k)[0]
+            rows = []
+            db.call("CONFIG", "RESETSTAT")
+            for _ in range(a.calls):
+                begun, m3, _n = combined(begun, k)
+                rows.append(m3)
+            comb_stat = evalsha_usec()
+            finish(begun)
+            show("combined (finish_and_claim, k finishes + claim of k)", rows, k)
+            print(f"  server evalsha {comb_stat[0]:.0f} us per call = {comb_stat[0] / k:.0f} us per job (finish + claim);"
+                  f" separate calls {claim_stat[0] + finish_stat[0]:.0f} us")
 
 
 main()

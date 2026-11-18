@@ -17,6 +17,11 @@ function M.decide()
   if c.effect == 'A' then
     c.rcpt_text = U.enc(c.result)
     c.result.finished = finished
+    -- The reply is the receipt's object plus "finished", which orders before "items" (its only key): splice it in rather than
+    -- encode the claim a second time (that second encode was most of this call's extra cost over FinishMany plus a claim).
+    local only = true
+    for k in pairs(c.result) do if k ~= 'items' and k ~= 'finished' then only = false end end
+    if only then c.rtext = '{"finished":' .. U.enc(finished) .. ',' .. string.sub(c.rcpt_text, 2) end
     return c
   end
   FP = '' -- no claim receipt

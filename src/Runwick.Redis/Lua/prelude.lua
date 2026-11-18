@@ -49,11 +49,23 @@ function U.blt(a, b)
   -- Most keys differ at the first byte, so settle that before any loop.
   local x, y = byte(a, 1), byte(b, 1)
   if x ~= y then return (x or -1) < (y or -1) end
+  -- Job hash fields share long prefixes (a:<attempt id>:...), so the rest is compared eight bytes per string.byte call.
+  -- A missing byte (past the end) is -1, so a proper prefix orders first.
   local n, m = #a, #b
   if m < n then n = m end
-  for i = 2, n do
-    x, y = byte(a, i), byte(b, i)
-    if x ~= y then return x < y end
+  local i = 2
+  while i <= n do
+    local a1, a2, a3, a4, a5, a6, a7, a8 = byte(a, i, i + 7)
+    local b1, b2, b3, b4, b5, b6, b7, b8 = byte(b, i, i + 7)
+    if a1 ~= b1 then return (a1 or -1) < (b1 or -1) end
+    if a2 ~= b2 then return (a2 or -1) < (b2 or -1) end
+    if a3 ~= b3 then return (a3 or -1) < (b3 or -1) end
+    if a4 ~= b4 then return (a4 or -1) < (b4 or -1) end
+    if a5 ~= b5 then return (a5 or -1) < (b5 or -1) end
+    if a6 ~= b6 then return (a6 or -1) < (b6 or -1) end
+    if a7 ~= b7 then return (a7 or -1) < (b7 or -1) end
+    if a8 ~= b8 then return (a8 or -1) < (b8 or -1) end
+    i = i + 8
   end
   return #a < #b
 end
@@ -80,26 +92,94 @@ function U.str(s)
   return '"' .. sgsub(s, '[%c"\\]', escape) .. '"'
 end
 
--- JSON with integers only (no float formatting), object keys in byte order, U.raw for preformatted values.
-local CJNULL = cjson.null
-function U.enc(v)
-  local t = type(v)
-  if t == 'string' then return U.str(v) end
-  if t == 'number' then return sformat('%d', v) end
-  if v == nil or v == NULL or v == CJNULL then return 'null' end
-  if t == 'boolean' then return v and 'true' or 'false' end
-  if v.__raw then return v.__raw end
-  local parts = {}
-  if getmetatable(v) == ARR then
-    for i = 1, (v.n or #v) do parts[i] = U.enc(v[i]) end
-    return '[' .. concat(parts, ',') .. ']'
+-- Objects of one shape (a claim's items, events' details) repeat within a call, so each key set is sorted once per call: a trie
+-- walked by the keys in pairs order ends at a node holding the sorted list (END, a table, cannot clash with a key). Exact for any
+-- keys; a different pairs order for the same set only costs another sort. Script locals live for one call, so nothing is shared.
+local KT, END, KS = {}, {}, {}
+local function sorted_keys(v)
+  local node, k, n = KT, {}, 0
+  for key in pairs(v) do
+    n = n + 1
+    k[n] = key
+    local nx = node[key]
+    if not nx then
+      nx = {}
+      node[key] = nx
+    end
+    node = nx
   end
-  local keys = U.sorted(v)
+  local s = node[END]
+  if not s then
+    if n > 1 then table.sort(k, U.blt) end
+    s = k
+    node[END] = s
+  end
+  return s
+end
+
+-- JSON with integers only (no float formatting), object keys in byte order, U.raw for preformatted values. The pieces go into one
+-- buffer joined once at the end, instead of building a string per value and per object.
+local CJNULL = cjson.null
+local function put(v, b, n)
+  local t = type(v)
+  n = n + 1
+  if t == 'string' then
+    b[n] = U.str(v)
+    return n
+  end
+  if t == 'number' then
+    b[n] = sformat('%d', v)
+    return n
+  end
+  if v == nil or v == NULL or v == CJNULL then
+    b[n] = 'null'
+    return n
+  end
+  if t == 'boolean' then
+    b[n] = v and 'true' or 'false'
+    return n
+  end
+  if v.__raw then
+    b[n] = v.__raw
+    return n
+  end
+  if getmetatable(v) == ARR then
+    b[n] = '['
+    for i = 1, (v.n or #v) do
+      if i > 1 then
+        n = n + 1
+        b[n] = ','
+      end
+      n = put(v[i], b, n)
+    end
+    n = n + 1
+    b[n] = ']'
+    return n
+  end
+  local keys = sorted_keys(v)
+  if #keys == 0 then
+    b[n] = '{}'
+    return n
+  end
   for i = 1, #keys do
     local k = keys[i]
-    parts[i] = U.str(k) .. ':' .. U.enc(v[k])
+    local ks = KS[k]
+    if not ks then
+      ks = U.str(k) .. ':'
+      KS[k] = ks
+    end
+    if i > 1 then n = n + 1 end
+    b[n] = (i == 1 and '{' or ',') .. ks
+    n = put(v[k], b, n)
   end
-  return '{' .. concat(parts, ',') .. '}'
+  n = n + 1
+  b[n] = '}'
+  return n
+end
+
+function U.enc(v)
+  local b = {}
+  return concat(b, '', 1, put(v, b, 0))
 end
 
 -- ------------------------------------------------------------------ refusals inside the decision (before any write)
