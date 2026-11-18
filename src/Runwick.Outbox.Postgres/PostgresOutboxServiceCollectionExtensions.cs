@@ -14,7 +14,7 @@ public static class PostgresOutboxServiceCollectionExtensions
         OutboxDestination? destination = null, Action<OutboxRelayOptions>? relay = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(sourceConnectionString);
-        OutboxServices.Add(services, destination ?? new OutboxDestination(), relay, _ => new PostgresOutboxSource(sourceConnectionString));
+        OutboxServices.Add(services, destination ?? new OutboxDestination(), relay, sp => new PostgresOutboxSource(sourceConnectionString) { BatchMarks = sp.GetRequiredService<OutboxRelayOptions>().BatchDeliveredMarks });
         services.AddSingleton<IPostgresOutbox>(sp => new PostgresOutbox(sp.GetRequiredService<OutboxStager>()));
         return services;
     }

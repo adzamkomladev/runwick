@@ -81,6 +81,13 @@ public sealed class OutboxRelayOptions
     /// </summary>
     public bool ReleaseSlotAfterReply { get; set; }
 
+    /// <summary>
+    /// When true, delivered marks that queue behind one another on the source's single control connection are written in one
+    /// statement and one commit, each still guarded by its own lease token (14 Changes 2026-11-17, D2). Honored by the
+    /// PostgreSQL source; other sources ignore it. False (the default) writes one statement per mark.
+    /// </summary>
+    public bool BatchDeliveredMarks { get; set; }
+
     /// <summary>Transport command lifetime; at most 30 s and never beyond AcceptUntil.</summary>
     public TimeSpan TransportLifetime { get; set; } = TimeSpan.FromSeconds(30);
 

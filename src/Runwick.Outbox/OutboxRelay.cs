@@ -175,12 +175,19 @@ internal sealed class OutboxRelay(
             if (options.ClaimBatchMin > 1 && free > 0 && free < options.ClaimBatchMin && !_inFlight.IsEmpty)
             {
                 // Let more slots free so this claim carries a batch; a message already in flight needs no claim to make progress.
-                var deadline = time.GetTimestamp();
-                while (free < options.ClaimBatchMin && !_inFlight.IsEmpty && time.GetElapsedTime(deadline) < options.ClaimBatchWait)
+                var started = time.GetTimestamp();
+                while (free < options.ClaimBatchMin && !_inFlight.IsEmpty)
                 {
+                    // The wait is recomputed once here: a negative timeout would throw and end the claim loop for good.
+                    var remaining = options.ClaimBatchWait - time.GetElapsedTime(started);
+                    if (remaining <= TimeSpan.Zero)
+                    {
+                        break;
+                    }
+
                     try
                     {
-                        await _slotFreed.WaitAsync(options.ClaimBatchWait - time.GetElapsedTime(deadline), stop).ConfigureAwait(false);
+                        await _slotFreed.WaitAsync(remaining, stop).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (stop.IsCancellationRequested)
                     {

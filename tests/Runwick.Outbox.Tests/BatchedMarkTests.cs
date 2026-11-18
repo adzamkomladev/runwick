@@ -87,6 +87,33 @@ public sealed class BatchedMarkTests
 
     [Fact]
     [Trait("Category", "Contract")]
+    public async Task A_very_short_claim_wait_never_ends_the_claim_loop()
+    {
+        // A wait of 1 ms expires between the loop test and the wait call; a negative timeout there once threw and stopped claiming for good.
+        await using var o = await OutboxFixture.StartAsync("obatch4", SourceKind.Postgres);
+        var stager = await o.OpenHost(identity: "stager", start: false);
+        var staged = new List<StagedOutboxMessage>();
+        for (var i = 0; i < 40; i++)
+        {
+            staged.Add(await o.StageAsync(stager, new PingJob("w" + i)));
+        }
+
+        await using var relay = await o.OpenHost(identity: "relay", relay: r =>
+        {
+            r.MaxInFlight = 4;
+            r.ClaimBatchMin = 4;
+            r.ClaimBatchWait = TimeSpan.FromMilliseconds(1);
+        });
+        foreach (var message in staged)
+        {
+            await o.WaitStateAsync(message.MessageId, "delivered", TimeSpan.FromSeconds(60));
+        }
+
+        Assert.Equal(40, relay.Relay.Delivered);
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
     public async Task A_relay_that_claims_in_batches_and_frees_slots_on_reply_delivers_each_message_once()
     {
         await using var o = await OutboxFixture.StartAsync("obatch3", SourceKind.Postgres);
@@ -103,10 +130,7 @@ public sealed class BatchedMarkTests
             r.DeliveryGroupSize = 4;
             r.ClaimBatchMin = 2;
             r.ReleaseSlotAfterReply = true;
-        }, wrapSource: inner =>
-        {
-            ((PostgresOutboxSource)inner).BatchMarks = true;
-            return inner;
+            r.BatchDeliveredMarks = true;
         });
         foreach (var message in staged)
         {

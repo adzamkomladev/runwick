@@ -108,6 +108,7 @@ A process that stages but should not deliver can turn the relay off: `relay: o =
 | `Enabled` | `true` | |
 | `MaxInFlight` | 4 | 1 to 64 messages |
 | `DeliveryGroupSize` | 1 (off) | 1 to 16. With a PostgreSQL destination, plain messages claimed together are delivered in one destination transaction. Each keeps its own transport command, receipt and delivery mapping. |
+| `BatchDeliveredMarks` | false | With a PostgreSQL source, delivered marks that queue behind one another are written in one statement and one commit. Each row is still guarded by its own lease token. |
 | `ClaimBatchMin` | 1 (off) | 1 to `MaxInFlight`. The relay waits until this many slots are free (at most `ClaimBatchWait`, 5 ms by default) before it claims, so one source claim carries several messages. |
 | `ReleaseSlotAfterReply` | false | When true, a message stops counting against `MaxInFlight` as soon as the destination has answered, so the next claim and send overlap its source mark. Its lease is still held and renewed until the mark is written, and at most twice `MaxInFlight` messages hold leases. |
 | `LeaseDuration` | 60 s | at least 5 s, and at least 3 × `RenewalInterval` |

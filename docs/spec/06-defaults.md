@@ -285,6 +285,7 @@ Not in M2 (listed so no M2 component invents them): rate-policy bounds (1–100,
 | Transport NotAfter | ≤ 30 s and ≤ AcceptUntil | — | ReceiveOutbox/1 | 14 §6.2 |
 | MaxInFlight / claim batch | 4 (1 – 64) | messages | Relay | 14 §4.2 |
 | DeliveryGroupSize | 1 (1 – 16) | messages per destination transaction | Relay | 14 §4.2 |
+| BatchDeliveredMarks | false | queued delivered marks written in one statement (PostgreSQL source) | Relay | 14 Changes 2026-11-17 |
 | ClaimBatchMin / ClaimBatchWait | 1 (1 – MaxInFlight) / 5 ms (0 – 1 s) | free slots a claim waits for / longest wait | Relay | 14 Changes 2026-11-17 |
 | ReleaseSlotAfterReply | false | slot freed when the destination answers (≤ 2 × MaxInFlight leases) | Relay | 14 Changes 2026-11-17 |
 | Source lease / renewal | 60 s / 15 s (lease ≥ 5 s, ≥ 3 × renewal) | s | Relay | 14 §4.2 |
