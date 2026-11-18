@@ -25,7 +25,7 @@ Spec: 05 Changes 2026-11-18, 22 Changes. Public docs: the configuration page, wi
 | Core (fake store), including 6 new `LoopCarriedFinishTests` | 459 of 459 |
 | `RedisFinishAndClaimTests`, including new FC-08 (the claim's size does not depend on how many finishes ride with it) | 8 of 8 |
 | `FinishAndClaimContractTests`, including new FC-13 (all stores, buffered and combined), FC-14 (lost reply of a carried claim) and FC-15 (refused carried claim) | 10 of 10 |
-| Full Redis project | see the final hand-off |
+| Full Redis project | 120 of 121 in 45 minutes. The one failure was the Sentinel case "a promotion that does not cover the verified history"; its fixture timed out waiting for replicas to catch up, and the case passed when run alone. An earlier full run stalled after 44 passing tests with the test process idle, while cluster nodes were running; it was stopped. No Redis test turns on buffered or combined finish, so neither run touches the changed code paths. |
 
 The new Core cases cover five behaviours:
 
