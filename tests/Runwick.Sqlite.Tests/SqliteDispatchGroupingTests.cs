@@ -63,6 +63,45 @@ public sealed class SqliteDispatchGroupingTests
     }
 
     [Fact]
+    public async Task Local_work_hint_for_a_batch_names_each_due_queue_once_and_skips_delayed_items_and_replays()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await DriverFixture.StartAsync("local_wake_many_" + Guid.NewGuid().ToString("N")[..8], StoreKind.Sqlite);
+        Action<RunwickBuilder> configure = r =>
+        {
+            TestJobs.Register(r);
+            r.Queue("other");
+        };
+        var producer = await fixture.OpenClient(configure: configure);
+        var listener = await fixture.OpenClient(configure: configure);
+        var local = Assert.IsAssignableFrom<ILocalWorkWakeSource>(listener.Driver);
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var notified = new List<string>();
+        var subscriber = local.ListenForLocalWorkAsync(producer.Application, notified.Add, stop.Token);
+        try
+        {
+            var preparer = producer.Services.GetRequiredService<DispatchPreparer>();
+            var later = new DispatchOptions { Queue = "other", NotBefore = DateTimeOffset.UtcNow.AddHours(1) };
+            var batch = preparer.PrepareMany(producer.Runtime.StoreId,
+                [new BatchDispatchItem(new PingJob("a")), new BatchDispatchItem(new PingJob("b")), new BatchDispatchItem(new PingJob("c"), later)], null);
+            var items = batch.Items.Select((intent, i) => new DispatchItem(intent, batch.Scopes[i], batch.ItemDigests[i]) { Rates = preparer.RatesFor(intent) })
+                .ToList();
+            var command = new StoreCommand<DispatchBatchRequest>(batch.Application, batch.OperationId.Value, batch.NotAfter,
+                new DispatchBatchRequest(items, false, batch.StoreId, batch.CommandDigest));
+
+            Assert.Equal(StoreStatus.Applied, (await producer.Driver.DispatchManyAsync(command, ct)).Status);
+            Assert.Equal("default", Assert.Single(notified));
+            Assert.True((await producer.Driver.DispatchManyAsync(command, ct)).Replayed);
+            Assert.Single(notified);
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => subscriber);
+        }
+    }
+
+    [Fact]
     public async Task Queued_dispatches_share_a_commit_with_independent_results_and_receipts()
     {
         var ct = TestContext.Current.CancellationToken;

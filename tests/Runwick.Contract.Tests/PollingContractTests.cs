@@ -70,7 +70,12 @@ public sealed class PollingContractTests
             Wait, "the dead owner's lease recovered by polling");
         Assert.NotEqual(first, orphan);
 
-        // Every notification that arrived was dropped.
+        // Every notification that arrived was dropped. On SQLite the producer shares this process, so its local wakes did arrive.
+        if (kind == StoreKind.Sqlite)
+        {
+            Assert.True(w.Engine.NotificationsReceived > 0, "the SQLite local wake never reached the worker");
+        }
+
         Assert.Equal(w.Engine.NotificationsReceived, w.Engine.NotificationsDropped);
         Assert.Empty(SnapshotInvariants.Violations((await f.ReadCommittedSnapshot()).Model));
     }
