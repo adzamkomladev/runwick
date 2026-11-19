@@ -559,13 +559,16 @@ function U.finish_items(base)
   for _, k in ipairs(order) do
     local it = items[k]
     local rc = redis.call('HMGET', P .. 'rcpt:' .. it.cmd, 'cls', 'op', 'ver', 'fp', 'status', 'code', 'decided', 'result')
+    local text = rc[1] and rc[8] and U.cdec(rc[8])
     if rc[1] then
       if rc[1] ~= 'durable' or rc[2] ~= 'Finish' or rc[3] ~= '1' or rc[4] ~= it.fp then
         done[k] = U.finish_item_json(it.cmd, U.noeffect('CommandConflict', 'command_conflict'), false)
+      elseif not text then
+        done[k] = U.finish_item_json(it.cmd, U.noeffect('UnsupportedVersion', 'receipt_codec_unsupported'), false)
       else
         -- 22 §4.5 marker for a replayed item: a fresh write, not part of any intent.
         redis.call('HSET', P .. 'rcpt:' .. it.cmd, 'confirmed', NOWS)
-        done[k] = U.finish_item_json(it.cmd, { status = rc[5], effect = 'A', code = rc[6] ~= '' and rc[6] or nil, decided = rc[7], result = rc[8] }, true)
+        done[k] = U.finish_item_json(it.cmd, { status = rc[5], effect = 'A', code = rc[6] ~= '' and rc[6] or nil, decided = rc[7], result = text }, true)
       end
     elseif NOW >= it.na then
       done[k] = U.finish_item_json(it.cmd, U.noeffect('CommandExpired', 'command_expired', { decided = NOWS }), false)
@@ -582,10 +585,10 @@ function U.finish_items(base)
         applied = applied + 1
         local key = 'rcpt:' .. it.cmd
         -- Encoded once: the receipt row and the reply item carry the same text.
-        local encoded = U.enc(r.result)
+        local encoded, stored = U.enc(r.result), U.cenc(r.result)
         r.result = U.raw(encoded)
         U.hset_sorted(key, RECEIPT_FIELDS, { cls = 'durable', op = 'Finish', ver = '1', fp = it.fp, notafter = U.S(it.na),
-          retain = U.S(it.na + U.DURABLE_FLOOR), status = 'Applied', code = '', detail = '', decided = NOWS, result = encoded })
+          retain = U.S(it.na + U.DURABLE_FLOOR), status = 'Applied', decided = NOWS, result = stored or encoded }, true)
         U.zadd('rcpt:exp:durable', it.na + U.DURABLE_FLOOR, it.cmd)
       end
       done[k] = U.finish_item_json(it.cmd, r, false)

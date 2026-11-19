@@ -87,9 +87,15 @@ function U.nn(v) if v == nil or v == cjson.null or v == NULL then return nil end
 local esc = { ['"'] = '\\"', ['\\'] = '\\\\', ['\n'] = '\\n', ['\r'] = '\\r', ['\t'] = '\\t' }
 local sfind, sformat, sgsub, concat = string.find, string.format, string.gsub, table.concat
 local function escape(c) return esc[c] or sformat('\\u%04x', string.byte(c)) end
+-- Quoted texts are kept for the call: a claim's ids, states and names repeat, and the compact receipt writes them again.
+local QS = {}
 function U.str(s)
-  if not sfind(s, '[%c"\\]') then return '"' .. s .. '"' end -- ids, names and hex need no escaping
-  return '"' .. sgsub(s, '[%c"\\]', escape) .. '"'
+  local q = QS[s]
+  if q then return q end
+  if not sfind(s, '[%c"\\]') then q = '"' .. s .. '"' -- ids, names and hex need no escaping
+  else q = '"' .. sgsub(s, '[%c"\\]', escape) .. '"' end
+  QS[s] = q
+  return q
 end
 
 -- Objects of one shape (a claim's items, events' details) repeat within a call, so each key set is sorted once per call: a trie
@@ -180,6 +186,140 @@ end
 function U.enc(v)
   local b = {}
   return concat(b, '', 1, put(v, b, 0))
+end
+
+-- Compact receipt results (codec 1, 22 §3.2). The claim and finish receipts store their result in a lossless form that U.cdec
+-- expands to exactly the text U.enc gives, so a replay returns the same bytes. Each object is an array [shape, values in sorted key
+-- order]; a shape is a number (the fixed list below, then shapes defined earlier in the same text) or, the first time, the key list.
+-- Every text value and every number of 10 digits or more is written once; later copies are -n, its position among them. ["a", ...]
+-- is an array and ["r", text] preformatted JSON. A value it cannot write exactly (a negative or fractional number) makes U.cenc
+-- return nil and the plain text is stored. The shape list is part of the codec: changing it needs codec 2.
+local CSHAPES = {}
+local CSID = {}
+for i, s in ipairs({ 'items', 'begin,code,jobId,ordinal,reserve,status', 'blockedScopeId,code,cursor,jobId,ordinal,status',
+  'attemptId,authorizedAt,executionNumber,generation,jobId,leaseExpiresAt,ownershipToken,revision,state,totalExecutionNumber,workerInstanceId',
+  'attemptId,contract,cursor,fences,generation,jobId,leaseExpiresAt,ownershipToken,policy,priority,queue,reservationNumber,revision,state,workerInstanceId',
+  'name,payloadVersion,serializerProfileId,serializerProfileVersion', 'eligibleAt,jobId',
+  'executionTimeout,fingerprintVersion,maxConsecutiveUnstartedAbandonments,maxExecutions,retry,unstartedRetry', 'scopeId,value',
+  'attemptId,attemptOutcome,disposition,eligibleAt,generation,jobId,retryDelay,revision,state,terminalReason' }) do
+  local k = {}
+  for x in string.gmatch(s, '[^,]+') do k[#k + 1] = x end
+  CSHAPES[i] = k
+  CSID[concat(k, '\0')] = i
+end
+local CREF = 1000000000
+U.COMPACT = true
+
+local NTXT = setmetatable({}, { __index = function(t, v) local s = sformat('%d', v) t[v] = s return s end })
+local floor = math.floor
+
+function U.cenc(root)
+  if not U.COMPACT then return nil end
+  local b, n, ok = { '{"#c":1,"v":' }, 1, true
+  local refs, nref, shapes, nshape = {}, 0, {}, #CSHAPES
+  -- Each piece carries the separator before it (pre), so the buffer holds one entry per value.
+  local function cput(v, pre)
+    local t = type(v)
+    n = n + 1
+    if t == 'string' or (t == 'number' and v >= CREF and v <= MAX_SCORE and v == floor(v)) then
+      local i = refs[v]
+      if i then
+        b[n] = pre .. NTXT[-i]
+      else
+        nref = nref + 1
+        refs[v] = nref
+        b[n] = pre .. (t == 'string' and U.str(v) or NTXT[v])
+      end
+      return
+    end
+    if t == 'number' then
+      if v < 0 or v >= CREF or v ~= floor(v) then ok = false return end
+      b[n] = pre .. NTXT[v]
+      return
+    end
+    if v == nil or v == NULL or v == CJNULL then b[n] = pre .. 'null' return end
+    if t == 'boolean' then b[n] = pre .. (v and 'true' or 'false') return end
+    local raw = v.__raw
+    if raw then
+      if type(raw) ~= 'string' then ok = false return end
+      if #raw <= 15 and (raw == '0' or sfind(raw, '^[1-9]%d*$')) then
+        n = n - 1
+        return cput(tonumber(raw), pre)
+      end
+      b[n] = pre .. '["r"'
+      cput(raw, ',')
+    elseif getmetatable(v) == ARR then
+      b[n] = pre .. '["a"'
+      for i = 1, (v.n or #v) do cput(v[i], ',') end
+    else
+      local keys = sorted_keys(v)
+      local id = shapes[keys]
+      if not id then
+        local fixed = CSID[concat(keys, '\0')]
+        if fixed then
+          id = NTXT[fixed]
+          shapes[keys] = id
+        else
+          -- First use of a shape outside the fixed list: the key list itself; later uses its number.
+          nshape = nshape + 1
+          shapes[keys] = NTXT[nshape]
+          local q = {}
+          for i = 1, #keys do q[i] = U.str(keys[i]) end
+          id = '[' .. concat(q, ',') .. ']'
+        end
+      end
+      b[n] = pre .. '[' .. id
+      for i = 1, #keys do cput(v[keys[i]], ',') end
+    end
+    n = n + 1
+    b[n] = ']'
+  end
+  cput(root, '')
+  if not ok then return nil end
+  n = n + 1
+  b[n] = '}'
+  return concat(b, '', 1, n)
+end
+
+-- A stored receipt result as replied: plain text as it is, a compact one expanded; nil for a codec this binary does not know.
+function U.cdec(text)
+  if string.sub(text, 1, 6) ~= '{"#c":' then return text end
+  local d = cjson.decode(text)
+  if d['#c'] ~= 1 then return nil end
+  local refs, shapes, nshape = {}, {}, #CSHAPES
+  local function get(x)
+    local t = type(x)
+    if t == 'string' then
+      refs[#refs + 1] = x
+      return x
+    end
+    if t == 'number' then
+      if x < 0 then return refs[-x] end
+      if x >= CREF then refs[#refs + 1] = x end
+      return x
+    end
+    if t ~= 'table' then return x end
+    local h = x[1]
+    if h == 'a' then
+      local a = U.arr()
+      for i = 2, #x do a[i - 1] = get(x[i]) end
+      a.n = #x - 1
+      return a
+    end
+    if h == 'r' then return U.raw(get(x[2])) end
+    local keys
+    if type(h) == 'table' then
+      nshape = nshape + 1
+      shapes[nshape] = h
+      keys = h
+    else
+      keys = CSHAPES[h] or shapes[h]
+    end
+    local o = {}
+    for i = 1, #keys do o[keys[i]] = get(x[i + 1]) end
+    return o
+  end
+  return U.enc(get(d.v))
 end
 
 -- ------------------------------------------------------------------ refusals inside the decision (before any write)
@@ -371,9 +511,10 @@ function U.job(id)
 end
 
 function U.jw(j, f, v)
-  -- j is the job as this command sees it (stored fields plus its own writes), so a field it lacks has nothing to delete.
-  if v == nil and j[f] == nil then return end
-  j[f] = v ~= nil and tostring(v) or nil
+  -- j is the job as this command sees it (stored fields plus its own writes). A field it lacks has nothing to delete, and a field that already holds the value is not written again.
+  local s = v ~= nil and tostring(v) or nil
+  if j[f] == s then return end
+  j[f] = s
   U.hset('job:' .. j.id, f, v)
 end
 
@@ -704,6 +845,7 @@ end
 
 -- Receipt hash fields in bytewise order, the order U.sorted gave them.
 local RECEIPT_FIELDS = { 'cls', 'code', 'decided', 'detail', 'fp', 'notafter', 'op', 'result', 'retain', 'status', 'ver' }
+local COMPACT_OPS = { ReserveAndBegin = true, Finish = true }
 
 function U.run(M)
   local mr = redis.call('HGETALL', META)
@@ -731,10 +873,12 @@ function U.run(M)
       if not rc[9] or rc[9] == '' then return reply_array(U.noeffect('InvariantFault', 'receipt_incomplete'), false) end
       -- 22 §4.5: the confirmation marker is a fresh write before the replayed reply (not an intent, no rev change).
       redis.call('HSET', P .. 'rcpt:' .. CMD, 'confirmed', NOWS)
+      local text = U.cdec(rc[9])
+      if not text then return reply_array(U.noeffect('UnsupportedVersion', 'receipt_codec_unsupported'), false) end
       local r = { status = rc[5], effect = 'A', code = rc[6] ~= '' and rc[6] or nil, detail = rc[7] ~= '' and rc[7] or nil,
-        decided = rc[8], result = rc[9] }
+        decided = rc[8], result = text }
       local a = reply_array(r, true)
-      return with_payloads(a, M.replay_ids and M.replay_ids(cjson.decode(rc[9])) or {})
+      return with_payloads(a, M.replay_ids and M.replay_ids(cjson.decode(text)) or {})
     end
   end
 
@@ -762,9 +906,11 @@ function U.run(M)
 
   if FP ~= '' then
     local na = NOT_AFTER
+    -- Claim and finish receipts store a compact result and leave out empty code and detail fields (a missing field reads as empty).
+    local compact = r.rcpt_store or (not r.rcpt_text and COMPACT_OPS[OP] and type(r.result) == 'table' and U.cenc(r.result))
     U.hset_sorted('rcpt:' .. CMD, RECEIPT_FIELDS, { cls = CLS, op = OP, ver = '1', fp = FP, notafter = U.S(na), retain = U.S(na + FLOOR),
-      status = r.status, code = r.code or '', detail = r.detail or '', decided = r.decided,
-      result = r.rcpt_text or result_text(r) })
+      status = r.status, code = r.code or (not COMPACT_OPS[OP] and '' or nil), detail = r.detail or (not COMPACT_OPS[OP] and '' or nil),
+      decided = r.decided, result = compact or r.rcpt_text or result_text(r) }, true)
     U.zadd('rcpt:exp:' .. CLS, na + FLOOR, CMD)
   end
 
