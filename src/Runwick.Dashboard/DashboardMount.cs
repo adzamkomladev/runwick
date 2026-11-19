@@ -30,7 +30,11 @@ internal sealed class DashboardMount : IInertiaRootView
     internal const string CsrfHeader = "X-Runwick-Csrf";
     internal const string CommandHeader = "X-Runwick-Command-Id";
     const string CallerKey = "runwick.dashboard.caller";
-    internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    // An explicit resolver: without one the options throw in a host that turns reflection-based JSON off.
+    internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver(),
+    };
 
     readonly DashboardOptions _options;
     readonly IServiceProvider _services;

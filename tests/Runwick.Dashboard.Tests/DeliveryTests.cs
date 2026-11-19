@@ -268,7 +268,7 @@ public sealed class DeliveryTests
         var api = await browser.SendAsync(HttpMethod.Post, $"/api/v1/jobs/{b}/cancel", inertia: false, JsonSerializer.Serialize(new
         {
             commandId = Guid.NewGuid(), expectedGeneration = pb.GetProperty("generation").GetInt32(), expectedRevision = pb.GetProperty("revision").GetInt64(),
-        }), r => r.Headers.Add(antiforgery.GetProperty("headerName").GetString()!, antiforgery.GetProperty("token").GetString()));
+        }, DashboardMount.Json), r => r.Headers.Add(antiforgery.GetProperty("headerName").GetString()!, antiforgery.GetProperty("token").GetString()));
         Assert.Equal(HttpStatusCode.OK, api.StatusCode);
         Assert.Equal("cancelled", (await SecurityTests.JobAsync(browser, a)).GetProperty("state").GetString());
         Assert.Equal("cancelled", (await SecurityTests.JobAsync(browser, b)).GetProperty("state").GetString());
