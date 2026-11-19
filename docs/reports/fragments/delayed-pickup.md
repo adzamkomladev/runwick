@@ -27,6 +27,7 @@ PostgreSQL and SQLite are unchanged. Neither sends such a hint nor reports `Next
 
 - Redis: `RedisWorkerPathTests.A_dispatch_publishes_a_wake_when_it_is_due_now_or_the_earliest_delayed_job_of_its_lane`. It replaces the old test, which asserted that a delayed dispatch publishes nothing. It checks four cases: the first delayed job wakes, a later one does not, an earlier one wakes again, and a due-now one wakes. It **fails on main** (no wake for the first delayed job) and passes with the fix.
 - Core: `WorkerEngineTests.A_pool_idle_at_the_long_cap_starts_a_delayed_job_at_its_due_time_after_its_wake_hint`. A pool idle at the 10 s cap gets the wake-up and a store that names the due time 3 s ahead. The test checks that the job is reserved within 200 ms of its due time. The engine did not change, so this test passes before and after; it pins the engine half the fix relies on. (A Core test cannot fail before this fix, because the missing piece was the store's wake-up.) The scripted store gained a `NextDueAt` setting.
+- Full runs with the fix: Core 454 of 454, Contract 496 of 496, Redis 124 of 124 (51 minutes). All passed.
 
 ### Benchmark: delayed 100/s, 5 s ahead, 16 workers
 
