@@ -1259,6 +1259,32 @@ public sealed class WorkerEngineTests
 
     [Fact]
     [Trait("Category", "Pure")]
+    public async Task A_pool_idle_at_the_long_cap_starts_a_delayed_job_at_its_due_time_after_its_wake_hint()
+    {
+        // With a healthy listener the idle wait climbs to 10 s (±20 %). A delayed dispatch is not due yet, so its wake hint (published when
+        // it becomes the earliest not-yet-due job of its lane) and the probe's NextDueAt are what end that wait on time. Without the hint
+        // the job waited out the back-off: the delayed-pickup tail (docs/reports/fragments/delayed-pickup.md).
+        await using var e = EngineFixture.Create();
+        e.Step = TimeSpan.FromMilliseconds(20);
+        var listener = new ScriptedListener();
+        e.Store.Listener = listener;
+        await e.StartAsync();
+        await e.RunUntilAsync(() => listener.Running.IsCompleted, Long, "listener started");
+        listener.Subscribe();
+        await e.AdvanceAsync(TimeSpan.FromSeconds(30));
+
+        e.Store.NextDueAt = e.Time.GetUtcNow() + TimeSpan.FromSeconds(3);
+        listener.Notify("default");
+        await e.AdvanceAsync(TimeSpan.FromSeconds(3));
+        var due = e.Engine.Clock.Now;
+        var id = e.Add("delayed"); // falls due now, with no notification
+        await e.RunUntilAsync(() => e.Events.Any(x => x.Name == "reserved" && x.Entry!.Lease.JobId == id), Long, "reserved");
+        var late = e.Events.First(x => x.Name == "reserved" && x.Entry!.Lease.JobId == id).At - due;
+        Assert.True(late <= TimeSpan.FromMilliseconds(200), $"started {late} after its due time");
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
     public async Task A_notification_reactivates_an_excluded_lane_while_another_queue_is_cooling()
     {
         await using var e = EngineFixture.Create(configure: r => r.Queue("other"), pool: p => p.Queue("other", 1));

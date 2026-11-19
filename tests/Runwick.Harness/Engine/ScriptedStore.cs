@@ -417,12 +417,15 @@ internal class ScriptedStore(TimeProvider time) : IRunwickStore, IWakeNotificati
             var ready = lanes.Select(l => (l, _jobs.Where(j => j.State is JobStates.Pending or JobStates.Retrying && j.Intent.Queue == l.Queue && j.Intent.Priority == l.Priority)
                     .Select(j => (DateTimeOffset?)j.CreatedAt).Min()))
                 .Where(x => x.Item2 is not null).Select(x => new ReadyLane(x.l, x.Item2!.Value)).ToList();
-            return Task.FromResult(new ReadySnapshot(now, ready) { NextDueAt = NextDueIn is { } d ? now + d : null });
+            return Task.FromResult(new ReadySnapshot(now, ready) { NextDueAt = NextDueIn is { } d ? now + d : NextDueAt >= now ? NextDueAt : null });
         }
     }
 
     /// <summary>When set, every probe names a job that falls due this long after it (a store that can say when the next delayed job is due).</summary>
     public TimeSpan? NextDueIn { get; set; }
+
+    /// <summary>When set (and <see cref="NextDueIn"/> is not), probes up to this store time name it as the next due job (the test adds the job then).</summary>
+    public DateTimeOffset? NextDueAt { get; set; }
 
     public Task<PresenceAck> PublishPresenceAsync(string application, PresenceRecord presence, CancellationToken ct) =>
         Task.FromResult(new PresenceAck(time.GetUtcNow() + presence.Expiry, true));

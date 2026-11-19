@@ -572,20 +572,24 @@ local function build_ops()
   return ops, keys
 end
 
--- Tells listening workers which queues just received a job that is due now: a hint published once the intent is whole (never
--- required; workers keep polling). Sent with redis.call directly, so it is not counted as a write of the intent.
+-- Tells listening workers which queues just received a job that is due now, or a job that is now the earliest not-yet-due job of
+-- its lane (an idle worker's last probe could not name it, so without the hint it would sleep its whole back-off past the due
+-- time). A hint published once the intent is whole (never required; workers keep polling). Sent with redis.call directly, so it is
+-- not counted as a write of the intent.
 function U.wake(ops)
   local seen = {}
   for i = 1, #ops do
     local op = ops[i]
-    if op[1] == 'Z' and string.sub(op[2], 1, 6) == 'ready:' then
+    local queue = op[1] == 'Z' and string.sub(op[2], 1, 6) == 'ready:' and string.match(op[2], '^ready:(.*):[^:]*$')
+    if queue and not seen[queue] then
+      local first
       for k = 3, #op, 2 do
-        if tonumber(op[k]) <= NOW then
-          local queue = string.match(op[2], '^ready:(.*):[^:]*$')
-          if queue and not seen[queue] then
-            seen[queue] = true
-            redis.call('PUBLISH', P .. 'wake', queue)
-          end
+        if tonumber(op[k]) > NOW then
+          first = first or redis.call('ZRANGE', P .. op[2], '(' .. NOWS, '+inf', 'BYSCORE', 'LIMIT', 0, 1)[1] or ''
+        end
+        if tonumber(op[k]) <= NOW or op[k + 1] == first then
+          seen[queue] = true
+          redis.call('PUBLISH', P .. 'wake', queue)
           break
         end
       end

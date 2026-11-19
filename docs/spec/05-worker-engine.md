@@ -4,6 +4,10 @@
 
 Numeric values are restated here where the engine behavior depends on them; [06-defaults.md](06-defaults.md) is the single table of defaults, derived formulas and startup inequalities. Where the two disagree, 06 is authoritative for the number and this file for the behavior.
 
+## Changes (2026-11-19, delayed pickup)
+
+No engine rule changes. The Redis store now also publishes a wake hint when a delayed or retrying job becomes the earliest not-yet-due job of its lane (22 Changes 2026-11-19, delayed pickup), so on Redis that case is no longer part of the "Cost: work that becomes due by time" list of the idle caps entry below: an idle pool is woken, probes, and sleeps until the probe's `NextDueAt` (§7.2, Changes 2026-10-31, SP-012). PostgreSQL and SQLite are unchanged (no such hint, no `NextDueAt`), so there a delayed job dispatched to a long-idle worker is still found within the idle back-off cap (+20 %) plus the hint age.
+
 ## Changes (2026-11-17, combined finish and claim)
 
 New **§12.7 Combined finish and claim (perf round two)**, an opt-in mode (`WorkerOptions.UseCombinedFinishClaim()`, `CombinedFinishClaim`, default off). Without it §12.1 to §12.6 are unchanged.
