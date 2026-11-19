@@ -75,7 +75,7 @@ internal sealed partial class PgDataSources
         while (true)
         {
             string[] payloads;
-            (string Application, Guid JobId)[] delayed;
+            KeyValuePair<(string Application, string Queue, string Priority), (long DueMs, Guid JobId)>[] delayed;
             lock (_dispatchWakeGate)
             {
                 if (_dispatchWakesStopped || (_pendingDispatchWakes.Count == 0 && _pendingDelayedWakes.Count == 0))
@@ -85,13 +85,29 @@ internal sealed partial class PgDataSources
                 }
 
                 payloads = [.. _pendingDispatchWakes];
-                delayed = [.. _pendingDelayedWakes.Select(d => (d.Key.Application, d.Value.JobId))];
+                delayed = [.. _pendingDelayedWakes];
                 _pendingDispatchWakes.Clear();
                 _pendingDelayedWakes.Clear();
             }
 
             var slot = Gate(PgLane.Background);
-            if (slot.Wait(0))
+            if (!slot.Wait(0))
+            {
+                // Busy lane: keep the hints for the next send rather than drop them. A dropped delayed candidate is not
+                // repeated by the jobs queued behind it, so its idle worker would sleep its whole back-off.
+                lock (_dispatchWakeGate)
+                {
+                    _pendingDispatchWakes.UnionWith(payloads);
+                    foreach (var (lane, held) in delayed)
+                    {
+                        if (!_pendingDelayedWakes.TryGetValue(lane, out var newer) || held.DueMs <= newer.DueMs)
+                        {
+                            _pendingDelayedWakes[lane] = held;
+                        }
+                    }
+                }
+            }
+            else
             {
                 try
                 {
@@ -102,7 +118,8 @@ internal sealed partial class PgDataSources
                     }
                     else
                     {
-                        await SendDispatchWakesAsync(payloads, delayed, budget.Token).ConfigureAwait(false);
+                        await SendDispatchWakesAsync(payloads, [.. delayed.Select(d => (d.Key.Application, d.Value.JobId))], budget.Token)
+                            .ConfigureAwait(false);
                     }
                 }
                 catch (Exception ex) when (ex is NpgsqlException or TimeoutException or IOException or OperationCanceledException or InvalidOperationException)

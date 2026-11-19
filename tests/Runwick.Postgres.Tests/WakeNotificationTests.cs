@@ -167,6 +167,34 @@ public sealed class WakeNotificationTests
     [Fact]
     [Trait("Category", "Contract")]
     [Trait("Case", "WAKE-01")]
+    public async Task A_delayed_wake_held_up_by_a_busy_background_lane_is_sent_once_the_lane_frees()
+    {
+        // The jobs queued behind the first delayed job never repeat its hint, so a send skipped for a busy lane must be kept.
+        await using var f = await DriverFixture.StartAsync(Ns("wake_busy"));
+        var c = await f.OpenClient(configure: r => TestJobs.Register(r));
+        await using var listener = await Listener.StartAsync(f);
+        var payload = f.Application + "/default";
+        var lane = c.Store.Sources.Gate(Runwick.Postgres.Store.PgLane.Background);
+        await lane.WaitAsync();
+        await lane.WaitAsync();
+        try
+        {
+            await c.Dispatcher.DispatchAsync(new PingJob("first"), new DispatchOptions { NotBefore = DateTimeOffset.UtcNow.AddMinutes(5) });
+            await listener.PumpAsync(TimeSpan.FromMilliseconds(500));
+            Assert.DoesNotContain(payload, listener.Payloads);
+        }
+        finally
+        {
+            lane.Release(2);
+        }
+
+        await listener.PumpAsync(TimeSpan.FromSeconds(10), () => listener.Payloads.Contains(payload));
+        Assert.Single(listener.Payloads, p => p == payload);
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    [Trait("Case", "WAKE-01")]
     public async Task A_failed_post_commit_wake_leaves_the_dispatch_and_receipt_durable()
     {
         var ct = TestContext.Current.CancellationToken;
