@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Do the changed scripts store byte-identical data and reply byte-identical text? Runs the same dispatch / claim / finish / finish-and-claim sequence (fixed ids, tokens, entropy, draws) through the
 baseline Lua and the checkout's Lua on two disposable Redis databases, dumps every key and compares them, with 13-digit millisecond times
-replaced by T. Usage: diffcheck.py --port P [--base DIR] [--new DIR]"""
+replaced by T. Receipt results are compared as replied (a compact result, 22 §3.2, expanded with the checkout's decoder; a missing code or
+detail field reads as empty). Usage: diffcheck.py --port P [--base DIR] [--new DIR]"""
 import argparse, json, re, socket, sys
 from pathlib import Path
 
@@ -38,7 +39,7 @@ def hexid(n, kind):
     return f"{kind:04x}{n:028x}"
 
 
-def run(lua, port):
+def run(lua, port, decoder):
     db = Redis(port)
     db.call("FLUSHALL")
     db.call("HSET", META, "store", STORE, "mode", "normal", "layout", 1, "epoch", 1, "admission", "open", "bf", "done")
@@ -67,8 +68,9 @@ def run(lua, port):
         replies.append(r)
     toks = json.dumps([hexid(i, 4) for i in range(5)])
     ents = json.dumps([f"{i:020x}" for i in range(5)])
-    r = db.call("EVALSHA", rb, 1, META, 0, STORE, "ReserveAndBegin", hexid(0, 5), hexid(0, 6) * 2, dl(30_000), 60_000, 600_000, "ownership", "c", "",
-                hexid(0, 7), "default", "medium", 600_000, toks, "", "", json.dumps([["test", 1, "json", 1]]), 5, ents, json.dumps([0] * 5))
+    claim = ["EVALSHA", rb, 1, META, 0, STORE, "ReserveAndBegin", hexid(0, 5), hexid(0, 6) * 2, dl(30_000), 60_000, 600_000, "ownership", "c", "",
+             hexid(0, 7), "default", "medium", 600_000, toks, "", "", json.dumps([["test", 1, "json", 1]]), 5, ents, json.dumps([0] * 5)]
+    r = db.call(*claim)
     assert r[1] == b"Applied", r
     replies.append(r)
     items = json.loads(r[7])["items"]
@@ -78,13 +80,20 @@ def run(lua, port):
     args = [3]
     for i in range(3):
         args += [hexid(i, 8), hexid(i, 9) * 2, dl(30_000), fbody(i, "succeeded"), 0.5]
-    r = db.call("EVALSHA", fm, 1, META, 0, STORE, "FinishMany", hexid(0, 10), "", dl(30_000), 60_000, 0, "", "d", "", *args)
+    many = ["EVALSHA", fm, 1, META, 0, STORE, "FinishMany", hexid(0, 10), "", dl(30_000), 60_000, 0, "", "d", "", *args]
+    r = db.call(*many)
     assert r[1] == b"Applied", r
     replies.append(r)
-    r = db.call("EVALSHA", fin, 1, META, 0, STORE, "Finish", hexid(3, 8), hexid(3, 9) * 2, dl(30_000), 60_000, 86_400_000, "durable", "d", "",
-                fbody(3, "retryable_failure"), 0.5)
+    single = ["EVALSHA", fin, 1, META, 0, STORE, "Finish", hexid(3, 8), hexid(3, 9) * 2, dl(30_000), 60_000, 86_400_000, "durable", "d", "",
+              fbody(3, "retryable_failure"), 0.5]
+    r = db.call(*single)
     assert r[1] == b"Applied", r
     replies.append(r)
+    # Lost replies: each resend replays from its receipt.
+    for call in (claim, many, single):
+        r = db.call(*call)
+        assert r[1] == b"Applied", r
+        replies.append(r)
     # FinishAndClaim: the last begun job finishes and three new jobs are claimed in one call; then a resend of the same call replays.
     toks = json.dumps([hexid(i, 11) for i in range(3)])
     ents = json.dumps([f"{i + 100:020x}" for i in range(3)])
@@ -98,6 +107,7 @@ def run(lua, port):
     assert r[3] == b"1", r
     replies.append(r)
 
+    expand = db.call("SCRIPT", "LOAD", decoder + "return U.cdec(ARGV[12])")
     dump = {}
     for key in db.call("KEYS", PREFIX + "*"):
         key = key.decode()
@@ -105,6 +115,10 @@ def run(lua, port):
         if t == "hash":
             flat = db.call("HGETALL", key)
             val = {flat[i].decode(): flat[i + 1].decode("latin1") for i in range(0, len(flat), 2)}
+            if ":rcpt:" in key and not key.endswith(("exp:durable", "exp:ownership")):
+                val.setdefault("code", ""); val.setdefault("detail", "")
+                if "result" in val:
+                    val["result"] = db.call("EVALSHA", expand, 1, META, *[""] * 11, val["result"].encode("latin1")).decode("latin1")
         elif t == "zset":
             flat = db.call("ZRANGE", key, 0, -1, "WITHSCORES")
             val = {flat[i].decode(): flat[i + 1].decode() for i in range(0, len(flat), 2)}
@@ -127,8 +141,10 @@ def main():
     ap.add_argument("--base", required=True, help="a copy of the baseline Lua directory (prelude.lua, jobs.lua, ops/)")
     ap.add_argument("--new", default=str(HERE.parents[2] / "src/Runwick.Redis/Lua"))
     a = ap.parse_args()
-    old = run(Path(a.base), a.port)
-    new = run(Path(a.new), a.port)
+    lua = Path(a.new)
+    decoder = (lua / "prelude.lua").read_text() + "\n" + (lua / "jobs.lua").read_text() + "\n"
+    old = run(Path(a.base), a.port, decoder)
+    new = run(lua, a.port, decoder)
     bad = 0
     for k in sorted(set(old) | set(new)):
         o, n = old.get(k), new.get(k)

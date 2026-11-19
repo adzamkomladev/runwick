@@ -87,9 +87,15 @@ function U.nn(v) if v == nil or v == cjson.null or v == NULL then return nil end
 local esc = { ['"'] = '\\"', ['\\'] = '\\\\', ['\n'] = '\\n', ['\r'] = '\\r', ['\t'] = '\\t' }
 local sfind, sformat, sgsub, concat = string.find, string.format, string.gsub, table.concat
 local function escape(c) return esc[c] or sformat('\\u%04x', string.byte(c)) end
+-- Quoted texts are kept for the call: a claim's ids, states and names repeat, and its compact receipt quotes them again.
+local QS = {}
 function U.str(s)
-  if not sfind(s, '[%c"\\]') then return '"' .. s .. '"' end -- ids, names and hex need no escaping
-  return '"' .. sgsub(s, '[%c"\\]', escape) .. '"'
+  local q = QS[s]
+  if q then return q end
+  if not sfind(s, '[%c"\\]') then q = '"' .. s .. '"' -- ids, names and hex need no escaping
+  else q = '"' .. sgsub(s, '[%c"\\]', escape) .. '"' end
+  QS[s] = q
+  return q
 end
 
 -- Objects of one shape (a claim's items, events' details) repeat within a call, so each key set is sorted once per call: a trie
@@ -371,9 +377,10 @@ function U.job(id)
 end
 
 function U.jw(j, f, v)
-  -- j is the job as this command sees it (stored fields plus its own writes), so a field it lacks has nothing to delete.
-  if v == nil and j[f] == nil then return end
-  j[f] = v ~= nil and tostring(v) or nil
+  -- j is the job as this command sees it (stored fields plus its own writes). A field it lacks has nothing to delete, and a field that already holds the value is not written again.
+  local s = v ~= nil and tostring(v) or nil
+  if j[f] == s then return end
+  j[f] = s
   U.hset('job:' .. j.id, f, v)
 end
 
@@ -704,6 +711,7 @@ end
 
 -- Receipt hash fields in bytewise order, the order U.sorted gave them.
 local RECEIPT_FIELDS = { 'cls', 'code', 'decided', 'detail', 'fp', 'notafter', 'op', 'result', 'retain', 'status', 'ver' }
+local COMPACT_OPS = { ReserveAndBegin = true, Finish = true }
 
 function U.run(M)
   local mr = redis.call('HGETALL', META)
@@ -731,10 +739,12 @@ function U.run(M)
       if not rc[9] or rc[9] == '' then return reply_array(U.noeffect('InvariantFault', 'receipt_incomplete'), false) end
       -- 22 §4.5: the confirmation marker is a fresh write before the replayed reply (not an intent, no rev change).
       redis.call('HSET', P .. 'rcpt:' .. CMD, 'confirmed', NOWS)
+      local text = U.cdec(rc[9])
+      if not text then return reply_array(U.noeffect('UnsupportedVersion', 'receipt_codec_unsupported'), false) end
       local r = { status = rc[5], effect = 'A', code = rc[6] ~= '' and rc[6] or nil, detail = rc[7] ~= '' and rc[7] or nil,
-        decided = rc[8], result = rc[9] }
+        decided = rc[8], result = text }
       local a = reply_array(r, true)
-      return with_payloads(a, M.replay_ids and M.replay_ids(cjson.decode(rc[9])) or {})
+      return with_payloads(a, M.replay_ids and M.replay_ids(cjson.decode(text)) or {})
     end
   end
 
@@ -762,9 +772,11 @@ function U.run(M)
 
   if FP ~= '' then
     local na = NOT_AFTER
+    -- Claim and finish receipts store a compact result and leave out empty code and detail fields (a missing field reads as empty).
+    local compact = COMPACT_OPS[OP] and U.cenc(r)
     U.hset_sorted('rcpt:' .. CMD, RECEIPT_FIELDS, { cls = CLS, op = OP, ver = '1', fp = FP, notafter = U.S(na), retain = U.S(na + FLOOR),
-      status = r.status, code = r.code or '', detail = r.detail or '', decided = r.decided,
-      result = r.rcpt_text or result_text(r) })
+      status = r.status, code = r.code or (not COMPACT_OPS[OP] and '' or nil), detail = r.detail or (not COMPACT_OPS[OP] and '' or nil),
+      decided = r.decided, result = compact or r.rcpt_text or result_text(r) }, true)
     U.zadd('rcpt:exp:' .. CLS, na + FLOOR, CMD)
   end
 

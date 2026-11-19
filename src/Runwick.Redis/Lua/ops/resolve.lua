@@ -10,8 +10,10 @@ if r[1] then
   if r[2] ~= '1' then return { 'Incompatible', r[2] } end
   if OP ~= '' and (r[1] ~= OP or r[3] ~= FP) then return { 'Conflict' } end
   if not r[6] or r[6] == '' then return { 'NotObserved' } end
+  local text = U.cdec(r[6]) -- a compact claim or finish result expands to the replied text (22 §3.2)
+  if not text then return { 'Incompatible', r[2] .. ' with an unknown result codec' } end
   redis.call('HSET', k, 'confirmed', NOWS)
-  return { 'Recorded', r[1], r[2], r[4], r[5], r[6] }
+  return { 'Recorded', r[1], r[2], r[4], r[5], text }
 end
 if NOW < NOT_AFTER then return { 'NotObserved' } end
 if NOW < NOT_AFTER + FLOOR then return { 'NotApplied' } end
