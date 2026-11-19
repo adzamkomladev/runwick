@@ -42,7 +42,7 @@ public sealed class RedisWorkerPathTests
     }
 
     [Fact]
-    public async Task A_dispatch_that_is_due_now_publishes_a_wake_for_its_queue_and_a_delayed_one_does_not()
+    public async Task A_dispatch_publishes_a_wake_when_it_is_due_now_or_the_earliest_delayed_job_of_its_lane()
     {
         await using var f = await DriverFixture.StartAsync("rww_" + Guid.NewGuid().ToString("N")[..8], StoreKind.Redis);
         var c = await f.OpenClient(configure: r => TestJobs.Register(r));
@@ -53,15 +53,22 @@ public sealed class RedisWorkerPathTests
         var listening = store.ListenAsync(c.Application, WakeChannels.Work, woke.Enqueue, () => subscribed.TrySetResult(), () => { }, stop.Token);
         await subscribed.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
 
-        await c.Dispatcher.DispatchAsync(new PingJob("delayed"), new DispatchOptions { NotBefore = DateTimeOffset.UtcNow.AddMinutes(5) }, Ct);
-        await c.Dispatcher.DispatchAsync(new PingJob("now"), cancellationToken: Ct);
-        for (var i = 0; i < 100 && woke.IsEmpty; i++)
+        // The first delayed job of an empty lane wakes (an idle worker's last probe could not name it), a later one does not, an
+        // earlier one does again, and a due-now one always does.
+        var now = DateTimeOffset.UtcNow;
+        (string Key, DateTimeOffset? NotBefore, int Wakes)[] steps =
+            [("first", now.AddMinutes(5), 1), ("later", now.AddMinutes(10), 1), ("earlier", now.AddMinutes(2), 2), ("now", null, 3)];
+        foreach (var (key, notBefore, wakes) in steps)
         {
-            await Task.Delay(50, Ct);
-        }
+            await c.Dispatcher.DispatchAsync(new PingJob(key), notBefore is { } at ? new DispatchOptions { NotBefore = at } : null, Ct);
+            for (var i = 0; i < 100 && woke.Count < wakes; i++)
+            {
+                await Task.Delay(50, Ct);
+            }
 
-        await Task.Delay(200, Ct); // room for a wrongly published second hint
-        Assert.Equal(["default"], woke.ToArray());
+            await Task.Delay(200, Ct); // room for a wrongly published extra hint
+            Assert.Equal(Enumerable.Repeat("default", wakes), woke.ToArray());
+        }
 
         // The scheduler channel has no listener: the call returns at once, like a store without notifications.
         await store.ListenAsync(c.Application, WakeChannels.Schedule, _ => { }, () => { }, () => { }, Ct);
