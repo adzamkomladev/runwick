@@ -99,6 +99,8 @@ Runwick keeps separate connection pools for lease work (claim, renew, finish) an
 
 Workers poll for due work. On PostgreSQL, a committed dispatch also sends a `NOTIFY` on a dedicated listener connection, so idle workers wake up sooner. The notification is only a hint. If it is lost, polling still finds the job.
 
+For jobs that are delayed or waiting to retry, each readiness check tells the worker when the next such job is due, and an idle worker sleeps until then rather than on its usual back-off. A delayed job sent with `Dispatch` or `DispatchMany` that becomes the earliest waiting job of its queue and priority also sends the `NOTIFY` once it has committed, so a worker that has been idle for a while learns its due time at once instead of after its back-off (up to 12 seconds). Delayed jobs queued behind an earlier one send nothing.
+
 ## Primary only
 
 Ownership decisions (who holds a job's lease) are never read from a replica. Point every Runwick process at the primary.

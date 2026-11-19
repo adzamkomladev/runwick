@@ -89,6 +89,7 @@ internal sealed partial class SqliteStore : IReadinessDiagnostics
             var ready = new List<ReadyLane>();
             var unsupported = new List<LaneKey>();
             var queues = new List<QueueReadiness>();
+            DateTimeOffset? nextDue = null;
             var controls = new Dictionary<string, (bool Paused, long Revision)>(StringComparer.Ordinal);
             foreach (var queue in lanes.Select(l => l.Queue).Distinct(StringComparer.Ordinal))
             {
@@ -140,9 +141,21 @@ internal sealed partial class SqliteStore : IReadinessDiagnostics
                 {
                     ready.Add(new ReadyLane(lane, due[0]));
                 }
+
+                // The lane's earliest not-yet-due job (any tuple): an idle pool sleeps until then instead of on its back-off.
+                var next = Rows(Cmd(conn, application, """
+                    SELECT j.eligible_at FROM runwick_jobs AS j
+                    WHERE j.application = @application AND j.queue = @queue AND j.priority = @priority AND j.state IN ('pending', 'retrying')
+                      AND j.eligible_at > @now
+                    ORDER BY j.eligible_at LIMIT 1
+                    """).P("queue", lane.Queue).P("priority", lane.Priority).P("now", observed), r => r.Time(0));
+                if (next.Count == 1 && (nextDue is null || next[0] < nextDue))
+                {
+                    nextDue = next[0];
+                }
             }
 
-            return new ReadySnapshot(observed, ready) { Queues = queues, UnsupportedLanes = unsupported };
+            return new ReadySnapshot(observed, ready) { Queues = queues, UnsupportedLanes = unsupported, NextDueAt = nextDue };
         }, ct);
     }
 

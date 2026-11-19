@@ -8,17 +8,17 @@ namespace Runwick.Postgres.Store;
 
 internal sealed partial class PgStore
 {
-    // Direct calls use dispatch_v4 and can publish a wake after commit. Staged calls use dispatch_v3 and its
-    // transactional wake, as do the outbox, management and schedule paths through rw_dispatch_core_v3 (04 §7.2).
+    // Direct calls use dispatch_v4 and can publish a wake after commit, also for a delayed job that is its lane's earliest. Staged
+    // calls use dispatch_v3 and its transactional wake (due jobs only), as do the outbox, management and schedule paths through
+    // rw_dispatch_core_v3 (04 §7.2).
 
     public async Task<StoreReply<DispatchResult>> DispatchAsync(StoreCommand<DispatchRequest> command, CancellationToken ct)
     {
         var reply = await runner.CallAsync(DispatchOp(command), DispatchCall([command.Body.Item], many: false, continueOnConflict: false),
             MapDispatch, ct).ConfigureAwait(false);
-        var item = command.Body.Item;
-        if (reply.Status == StoreStatus.Applied && !reply.Replayed && IsDueCreated(item, reply.Value, PgTime.Ms(reply.DecidedAt)))
+        if (reply.Status == StoreStatus.Applied && !reply.Replayed)
         {
-            sources.WakeDispatch(command.Application, item.Intent.Queue);
+            Wake(command.Application, command.Body.Item, reply.Value, PgTime.Ms(reply.DecidedAt), null);
         }
 
         return reply;
@@ -32,22 +32,36 @@ internal sealed partial class PgStore
         if (reply.Status == StoreStatus.Applied && !reply.Replayed && reply.Value is { } value)
         {
             var decidedMs = PgTime.Ms(reply.DecidedAt);
-            HashSet<string>? queues = null;
+            HashSet<string> queues = new(StringComparer.Ordinal);
             foreach (var outcome in value.Items)
             {
-                var item = items[outcome.Ordinal];
-                if (IsDueCreated(item, outcome.Result, decidedMs) && (queues ??= new(StringComparer.Ordinal)).Add(item.Intent.Queue))
-                {
-                    sources.WakeDispatch(command.Application, item.Intent.Queue);
-                }
+                Wake(command.Application, items[outcome.Ordinal], outcome.Result, decidedMs, queues);
             }
         }
 
         return reply;
     }
 
-    static bool IsDueCreated(DispatchItem item, DispatchResult? result, long decidedMs) =>
-        result?.Disposition == DispatchDisposition.Created && (item.Intent.NotBeforeMs is not { } notBefore || notBefore <= decidedMs);
+    /// <summary>
+    /// After a committed, non-replayed creation: a due job wakes its queue (once per queue per batch); a delayed one is handed to the
+    /// pump, which wakes its queue only if it is then the earliest not-yet-due job of its lane.
+    /// </summary>
+    void Wake(string application, DispatchItem item, DispatchResult? result, long decidedMs, HashSet<string>? queues)
+    {
+        if (result?.Disposition != DispatchDisposition.Created)
+        {
+            return;
+        }
+
+        if (item.Intent.NotBeforeMs is { } notBefore && notBefore > decidedMs)
+        {
+            sources.WakeDelayed(application, item.Intent.Queue, item.Intent.Priority, notBefore, result.JobId);
+        }
+        else if (queues?.Add(item.Intent.Queue) != false)
+        {
+            sources.WakeDispatch(application, item.Intent.Queue);
+        }
+    }
 
     /// <summary>Dispatch/1 on a caller-owned transaction (01 §15, 04 §6.1).</summary>
     public Task<StoreReply<DispatchResult>> StageDispatchAsync(NpgsqlTransaction transaction, StoreCommand<DispatchRequest> command, CancellationToken ct) =>

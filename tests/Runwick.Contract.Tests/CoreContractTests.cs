@@ -72,6 +72,38 @@ public sealed class CoreContractTests
 
     [Theory]
     [MemberData(nameof(Kinds))]
+    [Trait("Case", "RUN-01")]
+    public async Task The_probe_names_the_earliest_not_yet_due_job_of_the_probed_lanes(StoreKind kind)
+    {
+        // NextDueAt (05 §7.2, SP-012) lets an idle pool sleep until the next delayed or retrying job falls due. Only probed
+        // lanes count, and a due job does not hide it.
+        var (f, c) = await OpenAsync(kind, "probe_next");
+        await using var _ = f;
+        LaneKey[] lanes = [new("default", "medium")];
+        Assert.Null((await c.Driver.ProbeAsync(c.Application, lanes, c.Contracts, Ct)).NextDueAt);
+
+        var now = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()); // whole ms, as stored
+        var soon = now.AddMinutes(5);
+        await c.Dispatcher.DispatchAsync(new PingJob("later"), new DispatchOptions { NotBefore = now.AddMinutes(10) }, Ct);
+        await c.Dispatcher.DispatchAsync(new PingJob("soon"), new DispatchOptions { NotBefore = soon }, Ct);
+        await c.Dispatcher.DispatchAsync(new PingJob("other lane"), new DispatchOptions { NotBefore = now.AddMinutes(1), Priority = "high" }, Ct);
+        await c.Dispatcher.DispatchAsync(new PingJob("due"), cancellationToken: Ct);
+
+        var probe = await c.Driver.ProbeAsync(c.Application, lanes, c.Contracts, Ct);
+        Assert.Single(probe.Lanes);
+        Assert.Equal(soon, probe.NextDueAt);
+        Assert.Equal(now.AddMinutes(1), (await c.Driver.ProbeAsync(c.Application, [.. lanes, new("default", "high")], c.Contracts, Ct)).NextDueAt);
+
+        // A retrying job counts too (its delay is at most 1 s here, so it may already be due when the probe runs).
+        var lease = (await c.ReserveAsync()).Value!.Lease.Handle;
+        await c.BeginAsync(lease);
+        var retryAt = (await c.FinishAsync(lease, AttemptOutcome.RetryableFailure, requestedDelay: TimeSpan.FromSeconds(1))).Value!.EligibleAt!.Value;
+        probe = await c.Driver.ProbeAsync(c.Application, lanes, c.Contracts, Ct);
+        Assert.Equal(probe.ObservedAt < retryAt ? retryAt : soon, probe.NextDueAt);
+    }
+
+    [Theory]
+    [MemberData(nameof(Kinds))]
     [Trait("Case", "CMD-01")]
     public async Task A_resent_command_replays_its_receipt_and_a_changed_body_conflicts(StoreKind kind)
     {

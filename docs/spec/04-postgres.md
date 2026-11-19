@@ -6,6 +6,10 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-19, delayed pickup)
+
+- No migration, no schema revision, no SQL function change. (1) The ReadinessProbe/2 statement gains a `next` row: the minimum, over the probed unpaused lanes, of each lane's first `eligible_at > observed_at` among `pending` and `retrying` jobs (one index-only `jobs_ready` lookup per lane, `ORDER BY eligible_at LIMIT 1`), returned as `ReadySnapshot.NextDueAt` (05 §7.2, SP-012). At 10⁶ jobs (PGX-07) the probe reads 148 shared buffers against 110 before, 38 of them for the 12 `next` lookups. (2) The post-commit wake pump of the 2026-11-11 entry also takes delayed creations of `dispatch_v4`: per lane, the one due first since the last send. Its single send statement notifies such a job's queue when the job is still `pending` or `retrying` and no job of its lane with `eligible_at > now()` precedes it in claim order `(eligible_at, job_id)`: one unique-index lookup and one bounded `jobs_ready` range per candidate (7 buffers at 10⁶ rows, PGX-07). The check runs off the dispatch path, at most once per lane per 100 ms send interval, and a steady delayed stream sends almost no notifications. Transactional paths (staging, outbox, schedule, management through `rw_dispatch_core_v3`) still notify only for due jobs (05 Changes 2026-11-19, delayed pickup on PostgreSQL and SQLite).
+
 ## Changes (2026-11-17, keyed claim)
 
 - Migration `0025_claim_keyed`, schema revision 25, adds `reserve_and_begin_v3`. For both a fresh claim and a receipt replay, it looks up each payload’s job creation timestamp by application and job ID. The lookup stays correlated when application row estimates are stale. The receipt still determines the order of returned jobs, and the claim uses its existing locks and ownership checks.

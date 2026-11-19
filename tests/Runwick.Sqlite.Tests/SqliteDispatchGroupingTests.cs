@@ -63,7 +63,7 @@ public sealed class SqliteDispatchGroupingTests
     }
 
     [Fact]
-    public async Task Local_work_hint_for_a_batch_names_each_due_queue_once_and_skips_delayed_items_and_replays()
+    public async Task Local_work_hint_for_a_batch_names_each_due_queue_once_and_skips_queued_behind_delayed_items_and_replays()
     {
         var ct = TestContext.Current.CancellationToken;
         await using var fixture = await DriverFixture.StartAsync("local_wake_many_" + Guid.NewGuid().ToString("N")[..8], StoreKind.Sqlite);
@@ -80,6 +80,11 @@ public sealed class SqliteDispatchGroupingTests
         var subscriber = local.ListenForLocalWorkAsync(producer.Application, notified.Add, stop.Token);
         try
         {
+            // An earlier delayed job of the "other" lane wakes it once (it is the lane's earliest not-yet-due job); the batch's
+            // delayed item is queued behind it and wakes nothing.
+            await producer.Dispatcher.DispatchAsync(new PingJob("earlier"), new DispatchOptions { Queue = "other", NotBefore = DateTimeOffset.UtcNow.AddMinutes(30) }, ct);
+            Assert.Equal("other", Assert.Single(notified));
+            notified.Clear();
             var preparer = producer.Services.GetRequiredService<DispatchPreparer>();
             var later = new DispatchOptions { Queue = "other", NotBefore = DateTimeOffset.UtcNow.AddHours(1) };
             var batch = preparer.PrepareMany(producer.Runtime.StoreId,
@@ -93,6 +98,52 @@ public sealed class SqliteDispatchGroupingTests
             Assert.Equal("default", Assert.Single(notified));
             Assert.True((await producer.Driver.DispatchManyAsync(command, ct)).Replayed);
             Assert.Single(notified);
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => subscriber);
+        }
+    }
+
+    [Fact]
+    public async Task Local_work_hint_names_a_queue_when_a_job_is_due_now_or_the_earliest_delayed_job_of_its_lane()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await DriverFixture.StartAsync("local_wake_delayed_" + Guid.NewGuid().ToString("N")[..8], StoreKind.Sqlite);
+        var producer = await fixture.OpenClient(configure: r => TestJobs.Register(r));
+        var listener = await fixture.OpenClient(configure: r => TestJobs.Register(r));
+        var local = Assert.IsAssignableFrom<ILocalWorkWakeSource>(listener.Driver);
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var notified = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var subscriber = local.ListenForLocalWorkAsync(producer.Application, notified.Enqueue, stop.Token);
+        try
+        {
+            // The first delayed job of an empty lane wakes (an idle worker's last probe could not name it), a later one does not, an
+            // earlier one does again, and a due-now one always does. A batch wakes once for its earliest item, and not at all when
+            // every item is queued behind an earlier delayed job.
+            var now = DateTimeOffset.UtcNow;
+            (string[] Keys, double?[] Minutes, int Wakes)[] steps =
+            [
+                (["first"], [5], 1), (["later"], [10], 1), (["earlier"], [2], 2), (["now"], [null], 3),
+                (["behind", "earliest"], [20, 1], 4), (["behind-1", "behind-2"], [30, 40], 4),
+            ];
+            foreach (var (keys, minutes, wakes) in steps)
+            {
+                BatchDispatchItem[] items = [.. keys.Zip(minutes, (k, m) => new BatchDispatchItem(new PingJob(k),
+                    m is { } at ? new DispatchOptions { NotBefore = now.AddMinutes(at) } : null))];
+                if (items.Length == 1)
+                {
+                    await producer.Dispatcher.DispatchAsync(new PingJob(keys[0]), items[0].Options, ct);
+                }
+                else
+                {
+                    await producer.Dispatcher.DispatchManyAsync(items, cancellationToken: ct);
+                }
+
+                // The hint is published before the dispatch call returns.
+                Assert.Equal(Enumerable.Repeat("default", wakes), notified.ToArray());
+            }
         }
         finally
         {
