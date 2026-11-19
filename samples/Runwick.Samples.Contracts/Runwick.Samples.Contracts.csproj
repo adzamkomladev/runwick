@@ -2,6 +2,8 @@
   <!-- Proves a producer contract assembly needs only Runwick.Contracts. -->
   <PropertyGroup>
     <IsPackable>true</IsPackable>
+    <!-- No package readme: only src projects get eng/PACKAGE-README.md, and this package is never published. -->
+    <PackageReadmeFile />
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Runwick.Contracts\Runwick.Contracts.csproj" />
