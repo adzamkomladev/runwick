@@ -249,7 +249,6 @@ end
 
 function U.hset(k, f, v)
   local r = rec(P .. k, 'h')
-  r.pre = nil
   if v == nil then
     r.set[f] = nil
     r.del[f] = true
@@ -259,9 +258,9 @@ function U.hset(k, f, v)
   end
 end
 
--- Writes several fields of a hash that has no other write yet in this command. names must be in bytewise order (a test checks
--- the literal lists), so build_ops can skip sorting them. A nil value is skipped when skipnil is set; otherwise it takes the plain
--- path, which records a field deletion.
+-- Writes several fields of a hash; on a hash with no other write yet in this command it skips the per-field bookkeeping. A nil
+-- value is skipped when skipnil is set; otherwise it takes the plain path, which records a field deletion. (The lists are kept in
+-- bytewise order, which a test checks, though writes are no longer sorted.)
 function U.hset_sorted(k, names, vals, skipnil)
   local r = rec(P .. k, 'h')
   local fresh = next(r.set) == nil and next(r.del) == nil and not r.kill
@@ -279,7 +278,6 @@ function U.hset_sorted(k, names, vals, skipnil)
       U.hset(k, f, v)
     end
   end
-  r.pre = fresh and names or nil
 end
 
 function U.zscore(k, m)
@@ -373,6 +371,8 @@ function U.job(id)
 end
 
 function U.jw(j, f, v)
+  -- j is the job as this command sees it (stored fields plus its own writes), so a field it lacks has nothing to delete.
+  if v == nil and j[f] == nil then return end
   j[f] = v ~= nil and tostring(v) or nil
   U.hset('job:' .. j.id, f, v)
 end
@@ -554,32 +554,19 @@ local function build_ops()
     if r.t == 's' then
       if r.val ~= nil then ops[#ops + 1] = { 'S', s, r.val } end
     else
-      local d = next(r.del) ~= nil and U.sorted(r.del) or {}
-      if #d > 0 and not r.kill then
-        local op = { r.t == 'h' and 'HD' or 'ZR', s }
-        for _, f in ipairs(d) do op[#op + 1] = f end
+      -- The order of fields inside one write does not change what is stored, so nothing is sorted here.
+      local h = r.t == 'h'
+      if next(r.del) ~= nil and not r.kill then
+        local op = { h and 'HD' or 'ZR', s }
+        for f in pairs(r.del) do op[#op + 1] = f end
         ops[#ops + 1] = op
       end
-      local fs
-      if r.pre then
-        fs = {}
-        for _, f in ipairs(r.pre) do if r.set[f] ~= nil then fs[#fs + 1] = f end end
-      else
-        fs = U.sorted(r.set)
+      local op, n = { h and 'H' or 'Z', s }, 2
+      for f, v in pairs(r.set) do
+        if h then op[n + 1], op[n + 2] = f, v else op[n + 1], op[n + 2] = v, f end
+        n = n + 2
       end
-      if #fs > 0 then
-        local op = { r.t == 'h' and 'H' or 'Z', s }
-        for _, f in ipairs(fs) do
-          if r.t == 'h' then
-            op[#op + 1] = f
-            op[#op + 1] = r.set[f]
-          else
-            op[#op + 1] = r.set[f]
-            op[#op + 1] = f
-          end
-        end
-        ops[#ops + 1] = op
-      end
+      if n > 2 then ops[#ops + 1] = op end
     end
   end
   return ops, keys
@@ -606,15 +593,20 @@ function U.wake(ops)
   end
 end
 
--- Publishes intent batches from position pos; returns the next position or nil when published.
-function U.project(intent, pos, budget)
+-- Publishes intent batches from position pos; returns the next position or nil when published. unstored: the intent was never
+-- stored (a direct projection, 22 §4.1), so publication only moves rev.
+function U.project(intent, pos, budget, unstored)
   local last = math.min(#intent.ops, pos + budget - 1)
   for i = pos, last do apply(intent.ops[i]) end
   if last < #intent.ops then
     w('HSET', META, 'ipos', U.S(last + 1))
     return last + 1
   end
-  w('HSET', META, 'rev', intent.rev, 'guard', '', 'intent', '', 'intentsha', '', 'ipos', '')
+  if unstored then
+    w('HSET', META, 'rev', intent.rev)
+  else
+    w('HSET', META, 'rev', intent.rev, 'guard', '', 'intent', '', 'intentsha', '', 'ipos', '')
+  end
   U.wake(intent.ops)
   return nil
 end
@@ -634,6 +626,23 @@ local function inline_budget(ops, keys, bytes)
   return #ops
 end
 
+-- An upper bound of #cmsgpack.pack(intent), far cheaper than packing: a header is at most 5 bytes and a number packs to at most 9
+-- bytes, so length plus 9 bounds a text value and 18 any other.
+local function packed_bound(intent)
+  local n = 128
+  local function list(t)
+    n = n + 5
+    for i = 1, #t do
+      local v = t[i]
+      n = n + (type(v) == 'string' and #v + 9 or 18)
+    end
+  end
+  list({ intent.id, intent.op, intent.rev, intent.decided })
+  list(intent.reply)
+  for _, op in ipairs(intent.ops) do list(op) end
+  return n
+end
+
 local function commit(m, r)
   flush_events(m)
   local ops, keys = build_ops()
@@ -643,9 +652,15 @@ local function commit(m, r)
   if not nextrev then return U.noeffect('InvariantFault', 'counter_limit') end
   local reply = reply_array(r, false)
   local intent = { id = CMD, op = OP, rev = nextrev, decided = NOWS, ops = ops, reply = reply }
-  local bytes = cmsgpack.pack(intent)
-  if #bytes > MAX_BYTES then return U.noeffect('InvalidRequest', 'intent_too_large') end
-  local budget = inline_budget(ops, keys, #bytes)
+  -- Packed only when it is stored or when the bound cannot settle a size limit; the limits below see the same answer either way.
+  local bound, bytes = packed_bound(intent), nil
+  local function size(limit)
+    if bound <= limit then return bound end
+    bytes = bytes or cmsgpack.pack(intent)
+    return #bytes
+  end
+  if size(MAX_BYTES) > MAX_BYTES then return U.noeffect('InvalidRequest', 'intent_too_large') end
+  local budget = inline_budget(ops, keys, size(BATCH_INLINE_BYTES))
   if OP == 'DispatchGroup' then
     -- A grouped dispatch publishes inline only within measured shape limits; larger or slower shapes are declined
     -- before the first write so the client sends each command alone with its own identity.
@@ -653,13 +668,29 @@ local function commit(m, r)
     for _, op in ipairs(ops) do args = args + #op - 2 end
     local t = redis.call('TIME')
     local elapsed = (tonumber(t[1]) - tonumber(t0[1])) * 1000000 + tonumber(t[2]) - tonumber(t0[2])
-    if #ops > 80 or keys > 72 or #bytes > 262144 or args > 4096 or elapsed > 5000 then
+    if #ops > 80 or keys > 72 or size(262144) > 262144 or args > 4096 or elapsed > 5000 then
       return U.noeffect('InvalidRequest', 'group_fallback')
     end
     budget = #ops
   end
-  w('HSET', META, 'guard', CMD, 'intent', bytes, 'intentsha', redis.sha1hex(bytes), 'ipos', '1')
-  local more = U.project(intent, 1, budget)
+  local more
+  if budget >= #ops then
+    -- Direct projection (22 §4.1): one script call publishes the whole command, and Redis persists and replicates a script's
+    -- writes as one MULTI/EXEC, so the intent is only needed if a write fails partway (wrong key type, a key that left a cluster
+    -- node, an injected fault). Then it is stored after the fact, exactly as the stored-first order would have left it (guard,
+    -- intent, ipos 1, the writes made so far), and the error goes on as before. The guard counts as write 1 for FailAfter.
+    writes = writes + 1
+    local ok, err = pcall(U.project, intent, 1, budget, true)
+    if not ok then
+      bytes = bytes or cmsgpack.pack(intent)
+      redis.pcall('HSET', META, 'guard', CMD, 'intent', bytes, 'intentsha', redis.sha1hex(bytes), 'ipos', '1')
+      error(err, 0)
+    end
+  else
+    bytes = bytes or cmsgpack.pack(intent)
+    w('HSET', META, 'guard', CMD, 'intent', bytes, 'intentsha', redis.sha1hex(bytes), 'ipos', '1')
+    more = U.project(intent, 1, budget)
+  end
   if FAIL > 0 and writes >= FAIL then error('INJECTED reply lost after write ' .. writes) end
   if more then return { pending = true } end
   return nil

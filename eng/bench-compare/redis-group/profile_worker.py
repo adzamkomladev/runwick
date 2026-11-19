@@ -64,8 +64,12 @@ function U.wrap(name)
 end""")
     rep("  local ok, r = pcall(M.decide)", "  mark('pre_decide')\n  local ok, r = pcall(M.decide)\n  mark('decide')")
     rep("  flush_events(m)\n  local ops, keys = build_ops()", "  mark('commit_start')\n  flush_events(m)\n  mark('events')\n  local ops, keys = build_ops()\n  mark('build_ops')")
-    rep("  local bytes = cmsgpack.pack(intent)", "  local bytes = cmsgpack.pack(intent)\n  mark('pack')")
-    rep("  local more = U.project(intent, 1, budget)", "  mark('guard_write')\n  local more = U.project(intent, 1, budget)\n  mark('project')")
+    if "  local bytes = cmsgpack.pack(intent)" in prelude:  # scripts that store every intent before projecting
+        rep("  local bytes = cmsgpack.pack(intent)", "  local bytes = cmsgpack.pack(intent)\n  mark('pack')")
+        rep("  local more = U.project(intent, 1, budget)", "  mark('guard_write')\n  local more = U.project(intent, 1, budget)\n  mark('project')")
+    else:  # direct projection: the intent is stored only when a write fails partway
+        rep("  local budget = inline_budget(ops, keys, size(BATCH_INLINE_BYTES))", "  local budget = inline_budget(ops, keys, size(BATCH_INLINE_BYTES))\n  mark('pack')\n  mark('guard_write')")
+        rep("  if FAIL > 0 and writes >= FAIL then error('INJECTED reply lost", "  mark('project')\n  if FAIL > 0 and writes >= FAIL then error('INJECTED reply lost")
     rep("  if c and c.pending then return { 'P', CMD } end\n  return with_payloads(reply_array(r, false), r.payloads)",
         "  if c and c.pending then return { 'P', CMD } end\n  mark('end')\n  for k, v in pairs(U.ACC) do PM[#PM + 1] = 'in_' .. k .. ':' .. math.floor(v * 1000000) end\n"
         "  redis.call('SET', 'prof:last', table.concat(PM, ','))\n  local pa = with_payloads(reply_array(r, false), r.payloads)\n  return pa")
