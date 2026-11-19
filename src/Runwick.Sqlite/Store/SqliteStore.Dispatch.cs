@@ -25,10 +25,9 @@ internal sealed partial class SqliteStore
         var item = command.Body.Item;
         var reply = await runner.DispatchAsync(DispatchOp(command), tx => DispatchBody(tx, [item], many: false, continueOnConflict: false),
             MapDispatch, PreparedEnvelopeCodec.UpperBound(command.Application, item.Intent), ct).ConfigureAwait(false);
-        if (reply.Status == StoreStatus.Applied && !reply.Replayed && IsDueCreated(item, reply.Value, reply.DecidedAt) &&
-            LocalListenersFor(command.Application) is { } listeners)
+        if (reply.Status == StoreStatus.Applied && !reply.Replayed && LocalListenersFor(command.Application) is { } listeners)
         {
-            PublishLocalWake(listeners, item.Intent.Queue);
+            await WakeLocalAsync(listeners, command.Application, [(item, reply.Value)], reply.DecidedAt).ConfigureAwait(false);
         }
 
         return reply;
@@ -42,15 +41,8 @@ internal sealed partial class SqliteStore
         if (reply.Status == StoreStatus.Applied && !reply.Replayed && reply.Value is { } value &&
             LocalListenersFor(command.Application) is { } listeners)
         {
-            HashSet<string>? queues = null;
-            foreach (var outcome in value.Items)
-            {
-                var item = items[outcome.Ordinal];
-                if (IsDueCreated(item, outcome.Result, reply.DecidedAt) && (queues ??= new(StringComparer.Ordinal)).Add(item.Intent.Queue))
-                {
-                    PublishLocalWake(listeners, item.Intent.Queue);
-                }
-            }
+            await WakeLocalAsync(listeners, command.Application, value.Items.Select(o => (items[o.Ordinal], o.Result)), reply.DecidedAt)
+                .ConfigureAwait(false);
         }
 
         return reply;

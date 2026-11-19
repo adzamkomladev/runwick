@@ -10,8 +10,8 @@ internal sealed partial class PgStore : IReadinessDiagnostics
 
     /// <summary>
     /// One round trip, no locks, no payload, no unbounded counting. Row kinds: <c>lane</c> (oldest due supported job of
-    /// an unpaused registered lane), <c>unsupported</c> (the lane's oldest due job has a tuple outside the request) and
-    /// <c>queue</c> (control revision, pause flag, queue-scope live permits counted up to the capacity).
+    /// an unpaused registered lane), <c>unsupported</c> (the lane's oldest due job has a tuple outside the request),
+    /// <c>next</c> (the earliest not-yet-due job of those lanes, <see cref="ReadySnapshot.NextDueAt"/>) and <c>queue</c> (control revision, pause flag, queue-scope live permits counted up to the capacity).
     /// </summary>
     public Task<ReadySnapshot> ProbeAsync(string application, IReadOnlyList<LaneKey> lanes, IReadOnlyList<JobContract> supportedContracts, CancellationToken ct)
     {
@@ -85,6 +85,21 @@ internal sealed partial class PgStore : IReadinessDiagnostics
                           AND t.profile_id = h.serializer_profile_id
                           AND t.profile_version = h.serializer_profile_version)
                     UNION ALL
+                    SELECT 'next', NULL, NULL, min(n.eligible_at), NULL, NULL, NULL, NULL, NULL
+                    FROM lanes AS l
+                    CROSS JOIN LATERAL (
+                        SELECT j.eligible_at
+                        FROM runwick.jobs AS j
+                        WHERE j.application = @application
+                          AND j.queue = l.queue
+                          AND j.priority = l.priority
+                          AND j.state IN ('pending', 'retrying')
+                          AND j.eligible_at > g.observed_at
+                        ORDER BY j.eligible_at
+                        LIMIT 1
+                    ) AS n
+                    HAVING min(n.eligible_at) IS NOT NULL
+                    UNION ALL
                     SELECT 'queue', q.queue, NULL, NULL, q.revision, q.paused, qs.scope_id, qs.capacity, qs.live
                     FROM (SELECT DISTINCT u.queue FROM unnest(@lane_queues::text[]) AS u(queue)) AS d
                     JOIN runwick.queue_controls AS q ON q.application = @application AND q.queue = d.queue
@@ -111,6 +126,7 @@ internal sealed partial class PgStore : IReadinessDiagnostics
             var unsupported = new List<LaneKey>();
             var queues = new List<QueueReadiness>();
             DateTimeOffset observed = default;
+            DateTimeOffset? nextDue = null;
             var open = true;
             var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             await using (reader.ConfigureAwait(false))
@@ -132,6 +148,9 @@ internal sealed partial class PgStore : IReadinessDiagnostics
                         case "unsupported":
                             unsupported.Add(new LaneKey(reader.GetString(6), reader.GetString(7)));
                             break;
+                        case "next":
+                            nextDue = PgTime.Read(reader, 8);
+                            break;
                         default:
                             queues.Add(new QueueReadiness(reader.GetString(6), reader.GetBoolean(10), reader.GetInt64(9),
                                 await reader.IsDBNullAsync(11, ct).ConfigureAwait(false) ? null : reader.GetGuid(11),
@@ -143,7 +162,7 @@ internal sealed partial class PgStore : IReadinessDiagnostics
             }
 
             return open
-                ? new ReadySnapshot(observed, ready) { Queues = queues, UnsupportedLanes = unsupported }
+                ? new ReadySnapshot(observed, ready) { Queues = queues, UnsupportedLanes = unsupported, NextDueAt = nextDue }
                 : new ReadySnapshot(observed, []);
         }, ct);
     }

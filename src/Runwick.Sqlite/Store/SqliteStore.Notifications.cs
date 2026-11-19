@@ -71,7 +71,71 @@ internal sealed partial class SqliteStore : ILocalWorkWakeSource
         }
     }
 
-    static bool IsDueCreated(DispatchItem item, DispatchResult? result, DateTimeOffset decidedAt) =>
-        result?.Disposition == DispatchDisposition.Created &&
-        (item.Intent.NotBeforeMs is not { } due || due <= decidedAt.ToUnixTimeMilliseconds());
+    /// <summary>
+    /// After a committed, non-replayed dispatch: each queue with a created job that is due now, or that is the earliest not-yet-due
+    /// job of its lane (an idle worker's last probe could not name it), is woken once. Jobs queued behind an earlier delayed job wake
+    /// nothing. The earliest check is one indexed read per lane with a delayed creation, made only when a local worker listens.
+    /// </summary>
+    async Task WakeLocalAsync(Action<string> listeners, string application, IEnumerable<(DispatchItem Item, DispatchResult? Result)> outcomes,
+        DateTimeOffset decidedAt)
+    {
+        var queues = new HashSet<string>(StringComparer.Ordinal);
+        Dictionary<(string Queue, string Priority), (long DueMs, Guid JobId)>? delayed = null;
+        foreach (var (item, result) in outcomes)
+        {
+            if (result?.Disposition != DispatchDisposition.Created)
+            {
+                continue;
+            }
+
+            if (item.Intent.NotBeforeMs is { } due && due > decidedAt.ToUnixTimeMilliseconds())
+            {
+                var lane = (item.Intent.Queue, item.Intent.Priority);
+                if ((delayed ??= []).TryGetValue(lane, out var held) is false || due < held.DueMs)
+                {
+                    delayed[lane] = (due, result.JobId);
+                }
+            }
+            else if (queues.Add(item.Intent.Queue))
+            {
+                PublishLocalWake(listeners, item.Intent.Queue);
+            }
+        }
+
+        if (delayed is null)
+        {
+            return;
+        }
+
+        List<string> earliest;
+        try
+        {
+            earliest = await runner.ReadAsync(conn =>
+            {
+                var now = Now();
+                return delayed.Values.SelectMany(d => Rows(Cmd(conn, application, """
+                    SELECT x.queue FROM runwick_jobs AS x
+                    WHERE x.application = @application AND x.job_id = @job AND x.state IN ('pending', 'retrying')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM runwick_jobs AS j
+                          WHERE j.application = x.application AND j.queue = x.queue AND j.priority = x.priority
+                            AND j.state IN ('pending', 'retrying') AND j.eligible_at > @now
+                            AND (j.eligible_at < x.eligible_at OR (j.eligible_at = x.eligible_at AND j.job_id < x.job_id)))
+                    """).P("job", d.JobId).P("now", now), r => r.GetString(0))).ToList();
+            }, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // Best effort, like the hint itself: the dispatch has committed and workers keep polling.
+            return;
+        }
+
+        foreach (var queue in earliest)
+        {
+            if (queues.Add(queue))
+            {
+                PublishLocalWake(listeners, queue);
+            }
+        }
+    }
 }

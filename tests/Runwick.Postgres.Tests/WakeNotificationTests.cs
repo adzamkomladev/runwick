@@ -62,7 +62,7 @@ public sealed class WakeNotificationTests
     [Fact]
     [Trait("Category", "Contract")]
     [Trait("Case", "WAKE-01")]
-    public async Task A_committed_dispatch_notifies_its_queue_and_a_rolled_back_or_delayed_one_does_not()
+    public async Task A_committed_dispatch_notifies_its_queue_and_a_rolled_back_or_queued_behind_delayed_one_does_not()
     {
         await using var f = await DriverFixture.StartAsync(Ns("wake01"));
         var c = await f.OpenClient(configure: r => TestJobs.Register(r), time: new AheadOfDatabaseClock());
@@ -86,16 +86,18 @@ public sealed class WakeNotificationTests
         ]);
         Assert.Equal(DispatchDisposition.Reused, batch.Items[0].Receipt!.Disposition);
         Assert.Equal(DispatchDisposition.Created, batch.Items[1].Receipt!.Disposition);
+        // The first delayed job is its lane's earliest not-yet-due job and wakes once; the batch's one, due at the same time with a
+        // later ID, is queued behind it and does not (2026-11-19, delayed pickup).
         await listener.PumpAsync(TimeSpan.FromSeconds(2));
-        Assert.DoesNotContain(listener.Payloads, p => p.StartsWith(prefix, StringComparison.Ordinal));
+        const string queue = "default";
+        Assert.Equal([prefix + queue], listener.Payloads.Where(p => p.StartsWith(prefix, StringComparison.Ordinal)));
 
         // Committed, driver-owned: one notification naming the job's queue.
         var prepared = c.Prepared.Prepare(new PingJob("now"));
         var now = await c.Prepared.DispatchAsync(prepared);
-        const string queue = "default";
         Assert.Equal(1, await f.CountAsync("SELECT count(*) FROM runwick.jobs WHERE job_id = @j AND queue = @q", ("j", now.JobId.Value), ("q", queue)));
-        await listener.PumpAsync(TimeSpan.FromSeconds(10), () => listener.Payloads.Any(p => p.StartsWith(prefix, StringComparison.Ordinal)));
-        Assert.Equal([prefix + queue], listener.Payloads.Where(p => p.StartsWith(prefix, StringComparison.Ordinal)));
+        await listener.PumpAsync(TimeSpan.FromSeconds(10), () => listener.Payloads.Count(p => p.StartsWith(prefix, StringComparison.Ordinal)) >= 2);
+        Assert.Equal([prefix + queue, prefix + queue], listener.Payloads.Where(p => p.StartsWith(prefix, StringComparison.Ordinal)));
 
         // Replaying the immediate creation keeps its original receipt. The next listener pump must still see one wake.
         Assert.Equal(now.JobId, (await c.Prepared.DispatchAsync(prepared)).JobId);
@@ -106,22 +108,88 @@ public sealed class WakeNotificationTests
             var tx = await conn.BeginTransactionAsync();
             await Staging(c).StageAsync(c.Prepared.Prepare(new PingJob("staged")), tx);
             await listener.PumpAsync(TimeSpan.FromSeconds(1));
-            Assert.Single(listener.Payloads, p => p.StartsWith(prefix, StringComparison.Ordinal));
+            Assert.Equal(2, listener.Payloads.Count(p => p.StartsWith(prefix, StringComparison.Ordinal)));
             await tx.CommitAsync();
             await tx.DisposeAsync();
         }
 
-        await listener.PumpAsync(TimeSpan.FromSeconds(10), () => listener.Payloads.Count(p => p.StartsWith(prefix, StringComparison.Ordinal)) >= 2);
-        Assert.Equal(2, listener.Payloads.Count(p => p == prefix + queue));
+        await listener.PumpAsync(TimeSpan.FromSeconds(10), () => listener.Payloads.Count(p => p.StartsWith(prefix, StringComparison.Ordinal)) >= 3);
+        Assert.Equal(3, listener.Payloads.Count(p => p == prefix + queue));
 
         await c.Dispatcher.DispatchManyAsync([
             new BatchDispatchItem(new PingJob("first-due")),
             new BatchDispatchItem(new PingJob("second-due")),
             new BatchDispatchItem(new PingJob("future"), delayed),
         ]);
-        await listener.PumpAsync(TimeSpan.FromSeconds(10), () => listener.Payloads.Count(p => p == prefix + queue) >= 3);
+        await listener.PumpAsync(TimeSpan.FromSeconds(10), () => listener.Payloads.Count(p => p == prefix + queue) >= 4);
         await listener.PumpAsync(TimeSpan.FromMilliseconds(500));
-        Assert.Equal(3, listener.Payloads.Count(p => p == prefix + queue));
+        Assert.Equal(4, listener.Payloads.Count(p => p == prefix + queue));
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    [Trait("Case", "WAKE-01")]
+    public async Task A_dispatch_notifies_when_it_is_due_now_or_the_earliest_delayed_job_of_its_lane()
+    {
+        await using var f = await DriverFixture.StartAsync(Ns("wake_delayed"));
+        var c = await f.OpenClient(configure: r => TestJobs.Register(r));
+        await using var listener = await Listener.StartAsync(f);
+        var payload = f.Application + "/default";
+
+        // The first delayed job of an empty lane wakes (an idle worker's last probe could not name it), a later one does not, an
+        // earlier one does again, and a due-now one always does. A batch wakes once for its earliest item, and not at all when
+        // every item is queued behind an earlier delayed job.
+        var now = DateTimeOffset.UtcNow;
+        (string[] Keys, double?[] Minutes, int Wakes)[] steps =
+        [
+            (["first"], [5], 1), (["later"], [10], 1), (["earlier"], [2], 2), (["now"], [null], 3),
+            (["behind", "earliest"], [20, 1], 4), (["behind-1", "behind-2"], [30, 40], 4),
+        ];
+        foreach (var (keys, minutes, wakes) in steps)
+        {
+            BatchDispatchItem[] items = [.. keys.Zip(minutes, (k, m) => new BatchDispatchItem(new PingJob(k),
+                m is { } at ? new DispatchOptions { NotBefore = now.AddMinutes(at) } : null))];
+            if (items.Length == 1)
+            {
+                await c.Dispatcher.DispatchAsync(new PingJob(keys[0]), items[0].Options);
+            }
+            else
+            {
+                await c.Dispatcher.DispatchManyAsync(items);
+            }
+
+            await listener.PumpAsync(TimeSpan.FromSeconds(10), () => listener.Payloads.Count(p => p == payload) >= wakes);
+            await listener.PumpAsync(TimeSpan.FromMilliseconds(500)); // room for a wrongly sent extra notification
+            Assert.Equal(wakes, listener.Payloads.Count(p => p == payload));
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    [Trait("Case", "WAKE-01")]
+    public async Task A_delayed_wake_held_up_by_a_busy_background_lane_is_sent_once_the_lane_frees()
+    {
+        // The jobs queued behind the first delayed job never repeat its hint, so a send skipped for a busy lane must be kept.
+        await using var f = await DriverFixture.StartAsync(Ns("wake_busy"));
+        var c = await f.OpenClient(configure: r => TestJobs.Register(r));
+        await using var listener = await Listener.StartAsync(f);
+        var payload = f.Application + "/default";
+        var lane = c.Store.Sources.Gate(Runwick.Postgres.Store.PgLane.Background);
+        await lane.WaitAsync();
+        await lane.WaitAsync();
+        try
+        {
+            await c.Dispatcher.DispatchAsync(new PingJob("first"), new DispatchOptions { NotBefore = DateTimeOffset.UtcNow.AddMinutes(5) });
+            await listener.PumpAsync(TimeSpan.FromMilliseconds(500));
+            Assert.DoesNotContain(payload, listener.Payloads);
+        }
+        finally
+        {
+            lane.Release(2);
+        }
+
+        await listener.PumpAsync(TimeSpan.FromSeconds(10), () => listener.Payloads.Contains(payload));
+        Assert.Single(listener.Payloads, p => p == payload);
     }
 
     [Fact]

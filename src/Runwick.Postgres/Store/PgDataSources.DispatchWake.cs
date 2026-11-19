@@ -12,6 +12,9 @@ internal sealed partial class PgDataSources
 
     readonly object _dispatchWakeGate = new();
     readonly HashSet<string> _pendingDispatchWakes = new(StringComparer.Ordinal);
+
+    // Delayed creations since the last send: per lane (application, queue, priority), the one due first.
+    readonly Dictionary<(string Application, string Queue, string Priority), (long DueMs, Guid JobId)> _pendingDelayedWakes = new();
     Task? _dispatchWakePump;
     bool _dispatchWakesStopped;
 
@@ -28,12 +31,42 @@ internal sealed partial class PgDataSources
             }
 
             _pendingDispatchWakes.Add(application + "/" + queue);
-            if (_dispatchWakePump is null)
+            StartPump();
+        }
+    }
+
+    /// <summary>
+    /// A committed delayed creation. Its queue is woken only if, when the pump sends, the job is still pending and is due or is
+    /// the earliest not-yet-due job of its lane, which an idle worker's last probe could not name. Jobs queued behind an earlier
+    /// delayed job send nothing, so a steady delayed stream costs one indexed check per lane and send, and almost no notifications.
+    /// </summary>
+    internal void WakeDelayed(string application, string queue, string priority, long dueMs, Guid jobId)
+    {
+        lock (_dispatchWakeGate)
+        {
+            var lane = (application, queue, priority);
+            var held = _pendingDelayedWakes.TryGetValue(lane, out var h);
+            if (_dispatchWakesStopped || (!held && _pendingDelayedWakes.Count >= PayloadBounds.MaxBatchItems))
             {
-                // One pump can deliver hints from several independent dispatches.
-                using var flow = ExecutionContext.SuppressFlow();
-                _dispatchWakePump = Task.Run(FlushDispatchWakesAsync);
+                return;
             }
+
+            if (!held || dueMs < h.DueMs)
+            {
+                _pendingDelayedWakes[lane] = (dueMs, jobId);
+            }
+
+            StartPump();
+        }
+    }
+
+    void StartPump()
+    {
+        if (_dispatchWakePump is null)
+        {
+            // One pump can deliver hints from several independent dispatches.
+            using var flow = ExecutionContext.SuppressFlow();
+            _dispatchWakePump = Task.Run(FlushDispatchWakesAsync);
         }
     }
 
@@ -42,20 +75,39 @@ internal sealed partial class PgDataSources
         while (true)
         {
             string[] payloads;
+            KeyValuePair<(string Application, string Queue, string Priority), (long DueMs, Guid JobId)>[] delayed;
             lock (_dispatchWakeGate)
             {
-                if (_dispatchWakesStopped || _pendingDispatchWakes.Count == 0)
+                if (_dispatchWakesStopped || (_pendingDispatchWakes.Count == 0 && _pendingDelayedWakes.Count == 0))
                 {
                     _dispatchWakePump = null;
                     return;
                 }
 
                 payloads = [.. _pendingDispatchWakes];
+                delayed = [.. _pendingDelayedWakes];
                 _pendingDispatchWakes.Clear();
+                _pendingDelayedWakes.Clear();
             }
 
             var slot = Gate(PgLane.Background);
-            if (slot.Wait(0))
+            if (!slot.Wait(0))
+            {
+                // Busy lane: keep the hints for the next send rather than drop them. A dropped delayed candidate is not
+                // repeated by the jobs queued behind it, so its idle worker would sleep its whole back-off.
+                lock (_dispatchWakeGate)
+                {
+                    _pendingDispatchWakes.UnionWith(payloads);
+                    foreach (var (lane, held) in delayed)
+                    {
+                        if (!_pendingDelayedWakes.TryGetValue(lane, out var newer) || held.DueMs <= newer.DueMs)
+                        {
+                            _pendingDelayedWakes[lane] = held;
+                        }
+                    }
+                }
+            }
+            else
             {
                 try
                 {
@@ -66,7 +118,8 @@ internal sealed partial class PgDataSources
                     }
                     else
                     {
-                        await SendDispatchWakesAsync(payloads, budget.Token).ConfigureAwait(false);
+                        await SendDispatchWakesAsync(payloads, [.. delayed.Select(d => (d.Key.Application, d.Value.JobId))], budget.Token)
+                            .ConfigureAwait(false);
                     }
                 }
                 catch (Exception ex) when (ex is NpgsqlException or TimeoutException or IOException or OperationCanceledException or InvalidOperationException)
@@ -84,11 +137,30 @@ internal sealed partial class PgDataSources
         }
     }
 
-    async Task SendDispatchWakesAsync(string[] payloads, CancellationToken ct)
+    async Task SendDispatchWakesAsync(string[] payloads, (string Application, Guid JobId)[] delayed, CancellationToken ct)
     {
-        using var cmd = For(PgLane.Background).CreateCommand(
-            $"SELECT pg_catalog.pg_notify('{WakeChannels.Work}', q.payload) FROM pg_catalog.unnest($1) AS q(payload)");
+        // A delayed candidate wakes its queue while it is pending and nothing not yet due precedes it in claim order
+        // (eligible_at, job_id): one primary-key and one jobs_ready lookup each. PostgreSQL folds identical payloads.
+        using var cmd = For(PgLane.Background).CreateCommand($"""
+            SELECT pg_catalog.pg_notify('{WakeChannels.Work}', w.payload)
+            FROM (
+                SELECT q.payload FROM pg_catalog.unnest($1::text[]) AS q(payload)
+                UNION ALL
+                SELECT x.application || '/' || x.queue
+                FROM unnest($2::text[], $3::uuid[]) AS c(application, job_id) -- multi-argument unnest is FROM syntax, not a pg_catalog function
+                JOIN runwick.jobs AS x
+                  ON x.application = c.application AND x.job_id = c.job_id AND x.state IN ('pending', 'retrying')
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM runwick.jobs AS j
+                    WHERE j.application = x.application AND j.queue = x.queue AND j.priority = x.priority
+                      AND j.state IN ('pending', 'retrying')
+                      AND j.eligible_at > pg_catalog.now() -- stable, so an index bound that skips a due backlog
+                      AND (j.eligible_at, j.job_id) < (x.eligible_at, x.job_id))
+            ) AS w
+            """);
         cmd.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = payloads });
+        cmd.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = delayed.Select(d => d.Application).ToArray() });
+        cmd.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = delayed.Select(d => d.JobId).ToArray() });
         await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
@@ -99,6 +171,7 @@ internal sealed partial class PgDataSources
         {
             _dispatchWakesStopped = true;
             _pendingDispatchWakes.Clear();
+            _pendingDelayedWakes.Clear();
             pump = _dispatchWakePump;
         }
 

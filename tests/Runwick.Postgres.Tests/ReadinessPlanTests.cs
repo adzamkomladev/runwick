@@ -64,6 +64,10 @@ public sealed class ReadinessPlanTests
 
     static string ProbeSql => Statement("PgStore.Readiness.cs", "public Task<ReadySnapshot> ProbeAsync(", 0);
 
+    /// <summary>The post-commit wake send (2026-11-19, delayed pickup), with its earliest-delayed-job check; positional parameters.</summary>
+    static string WakeSql => Statement("PgDataSources.DispatchWake.cs", "async Task SendDispatchWakesAsync(", 0)
+        .Replace("{WakeChannels.Work}", WakeChannels.Work, StringComparison.Ordinal);
+
     /// <summary>
     /// Reserve's candidate claim, step C of <c>runwick.reserve_v2</c> (04 Changes 2026-11-02, PF-05 and PF-06 batched claim),
     /// as a plain statement: the INTO list is dropped and each function argument <c>p_x</c> becomes the parameter <c>@x</c>.
@@ -227,8 +231,19 @@ public sealed class ReadinessPlanTests
 
     sealed record Plan(string Text, JsonObject Root, long Buffers, double Ms, IReadOnlyList<(string Node, string? Index)> JobsAccess);
 
+    /// <summary>The delayed job whose wake check the <c>wake</c> plan measures.</summary>
+    static Guid _delayedJob;
+
     static NpgsqlCommand Bind(NpgsqlCommand cmd, DriverFixture f, IReadOnlyList<JobContract> contracts, string statement)
     {
+        if (statement == "wake")
+        {
+            cmd.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = Array.Empty<string>() });
+            cmd.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = new[] { f.Application } });
+            cmd.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = new[] { _delayedJob } });
+            return cmd;
+        }
+
         cmd.Parameters.AddWithValue("application", f.Application);
         if (statement == "probe")
         {
@@ -342,7 +357,15 @@ public sealed class ReadinessPlanTests
         });
         var contracts = c.Contracts;
         var template = (await c.Dispatcher.DispatchAsync(new WorkJob("template"))).JobId.Value;
-        var statements = new[] { ("probe", ProbeSql), ("reserve", ReserveCandidateSql), ("claim", ClaimCandidateSql), ("diagnostic", DiagnosticSql) };
+
+        // One delayed job behind the due backlog of its lane: the probe's NextDueAt and the wake check must reach it through
+        // the ready index without reading the due rows before it.
+        var delayedAt = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeMilliseconds());
+        _delayedJob = (await c.Dispatcher.DispatchAsync(new WorkJob("delayed"), new DispatchOptions { Queue = "q1", NotBefore = delayedAt })).JobId.Value;
+        var statements = new[]
+        {
+            ("probe", ProbeSql), ("reserve", ReserveCandidateSql), ("claim", ClaimCandidateSql), ("diagnostic", DiagnosticSql), ("wake", WakeSql),
+        };
         Assert.All(statements, s => Assert.Contains("runwick.jobs", s.Item2, StringComparison.Ordinal));
         Assert.Contains("FOR NO KEY UPDATE OF j SKIP LOCKED", ReserveCandidateSql, StringComparison.Ordinal);
         Assert.Contains("FOR NO KEY UPDATE OF j SKIP LOCKED", ClaimCandidateSql, StringComparison.Ordinal);
@@ -359,7 +382,7 @@ public sealed class ReadinessPlanTests
 
             await LongExecAsync(f, replica: false, "VACUUM (ANALYZE) runwick.jobs, runwick.job_generations, runwick.job_payloads");
             loaded = size;
-            Assert.Equal(size + 1, await f.CountAsync("SELECT count(*) FROM runwick.jobs"));
+            Assert.Equal(size + 2, await f.CountAsync("SELECT count(*) FROM runwick.jobs"));
             foreach (var (name, sql) in statements)
             {
                 var plan = await ExplainAsync(f, contracts, name, sql);
@@ -371,7 +394,7 @@ public sealed class ReadinessPlanTests
                 Assert.All(plan.JobsAccess, a =>
                 {
                     Assert.Contains(a.Node, new[] { "Index Scan", "Index Only Scan" });
-                    Assert.Equal("jobs_ready", a.Index);
+                    Assert.Contains(a.Index, name == "wake" ? ["jobs_ready", "jobs_pk", "jobs_profile_uq"] : new[] { "jobs_ready" });
                 });
             }
 
@@ -385,6 +408,7 @@ public sealed class ReadinessPlanTests
             var snapshot = await c.Store.ProbeAsync(f.Application, [.. Queues.SelectMany(q => Priorities.Select(p => new LaneKey(q, p)))],
                 contracts, CancellationToken.None);
             Assert.Equal(12, snapshot.Lanes.Count);
+            Assert.Equal(delayedAt, snapshot.NextDueAt);
             Assert.Equal(StoreStatus.Applied, (await c.ReserveAsync("q1", "medium")).Status);
         }
 
@@ -398,6 +422,7 @@ public sealed class ReadinessPlanTests
         }
 
         Assert.InRange(results[("probe", 1_000_000)].Buffers, 1, 400);
+        Assert.InRange(results[("wake", 1_000_000)].Buffers, 1, 40);
         Assert.InRange(results[("reserve", 1_000_000)].Buffers, 1, 40);
         Assert.InRange(results[("claim", 1_000_000)].Buffers, 1, 40 + (8 * IReserveAndBeginStore.MaxJobs));
         Assert.InRange(results[("diagnostic", 1_000_000)].Buffers, 1, (12 * 256) + 512);
