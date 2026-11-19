@@ -65,41 +65,42 @@ public sealed class RedisCompactReceiptTests
 
     [Fact]
     [Trait("Case", "RC-01")]
-    public async Task The_compact_form_expands_to_exactly_the_encoded_text_and_refuses_what_it_cannot_write()
+    public async Task The_compact_form_rebuilds_exactly_the_replied_text_and_keeps_the_plain_text_when_it_cannot()
     {
-        // The codec in Lua: every case is encoded with U.enc and with U.cenc, and the compact text must expand to the same bytes.
+        // The codec in Lua: a compact receipt rebuilt by the result builders must be the text those builders give when the decision
+        // is made, for any texts (quotes, backslashes, control bytes, non-ASCII, JSON, absent values).
         const string Body = """
             local fails = {}
-            local function check(name, v)
-              local c = U.cenc(v)
-              if not c then fails[#fails + 1] = name .. ': no compact form' return end
-              if string.sub(c, 1, 12) ~= '{"#c":1,"v":' then fails[#fails + 1] = name .. ': prefix' end
-              local full, back = U.enc(v), U.cdec(c)
+            local function same(name, compact, full)
+              if not compact then fails[#fails + 1] = name .. ': no compact form' return end
+              if string.sub(compact, 1, 7) ~= '{"~":1,' then fails[#fails + 1] = name .. ': prefix' end
+              if #compact >= #full then fails[#fails + 1] = name .. ': not shorter' end
+              local back = U.cdec(compact)
               if back ~= full then fails[#fails + 1] = name .. ': ' .. tostring(back) .. ' ~= ' .. full end
             end
-            local id = string.rep('ab', 16)
-            local lease = { jobId = id, attemptId = id, generation = U.raw('1'), leaseExpiresAt = 1795103260713, ownershipToken = 'tok',
-              revision = U.raw('9007199254740991'), state = 'running', workerInstanceId = 'w', authorizedAt = 1795103260713,
-              executionNumber = U.raw('007'), totalExecutionNumber = U.raw('-1') }
-            check('fixed shapes and refs', { items = U.arr({ { ordinal = 0, jobId = id, status = 'Applied', code = U.NULL, begin = lease,
-              reserve = { fences = U.arr({ { scopeId = id, value = U.raw('12') } }), policy = { executionTimeout = U.NULL, fingerprintVersion = 1,
-                maxConsecutiveUnstartedAbandonments = U.raw('3'), maxExecutions = U.raw('3'), retry = U.raw('{"initialDelay":100}'),
-                unstartedRetry = U.raw('{"initialDelay":100}') }, cursor = { eligibleAt = U.raw('1795103260713'), jobId = id } } },
-              { ordinal = 1, jobId = id, status = 'CapacityBlocked', code = 'capacity_blocked', blockedScopeId = id,
-                cursor = { eligibleAt = 1795103260713, jobId = id } } }) })
-            check('shapes outside the list, used twice', U.arr({ { zeta = 1, alpha = 'x' }, { alpha = 'y', zeta = 2 }, {}, {} }))
-            check('awkward text', { a = 'quote " backslash \\ tab \t nul \0 del \127 e9 \195\169 ' .. string.rep('x', 300), b = '', c = '-1',
-              d = U.raw('"text"'), e = U.raw(''), f = U.raw('{"#c":1}'), g = true, h = false, i = cjson.null, ['#c'] = 2,
-              ['k,l'] = 1, k = 1, l = 1 })
-            check('nested arrays and holes', U.arr({ U.arr(), U.arr({ 1, 2, U.arr({ 'x', 'x' }) }), setmetatable({ n = 3, [1] = 'a', [3] = 'c' },
-              getmetatable(U.arr())) }))
-            check('numbers', U.arr({ 0, 999999999, 1000000000, 1000000000, 9007199254740991, U.raw('1000000000'), U.raw('123456789012345'),
-              U.raw('1234567890123456') }))
-            check('a finish result', { attemptId = id, attemptOutcome = 'succeeded', disposition = 'succeeded', eligibleAt = U.NULL,
-              generation = U.raw('1'), jobId = id, retryDelay = U.NULL, revision = U.raw('4'), state = 'succeeded', terminalReason = 'succeeded' })
-            if U.cenc({ a = -1 }) ~= nil then fails[#fails + 1] = 'a negative number has no compact form' end
-            if U.cenc({ a = 1.5 }) ~= nil then fails[#fails + 1] = 'a fraction has no compact form' end
-            if U.cdec('{"#c":2,"v":[1]}') ~= nil then fails[#fails + 1] = 'an unknown codec is not expanded' end
+            local id, id2 = string.rep('ab', 16), string.rep('0f', 16)
+            local function rv(job, odd)
+              return { job = job, gen = '1', rrev = '9007199254740991', att = id2, worker = 'w', token = id2, lease = '1795103260713', rnum = '1',
+                name = odd and 'quote " backslash \\ tab \t nul \0 del \127 e9 \195\169' or 'test', pver = '1', profile = 'json', profver = '1',
+                queue = odd and '~q,"x":1' or 'default', priority = 'medium', elig = '1795103250000', timeout = odd and '30000' or nil,
+                maxun = '3', max = '3', retry = '{"initialDelay":100,"maximumDelay":1000}', uretry = odd and '{"a":"\\""}' or '{}' }
+            end
+            local b = { brev = '3', xnum = '1', txnum = '12', auth = '1795103260700' }
+            local v1, v2, v3, v4 = rv(id, false), rv(id2, true), rv(id2, true), rv(id, false)
+            v3.timeout = nil -- absent after present: not taken from the item before
+            local b2 = { brev = '4', xnum = '1', txnum = '13', auth = '1795103260700' }
+            same('a claim', U.cenc({ packed = { { 0, v1, b }, { 1, v2, b }, { 2, v3, b2 }, { 3, v4, b2 } } }),
+              U.enc({ items = U.arr({ U.claim_item(0, v1, b), U.claim_item(1, v2, b), U.claim_item(2, v3, b2), U.claim_item(3, v4, b2) }) }))
+            local f1 = { att = id, outcome = 'succeeded', state = 'succeeded', gen = '1', job = id2, rev = '4', reason = 'succeeded' }
+            same('a finish', U.cenc({ fv = f1 }), U.enc(U.finish_result(f1)))
+            local f2 = { att = id, outcome = 'retryable_failure', state = 'retrying', elig = '1795103260713', gen = '2', job = id2, delay = '75', rev = '5' }
+            same('a retried finish', U.cenc({ fv = f2 }), U.enc(U.finish_result(f2)))
+            local extra = rv(id, false)
+            extra.surprise = 'x'
+            if U.cenc({ packed = { { 0, extra, b } } }) ~= nil then fails[#fails + 1] = 'a value outside the key list keeps the plain text' end
+            if U.cenc({ fv = { att = id, rev = 4 } }) ~= nil then fails[#fails + 1] = 'a value that is not text keeps the plain text' end
+            if U.cenc({ result = { items = {} } }) ~= nil then fails[#fails + 1] = 'a decision without lists keeps the plain text' end
+            if U.cdec('{"~":2,"f":[]}') ~= nil then fails[#fails + 1] = 'an unknown codec is not rebuilt' end
             if U.cdec('{"items":[]}') ~= '{"items":[]}' then fails[#fails + 1] = 'plain text is returned as stored' end
             return fails
             """;
@@ -120,7 +121,7 @@ public sealed class RedisCompactReceiptTests
         var claimId = Guid.CreateVersion7();
         var notAfter = DateTimeOffset.UtcNow.AddSeconds(30);
         var first = await c.ReserveAndBeginAsync(3, commandId: claimId, notAfter: notAfter);
-        Assert.StartsWith("{\"#c\":1,", (string?)await ResultAsync(db, f, claimId), StringComparison.Ordinal);
+        Assert.StartsWith("{\"~\":1,", (string?)await ResultAsync(db, f, claimId), StringComparison.Ordinal);
         var again = await c.ReserveAndBeginAsync(3, commandId: claimId, notAfter: notAfter);
         Assert.Equal((StoreStatus.Applied, true, first.DecidedAt), (again.Status, again.Replayed, again.DecidedAt));
         Assert.Equivalent(first.Value, again.Value, strict: true);
@@ -138,7 +139,7 @@ public sealed class RedisCompactReceiptTests
         // Finish and FinishMany items: compact receipts, replays equal to the first answers, and resolution expands them.
         var single = c.FinishCommand(leases[0], AttemptOutcome.RetryableFailure, error: new AttemptError("boom", "System.Exception", "bo\"om é", null));
         var finished = await c.FinishAsync(single);
-        Assert.StartsWith("{\"#c\":1,", (string?)await ResultAsync(db, f, single.CommandId), StringComparison.Ordinal);
+        Assert.StartsWith("{\"~\":1,", (string?)await ResultAsync(db, f, single.CommandId), StringComparison.Ordinal);
         var finishedAgain = await c.FinishAsync(single);
         Assert.True(finishedAgain.Replayed);
         Assert.Equivalent(finished.Value, finishedAgain.Value, strict: true);
@@ -215,8 +216,8 @@ public sealed class RedisCompactReceiptTests
         var finish = c.FinishCommand(lease, AttemptOutcome.Succeeded);
         Assert.Equal(StoreStatus.Applied, (await c.FinishAsync(finish)).Status);
         var prefix = RxClient.KeyPrefix(f.Application) + "rcpt:";
-        await db.HashSetAsync(prefix + RxClient.Hex(claimId), "result", "{\"#c\":2,\"v\":[1]}");
-        await db.HashSetAsync(prefix + RxClient.Hex(finish.CommandId), "result", "{\"#c\":2,\"v\":[10]}");
+        await db.HashSetAsync(prefix + RxClient.Hex(claimId), "result", "{\"~\":2,\"items\":[]}");
+        await db.HashSetAsync(prefix + RxClient.Hex(finish.CommandId), "result", "{\"~\":2,\"jobId\":1}");
 
         var claim = await c.ReserveAndBeginAsync(1, commandId: claimId, notAfter: notAfter);
         Assert.Equal((StoreStatus.UnsupportedVersion, "receipt_codec_unsupported"), (claim.Status, claim.Error?.Code));

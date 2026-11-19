@@ -16,7 +16,6 @@ function M.decide()
   local c = U.reserve_and_begin(1)
   if c.effect == 'A' then
     c.rcpt_text = U.enc(c.result)
-    c.rcpt_store = U.cenc(c.result)
     c.result.finished = finished
     -- The reply is the receipt's object plus "finished", which orders before "items" (its only key): splice it in rather than
     -- encode the claim a second time (that second encode was most of this call's extra cost over FinishMany plus a claim).

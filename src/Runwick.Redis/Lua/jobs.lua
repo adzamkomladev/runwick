@@ -123,15 +123,111 @@ function U.queue_gate(queue)
   return nil
 end
 
-function U.policy_json(j)
+-- ------------------------------------------------------------------ claim and finish results, and their compact receipts
+
+-- The results of a reserve, a begin and a finish are built from short lists of texts (v) by these functions. A claim or finish
+-- receipt (22 §3.2, codec 1) stores only the lists, {"~":1,"c":[[ordinal,[reserve texts],[begin texts]],...]} or {"~":1,"f":[...]}
+-- (in a claim, 0 stands for the previous item's text in the same place),
+-- and a replay rebuilds the result with the same functions, so it is the replied text byte for byte. A claim whose items are not all
+-- plain Applied ones (blocked, deferred, closed, fenced) keeps its text as replied. The key lists are part of codec 1.
+U.RKEYS = { 'job', 'gen', 'rrev', 'att', 'worker', 'token', 'lease', 'rnum', 'name', 'pver', 'profile', 'profver', 'queue', 'priority',
+  'elig', 'timeout', 'maxun', 'max', 'retry', 'uretry' }
+U.BKEYS = { 'brev', 'xnum', 'txnum', 'auth' }
+U.FKEYS = { 'att', 'outcome', 'state', 'elig', 'gen', 'job', 'delay', 'rev', 'reason' }
+U.COMPACT = true
+
+function U.reserve_result(v, fences)
   return {
-    executionTimeout = U.gen(j, 'timeout') and U.raw(U.gen(j, 'timeout')) or NULL,
-    fingerprintVersion = 1,
-    maxConsecutiveUnstartedAbandonments = U.raw(U.gen(j, 'maxun')),
-    maxExecutions = U.raw(U.gen(j, 'max')),
-    retry = U.raw(U.gen(j, 'retry')),
-    unstartedRetry = U.raw(U.gen(j, 'uretry')),
+    jobId = v.job, generation = U.raw(v.gen), revision = U.raw(v.rrev), state = 'reserved', attemptId = v.att,
+    workerInstanceId = v.worker, ownershipToken = v.token, leaseExpiresAt = U.raw(v.lease), reservationNumber = U.raw(v.rnum),
+    contract = { name = v.name, payloadVersion = U.raw(v.pver), serializerProfileId = v.profile, serializerProfileVersion = U.raw(v.profver) },
+    queue = v.queue, priority = v.priority,
+    cursor = { eligibleAt = U.raw(v.elig), jobId = v.job },
+    policy = { executionTimeout = v.timeout and U.raw(v.timeout) or NULL, fingerprintVersion = 1,
+      maxConsecutiveUnstartedAbandonments = U.raw(v.maxun), maxExecutions = U.raw(v.max), retry = U.raw(v.retry),
+      unstartedRetry = U.raw(v.uretry) },
+    fences = fences or U.arr(),
   }
+end
+
+function U.begin_result(v, b)
+  return { jobId = v.job, generation = U.raw(v.gen), revision = U.raw(b.brev), state = 'running', attemptId = v.att,
+    workerInstanceId = v.worker, ownershipToken = v.token, leaseExpiresAt = U.raw(v.lease),
+    executionNumber = U.raw(b.xnum), totalExecutionNumber = U.raw(b.txnum), authorizedAt = U.raw(b.auth) }
+end
+
+function U.claim_item(ordinal, v, b, reserve, begin)
+  return { ordinal = ordinal, jobId = v.job, status = 'Applied', code = NULL, reserve = reserve or U.reserve_result(v),
+    begin = begin or U.begin_result(v, b) }
+end
+
+function U.finish_result(v)
+  return { jobId = v.job, generation = U.raw(v.gen), revision = U.raw(v.rev), state = v.state, attemptId = v.att,
+    attemptOutcome = v.outcome, disposition = v.state, terminalReason = v.reason or NULL, eligibleAt = v.elig and U.raw(v.elig) or NULL,
+    retryDelay = v.delay and U.raw(v.delay) or NULL }
+end
+
+-- A list as a JSON array of texts and nulls, with 0 for a text equal to the previous item's (prev); nil when v holds a key outside
+-- the list or a value that is not text (codec 1 cannot keep it, so the receipt keeps the replied text).
+local function texts(v, keys, set, prev)
+  for k, x in pairs(v) do
+    if not set[k] or type(x) ~= 'string' then return nil end
+  end
+  local out = {}
+  for i = 1, #keys do
+    local x = v[keys[i]]
+    out[i] = (x == nil and 'null') or (prev and prev[keys[i]] == x and '0') or U.str(x)
+  end
+  return '[' .. table.concat(out, ',') .. ']'
+end
+local function set_of(keys)
+  local t = {}
+  for _, k in ipairs(keys) do t[k] = true end
+  return t
+end
+local RSET, BSET, FSET = set_of(U.RKEYS), set_of(U.BKEYS), set_of(U.FKEYS)
+
+-- The compact receipt result of a decision (r.packed: a claim's items; r.fv: a finish), or nil to store the replied text.
+function U.cenc(r)
+  if not U.COMPACT then return nil end
+  if r.fv then
+    local f = texts(r.fv, U.FKEYS, FSET)
+    return f and '{"~":1,"f":' .. f .. '}'
+  end
+  if not r.packed then return nil end
+  local out = {}
+  for i, p in ipairs(r.packed) do
+    local q = r.packed[i - 1]
+    local a, b = texts(p[2], U.RKEYS, RSET, q and q[2]), texts(p[3], U.BKEYS, BSET, q and q[3])
+    if not (a and b) then return nil end
+    out[i] = '[' .. p[1] .. ',' .. a .. ',' .. b .. ']'
+  end
+  return '{"~":1,"c":[' .. table.concat(out, ',') .. ']}'
+end
+
+local function unlist(a, keys, prev)
+  local v = {}
+  for i = 1, #keys do
+    local x = a[i]
+    if x == 0 then x = prev[keys[i]] end
+    if x ~= cjson.null then v[keys[i]] = x end
+  end
+  return v
+end
+
+-- A stored receipt result as replied: plain text as it is, a compact one rebuilt; nil for a codec this binary does not know.
+function U.cdec(text)
+  if string.sub(text, 1, 5) ~= '{"~":' then return text end
+  local d = cjson.decode(text)
+  if d['~'] ~= 1 then return nil end
+  if d.f then return U.enc(U.finish_result(unlist(d.f, U.FKEYS))) end
+  if not d.c then return nil end
+  local items, v, b = U.arr(), nil, nil
+  for i, e in ipairs(d.c) do
+    v, b = unlist(e[2], U.RKEYS, v), unlist(e[3], U.BKEYS, b)
+    items[i] = U.claim_item(e[1], v, b)
+  end
+  return U.enc({ items = items })
 end
 
 -- Returns the Applied reply (result table) or a no-effect reply (CapacityBlocked carries the cursor).
@@ -181,15 +277,11 @@ function U.reserve_job(id, leaseMs, worker, token, entropy)
     U.zadd('permits:' .. s.id, expiry, id)
   end
   U.event('attempt_reserved', id, attempt, { generation = tonumber(j.gen), reservationNumber = U.raw(number) })
-  return U.applied({
-    jobId = id, generation = U.raw(j.gen), revision = U.raw(j.rev), state = 'reserved', attemptId = attempt,
-    workerInstanceId = worker, ownershipToken = token, leaseExpiresAt = expiry, reservationNumber = U.raw(number),
-    contract = { name = j.name, payloadVersion = U.raw(j.pver), serializerProfileId = j.profile, serializerProfileVersion = U.raw(j.profver) },
-    queue = j.queue, priority = j.priority,
-    cursor = { eligibleAt = U.raw(j.eligible), jobId = id },
-    policy = U.policy_json(j),
-    fences = fences,
-  }, nil, nil, { j = j }) -- the job as this command left it, for a Begin that follows in the same command
+  local v = { job = id, gen = j.gen, rrev = j.rev, att = attempt, worker = worker, token = token, lease = U.S(expiry), rnum = number,
+    name = j.name, pver = j.pver, profile = j.profile, profver = j.profver, queue = j.queue, priority = j.priority, elig = j.eligible,
+    timeout = U.gen(j, 'timeout'), maxun = U.gen(j, 'maxun'), max = U.gen(j, 'max'), retry = U.gen(j, 'retry'), uretry = U.gen(j, 'uretry') }
+  -- j: the job as this command left it, for a Begin that follows in the same command; v: the values a compact receipt keeps.
+  return U.applied(U.reserve_result(v, fences), nil, nil, { j = j, v = v, fenced = #fences > 0 })
 end
 
 -- ------------------------------------------------------------------ Begin (rw_begin_job_v1, 10 §4)
@@ -279,9 +371,9 @@ function U.begin_job(lease, jitter, job)
   U.attw(j, lease.attempt, 'auth', NOWS)
   U.set_state(j, 'running')
   U.event('attempt_started', j.id, lease.attempt, { generation = tonumber(j.gen), executionNumber = tonumber(number) })
-  return U.applied({ jobId = j.id, generation = U.raw(j.gen), revision = U.raw(j.rev), state = 'running', attemptId = lease.attempt,
-    workerInstanceId = lease.worker, ownershipToken = lease.token, leaseExpiresAt = U.raw(j.lease),
-    executionNumber = U.raw(number), totalExecutionNumber = U.raw(j.xcount), authorizedAt = NOW })
+  local v = { job = j.id, gen = j.gen, att = lease.attempt, worker = lease.worker, token = lease.token, lease = j.lease }
+  local b = { brev = j.rev, xnum = number, txnum = j.xcount, auth = NOWS }
+  return U.applied(U.begin_result(v, b), nil, nil, { v = v, bv = b })
 end
 
 function U.lease_of(t)
@@ -321,9 +413,9 @@ function U.finish_job(body, draw)
   local rev = U.close(j, lease.attempt, lease.token, body.outcome, state, reason, 'attempt_finished', body.elapsed, delay, eligible,
     U.nn(body.error))
   if U.nn(body.usage) then U.attw(j, lease.attempt, 'usage', body.usage) end
-  return U.applied({ jobId = j.id, generation = U.raw(j.gen), revision = U.raw(rev), state = state, attemptId = lease.attempt,
-    attemptOutcome = body.outcome, disposition = state, terminalReason = reason or NULL, eligibleAt = eligible or NULL,
-    retryDelay = delay or NULL })
+  local v = { att = lease.attempt, outcome = body.outcome, state = state, elig = eligible and U.S(eligible), gen = j.gen, job = j.id,
+    delay = delay and U.S(delay), rev = rev, reason = reason }
+  return U.applied(U.finish_result(v), nil, nil, { fv = v })
 end
 
 -- ------------------------------------------------------------------ scopes (04 §7.1, §7.2 step 8)
@@ -585,7 +677,7 @@ function U.finish_items(base)
         applied = applied + 1
         local key = 'rcpt:' .. it.cmd
         -- Encoded once: the receipt row and the reply item carry the same text.
-        local encoded, stored = U.enc(r.result), U.cenc(r.result)
+        local encoded, stored = U.enc(r.result), U.cenc(r)
         r.result = U.raw(encoded)
         U.hset_sorted(key, RECEIPT_FIELDS, { cls = 'durable', op = 'Finish', ver = '1', fp = it.fp, notafter = U.S(it.na),
           retain = U.S(it.na + U.DURABLE_FLOOR), status = 'Applied', decided = NOWS, result = stored or encoded }, true)
@@ -610,10 +702,12 @@ function U.reserve_and_begin(base)
   if #c == 0 then return U.noeffect('NoWork', 'no_work') end
   local tokens, entropy, jitters = cjson.decode(a(5)), cjson.decode(a(10)), cjson.decode(a(11))
   local items, begun, firstBlocked, last, reserved = U.arr(), {}, nil, nil, false
+  local packed, plain = {}, false
   for i, cand in ipairs(c) do
     local r = U.reserve_job(cand.id, tonumber(a(4)), a(1), tokens[i], entropy[i])
     if r.status == 'CapacityBlocked' then
       firstBlocked = firstBlocked or r.blocked
+      plain = true
       last = cand
       items[#items + 1] = { ordinal = i - 1, jobId = cand.id, status = 'CapacityBlocked', code = 'capacity_blocked', blockedScopeId = r.blocked,
         cursor = { eligibleAt = cand.at, jobId = cand.id } }
@@ -622,8 +716,17 @@ function U.reserve_and_begin(base)
       reserved = true
       local b = U.begin_job(U.lease_of(r.result), jitters[i], r.j)
       if b.effect ~= 'A' then U.abort(b.status, b.code) end
+      local v, bv = r.v, b.bv
+      if b.status == 'Applied' and not b.code and not r.fenced and bv and b.v.job == v.job and b.v.gen == v.gen and b.v.att == v.att
+        and b.v.worker == v.worker and b.v.token == v.token and b.v.lease == v.lease then
+        -- Built by the function a replay of the compact receipt uses.
+        items[#items + 1] = U.claim_item(i - 1, v, bv, r.result, b.result)
+        packed[#packed + 1] = { i - 1, v, bv }
+      else
+        plain = true
+        items[#items + 1] = { ordinal = i - 1, jobId = cand.id, status = b.status, code = b.code or NULL, reserve = r.result, begin = b.result }
+      end
       if b.status == 'Applied' then begun[#begun + 1] = cand.id end
-      items[#items + 1] = { ordinal = i - 1, jobId = cand.id, status = b.status, code = b.code or NULL, reserve = r.result, begin = b.result }
     end
   end
   if not reserved then
@@ -631,5 +734,6 @@ function U.reserve_and_begin(base)
   end
   local r = U.applied({ items = items })
   r.payloads = begun
+  if not plain then r.packed = packed end
   return r
 end
