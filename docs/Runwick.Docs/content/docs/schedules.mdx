@@ -60,6 +60,7 @@ runwick.AddScheduler(s =>
     s.IdlePollInterval = TimeSpan.FromSeconds(5);   // backs off to this when idle
     s.JobsPerSecond = 100;                          // per scheduler process
     s.Burst = 32;
+    s.EvaluationBudget = TimeSpan.FromSeconds(10); // time to work out a schedule's next run
 });
 ```
 

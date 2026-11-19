@@ -8,8 +8,11 @@ internal sealed record PlannerLimits(int HorizonYears, int HorizonDays, int MaxS
 {
     public const int PreviewCount = 10;
 
-    /// <summary>Materialization plans: 8 years + 2 days per lookup, 4,096 steps, 250 ms cooperative budget.</summary>
-    public static readonly PlannerLimits Plan = new(8, 2, 4_096, TimeSpan.FromMilliseconds(250));
+    /// <summary>Materialization plans: 8 years + 2 days per lookup, 4,096 steps, 10 s cooperative budget by default.</summary>
+    public static readonly PlannerLimits Plan = new(8, 2, 4_096, DefaultPlanBudget);
+
+    /// <summary>The default of <see cref="SchedulerOptions.EvaluationBudget"/>. 250 ms failed plans on cold or loaded hosts at startup.</summary>
+    public static TimeSpan DefaultPlanBudget => TimeSpan.FromSeconds(10);
 
     /// <summary>Registration, edit and preview: the same search bounds with a 1 s budget.</summary>
     public static readonly PlannerLimits Registration = new(8, 2, 4_096, TimeSpan.FromSeconds(1));

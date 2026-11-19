@@ -1832,6 +1832,7 @@ runwick.AddScheduler(s =>
     s.IdlePollInterval = TimeSpan.FromSeconds(5);   // backs off to this when idle
     s.JobsPerSecond = 100;                          // per scheduler process
     s.Burst = 32;
+    s.EvaluationBudget = TimeSpan.FromSeconds(10); // time to work out a schedule's next run
 });
 ```
 
@@ -4840,6 +4841,7 @@ Set with `runwick.AddScheduler(o => ...)`. The scheduler needs the `scheduler` c
 | `PollInterval` | 1 s while work is due |
 | `IdlePollInterval` | 5 s when idle (15 s on PostgreSQL while its listener is healthy) |
 | `JobsPerSecond` / `Burst` | 100 / 32 per scheduler process |
+| `EvaluationBudget` | 10 s per plan to work out a schedule's next run (250 ms – 5 min) |
 
 Per schedule: misfire policy `RunOnce` with 60 s grace (up to 24 h); catch-up at most 1,000 jobs per episode and 7 days back. See [Schedules](/docs/schedules).
 

@@ -263,7 +263,7 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
 
         // The cutoff is store time; the first cron occurrence is strictly after it (no backfill).
         var cutoff = await store.StoreNowAsync(ct).ConfigureAwait(false);
-        var next = await _slot.RunAsync(() => ScheduleRecurrence.For(definition, _artifact, _time)(cutoff), ct).ConfigureAwait(false);
+        var next = await _slot.RunAsync(() => ScheduleRecurrence.For(definition, _artifact, _time, _declarations.Options.EvaluationBudget)(cutoff), ct).ConfigureAwait(false);
         var firstDue = definition.Kind == ScheduleOperations.OneTime ? definition.DueAt : next?.At;
         var command = new StoreCommand<RegisterScheduleRequest>(Application, Guid.CreateVersion7(), _time.GetUtcNow() + ScheduleOperations.RegisterLifetime,
             new RegisterScheduleRequest(declaration.Key, definition, cutoff, firstDue));
@@ -623,7 +623,7 @@ internal sealed class SchedulerService : IRunwickComponent, IDisposable
         try
         {
             plan = await _slot.RunAsync(() =>
-                SchedulePlanner.Plan(schedule, cutoff, ScheduleRecurrence.For(schedule.Definition, _artifact, _time), Guid.CreateVersion7), ct)
+                SchedulePlanner.Plan(schedule, cutoff, ScheduleRecurrence.For(schedule.Definition, _artifact, _time, _declarations.Options.EvaluationBudget), Guid.CreateVersion7), ct)
                 .ConfigureAwait(false);
         }
         catch (ScheduleEvaluationException ex) when (ex.Class == EvaluationErrorClass.Deterministic)

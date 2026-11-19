@@ -13,7 +13,8 @@ internal readonly record struct DueOccurrence(DateTimeOffset At, bool Coalesced)
 /// </summary>
 internal static class ScheduleRecurrence
 {
-    public static Func<DateTimeOffset, DueOccurrence?> For(ScheduleDefinitionRecord definition, TzdbArtifact artifact, TimeProvider time)
+    public static Func<DateTimeOffset, DueOccurrence?> For(ScheduleDefinitionRecord definition, TzdbArtifact artifact, TimeProvider time,
+        TimeSpan? budget = null)
     {
         if (definition.Kind == ScheduleOperations.OneTime)
         {
@@ -25,10 +26,11 @@ internal static class ScheduleRecurrence
         ScheduleDefinition.RequireSupported(definition.EvaluatorProfile!, definition.TzdbVersion!, definition.TzdbSha256, artifact);
         var schedule = ScheduleDefinition.Compile(definition.CronText, definition.CronDialect!, definition.ZoneId, artifact,
             ParseGap(definition.GapPolicy), ParseFold(definition.FoldPolicy));
-        var budget = new EvaluationBudget(time, PlannerLimits.Plan);
+        var limits = budget is { } b ? PlannerLimits.Plan with { Budget = b } : PlannerLimits.Plan;
+        var spent = new EvaluationBudget(time, limits);
         return x =>
         {
-            var next = RecurrencePlanner.Next(schedule, Instant.FromUnixTimeMilliseconds(x.ToUnixTimeMilliseconds()), PlannerLimits.Plan, budget);
+            var next = RecurrencePlanner.Next(schedule, Instant.FromUnixTimeMilliseconds(x.ToUnixTimeMilliseconds()), limits, spent);
             return new DueOccurrence(DateTimeOffset.FromUnixTimeMilliseconds(next.UtcEpochMilliseconds), next.Coalesced);
         };
     }

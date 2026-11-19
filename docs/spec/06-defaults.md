@@ -4,6 +4,10 @@
 
 Every numeric default used by milestone M2 is in this file. Behavior that uses each value is specified in [05-worker-engine.md](05-worker-engine.md) (cited as `05 §n`) and the storage/protocol specs. A value listed here is the default; a host may change configurable values only within the startup inequalities of §3. Values marked *profile constant* are not host-configurable (raising them requires a new serializer profile/format version).
 
+## Changes (2026-11-19, plan budget)
+
+The materialization plan budget default is 10 s (was 250 ms) and configurable through `SchedulerOptions.EvaluationBudget` (12 Changes 2026-11-19).
+
 ## Changes (2026-11-09, attempt usage)
 
 `WorkerOptions.RecordResourceUsage` = **true**. Per attempt the worker reads process CPU time and allocated bytes at both ends of the attempt (measured cost about 2 × 6 µs and 2 × 13 ns), and one shared timer reads the working set every 250 ms (about 0.1 ms per read) while any attempt runs. End to end, three alternating on/off drain runs (20 000 jobs, 16 workers, PostgreSQL) gave a median of 103.5 jobs/s on and 100.2 off: no difference above the run-to-run spread of about 15%. Details in `docs/reports/attempt-usage.md`. With it off nothing is read and attempts store no usage (16 §2.2).
@@ -260,7 +264,7 @@ Not in M2 (listed so no M2 component invents them): rate-policy bounds (1–100,
 | Lookup horizon | 8 calendar years + 2 days after the cursor | — | Planner | 12 §8.1 |
 | Supported instant range | 0001-01-02T00:00Z … 9999-12-30T00:00Z | — | Planner | 12 §8.1 |
 | Steps per plan | 4,096 | steps | Planner | 12 §8.2 |
-| Cooperative budget, materialization | 250 | ms | Planner | 12 §8.2 |
+| Cooperative budget, materialization | 10,000 (`SchedulerOptions.EvaluationBudget`, 250 – 300,000) | ms | Planner | 12 §8.2 |
 | Cooperative budget, registration / edit / preview | 1,000 | ms | Planner | 12 §8.2 |
 | Preview length | 10 | occurrences | Preview | 12 §9 |
 | Evaluator slots | 1 per scheduler/store group | — | `EvaluatorSlot` | 12 §8.3 |

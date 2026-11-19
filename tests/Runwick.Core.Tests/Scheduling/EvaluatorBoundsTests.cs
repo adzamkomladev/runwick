@@ -89,12 +89,31 @@ public sealed class EvaluatorBoundsTests
     [Fact]
     public void An_elapsed_budget_is_local_pressure_not_invalidity()
     {
-        var planner = new RecurrencePlanner(new SteppingTime(100));
+        var planner = new RecurrencePlanner(new SteppingTime(2_000));
 
         var error = Fails(() => planner.Plan(Cron("* * * * *"), Ms("2026-01-01T00:00:00Z"), 10, PlannerLimits.Plan));
 
         Assert.Equal(EvaluationErrorCode.BudgetElapsed, error.Code);
         Assert.Equal(EvaluationErrorClass.LocalPressure, error.Class);
+    }
+
+    [Fact]
+    public void The_plan_budget_defaults_to_ten_seconds_and_follows_the_scheduler_option()
+    {
+        // A slow start (100 ms per clock read) fits the 10 s default but not the old fixed 250 ms.
+        Assert.Equal(TimeSpan.FromSeconds(10), PlannerLimits.Plan.Budget);
+        Assert.Equal(TimeSpan.FromSeconds(10), new SchedulerOptions().EvaluationBudget);
+        var slow = new RecurrencePlanner(new SteppingTime(100));
+        Assert.Equal(10, slow.Plan(Cron("* * * * *"), Ms("2026-01-01T00:00:00Z"), 10, PlannerLimits.Plan).Count);
+
+        var tight = PlannerLimits.Plan with { Budget = TimeSpan.FromMilliseconds(250) };
+        Assert.Equal(EvaluationErrorCode.BudgetElapsed,
+            Fails(() => slow.Plan(Cron("* * * * *"), Ms("2026-01-01T00:00:00Z"), 10, tight)).Code);
+
+        var options = new SchedulerOptions { EvaluationBudget = TimeSpan.FromSeconds(30) };
+        Assert.Equal(TimeSpan.FromSeconds(30), options.EvaluationBudget);
+        Assert.Throws<ArgumentOutOfRangeException>(() => options.EvaluationBudget = TimeSpan.FromMilliseconds(100));
+        Assert.Throws<ArgumentOutOfRangeException>(() => options.EvaluationBudget = TimeSpan.FromMinutes(6));
     }
 
     [Fact]

@@ -57,6 +57,22 @@ public enum ResumePolicy
 public sealed class SchedulerOptions
 {
     int _materializationGroupSize = ScheduleBounds.DefaultGroupPlans;
+    TimeSpan _evaluationBudget = PlannerLimits.DefaultPlanBudget;
+
+    /// <summary>
+    /// Wall-clock time one materialization plan may spend evaluating its recurrence before it fails with
+    /// <c>schedule_budget_elapsed</c> and is retried. Defaults to 10 s; range 250 ms – 5 min.
+    /// </summary>
+    public TimeSpan EvaluationBudget
+    {
+        get => _evaluationBudget;
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, TimeSpan.FromMilliseconds(250));
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, TimeSpan.FromMinutes(5));
+            _evaluationBudget = value;
+        }
+    }
 
     /// <summary>Base poll interval after draining due work; idle back-off doubles to <see cref="IdlePollInterval"/>.</summary>
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(1);
