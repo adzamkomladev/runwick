@@ -11,7 +11,8 @@ SET LOCAL lock_timeout = '5s';
 
 -- The set path. Returns NULL before any write when version 2 must decide; raises RWS33 to undo its writes for the same reason.
 -- Plans arrive sorted by command ID. Locks are taken as version 2 takes them: receipts in command order, schedule rows in
--- schedule order, new jobs in job order.
+-- schedule order, new jobs in job order. Every statement names its rows by key (= ANY of an array), so the plan stays an index
+-- lookup whatever the table statistics say.
 CREATE FUNCTION runwick.rw_schedule_group_set_v1(p_application text, p_operation text, p_class text, p_deadline_cap interval,
     p_plans runwick.rw_schedule_group_plan_v1[])
 RETURNS runwick.rw_reply_v1 LANGUAGE plpgsql VOLATILE AS $fn$
@@ -20,7 +21,10 @@ DECLARE
     v_clock timestamptz := pg_catalog.clock_timestamp();
     v_now timestamptz;
     v_rejects jsonb;
+    v_commands uuid[] := ARRAY(SELECT p.p_command_id FROM unnest(p_plans) AS p);
+    v_schedules uuid[] := ARRAY(SELECT p.p_schedule_id FROM unnest(p_plans) AS p);
     v_accepted uuid[];
+    v_accepted_schedules uuid[];
     v_replies jsonb;
     v_n integer;
 BEGIN
@@ -32,7 +36,7 @@ BEGIN
                      OR NOT EXISTS (SELECT 1 FROM runwick.queue_controls AS q
                                     WHERE q.application = p_application AND q.queue = p.p_queues[1]))
        OR EXISTS (SELECT 1 FROM runwick.storage_commands AS c
-                  WHERE c.application = p_application AND c.command_id IN (SELECT p.p_command_id FROM unnest(p_plans) AS p)) THEN
+                  WHERE c.application = p_application AND c.command_id = ANY (v_commands)) THEN
         RETURN NULL;
     END IF;
 
@@ -51,7 +55,7 @@ BEGIN
     END IF;
 
     PERFORM 1 FROM runwick.schedules AS s
-    WHERE s.application = p_application AND s.schedule_id IN (SELECT p.p_schedule_id FROM unnest(p_plans) AS p)
+    WHERE s.application = p_application AND s.schedule_id = ANY (v_schedules)
     ORDER BY s.schedule_id FOR UPDATE OF s;
 
     -- The plan checks of rw_materialize_core_v1, in its order, against the locked rows (13 §4.2).
@@ -78,7 +82,7 @@ BEGIN
                      FROM runwick.schedules AS s
                      JOIN runwick.schedule_definitions AS d
                        ON d.application = s.application AND d.schedule_id = s.schedule_id AND d.revision = s.definition_revision
-                     WHERE s.application = p_application) AS s
+                     WHERE s.application = p_application AND s.schedule_id = ANY (v_schedules)) AS s
             ON s.schedule_id = p.p_schedule_id) AS x
     WHERE (x.reply).status IS NOT NULL;
     v_rejects := COALESCE(v_rejects, '{}'::jsonb);
@@ -87,10 +91,11 @@ BEGIN
     IF v_rejects <> '{}'::jsonb THEN
         DELETE FROM runwick.storage_commands
         WHERE application = p_application AND retention_class = p_class AND result IS NULL
-          AND command_id IN (SELECT k::uuid FROM pg_catalog.jsonb_object_keys(v_rejects) AS k);
+          AND command_id = ANY (ARRAY(SELECT k::uuid FROM pg_catalog.jsonb_object_keys(v_rejects) AS k));
     END IF;
 
     v_accepted := ARRAY(SELECT p.p_command_id FROM unnest(p_plans) AS p WHERE NOT v_rejects ? p.p_command_id::text);
+    v_accepted_schedules := ARRAY(SELECT p.p_schedule_id FROM unnest(p_plans) AS p WHERE p.p_command_id = ANY (v_accepted));
     v_clock := pg_catalog.clock_timestamp();
     v_now := runwick.ms_floor(v_clock);
     IF EXISTS (SELECT 1 FROM unnest(p_plans) AS p
@@ -152,7 +157,8 @@ BEGIN
             episode_limit = p.p_after_episode_limit, needs_review = false, review_reason = NULL,
             cursor_revision = s.cursor_revision + 1, updated_at = v_now
         FROM unnest(p_plans) AS p
-        WHERE s.application = p_application AND s.schedule_id = p.p_schedule_id AND p.p_command_id = ANY (v_accepted);
+        WHERE s.application = p_application AND s.schedule_id = ANY (v_accepted_schedules)
+          AND s.schedule_id = p.p_schedule_id AND p.p_command_id = ANY (v_accepted);
         GET DIAGNOSTICS v_n = ROW_COUNT;
         IF v_n <> pg_catalog.cardinality(v_accepted) THEN
             RAISE EXCEPTION 'rw:invalid_transition' USING ERRCODE = 'RWI01';
@@ -172,7 +178,8 @@ BEGIN
                          'jobs', 1, 'skippedRanges', 0, 'episodeId', p.p_after_episode, 'needsReview', NULL::text,
                          'scheduleId', p.p_schedule_id, 'scheduleKey', s.schedule_key)
               FROM unnest(p_plans) AS p
-              JOIN runwick.schedules AS s ON s.application = p_application AND s.schedule_id = p.p_schedule_id
+              JOIN runwick.schedules AS s
+                ON s.application = p_application AND s.schedule_id = ANY (v_accepted_schedules) AND s.schedule_id = p.p_schedule_id
               WHERE p.p_command_id = ANY (v_accepted)) AS e
         ORDER BY e.o, e.part;
 
@@ -199,7 +206,8 @@ BEGIN
     UPDATE runwick.storage_commands AS c
     SET status = 'Applied', result = r.value, decided_at = v_now
     FROM pg_catalog.jsonb_each(v_replies) AS r
-    WHERE c.application = p_application AND c.retention_class = p_class AND c.command_id = r.key::uuid AND c.result IS NULL;
+    WHERE c.application = p_application AND c.retention_class = p_class AND c.command_id = ANY (v_accepted)
+      AND c.command_id = r.key::uuid AND c.result IS NULL;
     GET DIAGNOSTICS v_n = ROW_COUNT;
     IF v_n <> pg_catalog.cardinality(v_accepted) THEN
         RAISE EXCEPTION 'rw:receipt_finalization' USING ERRCODE = 'RWI03';
