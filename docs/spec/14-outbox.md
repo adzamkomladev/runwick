@@ -2,6 +2,16 @@
 
 **Sources:** [transactional-outbox.md](../architecture/transactional-outbox.md) (all sections, OUTBOX-01 … OUTBOX-07); [storage-command-protocol.md](../architecture/storage-command-protocol.md) "Outbox destination extension"; [driver-contract-suite.md](../architecture/driver-contract-suite.md) §4 (TX), OUT-01, OUT-02, CMD-01 … CMD-05, ISO-01; [performance-acceptance-plan.md](../architecture/performance-acceptance-plan.md) (P-09); 02 §7–§9; 03 §2.1, §4, §10; 04 §5, §6, §8; 06 §1.4, §1.7; 07 §4 (CMD), §8 (TX), §9 (ISO-01); 15 §10–§11.
 
+## Changes (2026-11-20, Outbox D: claim ahead and index-ordered claims)
+
+- **Why.** At four slots and 100 messages/s each slot has 40 ms per message. Traced P-09 runs on main found slots idle 38% of the time: a freed slot waited for the claim loop, which made one source claim per freed slot (1.4 messages per claim), and each claim read and sorted every due row because the `OR` of the two states could not use an index order, so a claim got slower as the backlog grew (2,000 buffers and 13 ms of server time per claim at a backlog of a few thousand). A slot that did get a message held it through destination send and source mark (76 ms under host load 23).
+- **Claim ahead.** `MaxInFlight` now bounds concurrent destination calls (slots), not leases. The relay keeps up to `2 × MaxInFlight × slot size` messages leased, where the slot size is `DeliveryGroupSize` with a grouping destination and 1 otherwise; messages awaiting their mark count. Claimed messages wait in order, leased and renewed, holding no slot; a slot that frees starts the next waiting message (or group) at once, without a claim round trip. The claim asks for the room left under that cap. A full claim with room left claims again at once; a claim that returns fewer rows than asked waits the idle poll (or a notification); a relay at the cap waits until a lease ends. Freed slots no longer wake an idle claim loop.
+- **A slot carries one destination call.** With `DeliveryGroupSize` above 1 and a grouping destination, a freed slot takes up to that many waiting messages as one group (14 Changes 2026-11-15), so groups form from the waiting messages instead of from one claim. A message that cannot be grouped is sent alone at the same time, in the same slot.
+- **Index-ordered claims.** The PostgreSQL claim reads each partial index in its own order (`pending` by `next_attempt_at`, expired `leased` by `lease_expires_at`, the clock read once as an index bound), locks at most `max` rows from each with `SKIP LOCKED`, and leases the `max` oldest by `next_attempt_at`. The SQLite claim reads the same two ordered branches. A claim now reads about `max` index entries however long the backlog is. No schema change: the existing partial indexes serve it.
+- **Defaults.** `DeliveryGroupSize` is now 4, and `ReleaseSlotAfterReply` and `BatchDeliveredMarks` are now true (06 §1.12). In paired P-09 runs at four slots on a loaded host, claim ahead alone raised confirmed deliveries from 26 to 58 per second, slot release and batched marks to 73, and groups of four to 99.6 (the offered rate). Destinations that cannot group (SQLite, Redis) ignore the group size, so for them a slot is one message and the lease cap is 8. With claim ahead, slots turn over faster than one mark statement per message can follow on the control lane; batched marks keep it to about one statement per 2 to 3 marks, and releasing the slot on reply keeps the mark off the slot.
+- **Shutdown.** Unchanged in kind: claims stop first, waiting messages are started as slots free until the host deadline, and after it nothing new starts; leases of messages still waiting expire and are reclaimed.
+- **Unchanged.** Transport identity and receipts, the token-guarded mark, mixed outcomes, lost replies, reclaims and the delivery mapping behave exactly as in the sections below; a waiting message checks its lease lifetime before its first send like any other.
+
 ## Changes (2026-11-17, D2 batched marks, claim batches, slot release)
 
 - **Why.** At four relay slots a message's whole life is claim, destination commit and source mark, and every source write waits for a single connection (the claim lane or the control lane). Marks, renewals and transport records share the control lane, so each mark waited behind the others. Throughput at four slots is bounded by slots divided by that life.
@@ -172,7 +182,7 @@ Every transition after staging is one short source transaction guarded by `lease
 ### 4.1 Sequence
 
 1. **Initialize** (retried with backoff): destination handshake (`EnsureReadyAsync`), then read the source UUID and check the schema version.
-2. **Claim** at most the free slots in one short source transaction (PostgreSQL: `FOR UPDATE SKIP LOCKED`. SQLite: `BEGIN IMMEDIATE`). A source may assign transport identity in that same update. It preserves a complete pair that is valid at the relay's supplied time and caps any new deadline at AcceptUntil. It assigns no new identity at or beyond that cutoff. The relay receives the claimed rows only after commit.
+2. **Claim** at most the room under the lease cap (2 × `MaxInFlight` × slot size, 14 Changes 2026-11-20) in one short source transaction (PostgreSQL: `FOR UPDATE SKIP LOCKED`. SQLite: `BEGIN IMMEDIATE`). A source may assign transport identity in that same update. It preserves a complete pair that is valid at the relay's supplied time and caps any new deadline at AcceptUntil. It assigns no new identity at or beyond that cutoff. The relay receives the claimed rows only after commit.
 3. Per message, outside any source transaction:
    1. Import the intent (02 §9.3). Malformed, unknown format/profile, digest mismatch → **block** with the codec's code.
    2. Check the destination binding (store, application) → `destination_binding_mismatch`; the registered contract → `contract_not_registered`; the delivery fingerprint recomputed from the row → `delivery_fingerprint_mismatch`. Each **blocks**.
@@ -188,11 +198,11 @@ The renewal loop renews every in-flight lease each `RenewalInterval`. A `false` 
 
 | Setting | Default | Bound |
 |---|---|---|
-| `MaxInFlight` (messages; also the claim batch) | 4 | 1 – 64 |
-| `DeliveryGroupSize` (plain messages sent to the destination in one transaction) | 1 (off) | 1 – 16 |
-| `BatchDeliveredMarks` (marks queued behind each other are written in one statement; PostgreSQL source) | false | — |
+| `MaxInFlight` (slots: concurrent destination calls; leases are capped at 2 × `MaxInFlight` × slot size, 14 Changes 2026-11-20) | 4 | 1 – 64 |
+| `DeliveryGroupSize` (plain waiting messages a free slot sends to the destination in one transaction) | 4 (since 2026-11-20; 1 sends alone) | 1 – 16 |
+| `BatchDeliveredMarks` (marks queued behind each other are written in one statement; PostgreSQL source) | true (since 2026-11-20) | — |
 | `ClaimBatchMin` / `ClaimBatchWait` (free slots to wait for before a claim, and the longest wait) | 1 (off) / 5 ms | 1 – `MaxInFlight` / 0 – 1 s |
-| `ReleaseSlotAfterReply` (a message stops holding a slot once the destination answers; at most 2 × `MaxInFlight` leases) | false | — |
+| `ReleaseSlotAfterReply` (a message stops holding a slot once the destination answers) | true (since 2026-11-20) | — |
 | `LeaseDuration` | 60 s | ≥ 5 s and ≥ 3 × `RenewalInterval` |
 | `RenewalInterval` | 15 s | > 0 |
 | `ProviderCallTimeout` (each source or destination call) | 5 s | > 0 and < `RenewalInterval` |
@@ -354,7 +364,7 @@ Project `tests/Runwick.Outbox.Tests`; traits `Category` (Contract | Fault), `Ite
 
 #### OUTBOX-07 — Bounds during a long outage and shutdown (PostgreSQL source)
 - **Steps:** Relay handshakes, destination dropped, 40 messages staged; sample for 12 s; stop with a 2 s deadline; restore and drain with a new relay.
-- **Assert:** ≤ 2 relay source sessions, never `idle in transaction`; in-flight ≤ 4 and claim batch ≤ 4; no pending row due later than `RetryMax` + margin; nothing delivered; stop returns within deadline + provider timeout and no claims follow; after the outage exactly 40 jobs and 40 mappings.
+- **Assert:** ≤ 2 relay source sessions, never `idle in transaction`; in-flight and claim batch ≤ the relay's lease cap (twice what the slots carry: 32 with the default groups of four, 8 when the destination cannot group; 14 Changes 2026-11-20); no pending row due later than `RetryMax` + margin; nothing delivered; stop returns within deadline + provider timeout and no claims follow; after the outage exactly 40 jobs and 40 mappings.
 
 #### OUT-01 — Lost marks under concurrent relays
 - **Steps:** 60 messages, three relays, each losing 20 % of marks before the write.

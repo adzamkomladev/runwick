@@ -3152,11 +3152,11 @@ A process that stages but should not deliver can turn the relay off: `relay: o =
 | `OutboxRelayOptions` | Default | Allowed |
 |---|---|---|
 | `Enabled` | `true` | |
-| `MaxInFlight` | 4 | 1 to 64 messages |
-| `DeliveryGroupSize` | 1 (off) | 1 to 16. With a PostgreSQL destination, plain messages claimed together are delivered in one destination transaction. Each keeps its own transport command, receipt and delivery mapping. |
-| `BatchDeliveredMarks` | false | With a PostgreSQL source, delivered marks that queue behind one another are written in one statement and one commit. Each row is still guarded by its own lease token. |
+| `MaxInFlight` | 4 | 1 to 64. The number of destination calls in progress at once (slots). The relay claims ahead: it keeps up to twice what the slots carry leased, so a slot that frees starts its next message without waiting for a claim. |
+| `DeliveryGroupSize` | 4 | 1 to 16 (1 sends each message alone). With a PostgreSQL destination, a free slot takes up to this many waiting plain messages and delivers them in one destination transaction. Each keeps its own transport command, receipt and delivery mapping. |
+| `BatchDeliveredMarks` | true | With a PostgreSQL source, delivered marks that queue behind one another are written in one statement and one commit. Each row is still guarded by its own lease token. |
 | `ClaimBatchMin` | 1 (off) | 1 to `MaxInFlight`. The relay waits until this many slots are free (at most `ClaimBatchWait`, 5 ms by default) before it claims, so one source claim carries several messages. |
-| `ReleaseSlotAfterReply` | false | When true, a message stops counting against `MaxInFlight` as soon as the destination has answered, so the next claim and send overlap its source mark. Its lease is still held and renewed until the mark is written, and at most twice `MaxInFlight` messages hold leases. |
+| `ReleaseSlotAfterReply` | true | A message stops counting against `MaxInFlight` as soon as the destination has answered, so the next send overlaps its source mark. Its lease is still held and renewed until the mark is written. Set false to hold the slot until the mark is written. |
 | `LeaseDuration` | 60 s | at least 5 s, and at least 3 × `RenewalInterval` |
 | `RenewalInterval` | 15 s | positive |
 | `ProviderCallTimeout` | 5 s | positive, shorter than `RenewalInterval` |
@@ -4850,11 +4850,11 @@ Per schedule: misfire policy `RunOnce` with 60 s grace (up to 24 h); catch-up at
 | Option | Default | Allowed |
 |---|---|---|
 | `Enabled` | `true` | |
-| `MaxInFlight` | 4 | 1 to 64 |
-| `DeliveryGroupSize` | 1 | 1 to 16; groups plain messages into one PostgreSQL destination transaction |
-| `BatchDeliveredMarks` | false | write queued delivered marks in one statement (PostgreSQL source) |
+| `MaxInFlight` | 4 | 1 to 64 slots (destination calls at once); up to twice what the slots carry is kept leased |
+| `DeliveryGroupSize` | 4 | 1 to 16; a free slot delivers up to this many waiting plain messages in one PostgreSQL destination transaction |
+| `BatchDeliveredMarks` | true | write queued delivered marks in one statement (PostgreSQL source) |
 | `ClaimBatchMin` / `ClaimBatchWait` | 1 / 5 ms | 1 to `MaxInFlight` / up to 1 s; wait for several free slots so one claim carries a batch |
-| `ReleaseSlotAfterReply` | false | stop counting a message against `MaxInFlight` once the destination has answered (at most 2 × `MaxInFlight` leases) |
+| `ReleaseSlotAfterReply` | true | stop counting a message against `MaxInFlight` once the destination has answered |
 | `LeaseDuration` / `RenewalInterval` | 60 s / 15 s | lease at least 5 s and at least 3 renewals |
 | `ProviderCallTimeout` | 5 s | shorter than `RenewalInterval` |
 | `IdlePoll` | 1 s | positive |

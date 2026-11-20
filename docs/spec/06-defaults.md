@@ -4,6 +4,11 @@
 
 Every numeric default used by milestone M2 is in this file. Behavior that uses each value is specified in [05-worker-engine.md](05-worker-engine.md) (cited as `05 §n`) and the storage/protocol specs. A value listed here is the default; a host may change configurable values only within the startup inequalities of §3. Values marked *profile constant* are not host-configurable (raising them requires a new serializer profile/format version).
 
+## Changes (2026-11-20, outbox relay claim ahead)
+
+- §1.12 `MaxInFlight` now counts slots (concurrent destination calls). The relay keeps up to 2 × `MaxInFlight` × slot size messages leased (slot size `DeliveryGroupSize` with a grouping destination, otherwise 1), so claimed messages wait beside busy slots; 8 leases when the destination cannot group (14 Changes 2026-11-20).
+- §1.12 `DeliveryGroupSize`: 1 → **4** (honoured by the PostgreSQL destination only), so with the defaults and a PostgreSQL destination the relay holds at most 32 leases. `ReleaseSlotAfterReply` and `BatchDeliveredMarks`: false → **true**. All three options remain; set `DeliveryGroupSize = 1` and the other two to false for the earlier behaviour.
+
 ## Changes (2026-11-19, schedule groups)
 
 - §1.14 now lists the PostgreSQL materialization group settings that landed on 2026-11-11 and 2026-11-13 (13 Changes): `GroupMaterializations` off by default; when on, two groups in flight, `MaterializationGroupSize` 4 by default (2 to 8), 2 MiB of combined payload per group. No value changes. Since schema revision 26 a group costs about 2.8 ms of database time per plan instead of 6.3 ms (04 Changes 2026-11-19, set-based schedule groups), so either group size carries the default 100 jobs/s allowance with room to spare.
@@ -291,11 +296,12 @@ Not in M2 (listed so no M2 component invents them): rate-policy bounds (1–100,
 | Acceptance horizon | 7 d default; (0, 30 d], whole ms | — | Stage | 14 §6.1 |
 | Mapping retention | ≥ AcceptUntil + 24 h | — | outbox_deliveries | 14 §6.4 |
 | Transport NotAfter | ≤ 30 s and ≤ AcceptUntil | — | ReceiveOutbox/1 | 14 §6.2 |
-| MaxInFlight / claim batch | 4 (1 – 64) | messages | Relay | 14 §4.2 |
-| DeliveryGroupSize | 1 (1 – 16) | messages per destination transaction | Relay | 14 §4.2 |
-| BatchDeliveredMarks | false | queued delivered marks written in one statement (PostgreSQL source) | Relay | 14 Changes 2026-11-17 |
+| MaxInFlight | 4 (1 – 64) | slots (concurrent destination calls) | Relay | 14 §4.2, Changes 2026-11-20 |
+| Relay leases (claim-ahead cap) | 2 × MaxInFlight × slot size (slot size = DeliveryGroupSize with a grouping destination, else 1) | messages | Relay | 14 Changes 2026-11-20 |
+| DeliveryGroupSize | 4 (1 – 16; 1 before 2026-11-20) | messages per destination transaction (PostgreSQL destination) | Relay | 14 §4.2, Changes 2026-11-20 |
+| BatchDeliveredMarks | true (false before 2026-11-20) | queued delivered marks written in one statement (PostgreSQL source) | Relay | 14 Changes 2026-11-17, 2026-11-20 |
 | ClaimBatchMin / ClaimBatchWait | 1 (1 – MaxInFlight) / 5 ms (0 – 1 s) | free slots a claim waits for / longest wait | Relay | 14 Changes 2026-11-17 |
-| ReleaseSlotAfterReply | false | slot freed when the destination answers (≤ 2 × MaxInFlight leases) | Relay | 14 Changes 2026-11-17 |
+| ReleaseSlotAfterReply | true (false before 2026-11-20) | slot freed when the destination answers | Relay | 14 Changes 2026-11-17, 2026-11-20 |
 | Source lease / renewal | 60 s / 15 s (lease ≥ 5 s, ≥ 3 × renewal) | s | Relay | 14 §4.2 |
 | Provider call timeout | 5 s (< renewal) | s | Relay | 14 §4.2 |
 | Idle poll | 1 s (5 s while the wake listener is healthy) | s | Relay | 14 §4.2 |
