@@ -513,6 +513,14 @@ public sealed class WorkerOptions
     /// <summary>Combined finish and claim switch; see <see cref="UseCombinedFinishClaim"/>. Default off.</summary>
     public bool CombinedFinishClaim { get; set; }
 
+    /// <summary>
+    /// Claims in flight per pool (05 §9.7). The most batched claims (ReserveAndBegin) one pool may have outstanding at once; 1 to 4,
+    /// default 1. Each claim only fills slots that are free when it is sent, so the pool never holds more jobs than its target. With 2
+    /// or more, slots that free up while a claim is waiting for its reply are claimed at once instead of after that reply. Only the
+    /// single-lane batched claim overlaps; a selection among several lanes still waits for the claim before it.
+    /// </summary>
+    public int ClaimsInFlight { get; set; } = 1;
+
     /// <summary>Buffered finish (G1) switch; see <see cref="UseBufferedFinish"/>. Default off.</summary>
     public bool BufferedFinish { get; set; }
 

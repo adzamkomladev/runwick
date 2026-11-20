@@ -6,7 +6,8 @@ namespace Runwick.Worker;
 
 /// <summary>
 /// One pool (05 §8): tickets, lane selection, cursors and cooldowns. Selection and claim settlement are serial per
-/// pool (at most one Reserve outstanding, including resolution of an uncertain claim); execution is concurrent.
+/// pool; up to <see cref="WorkerOptions.ClaimsInFlight"/> batched claims may wait for their replies at once (05 §9.7), any other
+/// claim is the only one outstanding when it is sent. Execution is concurrent.
 /// </summary>
 internal sealed class PoolCoordinator
 {
@@ -20,7 +21,9 @@ internal sealed class PoolCoordinator
     int _suspensions;
     int _idleStep;
     int _roundReserves;
-    bool _claimUnresolved;
+    int _unresolved;
+    int _inFlight;
+    readonly System.Collections.Concurrent.ConcurrentDictionary<Task, byte> _claims = new();
     bool _batchOff;
     readonly PriorityGate _claimGate = new(1);
 
@@ -53,8 +56,14 @@ internal sealed class PoolCoordinator
 
     public WakeSignal Wake { get; } = new();
 
-    /// <summary>The Reserve currently in flight (or being resolved); shutdown waits for it.</summary>
-    public Task? ClaimTask { get; private set; }
+    /// <summary>The claims currently in flight (or being resolved, or settling); shutdown waits for them.</summary>
+    public ICollection<Task> ClaimTasks => _claims.Keys;
+
+    /// <summary>Batched claims sent and not yet settled (05 §9.7).</summary>
+    public int ClaimsInFlight => Volatile.Read(ref _inFlight);
+
+    /// <summary>The most claims this pool has had in flight at once (diagnostics and tests).</summary>
+    public int ClaimsInFlightHighWater;
 
     public long ReservesSent;
 
@@ -65,9 +74,9 @@ internal sealed class PoolCoordinator
     public long InlineDeclinedBusy, InlineDeclinedClosed, InlineDeclinedStale, InlineDeclinedLane;
 
     /// <summary>Fresh claims stop while a Reserve or Begin of this pool is unresolved (05 §15.2).</summary>
-    public bool Suspended => Volatile.Read(ref _suspensions) > 0 || _claimUnresolved;
+    public bool Suspended => Volatile.Read(ref _suspensions) > 0 || ClaimUnresolved;
 
-    public bool ClaimUnresolved => _claimUnresolved;
+    public bool ClaimUnresolved => Volatile.Read(ref _unresolved) > 0;
 
     /// <summary>Saturated-queue Reserves skipped because probe/2 evidence excluded the queue (09 §4.2).</summary>
     public long SaturationSkips;
@@ -96,7 +105,7 @@ internal sealed class PoolCoordinator
         var stop = _engine.LoopStop;
         while (!stop.IsCancellationRequested && !_engine.Draining)
         {
-            if (!_engine.AdmissionOpen || Suspended || Gate.TryAcquire() is not { } ticket)
+            if (!_engine.AdmissionOpen || Suspended || !MayClaim() || Gate.TryAcquire() is not { } ticket)
             {
                 if (await Wake.WaitAsync(_engine.Clock, TimeSpan.FromSeconds(1), stop).ConfigureAwait(false))
                 {
@@ -129,6 +138,17 @@ internal sealed class PoolCoordinator
                 await IdleAsync(stop, next.Until).ConfigureAwait(false);
             }
         }
+    }
+
+    /// <summary>
+    /// Another claim may be sent: none is in flight, or fewer than the limit are and at least target ÷ limit slots are free, so a claim
+    /// sent beside another is still a large one (05 §9.7). Small claims cost the store more per job than the waiting they save.
+    /// </summary>
+    bool MayClaim()
+    {
+        var inFlight = ClaimsInFlight;
+        var limit = _engine.Options.ClaimsInFlight;
+        return inFlight == 0 || (inFlight < limit && Gate.Target - Gate.Outstanding >= Math.Max(1, Gate.Target / limit));
     }
 
     /// <summary>One opportunity with a ticket in hand: the probe view, the lane choice and the claim. Idle: the pool then waits (until the due time when known).</summary>
@@ -259,7 +279,7 @@ internal sealed class PoolCoordinator
             return null;
         }
 
-        if (_claimGate.TryAcquire() is not { } slot)
+        if (ClaimsInFlight > 0 || _claimGate.TryAcquire() is not { } slot)
         {
             Interlocked.Increment(ref InlineDeclinedBusy);
             return null;
@@ -303,7 +323,13 @@ internal sealed class PoolCoordinator
     }
 
     /// <summary>The call is still running or being resolved: shutdown waits for it as it does for a Reserve in flight.</summary>
-    internal void TrackClaim(Task task) => ClaimTask = task;
+    internal void TrackClaim(Task task)
+    {
+        if (_claims.TryAdd(task, 0))
+        {
+            _ = task.ContinueWith(t => _claims.TryRemove(t, out _), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
+    }
 
     /// <summary>
     /// Settles the claim half of a finish-and-claim call. A null reply is an unknown outcome: the same claim command is resubmitted
@@ -343,27 +369,41 @@ internal sealed class PoolCoordinator
             return;
         }
 
+        NotApplied(claim.Choice, claim.Lane, reply);
+    }
+
+    /// <summary>A claim that took nothing and was not followed by another claim in the same visit: the pool state follows the reply.</summary>
+    /// <remarks>
+    /// A pipelined claim may settle after a newer probe view was applied. Its NoWork then says nothing about the newer view, so the
+    /// lane is set aside only under the view it was chosen from (<paramref name="selectedUnder"/>; null: the current view).
+    /// </remarks>
+    void NotApplied(LaneChoice choice, LaneKey lane, StoreReply<ClaimedJobs> reply, ReadyView? selectedUnder = null)
+    {
         var now = _engine.Clock.Now;
-        Selector.OnNotApplied(claim.Choice);
+        Selector.OnNotApplied(choice);
         switch (reply.Status)
         {
             case StoreStatus.NoWork:
-                _cursors[claim.Lane] = null;
-                _excluded.Add(claim.Lane);
+                _cursors[lane] = null;
+                if (selectedUnder is null || ReferenceEquals(selectedUnder, _excludedFor))
+                {
+                    _excluded.Add(lane);
+                }
+
                 break;
             case StoreStatus.QueuePaused:
-                Selector.CoolQueue(claim.Choice.Queue, now);
+                Selector.CoolQueue(choice.Queue, now);
                 break;
             case StoreStatus.CapacityBlocked:
                 Outcomes.Record(now, blocked: true);
-                _cursors[claim.Lane] = reply.Error?.ResumeAfter;
-                switch (Classify(reply.Error?.BlockedScopeId, claim.Lane))
+                _cursors[lane] = reply.Error?.ResumeAfter;
+                switch (Classify(reply.Error?.BlockedScopeId, lane))
                 {
                     case BlockedScope.Queue:
-                        Selector.CoolQueue(claim.Choice.Queue, now);
+                        Selector.CoolQueue(choice.Queue, now);
                         break;
                     case BlockedScope.SingleTypeLane:
-                        Selector.CoolLane(claim.Choice.Queue, claim.Choice.Priority, now);
+                        Selector.CoolLane(choice.Queue, choice.Priority, now);
                         break;
                 }
 
@@ -440,7 +480,21 @@ internal sealed class PoolCoordinator
             if (BatchTickets(ticket, choice) is { } tickets)
             {
                 var batch = BatchAsync(tickets, lane, _cursors.GetValueOrDefault(lane));
-                ClaimTask = batch;
+                if (_engine.Options.ClaimsInFlight > 1)
+                {
+                    // Pipelined (05 §9.7): the loop goes on selecting while this claim waits; its reply settles under the claim lock.
+                    var n = Interlocked.Increment(ref _inFlight);
+                    if (n > ClaimsInFlightHighWater)
+                    {
+                        ClaimsInFlightHighWater = n;
+                    }
+
+                    TrackClaim(SettleLaterAsync(choice, lane, tickets, batch, _excludedFor));
+                    // Not yet known to be Applied: the idle back-off resets when the reply settles as Applied, as for a claim awaited here.
+                    return false;
+                }
+
+                TrackClaim(batch);
                 var (batchReply, batchSentAt) = await batch.ConfigureAwait(false);
                 switch (Settle(choice, lane, tickets, batchReply, batchSentAt))
                 {
@@ -464,7 +518,7 @@ internal sealed class PoolCoordinator
                 }
 
                 var claim = ClaimAsync(ticket, lane, _cursors.GetValueOrDefault(lane));
-                ClaimTask = claim;
+                TrackClaim(claim);
                 (reply, sentAt) = await claim.ConfigureAwait(false);
             }
 
@@ -536,6 +590,44 @@ internal sealed class PoolCoordinator
                     // CommandExpired (definitive) or another no-effect result: the visit ends.
                     return false;
             }
+        }
+    }
+
+    /// <summary>
+    /// Settles a pipelined batched claim once its reply is in (05 §9.7), under the claim lock as a claim of the loop's settles. A
+    /// reply that takes nothing returns every ticket and updates the pool as the inline claim's does; the visit does not continue.
+    /// </summary>
+    async Task SettleLaterAsync(LaneChoice choice, LaneKey lane, List<CapacityTicket> tickets, Task<(StoreReply<ClaimedJobs>? Reply, TimeSpan SentAt)> batch,
+        ReadyView? selectedUnder)
+    {
+        try
+        {
+            var (reply, sentAt) = await batch.ConfigureAwait(false);
+            // No cancellation: the tickets must be settled, and every holder of the lock releases it at control stop.
+            using var slot = await _claimGate.AcquireAsync(0, CancellationToken.None).ConfigureAwait(false);
+            switch (Settle(choice, lane, tickets, reply, sentAt))
+            {
+                case BatchResult.Applied:
+                    _idleStep = 0;
+                    break;
+                case BatchResult.AsReserve:
+                    tickets[0].Return();
+                    NotApplied(choice, lane, reply!, selectedUnder);
+                    break;
+                case BatchResult.Fallback:
+                    tickets[0].Return();
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            _engine.Logger.LogError(ex, "Runwick pipelined claim settlement failed in pool {Pool}.", Settings.Name);
+            throw;
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _inFlight);
+            Wake.Set();
         }
     }
 
@@ -737,6 +829,7 @@ internal sealed class PoolCoordinator
     {
         var first = _engine.Clock.Now;
         var submitted = false;
+        var unresolved = false;
         try
         {
             for (var attempt = 0; !_engine.ControlStop.IsCancellationRequested; attempt++)
@@ -763,9 +856,10 @@ internal sealed class PoolCoordinator
                 catch (Exception ex) when (!_engine.ControlStop.IsCancellationRequested)
                 {
                     _engine.Logger.LogDebug(ex, "Runwick {Operation} {Command} unresolved; resubmitting the same command.", operation, commandId);
-                    if (submitted && !_claimUnresolved && _engine.Clock.Now - first >= _engine.Options.ClaimResolutionBudget)
+                    if (submitted && !unresolved && _engine.Clock.Now - first >= _engine.Options.ClaimResolutionBudget)
                     {
-                        _claimUnresolved = true;
+                        unresolved = true;
+                        Interlocked.Increment(ref _unresolved);
                         _engine.Diagnose($"unresolved claim {commandId} in pool {Settings.Name}: admission suspended until it resolves");
                     }
 
@@ -778,9 +872,9 @@ internal sealed class PoolCoordinator
         }
         finally
         {
-            if (_claimUnresolved)
+            if (unresolved)
             {
-                _claimUnresolved = false;
+                Interlocked.Decrement(ref _unresolved);
                 Wake.Set();
             }
         }

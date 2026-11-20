@@ -24,7 +24,7 @@ public sealed partial class DefaultsMatchCodeTests
         "06 §1.1 Duration quantum, Retry evaluator: profile constants inside the evaluator, covered by RetryEvaluatorTests",
         "06 §1.2 Host ShutdownTimeout, Liveness stall bound: reference values, not set by Runwick",
         "06 §1.4 receipt retention, command lifetime: encoded in store SQL/Lua per provider, covered by contract tests",
-        "06 §1.5 queue weight range, SWRR modes, prefetch, per-pool claim concurrency: behaviour, not options",
+        "06 §1.5 queue weight range, SWRR modes, prefetch: behaviour, not options",
         "06 §1.6 pressure gates: thresholds inline in the pressure controller, covered by WorkerEngineTests/CAP cases",
         "06 §1.7 connection counts (control 8/2, work 14, lanes, background): PostgreSQL data-source strings built in the store",
         "06 §1.9 identity, payload and record bounds: profile constants, covered by SerializationCaseTests and wire vectors",
@@ -121,6 +121,7 @@ public sealed partial class DefaultsMatchCodeTests
         // 1.5 capacity, fairness, probing.
         Check(failures, f, "Default pool mode", WorkerSettings.DefaultPoolTarget);
         Check(failures, f, "Worker/store group maximum", WorkerSettings.GroupMaximum);
+        Check(failures, f, "Per-pool claim concurrency", o.ClaimsInFlight);
         var weights = new PoolBuilder("p").Weights;
         Check(failures, f, "Lane weights high : medium : low", weights.High, weights.Medium, weights.Low);
         Check(failures, f, "AgingEvery", WorkerSettings.AgingEvery);
