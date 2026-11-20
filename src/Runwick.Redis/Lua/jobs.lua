@@ -70,7 +70,23 @@ function U.started_details(g, x)
 end
 
 -- rw_close_v1: attempt row, permits, job, active key, event. Returns the job's new revision.
+-- PX.att: an attempt's record as one field a:<attempt>, written once when it closes (codec-fixed order, null for absent):
+-- [gen, reservation, execution, worker, reserved, authorized, finished, outcome, disposition, reason, elapsed, delay, next].
+-- While it is open its values are the job's own fields (attempt, worker, rcount, gen, g:<gen>:started) plus ares and aauth.
+local function packed_attempt(j, attempt, outcome, state, reason, elapsed, delay, eligible)
+  local function t(x) return x == nil and 'null' or q(U.S(x)) end
+  return '[' .. t(j.gen) .. ',' .. t(j.rcount) .. ',' .. t(j.aauth and U.gen(j, 'started') or nil) .. ',' .. t(j.worker) .. ',' .. t(j.ares) .. ','
+    .. t(j.aauth) .. ',' .. t(NOWS) .. ',' .. t(outcome) .. ',' .. t(state) .. ',' .. t(reason) .. ',' .. t(elapsed) .. ',' .. t(delay) .. ','
+    .. t(eligible) .. ']'
+end
 function U.close(j, attempt, token, outcome, state, reason, kind, elapsed, delay, eligible, err, details)
+  if PX.att then
+    U.expect(j['a:' .. attempt] == nil and j.attempt == attempt and j.token == token)
+    U.jw(j, 'a:' .. attempt, packed_attempt(j, attempt, outcome, state, reason, elapsed, delay, eligible))
+    U.attw(j, attempt, 'error', err)
+    U.jw(j, 'ares', nil)
+    U.jw(j, 'aauth', nil)
+  else
   U.expect(U.att(j, attempt, 'fin') == nil and j.attempt == attempt and j.token == token)
   U.attw(j, attempt, 'fin', NOWS)
   U.attw(j, attempt, 'outcome', outcome)
@@ -81,6 +97,7 @@ function U.close(j, attempt, token, outcome, state, reason, kind, elapsed, delay
   U.attw(j, attempt, 'next', eligible and U.S(eligible) or nil)
   U.attw(j, attempt, 'error', err)
   U.attw(j, attempt, 'closedby', CMD)
+  end
   for _, sid in ipairs(U.permit_scopes(j)) do
     local p = U.jget('permits', sid .. ':' .. j.id)
     if p and p.attempt == attempt and p.token == token then
@@ -322,12 +339,16 @@ function U.reserve_job(id, leaseMs, worker, token, entropy, lazy)
     end
   end
   local number = U.must(U.inc(j.rcount))
+  U.hset('attempts', attempt, id) -- attempt -> job, for management reads and RevealError (22 §7.2)
+  if PX.att then
+    U.jw(j, 'ares', NOWS)
+  else
   U.attw(j, attempt, 'gen', j.gen)
   U.attw(j, attempt, 'res', number)
-  U.hset('attempts', attempt, id) -- attempt -> job, for management reads and RevealError (22 §7.2)
   U.attw(j, attempt, 'worker', worker)
   U.attw(j, attempt, 'token', token)
   U.attw(j, attempt, 'reserved', NOWS)
+  end
   U.jw(j, 'rcount', number)
   U.jw(j, 'rev', U.must(U.inc(j.rev)))
   U.jw(j, 'attempt', attempt)
@@ -431,9 +452,14 @@ function U.begin_job(lease, jitter, job, lazy)
   U.jw(j, 'xcount', U.must(U.inc(j.xcount)))
   U.jw(j, 'rev', U.must(U.inc(j.rev)))
   U.jw(j, 'updated', NOWS)
+  if PX.att then
+    U.expect(j['a:' .. lease.attempt] == nil and j.aauth == nil)
+    U.jw(j, 'aauth', NOWS)
+  else
   U.expect(U.att(j, lease.attempt, 'fin') == nil and U.att(j, lease.attempt, 'exec') == nil)
   U.attw(j, lease.attempt, 'exec', number)
   U.attw(j, lease.attempt, 'auth', NOWS)
+  end
   U.set_state(j, 'running')
   U.event('attempt_started', j.id, lease.attempt, U.started_details(tonumber(j.gen), tonumber(number)))
   local v = { job = j.id, gen = j.gen, att = lease.attempt, worker = lease.worker, token = lease.token, lease = j.lease }
@@ -762,9 +788,20 @@ function U.finish_items(base)
         -- Encoded once: the receipt row and the reply item carry the same text.
         local encoded, stored = r.rtext or U.enc(r.result), U.cenc(r)
         r.result = U.raw(encoded)
+        if PX.fr then
+          -- One receipt key per call, rcpt:<call>:f, field = the item's command id, value "1|fp|notafter|decided|result"; one
+          -- expiry entry per call at the latest retain time. A resend names the call (client memory) and is looked up there.
+          U.hset('rcpt:' .. CMD .. ':f', it.cmd, '1|' .. it.fp .. '|' .. U.S(it.na) .. '|' .. NOWS .. '|' .. (stored or encoded))
+          local ret = it.na + U.DURABLE_FLOOR
+          if not U.FRRET or ret > U.FRRET then
+            U.FRRET = ret
+            U.zadd('rcpt:exp:durable', ret, CMD .. ':f')
+          end
+        else
         U.hset_sorted(key, RECEIPT_FIELDS, { cls = 'durable', op = 'Finish', ver = '1', fp = it.fp, notafter = U.S(it.na),
           retain = U.S(it.na + U.DURABLE_FLOOR), status = 'Applied', decided = NOWS, result = stored or encoded }, true)
         U.zadd('rcpt:exp:durable', it.na + U.DURABLE_FLOOR, it.cmd)
+        end
       end
       done[k] = U.finish_item_json(it.cmd, r, false)
     end
@@ -788,6 +825,8 @@ function U.reserve_and_begin(base)
   local packed, plain, text, known = {}, false, {}, {}
   for i, cand in ipairs(c) do
     local r = U.reserve_job(cand.id, tonumber(a(4)), a(1), tokens[i], entropy[i], true)
+    -- PX.ev1: the claim's reserved row is folded into its started row (reservationNumber added to the started details).
+    local folded = PX.ev1 and r.effect == 'A' and table.remove(U.EV)
     local item
     if r.status == 'CapacityBlocked' then
       firstBlocked = firstBlocked or r.blocked
@@ -802,6 +841,14 @@ function U.reserve_and_begin(base)
       -- U.lease_of(reserve result), from the values that result is built from.
       local b = U.begin_job({ job = v.job, attempt = v.att, worker = v.worker, token = v.token, gen = v.gen }, jitters[i], r.j, true)
       if b.effect ~= 'A' then U.abort(b.status, b.code) end
+      if folded then
+        local last = U.EV[#U.EV]
+        if b.status == 'Applied' and not b.code and last and last.kind == 'attempt_started' and last.job == v.job then
+          last.details = U.raw('{"executionNumber":' .. b.bv.xnum .. ',"generation":' .. v.gen .. ',"reservationNumber":' .. v.rnum .. '}')
+        else
+          table.insert(U.EV, #U.EV, folded) -- not a plain start: keep both rows (the reserved row goes back before the begin's rows)
+        end
+      end
       local bv = b.bv
       if b.status == 'Applied' and not b.code and not r.fenced and bv and b.v.job == v.job and b.v.gen == v.gen and b.v.att == v.att
         and b.v.worker == v.worker and b.v.token == v.token and b.v.lease == v.lease then

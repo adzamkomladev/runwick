@@ -15,6 +15,13 @@ local INLINE, MAX_OPS, MAX_KEYS, MAX_BYTES, MAX_SCORE = 100, 1024, 256, 4194304,
 local BATCH_INLINE_OPS, BATCH_INLINE_KEYS, BATCH_INLINE_BYTES, BATCH_INLINE_ARGS = 256, 230, 524288, 8192
 
 local U = {}   -- helpers namespace (keeps the chunk under Lua's local-variable limit)
+-- PROTOTYPE (redis-stored-data-proto, not for merge): stored-data options, switched on by name in this string.
+--   fr: one finish receipt key per call; ev: events packed per call; ev1: one event row per claimed job (no attempt_reserved row);
+--   att: attempt record packed into one field at close; nul: no null actorId/attemptId in event rows; six: no state index for
+--   reserved/running. See docs/plans/redis-stored-data-design.md.
+local PX = {}
+for f in string.gmatch('__PX__', '[^,]+') do PX[f] = true end
+U.PX = PX
 
 -- ------------------------------------------------------------------ numbers, text, JSON
 
@@ -353,6 +360,7 @@ end
 -- ------------------------------------------------------------------ events
 
 local EV = {}
+U.EV = EV
 function U.event(kind, job, attempt, details, actor)
   EV[#EV + 1] = { kind = kind, job = job, attempt = attempt, details = details or {}, actor = actor }
 end
@@ -403,8 +411,9 @@ function U.ready_key(j) return 'ready:' .. j.queue .. ':' .. j.priority end
 function U.set_state(j, state)
   local old = j.state
   if old ~= state then
-    U.zrem('idx:created:s:' .. old, j.id)
-    U.zadd('idx:created:s:' .. state, tonumber(j.created), j.id)
+    -- PX.six: reserved and running jobs are listed from the lease index instead (prototype).
+    if not (PX.six and (old == 'reserved' or old == 'running')) then U.zrem('idx:created:s:' .. old, j.id) end
+    if not (PX.six and (state == 'reserved' or state == 'running')) then U.zadd('idx:created:s:' .. state, tonumber(j.created), j.id) end
   end
   U.jw(j, 'state', state)
   if state == 'pending' or state == 'retrying' then
@@ -553,12 +562,31 @@ local function flush_events(m)
   local id = tonumber(m.nextevent or '1')
   -- U.zadd('events', id, ids) and U.hset('events:data', ids, row) on records found once (created in that order, as before).
   local ze, he = rec(P .. 'events', 'z'), rec(P .. 'events:data', 'h')
+  if PX.ev then
+    -- One row per call: shared time and command, then [kind, job (0 = previous row's), attempt (0 = previous), actor, details].
+    local first, parts, pj, pa = id, {}, nil, nil
+    for i, e in ipairs(EV) do
+      if id > MAX_SCORE then U.abort('InvariantFault', 'counter_limit') end
+      parts[i] = '[' .. U.str(e.kind) .. ',' .. (e.job == nil and 'null' or (e.job == pj and '0' or U.str(e.job))) .. ','
+        .. (e.attempt == nil and 'null' or (e.attempt == pa and '0' or U.str(e.attempt))) .. ',' .. (e.actor and U.str(e.actor) or 'null')
+        .. ',' .. (e.details.__raw or U.enc(e.details)) .. (e.commandId and (',' .. U.str(e.commandId)) or '') .. ']'
+      pj, pa = e.job, e.attempt
+      id = id + 1
+    end
+    local fs = U.S(first)
+    ze.set[fs], ze.del[fs] = fs, nil
+    he.set[fs], he.del[fs] = '{"~":1,"t":' .. NOWS .. ',"c":' .. U.str(CMD) .. ',"e":[' .. concat(parts, ',') .. ']}', nil
+    U.hset('meta', 'nextevent', U.S(id))
+    return
+  end
   for _, e in ipairs(EV) do
     if id > MAX_SCORE then U.abort('InvariantFault', 'counter_limit') end
     -- The row's keys are fixed, so they are written in bytewise order instead of being sorted.
     local ids = U.S(id)
-    local row = '{"actorId":' .. (e.actor and U.str(e.actor) or 'null') .. ',"attemptId":' .. (e.attempt and U.str(e.attempt) or 'null')
-      .. ',"commandId":' .. U.str(e.commandId or CMD) .. ',"details":' .. (e.details.__raw or U.enc(e.details)) .. ',"eventId":' .. ids
+    local head = PX.nul and ('{' .. (e.actor and '"actorId":' .. U.str(e.actor) .. ',' or '') .. (e.attempt and '"attemptId":' .. U.str(e.attempt) .. ',' or '')
+      .. '"commandId":') or ('{"actorId":' .. (e.actor and U.str(e.actor) or 'null') .. ',"attemptId":' .. (e.attempt and U.str(e.attempt) or 'null')
+      .. ',"commandId":')
+    local row = head .. U.str(e.commandId or CMD) .. ',"details":' .. (e.details.__raw or U.enc(e.details)) .. ',"eventId":' .. ids
       .. ',"jobId":' .. (e.job and U.str(e.job) or 'null') .. ',"kind":' .. U.str(e.kind) .. ',"occurredAt":' .. NOWS .. '}'
     ze.set[ids], ze.del[ids] = ids, nil
     he.set[ids], he.del[ids] = row, nil
