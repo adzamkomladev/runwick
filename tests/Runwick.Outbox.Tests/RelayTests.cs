@@ -357,8 +357,9 @@ public sealed class RelayTests
 
         Assert.InRange(maxSessions, 1, 2);
         Assert.Equal(0, idleInTx);
-        Assert.InRange(maxInFlight, 0, 8); // four slots plus up to four claimed messages waiting for one (14 Changes 2026-11-20)
-        Assert.InRange(source!.MaxClaimBatch, 1, 8);
+        // Leases stay under the claim-ahead cap: twice what the four slots carry (14 Changes 2026-11-20).
+        Assert.InRange(maxInFlight, 0, relay.Relay.LeaseCap);
+        Assert.InRange(source!.MaxClaimBatch, 1, relay.Relay.LeaseCap);
         Assert.Equal(0, relay.Relay.Delivered);
         Assert.Equal(0, await o.SourceCountAsync("SELECT count(*) FROM {messages} WHERE state = 'delivered'"));
 

@@ -246,10 +246,11 @@ internal sealed class OutboxRelay(
             }
 
             // A full claim with room left claims again at once. Otherwise wait: the source had nothing more (the idle poll, longer
-            // while the wake listener is healthy; a notification ends it), or there is no room (a freed slot or lease ends it), or
-            // renewal is uncertain (IdlePoll).
+            // while the wake listener is healthy; a notification ends it, and so does a lease ending while messages are in flight, since
+            // rows keep arriving while the relay is busy and a source without notifications would otherwise leave them for a whole
+            // poll), or there is no room (a lease ending ends it), or renewal is uncertain (IdlePoll).
             var drained = room > 0 && claimed < room && !_renewalUncertain;
-            _waitingForRoom = !drained;
+            _waitingForRoom = !drained || !_inFlight.IsEmpty;
             if (drained || ClaimRoom() <= 0 || _renewalUncertain)
             {
                 var idle = drained ? IdlePollNow : options.IdlePoll;
@@ -419,8 +420,9 @@ internal sealed class OutboxRelay(
                     {
                         Volatile.Write(ref entry.LeaseSentAt, sentAt);
                     }
-                    else
+                    else if (_inFlight.ContainsKey(entry.Lease.MessageId))
                     {
+                        // Not counted when the message's own mark finished meanwhile (the renewal raced it); that is no loss.
                         entry.Lost = true;
                         Interlocked.Increment(ref LeaseLosses);
                     }

@@ -58,11 +58,11 @@ public sealed class OutboxRelayOptions
     public TimeSpan RetryMax { get; set; } = TimeSpan.FromSeconds(60);
 
     /// <summary>
-    /// Plain messages claimed together are sent to the destination as one transaction of up to this many, each keeping its own
-    /// transport command, receipt and mapping (14 Changes 2026-11-15, D4). 1 (the default) sends each message alone. Only
-    /// destinations that implement grouped delivery honor it; others send alone.
+    /// A free slot sends up to this many waiting plain messages to the destination as one transaction, each keeping its own
+    /// transport command, receipt and mapping (14 Changes 2026-11-15, D4; 2026-11-20). 4 is the default since 2026-11-20 (Outbox D);
+    /// 1 sends each message alone. Only destinations that implement grouped delivery (PostgreSQL) honor it; others send alone.
     /// </summary>
-    public int DeliveryGroupSize { get; set; } = 1;
+    public int DeliveryGroupSize { get; set; } = 4;
 
     /// <summary>
     /// The claim waits until at least this many of the <see cref="MaxInFlight"/> slots are free (or nothing is in flight, or
