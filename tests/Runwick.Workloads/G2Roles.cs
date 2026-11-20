@@ -157,15 +157,16 @@ internal static class G2Roles
         sc.AddRunwickPostgresOutbox(source, relay: o =>
         {
             o.MaxInFlight = a.Int("slots", 4);
-            o.DeliveryGroupSize = a.Int("group", 1);
-            o.ClaimBatchMin = a.Int("claim-min", 1);
-            o.ClaimBatchWait = TimeSpan.FromMilliseconds(a.Int("claim-wait-ms", 5));
-            o.ReleaseSlotAfterReply = a.Int("release-slot", 0) == 1;
+            o.DeliveryGroupSize = a.Int("group", o.DeliveryGroupSize);
+            o.ClaimBatchMin = a.Int("claim-min", o.ClaimBatchMin);
+            o.ClaimBatchWait = TimeSpan.FromMilliseconds(a.Int("claim-wait-ms", (int)o.ClaimBatchWait.TotalMilliseconds));
+            o.ReleaseSlotAfterReply = a.OptInt("release-slot") is { } release ? release == 1 : o.ReleaseSlotAfterReply;
+            o.BatchDeliveredMarks = a.OptInt("batch-marks") is { } marks ? marks == 1 : o.BatchDeliveredMarks;
         });
         await using var log = new MarkLog(a.Str("out") + ".marks.csv");
         LossySource? lossy = null;
         PostgresOutboxSource? pg = null;
-        sc.AddSingleton<IOutboxSource>(_ => lossy = new LossySource(pg = new PostgresOutboxSource(source) { BatchMarks = a.Int("batch-marks", 0) == 1 }, log));
+        sc.AddSingleton<IOutboxSource>(sp => lossy = new LossySource(pg = new PostgresOutboxSource(source) { BatchMarks = sp.GetRequiredService<OutboxRelayOptions>().BatchDeliveredMarks }, log));
         await using var provider = sc.BuildServiceProvider();
         var hosted = provider.GetServices<IHostedService>().ToList();
         foreach (var h in hosted)
@@ -199,6 +200,7 @@ internal static class G2Roles
         }
 
         var relay = provider.GetRequiredService<OutboxRelay>();
+        var relayOptions = provider.GetRequiredService<OutboxRelayOptions>();
         var summary = new JsonObject
         {
             ["slots"] = a.Int("slots", 4),
@@ -207,7 +209,10 @@ internal static class G2Roles
             ["retriesScheduled"] = Interlocked.Read(ref relay.RetriesScheduled),
             ["leaseLosses"] = Interlocked.Read(ref relay.LeaseLosses),
             ["sends"] = Interlocked.Read(ref relay.Sends),
-            ["group"] = a.Int("group", 1),
+            ["group"] = relayOptions.DeliveryGroupSize,
+            ["releaseSlotAfterReply"] = relayOptions.ReleaseSlotAfterReply,
+            ["batchDeliveredMarks"] = relayOptions.BatchDeliveredMarks,
+            ["claimBatchMin"] = relayOptions.ClaimBatchMin,
             ["groupSends"] = Interlocked.Read(ref relay.GroupSends),
             ["groupedCommands"] = Interlocked.Read(ref relay.GroupedCommands),
             ["groupFallbacks"] = Interlocked.Read(ref relay.GroupFallbacks),

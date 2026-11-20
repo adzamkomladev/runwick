@@ -51,6 +51,10 @@ internal sealed class OutboxRelay(
         public OutboxLease Lease { get; } = lease;
 
         public long LeaseSentAt = claimSentAt;
+
+        /// <summary>Diagnostics (PhaseTimings): when the claim returned, and when the message took a slot.</summary>
+        public long ClaimedAt = PhaseTimings.Start();
+        public long StartedAt;
         public volatile bool Lost;
         public int SlotReleased;
     }
@@ -174,6 +178,7 @@ internal sealed class OutboxRelay(
             var free = FreeSlots();
             if (options.ClaimBatchMin > 1 && free > 0 && free < options.ClaimBatchMin && !_inFlight.IsEmpty)
             {
+                var batchWaitStarted = PhaseTimings.Start();
                 // Let more slots free so this claim carries a batch; a message already in flight needs no claim to make progress.
                 var started = time.GetTimestamp();
                 while (free < options.ClaimBatchMin && !_inFlight.IsEmpty)
@@ -196,6 +201,8 @@ internal sealed class OutboxRelay(
 
                     free = FreeSlots();
                 }
+
+                PhaseTimings.Lap(batchWaitStarted, "OutboxClaimLoop", "batchWait");
             }
 
             var claimed = 0;
@@ -236,6 +243,7 @@ internal sealed class OutboxRelay(
                 // Nothing claimed with a free slot: the idle poll, longer while the wake listener is healthy. A full or
                 // renewal-paused relay keeps IdlePoll (a freed slot ends the wait either way).
                 var idle = claimed == 0 && free > 0 && !_renewalUncertain ? IdlePollNow : options.IdlePoll;
+                var waitStarted = PhaseTimings.Start();
                 try
                 {
                     await _slotFreed.WaitAsync(idle, stop).ConfigureAwait(false);
@@ -244,6 +252,8 @@ internal sealed class OutboxRelay(
                 {
                     return;
                 }
+
+                PhaseTimings.Lap(waitStarted, "OutboxClaimLoop", claimed == 0 && free > 0 ? "idleWait" : "fullWait");
             }
         }
     }
@@ -465,6 +475,10 @@ internal sealed class OutboxRelay(
             {
                 Interlocked.Decrement(ref _unslotted); // its slot was given up when the destination answered
             }
+            else
+            {
+                PhaseTimings.Lap(entry.StartedAt, "OutboxDelivery", "slotHeld");
+            }
 
             _slotFreed.Release();
         }
@@ -475,6 +489,7 @@ internal sealed class OutboxRelay(
     {
         if (options.ReleaseSlotAfterReply && _inFlight.ContainsKey(entry.Lease.MessageId) && Interlocked.Exchange(ref entry.SlotReleased, 1) == 0)
         {
+            PhaseTimings.Lap(entry.StartedAt, "OutboxDelivery", "slotHeld");
             Interlocked.Increment(ref _unslotted);
             _slotFreed.Release();
         }
@@ -618,6 +633,7 @@ internal sealed class OutboxRelay(
     async Task<Ready?> PrepareAsync(InFlight entry)
     {
         var lease = entry.Lease;
+        var prepareStarted = entry.StartedAt = PhaseTimings.Lap(entry.ClaimedAt, "OutboxDelivery", "claimToStart");
         PreparedDispatch prepared;
         try
         {
@@ -688,6 +704,7 @@ internal sealed class OutboxRelay(
         var command = new StoreCommand<ReceiveOutboxRequest>(prepared.Application, commandId, notAfter,
             new ReceiveOutboxRequest(identity,
                 new DispatchItem(prepared.Intent, prepared.Scopes, prepared.Digests) { Rates = preparer.RatesFor(prepared.Intent) }, lease.AcceptUntil, fingerprint, prepared.StoreId));
+        PhaseTimings.Lap(prepareStarted, "OutboxDelivery", "prepare");
         return new Ready(entry, prepared.Application, identity, fingerprint, command);
     }
 

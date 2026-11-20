@@ -815,8 +815,15 @@ internal static class G2Workloads
             }
 
             var trace = a.Has("trace");
-            List<string> relayArgs = ["--slots", I(a.Int("slots", 4)), "--group", I(a.Int("group", 1)), "--batch-marks", I(a.Int("batch-marks", 0)),
-                "--claim-min", I(a.Int("claim-min", 1)), "--claim-wait-ms", I(a.Int("claim-wait-ms", 5)), "--release-slot", I(a.Int("release-slot", 0))];
+            List<string> relayArgs = ["--slots", I(a.Int("slots", 4))];
+            // Relay options not given here keep the relay's own defaults.
+            foreach (var name in new[] { "group", "batch-marks", "claim-min", "claim-wait-ms", "release-slot" })
+            {
+                if (a.OptInt(name) is { } v)
+                {
+                    relayArgs.AddRange(["--" + name, I(v)]);
+                }
+            }
             if (trace)
             {
                 relayArgs.Add("--trace");
