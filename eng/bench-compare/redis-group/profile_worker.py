@@ -62,17 +62,31 @@ function U.wrap(name)
     return a, b
   end
 end""")
+    def opt(old, new):  # a finer mark, where this version of the prelude has the line
+        nonlocal prelude
+        if prelude.count(old) == 1:
+            prelude = prelude.replace(old, new)
+
+    # setup: running the chunk's definitions; meta_gates: HGETALL meta and the gates; rcpt_lookup: the receipt check
+    opt("function U.run(M)\n", "function U.run(M)\n  mark('setup')\n")
+    opt("  U.meta = m\n\n  if FP ~= '' then", "  U.meta = m\n  mark('meta_gates')\n\n  if FP ~= '' then")
+    opt("  if NOW >= NOT_AFTER then return reply_array(U.noeffect('CommandExpired'", "  mark('rcpt_lookup')\n  if NOW >= NOT_AFTER then return reply_array(U.noeffect('CommandExpired'")
     rep("  local ok, r = pcall(M.decide)", "  mark('pre_decide')\n  local ok, r = pcall(M.decide)\n  mark('decide')")
+    opt("  local ok2, c = pcall(commit, m, r)", "  mark('receipt')\n  local ok2, c = pcall(commit, m, r)")
     rep("  flush_events(m)\n  local ops, keys = build_ops()", "  mark('commit_start')\n  flush_events(m)\n  mark('events')\n  local ops, keys = build_ops()\n  mark('build_ops')")
+    opt("  local reply = reply_array(r, false)\n", "  local reply = reply_array(r, false)\n  mark('reply_encode')\n")
     if "  local bytes = cmsgpack.pack(intent)" in prelude:  # scripts that store every intent before projecting
         rep("  local bytes = cmsgpack.pack(intent)", "  local bytes = cmsgpack.pack(intent)\n  mark('pack')")
         rep("  local more = U.project(intent, 1, budget)", "  mark('guard_write')\n  local more = U.project(intent, 1, budget)\n  mark('project')")
     else:  # direct projection: the intent is stored only when a write fails partway
-        rep("  local budget = inline_budget(ops, keys, size(BATCH_INLINE_BYTES))", "  local budget = inline_budget(ops, keys, size(BATCH_INLINE_BYTES))\n  mark('pack')\n  mark('guard_write')")
+        rep("  local budget = inline_budget(ops, keys, size(BATCH_INLINE_BYTES))", "  local budget = inline_budget(ops, keys, size(BATCH_INLINE_BYTES))\n  mark('bound')")
         rep("  if FAIL > 0 and writes >= FAIL then error('INJECTED reply lost", "  mark('project')\n  if FAIL > 0 and writes >= FAIL then error('INJECTED reply lost")
-    rep("  if c and c.pending then return { 'P', CMD } end\n  return with_payloads(reply_array(r, false), r.payloads)",
-        "  if c and c.pending then return { 'P', CMD } end\n  mark('end')\n  for k, v in pairs(U.ACC) do PM[#PM + 1] = 'in_' .. k .. ':' .. math.floor(v * 1000000) end\n"
-        "  redis.call('SET', 'prof:last', table.concat(PM, ','))\n  local pa = with_payloads(reply_array(r, false), r.payloads)\n  return pa")
+    # payloads: the reply array and the payload reads after the commit (with_payloads); the profile row is written last
+    tail = "  if c and c.pending then return { 'P', CMD } end\n  return with_payloads(reply_array(r, false), r.payloads"
+    args = prelude[prelude.index(tail) + len(tail):].split("\n", 1)[0]  # ")" or ", r.known)"
+    rep(tail + args, "  if c and c.pending then return { 'P', CMD } end\n  mark('end')\n  local pa = with_payloads(reply_array(r, false), r.payloads" + args
+        + "\n  mark('payloads')\n  for k, v in pairs(U.ACC) do PM[#PM + 1] = 'in_' .. k .. ':' .. math.floor(v * 1000000) end\n"
+        "  redis.call('SET', 'prof:last', table.concat(PM, ','))\n  return pa")
     jobs = (lua / "jobs.lua").read_text()
     names = ['candidates', 'reserve_job', 'begin_job', 'finish_job'] + [n for n in os.environ.get("WRAPS", "").split(",") if n]
     # WRAPS=enc,sorted,... also times those helpers (helpers that prelude locals captured before this line are not affected)
@@ -173,7 +187,7 @@ def main():
             if key.startswith("in_"):
                 m = statistics.median(r[key] for r in rows)
                 print(f"  {key:22s} total {m:7.0f} us")
-        total = statistics.median(r["end"] for r in rows)
+        total = statistics.median(r["payloads"] for r in rows)
         print(f"  per job: {total / k:.0f} us (in-script total {total:.0f} us)")
 
     for k in [int(x) for x in a.k.split(",")]:
