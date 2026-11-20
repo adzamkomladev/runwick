@@ -154,7 +154,7 @@ public sealed partial class DefaultsMatchCodeTests
 
         // 06 §1.12 outbox relay.
         var ob = new OutboxRelayOptions();
-        Check(failures, "06-defaults.md", "MaxInFlight / claim batch", ob.MaxInFlight);
+        Check(failures, "06-defaults.md", "MaxInFlight", ob.MaxInFlight);
         Check(failures, "06-defaults.md", "Source lease / renewal", Sec(ob.LeaseDuration), Sec(ob.RenewalInterval));
         Check(failures, "06-defaults.md", "Provider call timeout", Sec(ob.ProviderCallTimeout));
         Check(failures, "06-defaults.md", "Idle poll", Sec(ob.IdlePoll));
