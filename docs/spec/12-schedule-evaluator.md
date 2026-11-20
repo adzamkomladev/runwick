@@ -4,6 +4,10 @@
 
 This file is normative for SP-015: the recurrence grammar, normalization, the definition fingerprint, the Cronos and NodaTime adapters, TZDB artifact identity, the bounded planner and preview, and the error classes. Storage, materialization, misfires and commands are spec 13 (SP-016). Numbers are restated where behavior depends on them; 06 is authoritative for the number if the two ever disagree.
 
+## Changes (2026-11-19, evaluation cost)
+
+- No change to the evaluator. Measured during the scheduler lag work (13 Changes 2026-11-19): evaluation costs about 0.06 to 0.09 ms per plan in P-06 (1,000 minute schedules), against 2.8 ms of PostgreSQL time per plan after the set-based group writes. Caching compiled recurrences (plan item S5) is not justified by these numbers and is not built.
+
 ## Changes (2026-11-19, configurable plan budget)
 
 - (2026-11-19) The materialization plan's cooperative time budget is now `SchedulerOptions.EvaluationBudget`, default **10 s** (was a fixed 250 ms), range 250 ms – 5 min. On a cold or loaded host the first plans after startup (JIT, TZDB load) overran 250 ms and failed with `schedule_budget_elapsed`. The 4,096-step limit still bounds the work. Registration, edit and preview keep their 1 s budget.

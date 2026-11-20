@@ -4,6 +4,10 @@
 
 Every numeric default used by milestone M2 is in this file. Behavior that uses each value is specified in [05-worker-engine.md](05-worker-engine.md) (cited as `05 §n`) and the storage/protocol specs. A value listed here is the default; a host may change configurable values only within the startup inequalities of §3. Values marked *profile constant* are not host-configurable (raising them requires a new serializer profile/format version).
 
+## Changes (2026-11-19, schedule groups)
+
+- §1.14 now lists the PostgreSQL materialization group settings that landed on 2026-11-11 and 2026-11-13 (13 Changes): `GroupMaterializations` off by default; when on, two groups in flight, `MaterializationGroupSize` 4 by default (2 to 8), 2 MiB of combined payload per group. No value changes. Since schema revision 26 a group costs about 2.8 ms of database time per plan instead of 6.3 ms (04 Changes 2026-11-19, set-based schedule groups), so either group size carries the default 100 jobs/s allowance with room to spare.
+
 ## Changes (2026-11-19, plan budget)
 
 The materialization plan budget default is 10 s (was 250 ms) and configurable through `SchedulerOptions.EvaluationBudget` (12 Changes 2026-11-19).
@@ -322,7 +326,8 @@ These are benchmark inputs, not tuned release values.
 |---|---|---|
 | Due read | 32 schedules per page with a local scan position. Empty head reads include the earliest eligible future scan time. | — |
 | Polling | Full productive pages continue promptly. Base poll 1 s after a short productive page. Unproductive pages and failures back off to 5 s (15 s with a healthy schedule listener), × (1 ± 0.10). Idle waits respect known due instants. | — |
-| Materializations in flight | 1 per scheduler/store group | — |
+| Materializations in flight | 1 per scheduler/store group; with `GroupMaterializations` (PostgreSQL, off by default) 2 groups | — |
+| Materialization group (`MaterializationGroupSize`) | 4 single-occurrence plans, 2 MiB combined payload | 2 – 8 plans |
 | Local allowance | 100 jobs/s, burst 32 | — |
 | Request / resolution budget | 5 s / 30 s | — |
 | Plan | 32 jobs, 2 MiB payload | hard |

@@ -229,6 +229,182 @@ public sealed class ScheduleContractTests
         Assert.Equal(0, await Count(f, "SELECT count(*) FROM runwick.storage_commands WHERE command_id = @id", ("id", expired.CommandId)));
     }
 
+    /// <summary>Registers one-time schedules due a second ago and returns one grouped command per key.</summary>
+    static async Task<List<StoreCommand<MaterializeRequest>>> DueCommandsAsync(TestClient c, params string[] keys)
+    {
+        var due = (await Store(c).StoreNowAsync(Ct)).AddSeconds(-1);
+        var commands = new List<StoreCommand<MaterializeRequest>>();
+        foreach (var key in keys)
+        {
+            Assert.Equal(StoreStatus.Applied, (await RegisterAsync(c, key, declaration =>
+            {
+                declaration.Cron = null;
+                declaration.DueAt = due;
+            })).Status);
+            commands.Add(c.Command((await PlanAsync(c, key)).Plan!));
+        }
+
+        return commands;
+    }
+
+    /// <summary>
+    /// Takes version 2 of the group function away, so a group that does not finish in the set path of version 3 fails
+    /// (0026). The fixture's database is its own.
+    /// </summary>
+    static Task SetVersionTwoAsync(DriverFixture f, bool present) => Exec(f, present
+        ? "ALTER FUNCTION runwick.materialize_schedule_group_v2_off RENAME TO materialize_schedule_group_v2"
+        : "ALTER FUNCTION runwick.materialize_schedule_group_v2 RENAME TO materialize_schedule_group_v2_off");
+
+    [Theory(SkipTestWithoutData = true)]
+    [MemberData(nameof(PostgresKind))]
+    [Trait("Case", "S3")]
+    public async Task A_clean_schedule_group_is_written_in_one_pass_and_replays_exactly_after_a_lost_reply(StoreKind kind)
+    {
+        var (f, c) = await OpenAsync(kind, "schgroupset");
+        await using var _ = f;
+        var grouped = Assert.IsAssignableFrom<IScheduleGroupStore>(Store(c));
+        var commands = await DueCommandsAsync(c, "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8");
+        // A single-command materialization of the same shape, to compare rows with.
+        var single = await DueCommandsAsync(c, "single");
+        Assert.Equal(StoreStatus.Applied, (await Store(c).MaterializeOccurrencesAsync(single[0], Ct)).Status);
+
+        await SetVersionTwoAsync(f, present: false);
+        f.ArmFault(FaultPoint.AfterCommitBeforeReply, FaultSpec.DropReply, FaultTarget.Command(commands[0].CommandId));
+        await Assert.ThrowsAsync<StoreOutcomeUnknownException>(() => grouped.MaterializeGroupAsync(commands, Ct));
+        await SetVersionTwoAsync(f, present: true);
+
+        // Every plan committed in the set path: one job, one occurrence, a decided receipt and two events each.
+        Assert.Equal(9, await Jobs(f));
+        Assert.Equal(9, await Occurrences(f));
+        Assert.Equal(9, await Count(f, "SELECT count(*) FROM runwick.storage_commands WHERE operation = 'MaterializeOccurrences' AND status = 'Applied'"));
+        Assert.Equal(9, await Count(f, "SELECT count(*) FROM runwick.queue_events WHERE event_kind = 'schedule_materialized'"));
+        Assert.Equal(9, await Count(f, "SELECT count(*) FROM runwick.queue_events WHERE event_kind = 'dispatched'"));
+        Assert.Equal(9, await Count(f, "SELECT count(*) FROM runwick.schedules WHERE cursor_revision = 2 AND evaluated_through IS NOT NULL"));
+        // Each plan's dispatched event directly precedes its materialized event, as version 2 writes them.
+        Assert.Equal(9, await Count(f, """
+            SELECT count(*) FROM runwick.queue_events AS d
+            JOIN runwick.queue_events AS m ON m.command_id = d.command_id AND m.event_kind = 'schedule_materialized'
+            WHERE d.event_kind = 'dispatched' AND m.event_id = (SELECT min(x.event_id) FROM runwick.queue_events AS x WHERE x.event_id > d.event_id)
+            """));
+        // Rows have the shape of the single-command path: same receipt result keys, same event details apart from identities.
+        Assert.Equal(8, await Count(f, """
+            SELECT count(*) FROM runwick.storage_commands AS g, runwick.storage_commands AS s
+            WHERE g.operation = 'MaterializeOccurrences' AND s.command_id = @single AND g.command_id <> s.command_id
+              AND (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(g.result) AS k) = (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(s.result) AS k)
+              AND g.result -> 'occurrences' -> 0 -> 'kind' = s.result -> 'occurrences' -> 0 -> 'kind'
+              AND g.result -> 'occurrences' -> 0 -> 'disposition' = s.result -> 'occurrences' -> 0 -> 'disposition'
+              AND g.result -> 'cursorRevision' = s.result -> 'cursorRevision'
+              AND g.retain_until - g.not_after = s.retain_until - s.not_after
+            """, ("single", single[0].CommandId)));
+        Assert.Equal(8, await Count(f, """
+            SELECT count(*) FROM runwick.queue_events AS g, runwick.queue_events AS s
+            WHERE g.event_kind = s.event_kind AND s.command_id = @single AND g.command_id <> s.command_id
+              AND g.details - 'scheduleId' - 'scheduleKey' - 'cutoff' = s.details - 'scheduleId' - 'scheduleKey' - 'cutoff'
+              AND g.actor_id IS NOT DISTINCT FROM s.actor_id AND g.attempt_id IS NULL
+              AND g.event_kind = 'schedule_materialized'
+            """, ("single", single[0].CommandId)));
+        Assert.Equal(8, await Count(f, """
+            SELECT count(*) FROM runwick.queue_events AS g, runwick.queue_events AS s
+            WHERE g.event_kind = 'dispatched' AND s.event_kind = 'dispatched' AND s.command_id = @single AND g.command_id <> s.command_id
+              AND g.details = s.details AND g.actor_id IS NOT DISTINCT FROM s.actor_id
+            """, ("single", single[0].CommandId)));
+        Assert.Equal(8, await Count(f, """
+            SELECT count(*) FROM runwick.jobs AS g JOIN runwick.job_generations AS gg USING (application, job_id)
+            JOIN runwick.job_payloads AS gp USING (application, job_id), runwick.jobs AS s
+            JOIN runwick.job_generations AS sg USING (application, job_id) JOIN runwick.job_payloads AS sp USING (application, job_id)
+            WHERE s.job_id = @job AND g.job_id <> s.job_id
+              AND (g.state, g.queue, g.priority, g.eligible_at = g.created_at, gg.created_reason, gg.max_executions, gp.headers - 'schedule')
+                = (s.state, s.queue, s.priority, s.eligible_at = s.created_at, sg.created_reason, sg.max_executions, sp.headers - 'schedule')
+            """, ("job", single[0].Body.Occurrences[0].ProposedJobId)));
+
+        // Resending the group replays every plan with its original job; nothing new is written.
+        var replay = await grouped.MaterializeGroupAsync(commands, Ct);
+        Assert.True(replay.Value!.Grouped);
+        for (var i = 0; i < commands.Count; i++)
+        {
+            var outcome = replay.Value.Outcomes[i];
+            Assert.Equal(StoreStatus.Applied, outcome.Status);
+            Assert.True(outcome.Replayed);
+            Assert.Equal(commands[i].Body.Occurrences[0].ProposedJobId, Assert.Single(outcome.Value!.Occurrences).JobId);
+        }
+
+        var alone = await Store(c).MaterializeOccurrencesAsync(commands[3], Ct);
+        Assert.True(alone.Replayed);
+        Assert.Equal(commands[3].Body.Occurrences[0].ProposedJobId, Assert.Single(alone.Value!.Occurrences).JobId);
+        Assert.Equal(9, await Jobs(f));
+        Assert.Equal(9, await Occurrences(f));
+        Assert.Equal(18, await Count(f, "SELECT count(*) FROM runwick.queue_events WHERE event_kind IN ('dispatched', 'schedule_materialized')"));
+    }
+
+    [Theory(SkipTestWithoutData = true)]
+    [MemberData(nameof(PostgresKind))]
+    [Trait("Case", "S3")]
+    public async Task The_set_path_refuses_a_stale_or_paused_plan_and_applies_the_rest_of_the_group(StoreKind kind)
+    {
+        var (f, c) = await OpenAsync(kind, "schgroupstale");
+        await using var _ = f;
+        var grouped = Assert.IsAssignableFrom<IScheduleGroupStore>(Store(c));
+        var commands = await DueCommandsAsync(c, "a", "stale", "paused", "b");
+        // An edit after planning moves the control revision; a pause sets the flag. Both plans must be refused.
+        await Exec(f, "UPDATE runwick.schedules SET control_revision = control_revision + 1 WHERE schedule_key = 'stale'");
+        await Exec(f, "UPDATE runwick.schedules SET paused = true WHERE schedule_key = 'paused'");
+
+        await SetVersionTwoAsync(f, present: false);
+        var reply = await grouped.MaterializeGroupAsync(commands, Ct);
+        await SetVersionTwoAsync(f, present: true);
+
+        Assert.True(reply.Value?.Grouped == true, $"{reply.Status} {reply.Error?.Code} {reply.Error?.Detail}");
+        Assert.NotNull(reply.Value);
+        var outcomes = reply.Value.Outcomes;
+        Assert.Equal(StoreStatus.Applied, outcomes[0].Status);
+        Assert.Equal("revision_conflict", outcomes[1].Error?.Code);
+        Assert.Equal("schedule_paused", outcomes[2].Error?.Code);
+        Assert.Equal(StoreStatus.Applied, outcomes[3].Status);
+        Assert.Equal(2, await Jobs(f));
+        Assert.Equal(2, await Occurrences(f));
+        // A refused plan leaves no receipt, so the same command can be resent once the schedule allows it.
+        Assert.Equal(0, await Count(f, "SELECT count(*) FROM runwick.storage_commands WHERE command_id IN (@s, @p)",
+            ("s", commands[1].CommandId), ("p", commands[2].CommandId)));
+        Assert.Equal(1, await Count(f, "SELECT count(*) FROM runwick.schedules WHERE schedule_key = 'stale' AND cursor_revision = 1 AND evaluated_through IS NULL"));
+        await Exec(f, "UPDATE runwick.schedules SET paused = false WHERE schedule_key = 'paused'");
+        var resent = await Store(c).MaterializeOccurrencesAsync(commands[2], Ct);
+        Assert.Equal(StoreStatus.Applied, resent.Status);
+        Assert.False(resent.Replayed);
+    }
+
+    [Theory(SkipTestWithoutData = true)]
+    [MemberData(nameof(PostgresKind))]
+    [Trait("Case", "S3")]
+    public async Task A_set_path_failure_after_its_writes_leaves_nothing_and_version_two_decides_each_plan(StoreKind kind)
+    {
+        var (f, c) = await OpenAsync(kind, "schgrouproll");
+        await using var _ = f;
+        var grouped = Assert.IsAssignableFrom<IScheduleGroupStore>(Store(c));
+        var commands = await DueCommandsAsync(c, "a", "b", "c");
+        // An occurrence row the plan for b does not know about: the set path writes jobs, payloads and generations for all
+        // three, then finds the conflict on the occurrence insert and must undo everything, receipts included.
+        var b = commands[1].Body;
+        await Exec(f, """
+            INSERT INTO runwick.schedule_occurrences (application, schedule_id, occurrence_kind, occurrence_key, scheduled_at,
+                definition_revision, job_id, disposition, coalesced, materialized_at, command_id)
+            SELECT application, schedule_id, 'scheduled', @key, @at, definition_revision, NULL, 'skipped', false, now(), gen_random_uuid()
+            FROM runwick.schedules WHERE schedule_key = 'b'
+            """, ("key", ScheduleOperations.OccurrenceKey(b.Occurrences[0].ScheduledAt)), ("at", b.Occurrences[0].ScheduledAt));
+
+        var reply = await grouped.MaterializeGroupAsync(commands, Ct);
+
+        Assert.True(reply.Value!.Grouped);
+        Assert.Equal(StoreStatus.Applied, reply.Value.Outcomes[0].Status);
+        Assert.Equal("occurrence_exists", reply.Value.Outcomes[1].Error?.Code);
+        Assert.Equal(StoreStatus.Applied, reply.Value.Outcomes[2].Status);
+        Assert.Equal(2, await Jobs(f));
+        Assert.Equal(0, await Count(f, "SELECT count(*) FROM runwick.jobs WHERE job_id = @j", ("j", b.Occurrences[0].ProposedJobId)));
+        Assert.Equal(0, await Count(f, "SELECT count(*) FROM runwick.job_payloads WHERE job_id = @j", ("j", b.Occurrences[0].ProposedJobId)));
+        Assert.Equal(2, await Count(f, "SELECT count(*) FROM runwick.queue_events WHERE event_kind = 'dispatched'"));
+        Assert.Equal(2, await Count(f, "SELECT count(*) FROM runwick.queue_events WHERE event_kind = 'schedule_materialized'"));
+        Assert.Equal(2, await Count(f, "SELECT count(*) FROM runwick.storage_commands WHERE operation = 'MaterializeOccurrences'"));
+    }
+
     static async Task<(ScheduleSnapshot Snapshot, DateTimeOffset Cutoff, MaterializeRequest? Plan)> PlanAsync(TestClient c, string key)
     {
         var s = await ReadAsync(c, key);

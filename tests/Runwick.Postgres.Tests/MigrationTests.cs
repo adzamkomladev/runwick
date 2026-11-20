@@ -12,7 +12,7 @@ namespace Runwick.Postgres.Tests;
 public sealed class MigrationTests
 {
     const string SpecManifest = """
-        {"manifestVersion":1,"schemaRevision":25,"protocolEpochs":[1],"receiptCodecs":[1],"commandFingerprintVersions":[1],
+        {"manifestVersion":1,"schemaRevision":26,"protocolEpochs":[1],"receiptCodecs":[1],"commandFingerprintVersions":[1],
          "windowFingerprintVersions":[1],"retryEvaluators":["exponential-v1"],
          "operations":{"Describe":[1],"RegisterApplication":[1],"RegisterQueue":[1],"RegisterScope":[1],"Dispatch":[1],
            "DispatchMany":[1],"ResolveCommand":[1],"ReadinessProbe":[1,2],"PublishPresence":[1],"ListExpiredLeases":[1],
@@ -149,6 +149,9 @@ public sealed class MigrationTests
     [InlineData("0025_claim_keyed:expand", 24L)]
     [InlineData("0025_claim_keyed:validate", 25L)]
     [InlineData("0025_claim_keyed:activate", 25L)]
+    [InlineData("0026_schedule_group_set:expand", 25L)]
+    [InlineData("0026_schedule_group_set:validate", 26L)]
+    [InlineData("0026_schedule_group_set:activate", 26L)]
     public async Task Session_killed_after_a_phase_resumes_from_catalog_state(string killAfter, long revisionAfterKill)
     {
         var server = await StoreServer.SharedAsync();
