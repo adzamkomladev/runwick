@@ -2,7 +2,8 @@
 """Do the changed scripts store byte-identical data and reply byte-identical text? Runs the same dispatch / claim / finish / finish-and-claim sequence (fixed ids, tokens, entropy, draws) through the
 baseline Lua and the checkout's Lua on two disposable Redis databases, dumps every key and compares them, with 13-digit millisecond times
 replaced by T. Receipt results are compared as replied (a compact result, 22 §3.2, expanded with the checkout's decoder; a missing code or
-detail field reads as empty). Usage: diffcheck.py --port P [--base DIR] [--new DIR]"""
+detail field reads as empty). Also covers a claim whose items are not plain Applied ones (fenced, capacity blocked, cancelled before start,
+budget exhausted), a single Reserve, Begin and Finish, and a resend (replay) of every command. Usage: diffcheck.py --port P [--base DIR] [--new DIR]"""
 import argparse, json, re, socket, sys
 from pathlib import Path
 
@@ -106,6 +107,49 @@ def run(lua, port, decoder):
     r = db.call(*call)
     assert r[3] == b"1", r
     replies.append(r)
+
+    # Claim items that are not plain Applied ones (each kept as replied text): a fenced resource scope, a second job of that scope
+    # (capacity blocked), a job with a cancel request (cancelled before start) and one with its execution budget used up; then a
+    # single Reserve, Begin and Finish on a fifth job. Each is resent once (a lost reply).
+    db.call("HSET", PREFIX + "queues", "q2", "{}")
+    scope = [dict(kind="resource", key="r1", id=hexid(0, 20), capacity=1)]
+    for i in range(10, 15):
+        policy = dict(maxExec=3, maxUn=3, retry='{"initialDelay":100,"maximumDelay":1000}', uretry='{"initialDelay":100,"maximumDelay":1000}', timeout=5000)
+        body = dict(jobId=hexid(i, 1), name="test", queue="q2", priority="medium", pver=1, profile="json", profver=1, notBefore=None,
+                    akey=None, wkey=None, wms=None, biz="0" * 64, pol="0" * 64, headers='{"business":{},"diagnostic":{}}', policy=policy,
+                    scopes=scope if i in (10, 11) else [], rates=[])
+        r = db.call("EVALSHA", dispatch, 1, META, 0, STORE, "Dispatch", hexid(i, 2), hexid(i, 3) * 2, dl(300_000), 600_000, 86_400_000,
+                    "durable", "c", "", 0, 0, "initial", "", 1, json.dumps(body), b"payload-%d" % i)
+        assert r[1] == b"Applied", r
+    db.call("HSET", PREFIX + "job:" + hexid(12, 1), "cancelat", "1")
+    db.call("HSET", PREFIX + "job:" + hexid(13, 1), "g:1:started", "3")
+    db.call("ZADD", PREFIX + "ready:q2:medium", 1, hexid(10, 1), 2, hexid(11, 1), 3, hexid(12, 1), 4, hexid(13, 1), 5, hexid(14, 1))
+    toks = json.dumps([hexid(i, 12) for i in range(4)])
+    ents = json.dumps([f"{i + 200:020x}" for i in range(4)])
+    mixed = ["EVALSHA", rb, 1, META, 0, STORE, "ReserveAndBegin", hexid(2, 5), hexid(2, 6) * 2, dl(30_000), 60_000, 600_000, "ownership", "c", "",
+             hexid(2, 7), "q2", "medium", 600_000, toks, "", "", json.dumps([["test", 1, "json", 1]]), 4, ents, json.dumps([0] * 4)]
+    reserve = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/reserve.lua").read_text())
+    begin = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/begin.lua").read_text())
+    one = ["EVALSHA", reserve, 1, META, 0, STORE, "Reserve", hexid(3, 5), hexid(3, 6) * 2, dl(30_000), 60_000, 600_000, "ownership", "c", "",
+           hexid(3, 7), "q2", "medium", 600_000, hexid(3, 12), "4", hexid(13, 1), json.dumps([["test", 1, "json", 1]]), f"{300:020x}"]
+    for c in (mixed, mixed, one, one):
+        r = db.call(*c)
+        assert r[1] == b"Applied", r
+        replies.append(r)
+        if c is mixed:
+            items = json.loads(r[7])["items"]
+            assert [(i["status"], bool(i.get("reserve", {}).get("fences"))) for i in items] == [
+                ("Applied", True), ("CapacityBlocked", False), ("InvalidState", False), ("BudgetExhausted", False)], items
+    res = json.loads(r[7])
+    lease = json.dumps(dict(jobId=res["jobId"], attemptId=res["attemptId"], workerInstanceId=res["workerInstanceId"], ownershipToken=res["ownershipToken"],
+                            generation=res["generation"]))
+    beg = ["EVALSHA", begin, 1, META, 0, STORE, "Begin", hexid(4, 5), hexid(4, 6) * 2, dl(30_000), 60_000, 600_000, "ownership", "c", "", lease, 0]
+    fin2 = ["EVALSHA", fin, 1, META, 0, STORE, "Finish", hexid(14, 8), hexid(14, 9) * 2, dl(30_000), 60_000, 86_400_000, "durable", "d", "",
+            json.dumps(dict(lease=json.loads(lease), outcome="succeeded", elapsed=2, requested=None, error=None, usage=None)), 0.5]
+    for c in (beg, beg, fin2, fin2):
+        r = db.call(*c)
+        assert r[1] == b"Applied", r
+        replies.append(r)
 
     expand = db.call("SCRIPT", "LOAD", decoder + "return U.cdec(ARGV[12])")
     dump = {}

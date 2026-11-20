@@ -103,10 +103,8 @@ end
 -- keys; a different pairs order for the same set only costs another sort. Script locals live for one call, so nothing is shared.
 local KT, END, KS = {}, {}, {}
 local function sorted_keys(v)
-  local node, k, n = KT, {}, 0
+  local node = KT
   for key in pairs(v) do
-    n = n + 1
-    k[n] = key
     local nx = node[key]
     if not nx then
       nx = {}
@@ -116,8 +114,10 @@ local function sorted_keys(v)
   end
   local s = node[END]
   if not s then
-    if n > 1 then table.sort(k, U.blt) end
-    s = k
+    -- A new key set: list it (a second walk of the same table lists the same keys) and sort it once.
+    s = {}
+    for key in pairs(v) do s[#s + 1] = key end
+    if #s > 1 then table.sort(s, U.blt) end
     node[END] = s
   end
   return s
@@ -376,12 +376,25 @@ function U.job(id)
   return t
 end
 
+local JREC = {}
 function U.jw(j, f, v)
   -- j is the job as this command sees it (stored fields plus its own writes). A field it lacks has nothing to delete, and a field that already holds the value is not written again.
   local s = v ~= nil and tostring(v) or nil
   if j[f] == s then return end
   j[f] = s
-  U.hset('job:' .. j.id, f, v)
+  -- U.hset('job:' .. id, f, v), with the job's overlay record found once per job rather than by building its key for every field.
+  local r = JREC[j.id]
+  if not r then
+    r = rec(P .. 'job:' .. j.id, 'h')
+    JREC[j.id] = r
+  end
+  if s == nil then
+    r.set[f] = nil
+    r.del[f] = true
+  else
+    r.set[f] = s
+    r.del[f] = nil
+  end
 end
 
 function U.ready_key(j) return 'ready:' .. j.queue .. ':' .. j.priority end
@@ -461,11 +474,12 @@ local function reply_array(r, replayed)
   return a
 end
 
-local function with_payloads(a, ids)
+-- known: id -> { headers, created } this command already holds for a job it claimed (the claim does not change either field).
+local function with_payloads(a, ids, known)
   local n = 0
   local tail = {}
   for _, id in ipairs(ids or {}) do
-    local j = redis.call('HMGET', P .. 'job:' .. id, 'headers', 'created')
+    local j = known and known[id] or redis.call('HMGET', P .. 'job:' .. id, 'headers', 'created')
     local p = redis.call('GET', P .. 'pay:' .. id)
     if j[1] and p then
       n = n + 1
@@ -537,45 +551,67 @@ U.apply = apply
 local function flush_events(m)
   if #EV == 0 then return end
   local id = tonumber(m.nextevent or '1')
+  -- U.zadd('events', id, ids) and U.hset('events:data', ids, row) on records found once (created in that order, as before).
+  local ze, he = rec(P .. 'events', 'z'), rec(P .. 'events:data', 'h')
   for _, e in ipairs(EV) do
     if id > MAX_SCORE then U.abort('InvariantFault', 'counter_limit') end
     -- The row's keys are fixed, so they are written in bytewise order instead of being sorted.
     local ids = U.S(id)
     local row = '{"actorId":' .. (e.actor and U.str(e.actor) or 'null') .. ',"attemptId":' .. (e.attempt and U.str(e.attempt) or 'null')
-      .. ',"commandId":' .. U.str(e.commandId or CMD) .. ',"details":' .. U.enc(e.details) .. ',"eventId":' .. ids
+      .. ',"commandId":' .. U.str(e.commandId or CMD) .. ',"details":' .. (e.details.__raw or U.enc(e.details)) .. ',"eventId":' .. ids
       .. ',"jobId":' .. (e.job and U.str(e.job) or 'null') .. ',"kind":' .. U.str(e.kind) .. ',"occurredAt":' .. NOWS .. '}'
-    U.zadd('events', id, ids)
-    U.hset('events:data', ids, row)
+    ze.set[ids], ze.del[ids] = ids, nil
+    he.set[ids], he.del[ids] = row, nil
     id = id + 1
   end
   U.hset('meta', 'nextevent', U.S(id))
 end
 
+-- OPBYTES: the ops' part of packed_bound, summed by build_ops as it builds them (5 per list, then length plus 9 per text, 18 per
+-- other value), so the bound needs no second pass over every op.
+local OPBYTES = 0
+local function vb(x) return type(x) == 'string' and #x + 9 or 18 end
 local function build_ops()
-  local ops, keys = {}, 0
+  local ops, keys, b = {}, 0, 0
   for _, k in ipairs(WO) do
     local r = W[k]
     local s = string.sub(k, #P + 1)
+    local sb = #s + 9
     if s ~= 'meta' then keys = keys + 1 end
-    if r.kill then ops[#ops + 1] = { 'D', s } end
+    if r.kill then
+      ops[#ops + 1] = { 'D', s }
+      b = b + 15 + sb
+    end
     if r.t == 's' then
-      if r.val ~= nil then ops[#ops + 1] = { 'S', s, r.val } end
+      if r.val ~= nil then
+        ops[#ops + 1] = { 'S', s, r.val }
+        b = b + 15 + sb + vb(r.val)
+      end
     else
       -- The order of fields inside one write does not change what is stored, so nothing is sorted here.
       local h = r.t == 'h'
       if next(r.del) ~= nil and not r.kill then
         local op = { h and 'HD' or 'ZR', s }
-        for f in pairs(r.del) do op[#op + 1] = f end
+        b = b + 16 + sb
+        for f in pairs(r.del) do
+          op[#op + 1] = f
+          b = b + (type(f) == 'string' and #f + 9 or 18)
+        end
         ops[#ops + 1] = op
       end
-      local op, n = { h and 'H' or 'Z', s }, 2
+      local op, n, ob = { h and 'H' or 'Z', s }, 2, 0
       for f, v in pairs(r.set) do
         if h then op[n + 1], op[n + 2] = f, v else op[n + 1], op[n + 2] = v, f end
         n = n + 2
+        ob = ob + (type(f) == 'string' and #f + 9 or 18) + (type(v) == 'string' and #v + 9 or 18)
       end
-      if n > 2 then ops[#ops + 1] = op end
+      if n > 2 then
+        ops[#ops + 1] = op
+        b = b + 15 + sb + ob
+      end
     end
   end
+  OPBYTES = b
   return ops, keys
 end
 
@@ -650,8 +686,7 @@ local function packed_bound(intent)
   end
   list({ intent.id, intent.op, intent.rev, intent.decided })
   list(intent.reply)
-  for _, op in ipairs(intent.ops) do list(op) end
-  return n
+  return n + OPBYTES -- the ops, summed by build_ops
 end
 
 local function commit(m, r)
@@ -767,7 +802,7 @@ function U.run(M)
   if r.nocommit then
     -- A replay-only group confirms its receipts like Dispatch replays do: a fresh write, no intent, no revision change.
     for _, key in ipairs(r.confirmations or {}) do w('HSET', P .. key, 'confirmed', NOWS) end
-    return with_payloads(reply_array(r, false), r.payloads)
+    return with_payloads(reply_array(r, false), r.payloads, r.known)
   end
 
   if FP ~= '' then
@@ -787,7 +822,7 @@ function U.run(M)
   end
   if c and c.effect then return reply_array(c, false) end
   if c and c.pending then return { 'P', CMD } end
-  return with_payloads(reply_array(r, false), r.payloads)
+  return with_payloads(reply_array(r, false), r.payloads, r.known)
 end
 
 local ARGS = function(i) return ARGV[A + i - 1] end
