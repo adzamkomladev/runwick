@@ -181,16 +181,29 @@ internal sealed class PostgresOutboxSource : IOutboxSource, IOutboxWakeSource, I
         OnLane(_claimLane, "OutboxClaim", async connection =>
         {
             using var claim = new NpgsqlCommand("""
-                WITH due AS (
-                    SELECT message_id, LEAST(@transport_bound, accept_until) AS new_not_after,
-                           LEAST(@transport_bound, accept_until) > @transport_as_of
-                           AND (transport_command_id IS NULL OR transport_not_after IS NULL OR transport_not_after <= @transport_as_of) AS replace_transport
+                WITH pending AS (
+                    -- One ordered walk of each partial index, so a claim reads @max rows however long the backlog is
+                    -- (an OR of both states read and sorted every due row). The sub-select makes the clock an index bound.
+                    SELECT message_id, next_attempt_at, accept_until, transport_command_id, transport_not_after
                     FROM runwick_outbox.outbox_messages
-                    WHERE (state = 'pending' AND next_attempt_at <= clock_timestamp())
-                       OR (state = 'leased' AND lease_expires_at <= clock_timestamp())
+                    WHERE state = 'pending' AND next_attempt_at <= (SELECT clock_timestamp())
                     ORDER BY next_attempt_at
                     LIMIT @max
                     FOR UPDATE SKIP LOCKED),
+                expired AS (
+                    SELECT message_id, next_attempt_at, accept_until, transport_command_id, transport_not_after
+                    FROM runwick_outbox.outbox_messages
+                    WHERE state = 'leased' AND lease_expires_at <= (SELECT clock_timestamp())
+                    ORDER BY lease_expires_at
+                    LIMIT @max
+                    FOR UPDATE SKIP LOCKED),
+                due AS (
+                    SELECT message_id, LEAST(@transport_bound, accept_until) AS new_not_after,
+                           LEAST(@transport_bound, accept_until) > @transport_as_of
+                           AND (transport_command_id IS NULL OR transport_not_after IS NULL OR transport_not_after <= @transport_as_of) AS replace_transport
+                    FROM (SELECT * FROM pending UNION ALL SELECT * FROM expired) AS d
+                    ORDER BY next_attempt_at
+                    LIMIT @max),
                 assigned AS (
                     SELECT due.*, (@transport_ids)[(row_number() OVER ())::int] AS new_command_id
                     FROM due)

@@ -66,8 +66,13 @@ internal sealed class SqliteOutboxSource(string connectionString) : IOutboxSourc
             var now = (await NowAsync(connection, tx, ct).ConfigureAwait(false)).ToUnixTimeMilliseconds();
             var ids = new List<string>();
             using (var due = new SqliteCommand("""
-                SELECT message_id FROM runwick_outbox_messages
-                WHERE (state = 'pending' AND next_attempt_at <= $now) OR (state = 'leased' AND lease_expires_at <= $now)
+                SELECT message_id FROM (
+                    -- One ordered walk of each partial index, so a claim reads $max rows however long the backlog is.
+                    SELECT * FROM (SELECT message_id, next_attempt_at FROM runwick_outbox_messages
+                                   WHERE state = 'pending' AND next_attempt_at <= $now ORDER BY next_attempt_at LIMIT $max)
+                    UNION ALL
+                    SELECT * FROM (SELECT message_id, next_attempt_at FROM runwick_outbox_messages
+                                   WHERE state = 'leased' AND lease_expires_at <= $now ORDER BY lease_expires_at LIMIT $max))
                 ORDER BY next_attempt_at
                 LIMIT $max
                 """, connection, tx))

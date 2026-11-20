@@ -56,7 +56,12 @@ internal sealed class OutboxRelay(
         public long ClaimedAt = PhaseTimings.Start();
         public long StartedAt;
         public volatile bool Lost;
-        public int SlotReleased;
+
+        /// <summary>The slot this message's destination call holds, shared by a group; null while it waits (guarded by the slot lock).</summary>
+        public SlotTicket? Slot;
+
+        /// <summary>True once this message stopped counting toward its slot (guarded by the slot lock).</summary>
+        public bool SlotDone;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -175,13 +180,14 @@ internal sealed class OutboxRelay(
         failures = 0;
         while (!stop.IsCancellationRequested)
         {
-            var free = FreeSlots();
-            if (options.ClaimBatchMin > 1 && free > 0 && free < options.ClaimBatchMin && !_inFlight.IsEmpty)
+            var room = ClaimRoom();
+            if (options.ClaimBatchMin > 1 && room > 0 && room < options.ClaimBatchMin && !_inFlight.IsEmpty)
             {
                 var batchWaitStarted = PhaseTimings.Start();
-                // Let more slots free so this claim carries a batch; a message already in flight needs no claim to make progress.
+                // Let more room open so this claim carries a batch; a message already in flight needs no claim to make progress.
                 var started = time.GetTimestamp();
-                while (free < options.ClaimBatchMin && !_inFlight.IsEmpty)
+                _waitingForRoom = true;
+                while (room < options.ClaimBatchMin && !_inFlight.IsEmpty)
                 {
                     // The wait is recomputed once here: a negative timeout would throw and end the claim loop for good.
                     var remaining = options.ClaimBatchWait - time.GetElapsedTime(started);
@@ -199,14 +205,15 @@ internal sealed class OutboxRelay(
                         return;
                     }
 
-                    free = FreeSlots();
+                    room = ClaimRoom();
                 }
 
+                _waitingForRoom = false;
                 PhaseTimings.Lap(batchWaitStarted, "OutboxClaimLoop", "batchWait");
             }
 
             var claimed = 0;
-            if (free > 0 && !_renewalUncertain)
+            if (room > 0 && !_renewalUncertain)
             {
                 try
                 {
@@ -214,7 +221,7 @@ internal sealed class OutboxRelay(
                     var claimSentAt = time.GetTimestamp();
                     var now = time.GetUtcNow();
                     var bound = DateTimeOffset.FromUnixTimeMilliseconds(Fingerprints.FloorEpochMs(now + options.TransportLifetime));
-                    var leases = await Call(c => source.ClaimWithTransportAsync(_owner, free, options.LeaseDuration, now, bound, c),
+                    var leases = await Call(c => source.ClaimWithTransportAsync(_owner, room, options.LeaseDuration, now, bound, c),
                         "OutboxClaim").ConfigureAwait(false);
                     failures = 0;
                     var entries = new List<InFlight>(leases.Count);
@@ -228,7 +235,7 @@ internal sealed class OutboxRelay(
                         }
                     }
 
-                    StartDelivery(entries);
+                    Enqueue(entries);
                 }
                 catch (Exception ex) when (!stop.IsCancellationRequested && ex is not OutOfMemoryException)
                 {
@@ -238,11 +245,14 @@ internal sealed class OutboxRelay(
                 }
             }
 
-            if (claimed == 0 || FreeSlots() <= 0)
+            // A full claim with room left claims again at once. Otherwise wait: the source had nothing more (the idle poll, longer
+            // while the wake listener is healthy; a notification ends it), or there is no room (a freed slot or lease ends it), or
+            // renewal is uncertain (IdlePoll).
+            var drained = room > 0 && claimed < room && !_renewalUncertain;
+            _waitingForRoom = !drained;
+            if (drained || ClaimRoom() <= 0 || _renewalUncertain)
             {
-                // Nothing claimed with a free slot: the idle poll, longer while the wake listener is healthy. A full or
-                // renewal-paused relay keeps IdlePoll (a freed slot ends the wait either way).
-                var idle = claimed == 0 && free > 0 && !_renewalUncertain ? IdlePollNow : options.IdlePoll;
+                var idle = drained ? IdlePollNow : options.IdlePoll;
                 var waitStarted = PhaseTimings.Start();
                 try
                 {
@@ -253,8 +263,10 @@ internal sealed class OutboxRelay(
                     return;
                 }
 
-                PhaseTimings.Lap(waitStarted, "OutboxClaimLoop", claimed == 0 && free > 0 ? "idleWait" : "fullWait");
+                PhaseTimings.Lap(waitStarted, "OutboxClaimLoop", drained ? "idleWait" : "fullWait");
             }
+
+            _waitingForRoom = false;
         }
     }
 
@@ -437,61 +449,146 @@ internal sealed class OutboxRelay(
     /// <summary>Grouped sends that fell back to one send per command (tests and diagnostics).</summary>
     public long GroupFallbacks;
 
-    void StartDelivery(List<InFlight> entries)
+    /// <summary>One relay slot: one destination call, alone or grouped; free again when every message it carries is done with it.</summary>
+    internal sealed class SlotTicket(int messages)
     {
-        var size = destination is IOutboxGroupDestinationStore ? options.DeliveryGroupSize : 1;
-        if (size <= 1 || entries.Count < 2)
-        {
-            foreach (var entry in entries)
-            {
-                _ = Task.Run(() => DeliverAsync(entry), CancellationToken.None);
-            }
+        public int Remaining = messages;
+    }
 
-            return;
-        }
+    readonly Lock _slots = new();
+    readonly Queue<InFlight> _waiting = new();
+    int _slotted;
+    volatile bool _waitingForRoom;
 
-        foreach (var chunk in entries.Chunk(size))
+    /// <summary>Messages one slot carries: <see cref="OutboxRelayOptions.DeliveryGroupSize"/> when the destination groups, otherwise 1.</summary>
+    int SlotSize => destination is IOutboxGroupDestinationStore ? options.DeliveryGroupSize : 1;
+
+    /// <summary>Slots (<see cref="OutboxRelayOptions.MaxInFlight"/> destination calls) not held by a delivery.</summary>
+    internal int FreeSlots()
+    {
+        lock (_slots)
         {
-            _ = Task.Run(() => DeliverGroupAsync(chunk), CancellationToken.None);
+            return options.MaxInFlight - _slotted;
         }
     }
 
-    int _unslotted;
+    /// <summary>
+    /// The most leases the relay holds (14 Changes 2026-11-20): twice what the slots carry, so up to one full round of claimed messages
+    /// waits beside the busy slots (messages awaiting their mark included).
+    /// </summary>
+    internal int LeaseCap => 2 * options.MaxInFlight * SlotSize;
 
-    /// <summary>Slots not held by a message; with <see cref="OutboxRelayOptions.ReleaseSlotAfterReply"/> a message awaiting its mark holds none.</summary>
-    internal int FreeSlots()
+    /// <summary>
+    /// How many messages the next claim asks for: whatever keeps the leases at <see cref="LeaseCap"/>, so a freed slot starts its next
+    /// message at once instead of waiting for a claim round trip.
+    /// </summary>
+    internal int ClaimRoom() => LeaseCap - _inFlight.Count;
+
+    /// <summary>Claimed messages wait (leased and renewed, holding no slot) until a slot is free.</summary>
+    void Enqueue(List<InFlight> entries)
     {
-        var total = _inFlight.Count;
-        var free = options.MaxInFlight - (total - Volatile.Read(ref _unslotted));
-        // Messages awaiting their mark hold a lease but no slot; twice MaxInFlight leases is the most a slow mark path can pile up.
-        return options.ReleaseSlotAfterReply ? Math.Min(free, 2 * options.MaxInFlight - total) : free;
+        lock (_slots)
+        {
+            foreach (var entry in entries)
+            {
+                _waiting.Enqueue(entry);
+            }
+        }
+
+        Pump();
+    }
+
+    /// <summary>Starts waiting messages in free slots, up to a group per slot; called after a claim and whenever a slot frees.</summary>
+    void Pump()
+    {
+        if (_abort.IsCancellationRequested)
+        {
+            return; // past the host deadline: messages still waiting keep their leases until they expire and are reclaimed
+        }
+
+        var size = SlotSize;
+        List<InFlight[]>? start = null;
+        lock (_slots)
+        {
+            while (_slotted < options.MaxInFlight && _waiting.Count > 0)
+            {
+                var take = Math.Min(size, _waiting.Count);
+                var ticket = new SlotTicket(take);
+                var batch = new InFlight[take];
+                for (var i = 0; i < take; i++)
+                {
+                    batch[i] = _waiting.Dequeue();
+                    batch[i].Slot = ticket;
+                }
+
+                _slotted++;
+                (start ??= []).Add(batch);
+            }
+        }
+
+        foreach (var batch in start ?? [])
+        {
+            _ = batch.Length == 1
+                ? Task.Run(() => DeliverAsync(batch[0]), CancellationToken.None)
+                : Task.Run(() => DeliverGroupAsync(batch), CancellationToken.None);
+        }
+    }
+
+    /// <summary>This message is done with its slot; true when that freed the slot.</summary>
+    bool GiveUpSlot(InFlight entry)
+    {
+        lock (_slots)
+        {
+            if (entry.Slot is not { } ticket || entry.SlotDone)
+            {
+                return false;
+            }
+
+            entry.SlotDone = true;
+            if (--ticket.Remaining > 0)
+            {
+                return false;
+            }
+
+            _slotted--;
+            return true;
+        }
     }
 
     void Release(InFlight entry)
     {
         if (_inFlight.TryRemove(entry.Lease.MessageId, out _))
         {
-            if (Interlocked.Exchange(ref entry.SlotReleased, 1) == 1)
-            {
-                Interlocked.Decrement(ref _unslotted); // its slot was given up when the destination answered
-            }
-            else
+            var held = !entry.SlotDone;
+            if (GiveUpSlot(entry) || held)
             {
                 PhaseTimings.Lap(entry.StartedAt, "OutboxDelivery", "slotHeld");
             }
 
-            _slotFreed.Release();
+            SignalRoom();
+            Pump();
         }
     }
 
-    /// <summary>The destination answered: the message stops holding a slot while its source mark is written (opt-in).</summary>
+    /// <summary>The destination answered: the message stops counting toward its slot while its source mark is written.</summary>
     void FreeSlotForMark(InFlight entry)
     {
-        if (options.ReleaseSlotAfterReply && _inFlight.ContainsKey(entry.Lease.MessageId) && Interlocked.Exchange(ref entry.SlotReleased, 1) == 0)
+        if (options.ReleaseSlotAfterReply && !entry.SlotDone)
         {
             PhaseTimings.Lap(entry.StartedAt, "OutboxDelivery", "slotHeld");
-            Interlocked.Increment(ref _unslotted);
-            _slotFreed.Release();
+            if (GiveUpSlot(entry))
+            {
+                Pump();
+            }
+        }
+    }
+
+    /// <summary>Room for a claim opened: wake the claim loop only when it waits for room (or shutdown waits for in-flight work).</summary>
+    void SignalRoom()
+    {
+        if (_waitingForRoom || _claimStop.IsCancellationRequested)
+        {
+            OnWake();
         }
     }
 

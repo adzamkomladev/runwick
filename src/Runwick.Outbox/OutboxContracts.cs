@@ -75,18 +75,18 @@ public sealed class OutboxRelayOptions
     public TimeSpan ClaimBatchWait { get; set; } = TimeSpan.FromMilliseconds(5);
 
     /// <summary>
-    /// When true, a message stops counting against <see cref="MaxInFlight"/> once the destination has answered, so the next claim and
-    /// send overlap its source mark. The source lease is still held and renewed until the mark finishes, and shutdown still waits for it.
-    /// False (the default) keeps a slot until the mark is written (14 Changes 2026-11-17, D2).
+    /// When true (the default since 2026-11-20, Outbox D), a message stops counting against <see cref="MaxInFlight"/> once the destination
+    /// has answered, so the next send overlaps its source mark. The source lease is still held and renewed until the mark finishes, and
+    /// shutdown still waits for it. False keeps a slot until the mark is written (14 Changes 2026-11-17, D2).
     /// </summary>
-    public bool ReleaseSlotAfterReply { get; set; }
+    public bool ReleaseSlotAfterReply { get; set; } = true;
 
     /// <summary>
     /// When true, delivered marks that queue behind one another on the source's single control connection are written in one
     /// statement and one commit, each still guarded by its own lease token (14 Changes 2026-11-17, D2). Honored by the
-    /// PostgreSQL source; other sources ignore it. False (the default) writes one statement per mark.
+    /// PostgreSQL source; other sources ignore it. True is the default since 2026-11-20 (Outbox D); false writes one statement per mark.
     /// </summary>
-    public bool BatchDeliveredMarks { get; set; }
+    public bool BatchDeliveredMarks { get; set; } = true;
 
     /// <summary>Transport command lifetime; at most 30 s and never beyond AcceptUntil.</summary>
     public TimeSpan TransportLifetime { get; set; } = TimeSpan.FromSeconds(30);
