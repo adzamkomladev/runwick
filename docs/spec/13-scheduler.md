@@ -2,6 +2,10 @@
 
 **Sources:** [scheduling-internals.md](../architecture/scheduling-internals.md) §2–§10 (primary); [scheduler-evaluator-and-defaults.md](../architecture/scheduler-evaluator-and-defaults.md) §3, §5; [postgres-schema-and-operations.md](../architecture/postgres-schema-and-operations.md) §4–§6; [storage-command-protocol.md](../architecture/storage-command-protocol.md); [management-retention-defaults.md](../architecture/management-retention-defaults.md) (command lifetimes, schedule retention); [public-api-contract.md](../architecture/public-api-contract.md) §9, §18; 12 (evaluator); 08 (actor, audit, events, receipts); 10 (rate scopes, capability activation pattern); 03 §3, §8.
 
+## Changes (2026-11-20, grouping on by default)
+
+On stores that support it (PostgreSQL), grouped materialization is the default: `GroupMaterializations` true, `MaterializationGroupSize` 8 (06 Changes 2026-11-20). Set `GroupMaterializations = false` for the single-plan path.
+
 ## Changes (2026-11-19, set-based group writes)
 
 On PostgreSQL a materialization group is written with one statement per table (04 Changes 2026-11-19, set-based schedule groups). The scheduler side is unchanged: the same plans, group sizes (default 4, range 2 to 8), two groups in flight, 2 MiB of payload per group, per-plan command IDs, fingerprints, deadlines and replies. What a plan may change is unchanged too: a group carries only single-occurrence plans with no catch-up episode, review, resume policy, audit range, key, scope or rate, and every refusal of §4.2 is decided per plan against the locked schedule row. A plan refused for a stale revision, a pause or an edit leaves no receipt, so the scheduler replans it as before. A lost reply is resolved by resending the same commands; the resend finds the receipts and replays each plan's stored result. No occurrence can be written twice: the occurrence primary key, the cursor high-water check and the revision check run as before, and any conflict sends the whole group to the per-plan path.

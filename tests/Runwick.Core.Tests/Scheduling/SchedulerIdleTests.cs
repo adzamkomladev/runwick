@@ -150,8 +150,8 @@ public sealed class SchedulerIdleTests
     }
 
     [Theory]
-    [InlineData(null, 4)]
-    [InlineData(8, 8)]
+    [InlineData(null, 8)]
+    [InlineData(4, 4)]
     [Trait("Case", "S3")]
     public async Task The_loop_limits_groups_and_sends_unsupported_plans_separately(int? configuredSize, int expectedSize)
     {
@@ -348,8 +348,9 @@ public sealed class SchedulerIdleTests
     [Trait("Case", "P-06s")]
     public async Task An_unproductive_page_backs_off_and_then_reaches_later_schedules_at_the_same_instant()
     {
+        // The single-plan loop: the grouped loop reads the next page while a page commits, by design.
         var count = ScheduleBounds.DueReadLimit;
-        var (fixture, store, scheduler) = DueFixture(count + 1);
+        var (fixture, store, scheduler) = DueFixture(count + 1, configure: options => options.GroupMaterializations = false);
         await using var e = fixture;
         store.Conflicts.UnionWith(store.Due.Take(count).Select(s => s.ScheduleId));
 

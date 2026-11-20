@@ -84,10 +84,10 @@ public sealed class SchedulerOptions
 
     public int Burst { get; set; } = 32;
 
-    /// <summary>Group independent single-occurrence plans on stores that support it. Defaults to disabled.</summary>
-    public bool GroupMaterializations { get; set; }
+    /// <summary>Group independent single-occurrence plans on stores that support it (PostgreSQL). Defaults to enabled.</summary>
+    public bool GroupMaterializations { get; set; } = true;
 
-    /// <summary>Maximum plans per group when <see cref="GroupMaterializations"/> is enabled. Defaults to 4; range 2–8.</summary>
+    /// <summary>Maximum plans per group when <see cref="GroupMaterializations"/> is enabled. Defaults to 8; range 2–8.</summary>
     public int MaterializationGroupSize
     {
         get => _materializationGroupSize;

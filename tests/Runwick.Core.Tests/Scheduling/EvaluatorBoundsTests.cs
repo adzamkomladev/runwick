@@ -103,6 +103,8 @@ public sealed class EvaluatorBoundsTests
         // A slow start (100 ms per clock read) fits the 10 s default but not the old fixed 250 ms.
         Assert.Equal(TimeSpan.FromSeconds(10), PlannerLimits.Plan.Budget);
         Assert.Equal(TimeSpan.FromSeconds(10), new SchedulerOptions().EvaluationBudget);
+        Assert.True(new SchedulerOptions().GroupMaterializations); // grouping on by default, 8 plans per group (06 Changes 2026-11-20)
+        Assert.Equal(8, new SchedulerOptions().MaterializationGroupSize);
         var slow = new RecurrencePlanner(new SteppingTime(100));
         Assert.Equal(10, slow.Plan(Cron("* * * * *"), Ms("2026-01-01T00:00:00Z"), 10, PlannerLimits.Plan).Count);
 

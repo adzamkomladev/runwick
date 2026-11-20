@@ -1838,7 +1838,7 @@ runwick.AddScheduler(s =>
 
 The values above are the defaults. `AddScheduler` may be called once.
 
-On PostgreSQL, set `s.GroupMaterializations = true` to group eligible single-occurrence plans. The scheduler sends up to two groups concurrently, each with up to 2 MiB of combined job payload. Set `s.MaterializationGroupSize = 8` to raise the default limit of four plans per group. Catch-up and serialized schedules continue to use individual materialization calls.
+On PostgreSQL the scheduler groups eligible single-occurrence plans by default: up to eight plans per group, up to two groups at once, each with up to 2 MiB of combined job payload. Set `s.MaterializationGroupSize` (2 to 8) to use smaller groups, or `s.GroupMaterializations = false` to send every plan on its own. Catch-up and serialized schedules continue to use individual materialization calls.
 
 ## Defining a schedule
 
@@ -4842,6 +4842,7 @@ Set with `runwick.AddScheduler(o => ...)`. The scheduler needs the `scheduler` c
 | `IdlePollInterval` | 5 s when idle (15 s on PostgreSQL while its listener is healthy) |
 | `JobsPerSecond` / `Burst` | 100 / 32 per scheduler process |
 | `EvaluationBudget` | 10 s per plan to work out a schedule's next run (250 ms – 5 min) |
+| `GroupMaterializations` / `MaterializationGroupSize` | on / 8 plans per group (PostgreSQL; 2 – 8) |
 
 Per schedule: misfire policy `RunOnce` with 60 s grace (up to 24 h); catch-up at most 1,000 jobs per episode and 7 days back. See [Schedules](/docs/schedules).
 
