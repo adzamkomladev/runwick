@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Combined finish-and-claim pairs: one Runwick bench build run with and without the option (arms base, comb; buf = buffered finish, both = both), and BullMQ, alternating order, a fresh Redis 8.2 per run, each round under the shared bench lock.
 # usage: pairs-combined.sh <workload> <rounds> <bench-bin-dir> [arms...]    workloads: drain steady500 delayed100 steady100
-# Arms old and oldbuf run a second build given by BASE_BIN (without and with buffered finish), for base-against-change pairs.
+# Arms old and oldbuf run a second build given by BASE_BIN (without and with buffered finish), for base-against-change pairs; midbuf runs a
+# third build given by MID_BIN with buffered finish (two changes stacked on one base, measured in the same rounds).
 # FSYNC=tmpfs puts the AOF on memory (fsync costs almost nothing): the CPU-bound view. Default is the host disk (fsync about 7 ms here).
 set -uo pipefail
 cd "$(dirname "$0")"
@@ -26,7 +27,7 @@ run_arm() {
   local flags=()
   local bin=$cand workers=16
   case "$arm" in comb) flags=(--combined-finish-claim) ;; buf) flags=(--buffered-finish) ;; both) flags=(--buffered-finish --combined-finish-claim) ;;
-    old) bin=$BASE_BIN ;; oldbuf) bin=$BASE_BIN; flags=(--buffered-finish) ;; oldbuf32) bin=$BASE_BIN; flags=(--buffered-finish); workers=32 ;; esac
+    old) bin=$BASE_BIN ;; oldbuf) bin=$BASE_BIN; flags=(--buffered-finish) ;; midbuf) bin=$MID_BIN; flags=(--buffered-finish) ;; oldbuf32) bin=$BASE_BIN; flags=(--buffered-finish); workers=32 ;; esac
   local rw=("$bin/Runwick.Workloads" bench --store redis --redis "$address" --out "$prefix.json" "${flags[@]}")
   local cmd=()
   case "$workload:$arm" in

@@ -41,10 +41,10 @@ public sealed class RedisUpgradeTests
         var meta = RxClient.Meta(app);
 
         // The layout and epoch live in the application's meta copy and in rw:store; the gate reads the meta copy.
-        await db.HashSetAsync(meta, "layout", "2");
+        await db.HashSetAsync(meta, "layout", "3");
         var wrongLayout = await c.ReserveAsync();
         Assert.Equal(("UnsupportedVersion", "schema_incompatible"), (wrongLayout.Status.ToString(), wrongLayout.Error!.Code));
-        await db.HashSetAsync(meta, [new HashEntry("layout", "1"), new HashEntry("mode", "expand")]);
+        await db.HashSetAsync(meta, [new HashEntry("layout", "2"), new HashEntry("mode", "expand")]);
         var expand = await c.ReserveAsync();
         Assert.Equal(("AdmissionClosed", "store_maintenance"), (expand.Status.ToString(), expand.Error!.Code));
         await db.HashSetAsync(meta, "mode", "normal");

@@ -56,8 +56,9 @@ public sealed class RedisGroupedDispatchTests
         public async Task<List<(string CommandId, int Ordinal)>> DispatchEventsAsync()
         {
             await using var mux = await ConnectionMultiplexer.ConnectAsync(Configuration);
-            var rows = await mux.GetDatabase().HashValuesAsync(RedisServer.Key(Application, "events:data"));
-            return [.. rows.Select(r => JsonNode.Parse((string)r!)!.AsObject())
+            var hash = await mux.GetDatabase().HashGetAllAsync(RedisServer.Key(Application, "events:data"));
+            var rows = RedisEventRows.All(hash.Select(e => KeyValuePair.Create((string)e.Name!, (string)e.Value!)));
+            return [.. rows.Select(r => JsonNode.Parse(r)!.AsObject())
                 .Where(o => o["kind"]!.GetValue<string>() == "dispatched")
                 .Select(o => (o["commandId"]!.GetValue<string>(), o["details"]!["ordinal"]!.GetValue<int>()))];
         }

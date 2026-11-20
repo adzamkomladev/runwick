@@ -51,7 +51,8 @@ local function head_delete(index, data, field, cutoff, rows)
   local deleted = 0
   for _, id in ipairs(redis.call('ZRANGE', P .. index, 0, rows - 1)) do
     local row = U.hget(data, id)
-    local at = row and tonumber(string.match(row, '"' .. field .. '":(%d+)'))
+    -- An event pack (layout 2) carries its one time in its head: ~1|<occurredAt>|...
+    local at = row and (tonumber(string.match(row, '^~1|(%d+)|')) or tonumber(string.match(row, '"' .. field .. '":(%d+)')))
     if at and at >= cutoff then break end
     if full() then return deleted, true end
     U.hset(data, id, nil)

@@ -71,16 +71,22 @@ end
 
 -- rw_close_v1: attempt row, permits, job, active key, event. Returns the job's new revision.
 function U.close(j, attempt, token, outcome, state, reason, kind, elapsed, delay, eligible, err, details)
-  U.expect(U.att(j, attempt, 'fin') == nil and j.attempt == attempt and j.token == token)
-  U.attw(j, attempt, 'fin', NOWS)
-  U.attw(j, attempt, 'outcome', outcome)
-  U.attw(j, attempt, 'disp', state)
-  U.attw(j, attempt, 'reason', reason)
-  U.attw(j, attempt, 'elapsed', elapsed and U.S(elapsed) or nil)
-  U.attw(j, attempt, 'delay', delay and U.S(delay) or nil)
-  U.attw(j, attempt, 'next', eligible and U.S(eligible) or nil)
+  U.expect(U.att(j, attempt, 'fin') == nil and j['a:' .. attempt] == nil and j.attempt == attempt and j.token == token)
+  if U.att(j, attempt, 'res') then
+    -- Reserved under layout 1 (a store migrated without draining): closed in that attempt's own form.
+    U.attw(j, attempt, 'fin', NOWS)
+    U.attw(j, attempt, 'outcome', outcome)
+    U.attw(j, attempt, 'disp', state)
+    U.attw(j, attempt, 'reason', reason)
+    U.attw(j, attempt, 'elapsed', elapsed and U.S(elapsed) or nil)
+    U.attw(j, attempt, 'delay', delay and U.S(delay) or nil)
+    U.attw(j, attempt, 'next', eligible and U.S(eligible) or nil)
+  else
+    U.jw(j, 'a:' .. attempt, U.attempt_record(j, outcome, state, reason, elapsed, delay, eligible))
+    U.jw(j, 'ares', nil)
+    U.jw(j, 'aauth', nil)
+  end
   U.attw(j, attempt, 'error', err)
-  U.attw(j, attempt, 'closedby', CMD)
   for _, sid in ipairs(U.permit_scopes(j)) do
     local p = U.jget('permits', sid .. ':' .. j.id)
     if p and p.attempt == attempt and p.token == token then
@@ -322,12 +328,9 @@ function U.reserve_job(id, leaseMs, worker, token, entropy, lazy)
     end
   end
   local number = U.must(U.inc(j.rcount))
-  U.attw(j, attempt, 'gen', j.gen)
-  U.attw(j, attempt, 'res', number)
   U.hset('attempts', attempt, id) -- attempt -> job, for management reads and RevealError (22 §7.2)
-  U.attw(j, attempt, 'worker', worker)
-  U.attw(j, attempt, 'token', token)
-  U.attw(j, attempt, 'reserved', NOWS)
+  U.expect(j['a:' .. attempt] == nil and U.att(j, attempt, 'res') == nil)
+  U.jw(j, 'ares', NOWS) -- the open attempt is the job's own fields plus ares (U.attempts)
   U.jw(j, 'rcount', number)
   U.jw(j, 'rev', U.must(U.inc(j.rev)))
   U.jw(j, 'attempt', attempt)
@@ -431,9 +434,14 @@ function U.begin_job(lease, jitter, job, lazy)
   U.jw(j, 'xcount', U.must(U.inc(j.xcount)))
   U.jw(j, 'rev', U.must(U.inc(j.rev)))
   U.jw(j, 'updated', NOWS)
-  U.expect(U.att(j, lease.attempt, 'fin') == nil and U.att(j, lease.attempt, 'exec') == nil)
-  U.attw(j, lease.attempt, 'exec', number)
-  U.attw(j, lease.attempt, 'auth', NOWS)
+  U.expect(U.att(j, lease.attempt, 'fin') == nil and U.att(j, lease.attempt, 'exec') == nil and j['a:' .. lease.attempt] == nil)
+  if U.att(j, lease.attempt, 'res') then
+    U.attw(j, lease.attempt, 'exec', number) -- reserved under layout 1
+    U.attw(j, lease.attempt, 'auth', NOWS)
+  else
+    U.expect(j.aauth == nil)
+    U.jw(j, 'aauth', NOWS)
+  end
   U.set_state(j, 'running')
   U.event('attempt_started', j.id, lease.attempt, U.started_details(tonumber(j.gen), tonumber(number)))
   local v = { job = j.id, gen = j.gen, att = lease.attempt, worker = lease.worker, token = lease.token, lease = j.lease }
@@ -726,13 +734,25 @@ function U.finish_items(base)
   local n = tonumber(ARGS(base))
   local items, done, confirm = {}, {}, {}
   for i = 1, n do
-    local b = base + 1 + (i - 1) * 5
-    items[i] = { cmd = ARGS(b), fp = ARGS(b + 1), na = tonumber(ARGS(b + 2)), body = cjson.decode(ARGS(b + 3)), draw = tonumber(ARGS(b + 4)) }
+    local b = base + 1 + (i - 1) * 6
+    items[i] = { cmd = ARGS(b), fp = ARGS(b + 1), na = tonumber(ARGS(b + 2)), body = cjson.decode(ARGS(b + 3)), draw = tonumber(ARGS(b + 4)),
+      hint = ARGS(b + 5) or '' }
   end
   for k, it in ipairs(items) do
-    local rc = redis.call('HMGET', P .. 'rcpt:' .. it.cmd, 'cls', 'op', 'ver', 'fp', 'status', 'code', 'decided', 'result')
+    -- A resend names the call it was first sent in (its receipt may be there); otherwise, or when not found there, rcpt:<item>.
+    local fv = it.hint ~= '' and redis.call('HGET', P .. 'rcpt:' .. it.hint .. ':f', it.cmd)
+    local rc
+    if fv then
+      local fp, _, decided, stored = U.frcpt(fv)
+      it.confirm = 'rcpt:' .. it.hint .. ':f'
+      rc = { 'durable', 'Finish', '1', fp or '', 'Applied', '', decided, fp and stored }
+    else
+      rc = redis.call('HMGET', P .. 'rcpt:' .. it.cmd, 'cls', 'op', 'ver', 'fp', 'status', 'code', 'decided', 'result')
+    end
     local text = rc[1] and rc[8] and U.cdec(rc[8])
-    if rc[1] then
+    if fv and not rc[8] then
+      done[k] = U.finish_item_json(it.cmd, U.noeffect('UnsupportedVersion', 'receipt_codec_unsupported'), false)
+    elseif rc[1] then
       if rc[1] ~= 'durable' or rc[2] ~= 'Finish' or rc[3] ~= '1' or rc[4] ~= it.fp then
         done[k] = U.finish_item_json(it.cmd, U.noeffect('CommandConflict', 'command_conflict'), false)
       elseif not text then
@@ -750,7 +770,11 @@ function U.finish_items(base)
   -- 22 §4.5 markers for the replayed items: fresh writes, not part of any intent, in command-id order. (Only these are sorted: the
   -- checks above are reads, so their order changes nothing.)
   if #confirm > 1 then table.sort(confirm, function(a, b) return U.blt(items[a].cmd, items[b].cmd) end) end
-  for _, k in ipairs(confirm) do redis.call('HSET', P .. 'rcpt:' .. items[k].cmd, 'confirmed', NOWS) end
+  for _, k in ipairs(confirm) do
+    local it = items[k]
+    if it.confirm then redis.call('HSET', P .. it.confirm, 'c:' .. it.cmd, NOWS) else redis.call('HSET', P .. 'rcpt:' .. it.cmd, 'confirmed', NOWS) end
+  end
+  local retain
   local applied = 0
   for k, it in ipairs(items) do
     if not done[k] then
@@ -758,17 +782,25 @@ function U.finish_items(base)
       r.decided = NOWS
       if r.effect == 'A' then
         applied = applied + 1
-        local key = 'rcpt:' .. it.cmd
         -- Encoded once: the receipt row and the reply item carry the same text.
         local encoded, stored = r.rtext or U.enc(r.result), U.cenc(r)
         r.result = U.raw(encoded)
-        U.hset_sorted(key, RECEIPT_FIELDS, { cls = 'durable', op = 'Finish', ver = '1', fp = it.fp, notafter = U.S(it.na),
-          retain = U.S(it.na + U.DURABLE_FLOOR), status = 'Applied', decided = NOWS, result = stored or encoded }, true)
-        U.zadd('rcpt:exp:durable', it.na + U.DURABLE_FLOOR, it.cmd)
+        if it.hint == '' then
+          -- A first send: one receipt key per call, rcpt:<call>:f, field = item command id, and one expiry entry at the latest
+          -- retain time (22 §3.2). The sender keeps the call id and names it when it resends.
+          U.hset('rcpt:' .. CMD .. ':f', it.cmd, '1|' .. it.fp .. '|' .. U.S(it.na) .. '|' .. NOWS .. '|' .. (stored or encoded))
+          if not retain or it.na > retain then retain = it.na end
+        else
+          -- A resend not decided before: its own receipt, which every later resend finds whatever call it names.
+          U.hset_sorted('rcpt:' .. it.cmd, RECEIPT_FIELDS, { cls = 'durable', op = 'Finish', ver = '1', fp = it.fp, notafter = U.S(it.na),
+            retain = U.S(it.na + U.DURABLE_FLOOR), status = 'Applied', decided = NOWS, result = stored or encoded }, true)
+          U.zadd('rcpt:exp:durable', it.na + U.DURABLE_FLOOR, it.cmd)
+        end
       end
       done[k] = U.finish_item_json(it.cmd, r, false)
     end
   end
+  if retain then U.zadd('rcpt:exp:durable', retain + U.DURABLE_FLOOR, CMD .. ':f') end
   local out = U.arr()
   for k = 1, n do out[k] = done[k] end
   return out, applied

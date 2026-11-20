@@ -114,7 +114,7 @@ public sealed class ConfigContractTests
     {
         StoreKind.Postgres => f.ExecAsync("UPDATE runwick.store_metadata SET schema_revision = @r", ("r", PgMigrator.CurrentRevision + offset)),
         StoreKind.Sqlite => f.ExecAsync("UPDATE runwick_store_metadata SET schema_revision = @r", ("r", Runwick.Sqlite.Migrations.SqliteMigrator.CurrentRevision + offset)),
-        _ => RedisAdmin.SetLayout(f.Application, (1 + offset).ToString(CultureInfo.InvariantCulture)),
+        _ => RedisAdmin.SetLayout(f.Application, (Runwick.Redis.Migrations.RedisMigrator.CurrentLayout + offset).ToString(CultureInfo.InvariantCulture)),
     };
 
     [Theory]

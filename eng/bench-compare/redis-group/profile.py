@@ -3,6 +3,7 @@
 Redis (AOF always) and prints mean microseconds per phase for single dispatch and for groups. Usage: profile.py --port P [--n 300] [--group 6]"""
 import argparse, json, socket, statistics
 from pathlib import Path
+from luascript import layout
 from uuid import uuid4
 
 import os
@@ -85,7 +86,7 @@ def main():
     ap.add_argument("--payload", type=int, default=1024)
     a = ap.parse_args()
     db = Redis(a.port)
-    db.call("HSET", META, "store", STORE, "mode", "normal", "layout", 1, "epoch", 1, "admission", "open", "bf", "done")
+    db.call("HSET", META, "store", STORE, "mode", "normal", "layout", layout(LUA), "epoch", 1, "admission", "open", "bf", "done")
     db.call("HSET", PREFIX + "queues", "default", "{}")
     single = db.call("SCRIPT", "LOAD", patched((LUA / "ops/dispatch.lua").read_text()))
     grouped = db.call("SCRIPT", "LOAD", patched((LUA / "ops/dispatch_group.lua").read_text()))

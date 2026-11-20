@@ -139,25 +139,29 @@ public sealed class RedisScriptCutTests
         Assert.Equal(4, leases.Count);
         var a = c.FinishCommand(leases[0], AttemptOutcome.Succeeded);
         var b = c.FinishCommand(leases[1], AttemptOutcome.RetryableFailure, error: new AttemptError("x", "System.Exception", "m", null));
-        var first = await c.FinishManyAsync([a, b]);
+        var call = Guid.CreateVersion7();
+        var first = await c.FinishManyAsync([a, b], call);
         Assert.All(first.Value!.Outcomes, o => Assert.Equal((StoreStatus.Applied, false), (o.Status, o.Replayed)));
 
         // The resend of a and b rides in a batch with two new finishes, the replayed ones in the middle and out of command-id order.
         var d = c.FinishCommand(leases[3], AttemptOutcome.PermanentFailure);
         var e = c.FinishCommand(leases[2], AttemptOutcome.Succeeded);
-        var mixed = await c.FinishManyAsync([e, b, a, d]);
+        var mixedCall = Guid.CreateVersion7();
+        var mixed = await c.FinishManyAsync([e, b, a, d], mixedCall);
         var outcomes = mixed.Value!.Outcomes;
         Assert.Equal([false, true, true, false], outcomes.Select(o => o.Replayed));
         Assert.All(outcomes, o => Assert.Equal(StoreStatus.Applied, o.Status));
         Assert.Equivalent(first.Value.Outcomes[1].Value, outcomes[1].Value, strict: true);
         Assert.Equivalent(first.Value.Outcomes[0].Value, outcomes[2].Value, strict: true);
 
-        // Replayed items carry the 22 §4.5 confirmation marker; newly decided ones do not.
+        // Replayed items carry the 22 §4.5 confirmation marker; newly decided ones do not. Since layout 2 a batch's finish receipts are
+        // its call's rcpt:<call>:f, and the marker is that hash's c:<item> field (22 §3.2).
         var db = (await RedisServer.AdminAsync()).GetDatabase();
         var prefix = RxClient.KeyPrefix(f.Application) + "rcpt:";
-        foreach (var (cmd, confirmed) in new[] { (a, true), (b, true), (d, false), (e, false) })
+        foreach (var (cmd, receipts, confirmed) in new[] { (a, call, true), (b, call, true), (d, mixedCall, false), (e, mixedCall, false) })
         {
-            Assert.Equal(confirmed, await db.HashExistsAsync(prefix + RxClient.Hex(cmd.CommandId), "confirmed"));
+            Assert.True(await db.HashExistsAsync(prefix + RxClient.Hex(receipts) + ":f", RxClient.Hex(cmd.CommandId)));
+            Assert.Equal(confirmed, await db.HashExistsAsync(prefix + RxClient.Hex(receipts) + ":f", "c:" + RxClient.Hex(cmd.CommandId)));
         }
 
         var jobs = (await f.ReadCommittedSnapshot()).Model.Jobs;
@@ -205,7 +209,10 @@ public sealed class RedisScriptCutTests
             local bad, n = {}, 0
             local keys = { dispatched = 'generation,ordinal,priority,queue', attempt_reserved = 'generation,reservationNumber',
               attempt_started = 'executionNumber,generation', attempt_finished = 'disposition,generation,outcome' }
-            local rows = redis.call('HGETALL', P .. 'events:data')
+            local rows, stored = {}, redis.call('HGETALL', P .. 'events:data')
+            for i = 1, #stored, 2 do
+              U.event_rows(tonumber(stored[i]), stored[i + 1], function(id, row) rows[#rows + 1] = id; rows[#rows + 1] = row end)
+            end
             for i = 2, #rows, 2 do
               local d = string.match(rows[i], ',"details":(.*),"eventId":')
               n = n + 1

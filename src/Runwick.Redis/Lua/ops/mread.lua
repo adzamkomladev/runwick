@@ -68,18 +68,16 @@ elseif SUB == 'job' then
         gens[#gens + 1] = { n = tonumber(n), row = { generation = U.raw(n), reason = j['g:' .. n .. ':reason'], by = str(j['g:' .. n .. ':by']),
           created = num(val), started = num(j['g:' .. n .. ':started']), max = num(j['g:' .. n .. ':max']) } }
       end
-      local a = string.match(f, '^a:([0-9a-f]+):res$')
-      if a then
-        local function af(x) return j['a:' .. a .. ':' .. x] end
-        local code = NULL
-        if af('error') then
-          local ok, e = pcall(cjson.decode, af('error'))
-          if ok and type(e) == 'table' and U.nn(e.code) then code = e.code end
-        end
-        atts[#atts + 1] = { n = tonumber(val), row = { id = a, generation = num(af('gen')), reservation = num(val), execution = num(af('exec')),
-          worker = af('worker'), reserved = num(af('reserved')), authorized = num(af('auth')), finished = num(af('fin')), outcome = str(af('outcome')),
-          disposition = str(af('disp')), reason = str(af('reason')), errorCode = code, usage = str(af('usage')) } }
+    end
+    for _, r in ipairs(U.attempts(j)) do
+      local code = NULL
+      if r.error then
+        local ok, e = pcall(cjson.decode, r.error)
+        if ok and type(e) == 'table' and U.nn(e.code) then code = e.code end
       end
+      atts[#atts + 1] = { n = tonumber(r.res), row = { id = r.id, generation = num(r.gen), reservation = num(r.res), execution = num(r.exec),
+        worker = r.worker, reserved = num(r.reserved), authorized = num(r.auth), finished = num(r.fin), outcome = str(r.outcome),
+        disposition = str(r.disp), reason = str(r.reason), errorCode = code, usage = str(r.usage) } }
     end
     table.sort(gens, function(x, y) return x.n < y.n end)
     table.sort(atts, function(x, y) return x.n < y.n end)
@@ -195,22 +193,18 @@ elseif SUB == 'jscan' then
         local j = U.hgetall('job:' .. id)
         if j.state then
           local auth, res, ran, errs = nil, nil, false, U.arr()
-          for f in pairs(j) do
-            local a = string.match(f, '^a:([0-9a-f]+):res$')
-            if a then
-              local p = 'a:' .. a .. ':'
-              local by = j[p .. 'worker'] == worker
-              if by then ran = true end
-              if j[p .. 'gen'] == j.gen then
-                local x, r = tonumber(j[p .. 'auth']), tonumber(j[p .. 'reserved'])
-                if x and (not auth or x < auth) then auth = x end
-                if r and (not res or r < res) then res = r end
-              end
-              local fin = tonumber(j[p .. 'fin'])
-              if ef and fin and fin >= ef and fin < et and j[p .. 'error'] and (worker == '' or by) then
-                local ok, e = pcall(cjson.decode, j[p .. 'error'])
-                if ok and type(e) == 'table' and type(U.nn(e.code)) == 'string' then errs[#errs + 1] = e.code end
-              end
+          for _, a in ipairs(U.attempts(j)) do
+            local by = a.worker == worker
+            if by then ran = true end
+            if a.gen == j.gen then
+              local x, r = tonumber(a.auth), tonumber(a.reserved)
+              if x and (not auth or x < auth) then auth = x end
+              if r and (not res or r < res) then res = r end
+            end
+            local fin = tonumber(a.fin)
+            if ef and fin and fin >= ef and fin < et and a.error and (worker == '' or by) then
+              local ok, e = pcall(cjson.decode, a.error)
+              if ok and type(e) == 'table' and type(U.nn(e.code)) == 'string' then errs[#errs + 1] = e.code end
             end
           end
           local st = auth or res

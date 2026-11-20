@@ -133,7 +133,7 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
 
         var s = entries.ToDictionary(e => (string)e.Name!, e => (string)e.Value!, StringComparer.Ordinal);
         var storeId = Guid.Parse(s["store"]);
-        if (s["layout"] != "1" || s["digest"] != Convert.ToHexStringLower(RedisMigrator.Manifest().Digest))
+        if (s["layout"] != RedisMigrator.CurrentLayout.ToString(CultureInfo.InvariantCulture) || s["digest"] != Convert.ToHexStringLower(RedisMigrator.Manifest().Digest))
         {
             throw new StoreIncompatibleException("The Redis layout revision or manifest differs from this binary's: schema_incompatible.");
         }

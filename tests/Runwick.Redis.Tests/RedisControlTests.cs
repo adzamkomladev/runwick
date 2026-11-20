@@ -138,9 +138,12 @@ public sealed class RedisControlTests
                 cursor = page.Next;
                 if (page.Events.Count > 0)
                 {
-                    // Cleanup of events already read (17): the reader's position is unaffected.
+                    // Cleanup of events already read (17): the reader's position is unaffected. Retention deletes whole entries, and a
+                    // layout-2 entry holds a call's events (22 §3.2): only entries before the one holding this page's first event go.
                     var old = page.Events[0].EventId;
-                    await db.SortedSetRemoveRangeByScoreAsync(prefix + "events", 0, old - 1);
+                    var holder = await db.SortedSetRangeByScoreAsync(prefix + "events", double.NegativeInfinity, old, order: Order.Descending, take: 1);
+                    var from = holder.Length > 0 ? long.Parse((string)holder[0]!, System.Globalization.CultureInfo.InvariantCulture) : old;
+                    await db.SortedSetRemoveRangeByScoreAsync(prefix + "events", 0, from - 1);
                 }
                 else if (stop)
                 {

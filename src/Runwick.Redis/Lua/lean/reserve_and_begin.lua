@@ -59,7 +59,7 @@ for i, id in ipairs(cands) do
   local att = sformat('%012x', NOW) .. '7' .. ssub(ent, 1, 3) .. sformat('%x', (tonumber(ssub(ent, 4, 4), 16) % 4) + 8) .. ssub(ent, 5, 19)
   local number, rrev = L.inc(j.rcount), L.inc(j.rev)
   local brev, xnum, txnum = rrev and L.inc(rrev), L.inc(j['g:' .. gen .. ':started']), L.inc(j.xcount)
-  if not (number and brev and xnum and txnum) or j['a:' .. att .. ':fin'] or j['a:' .. att .. ':exec'] then return GENERIC() end
+  if not (number and brev and xnum and txnum) or j['a:' .. att] or j['a:' .. att .. ':res'] or j.ares or j.aauth then return GENERIC() end
   vs[i] = { job = id, gen = gen, rrev = rrev, att = att, worker = worker, token = token, lease = lease, rnum = number, name = j.name,
     pver = j.pver, profile = j.profile, profver = j.profver, queue = j.queue, priority = j.priority, elig = j.eligible,
     timeout = j['g:' .. gen .. ':timeout'], maxun = j['g:' .. gen .. ':maxun'], max = j['g:' .. gen .. ':max'], retry = j['g:' .. gen .. ':retry'],
@@ -72,14 +72,9 @@ if not L.can_commit(m) then return GENERIC() end
 local items, packed, known = {}, {}, {}
 for i, j in ipairs(jobs) do
   local v, b, id, gen = vs[i], bs[i], j.id, j.gen
-  local a = 'a:' .. v.att .. ':'
   local old = j.state
-  L.jw(j, a .. 'gen', gen)
-  L.jw(j, a .. 'res', v.rnum)
   L.hset('attempts', v.att, id)
-  L.jw(j, a .. 'worker', worker)
-  L.jw(j, a .. 'token', v.token)
-  L.jw(j, a .. 'reserved', NOWS)
+  L.jw(j, 'ares', NOWS)
   L.jw(j, 'rcount', v.rnum)
   L.jw(j, 'rev', b.brev)
   L.jw(j, 'attempt', v.att)
@@ -91,8 +86,7 @@ for i, j in ipairs(jobs) do
   L.jw(j, 'g:' .. gen .. ':started', b.xnum)
   L.jw(j, 'g:' .. gen .. ':unstarted', '0')
   L.jw(j, 'xcount', b.txnum)
-  L.jw(j, a .. 'exec', b.xnum)
-  L.jw(j, a .. 'auth', NOWS)
+  L.jw(j, 'aauth', NOWS)
   -- U.set_state(reserved) then U.set_state(running): the net index changes.
   L.zrem('idx:created:s:' .. old, id)
   L.zrem('idx:created:s:reserved', id)

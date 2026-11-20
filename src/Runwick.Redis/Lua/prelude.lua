@@ -448,6 +448,60 @@ function U.genw(j, f, v) U.jw(j, 'g:' .. j.gen .. ':' .. f, v) end
 function U.att(j, a, f) return j['a:' .. a .. ':' .. f] end
 function U.attw(j, a, f, v) U.jw(j, 'a:' .. a .. ':' .. f, v) end
 
+-- Attempt records (22 §3.1). Layout 1 wrote one field per value, a:<attempt>:<name>, from the reservation on. Layout 2 describes an
+-- open attempt by the job's own fields (attempt, worker, rcount, gen, g:<gen>:started) plus ares and aauth, and writes one field
+-- a:<attempt> when it closes: [gen, reservation, execution, worker, reserved, authorized, finished, outcome, disposition, reason,
+-- elapsed, delay, next] (numbers bare, null when absent). a:<attempt>:error and a:<attempt>:usage stay separate in both layouts.
+U.ATT_KEYS = { 'gen', 'res', 'exec', 'worker', 'reserved', 'auth', 'fin', 'outcome', 'disp', 'reason', 'elapsed', 'delay', 'next' }
+local ATT_TEXT = { worker = true, outcome = true, disp = true, reason = true }
+function U.attempt_record(j, outcome, state, reason, elapsed, delay, eligible)
+  local v = { gen = j.gen, res = j.rcount, exec = j.aauth and U.gen(j, 'started') or nil, worker = j.worker, reserved = j.ares, auth = j.aauth,
+    fin = NOWS, outcome = outcome, disp = state, reason = reason, elapsed = elapsed and U.S(elapsed), delay = delay and U.S(delay),
+    next = eligible and U.S(eligible) }
+  local parts = {}
+  for i, k in ipairs(U.ATT_KEYS) do
+    local x = v[k]
+    parts[i] = x == nil and 'null' or (ATT_TEXT[k] and U.str(x) or x)
+  end
+  return '[' .. concat(parts, ',') .. ']'
+end
+
+-- Every attempt of a job in any of its forms, as { id, gen, res, exec, worker, reserved, auth, fin, outcome, disp, reason, elapsed,
+-- delay, next, error, usage } (text or nil), in no order.
+function U.attempts(j)
+  local out = {}
+  for f, val in pairs(j) do
+    local a = string.match(f, '^a:(%x+):res$')
+    if a then
+      local r = { id = a }
+      for _, k in ipairs(U.ATT_KEYS) do r[k] = j['a:' .. a .. ':' .. k] end
+      out[#out + 1] = r
+    else
+      a = string.match(f, '^a:(%x+)$')
+      if a then
+        local ok, l = pcall(cjson.decode, val)
+        local r = { id = a }
+        if ok and type(l) == 'table' then
+          for i, k in ipairs(U.ATT_KEYS) do
+            local x = U.nn(l[i])
+            if x ~= nil then r[k] = type(x) == 'number' and sformat('%d', x) or tostring(x) end
+          end
+        end
+        out[#out + 1] = r
+      end
+    end
+  end
+  local a = j.attempt
+  if a and j.ares and not j['a:' .. a] and not j['a:' .. a .. ':res'] then
+    out[#out + 1] = { id = a, gen = j.gen, res = j.rcount, exec = j.aauth and j.gen and j['g:' .. j.gen .. ':started'] or nil, worker = j.worker,
+      reserved = j.ares, auth = j.aauth }
+  end
+  for _, r in ipairs(out) do
+    r.error, r.usage = j['a:' .. r.id .. ':error'], j['a:' .. r.id .. ':usage']
+  end
+  return out
+end
+
 function U.list(s)
   local t = {}
   if s and s ~= '' then for x in string.gmatch(s, '[^,]+') do t[#t + 1] = x end end
@@ -503,7 +557,7 @@ end
 local function gates(m)
   if m.store ~= STORE then return U.noeffect('UnsupportedVersion', 'store_identity_mismatch') end
   if m.mode ~= 'normal' then return U.noeffect('AdmissionClosed', 'store_maintenance') end
-  if m.layout ~= '1' or m.epoch ~= '1' then return U.noeffect('UnsupportedVersion', 'schema_incompatible') end
+  if m.layout ~= '2' or m.epoch ~= '1' then return U.noeffect('UnsupportedVersion', 'schema_incompatible') end
   if GATE == 'c' then
     if tonumber(m.reqepoch or '1') > 1 then return U.noeffect('UnsupportedVersion', 'capability_unsupported') end
     local known = U.known_caps()
@@ -548,11 +602,79 @@ local function apply(op)
 end
 U.apply = apply
 
+-- Event packs (layout 2, 22 §3.2): one events:data entry per call, keyed and scored by its first event id, ids consecutive:
+--   ~1|<occurredAt>|<command id>             then one line per entry, joined by "\n":
+--   <kind>|<job>|<attempt>|<command id if not the call's>|<actor JSON length>|<actor JSON><details JSON>
+-- with '' for a null job or attempt and length 0 for no actor. A claim's attempt_reserved and attempt_started rows of one attempt are
+-- one entry ~rs|<job>|<attempt>||0|<generation>,<reservation number>,<execution number> holding two ids. U.event_rows expands an
+-- entry back into the layout-1 rows byte for byte. A call whose values cannot be split this way writes layout-1 rows instead.
+local function pack_entries()
+  local function token(x) return x == nil or (x ~= '' and not sfind(x, '[|\n]')) end
+  if not token(CMD) or CMD == nil then return nil end
+  local parts, i = { '~1|' .. NOWS .. '|' .. CMD }, 1
+  while i <= #EV do
+    local e, f = EV[i], EV[i + 1]
+    if not (token(e.kind) and e.kind and token(e.job) and token(e.attempt) and token(e.commandId)) then return nil end
+    local details = e.details.__raw or U.enc(e.details)
+    if sfind(details, '\n', 1, true) then return nil end
+    local g, n, x, g2
+    if e.kind == 'attempt_reserved' and f and f.kind == 'attempt_started' and f.job == e.job and f.attempt == e.attempt and e.actor == nil
+      and f.actor == nil and e.commandId == nil and f.commandId == nil then
+      g, n = string.match(details, '^{"generation":(%d+),"reservationNumber":(%d+)}$')
+      x, g2 = string.match(f.details.__raw or U.enc(f.details), '^{"executionNumber":(%d+),"generation":(%d+)}$')
+    end
+    local head = e.kind .. '|' .. (e.job or '') .. '|' .. (e.attempt or '') .. '|' .. (e.commandId ~= CMD and e.commandId or '') .. '|'
+    if g and x and g == g2 then
+      parts[#parts + 1] = '~rs' .. string.sub(head, #e.kind + 1) .. '0|' .. g .. ',' .. n .. ',' .. x
+      i = i + 2
+    else
+      local actor = e.actor and U.str(e.actor) or ''
+      parts[#parts + 1] = head .. #actor .. '|' .. actor .. details
+      i = i + 1
+    end
+  end
+  return concat(parts, '\n')
+end
+
+-- The layout-1 rows of one stored events:data entry (a row, or a pack whose first id is first), as emit(id, row) in id order.
+function U.event_rows(first, v, emit)
+  if string.sub(v, 1, 3) ~= '~1|' then return emit(first, v) end
+  local t, cmd = string.match(v, '^~1|(%d+)|([^\n]*)')
+  local id = first
+  for line in string.gmatch(v, '\n([^\n]*)') do
+    local kind, job, att, c, alen, rest = string.match(line, '^([^|]*)|([^|]*)|([^|]*)|([^|]*)|(%d+)|(.*)$')
+    local n = tonumber(alen)
+    local head = '{"actorId":' .. (n > 0 and string.sub(rest, 1, n) or 'null') .. ',"attemptId":' .. (att ~= '' and U.str(att) or 'null')
+      .. ',"commandId":' .. U.str(c ~= '' and c or cmd) .. ',"details":'
+    local tail = ',"jobId":' .. (job ~= '' and U.str(job) or 'null') .. ',"kind":'
+    if kind == '~rs' then
+      local g, r, x = string.match(rest, '^(%d+),(%d+),(%d+)$')
+      emit(id, head .. '{"generation":' .. g .. ',"reservationNumber":' .. r .. '},"eventId":' .. sformat('%d', id) .. tail
+        .. '"attempt_reserved","occurredAt":' .. t .. '}')
+      emit(id + 1, head .. '{"executionNumber":' .. x .. ',"generation":' .. g .. '},"eventId":' .. sformat('%d', id + 1) .. tail
+        .. '"attempt_started","occurredAt":' .. t .. '}')
+      id = id + 2
+    else
+      emit(id, head .. string.sub(rest, n + 1) .. ',"eventId":' .. sformat('%d', id) .. tail .. U.str(kind) .. ',"occurredAt":' .. t .. '}')
+      id = id + 1
+    end
+  end
+end
+
 local function flush_events(m)
   if #EV == 0 then return end
   local id = tonumber(m.nextevent or '1')
   -- U.zadd('events', id, ids) and U.hset('events:data', ids, row) on records found once (created in that order, as before).
   local ze, he = rec(P .. 'events', 'z'), rec(P .. 'events:data', 'h')
+  if id + #EV - 1 > MAX_SCORE then U.abort('InvariantFault', 'counter_limit') end
+  local pack = pack_entries()
+  if pack then
+    local fs = U.S(id)
+    ze.set[fs], ze.del[fs] = fs, nil
+    he.set[fs], he.del[fs] = pack, nil
+    U.hset('meta', 'nextevent', U.S(id + #EV))
+    return
+  end
   for _, e in ipairs(EV) do
     if id > MAX_SCORE then U.abort('InvariantFault', 'counter_limit') end
     -- The row's keys are fixed, so they are written in bytewise order instead of being sorted.
@@ -748,6 +870,11 @@ end
 local RECEIPT_FIELDS = { 'cls', 'code', 'decided', 'detail', 'fp', 'notafter', 'op', 'result', 'retain', 'status', 'ver' }
 local COMPACT_OPS = { ReserveAndBegin = true, Finish = true }
 
+-- A finish receipt in a call's rcpt:<call>:f hash: "1|<fingerprint>|<NotAfter>|<decided>|<stored result>". Nil for another codec.
+function U.frcpt(v)
+  return string.match(v, '^1|(%x+)|(%d+)|(%d+)|(.*)$')
+end
+
 function U.run(M)
   local mr = redis.call('HGETALL', META)
   local m = {}
@@ -765,6 +892,20 @@ function U.run(M)
   if g then return reply_array(g, false) end
   U.meta = m
 
+  -- A Finish resend names the call it was first sent in: its receipt may be that call's rcpt:<call>:f entry (22 §3.2).
+  local hint = FP ~= '' and M.hint and M.hint() or ''
+  if hint ~= '' then
+    local v = redis.call('HGET', P .. 'rcpt:' .. hint .. ':f', CMD)
+    if v then
+      local fp, _, decided, stored = U.frcpt(v)
+      if not fp then return reply_array(U.noeffect('UnsupportedVersion', 'receipt_codec_unsupported'), false) end
+      if CLS ~= 'durable' or OP ~= 'Finish' or fp ~= FP then return reply_array(U.noeffect('CommandConflict', 'command_conflict'), false) end
+      redis.call('HSET', P .. 'rcpt:' .. hint .. ':f', 'c:' .. CMD, NOWS)
+      local text = U.cdec(stored)
+      if not text then return reply_array(U.noeffect('UnsupportedVersion', 'receipt_codec_unsupported'), false) end
+      return with_payloads(reply_array({ status = 'Applied', effect = 'A', decided = decided, result = text }, true), {})
+    end
+  end
   if FP ~= '' then
     local rc = redis.call('HMGET', P .. 'rcpt:' .. CMD, 'cls', 'op', 'ver', 'fp', 'status', 'code', 'detail', 'decided', 'result')
     if rc[1] then
@@ -835,7 +976,7 @@ function U.read_gate()
   if not m.store then return { 'NONE', 'application_not_registered' } end
   if STORE ~= '' and m.store ~= STORE then return { 'NONE', 'store_identity_mismatch' } end
   if m.guard and m.guard ~= '' then return { 'RECOVERING', m.guard } end
-  if m.layout ~= '1' or m.epoch ~= '1' then return { 'NONE', 'schema_incompatible' } end
+  if m.layout ~= '2' or m.epoch ~= '1' then return { 'NONE', 'schema_incompatible' } end
   if m.mode ~= 'normal' then return { 'CLOSED', m.rev or '0' } end
   U.meta = m
   return nil, m

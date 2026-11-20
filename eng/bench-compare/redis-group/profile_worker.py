@@ -3,7 +3,7 @@
 against a disposable Redis and prints median microseconds per phase, per call and per job, for claim/finish batches of k.
 os.clock is process CPU time, so it is not distorted by other load on the host. Usage: profile_worker.py --port P [--lua DIR] [--k 1,4,16] [--calls 40]"""
 import argparse, json, os, socket, statistics
-from luascript import compose
+from luascript import compose, hint, layout
 from pathlib import Path
 from uuid import uuid4
 
@@ -109,7 +109,7 @@ def main():
     lua = Path(a.lua)
     db = Redis(a.port)
     db.call("FLUSHALL")
-    db.call("HSET", META, "store", STORE, "mode", "normal", "layout", 1, "epoch", 1, "admission", "open", "bf", "done")
+    db.call("HSET", META, "store", STORE, "mode", "normal", "layout", layout(lua), "epoch", 1, "admission", "open", "bf", "done")
     db.call("HSET", PREFIX + "queues", "default", "{}")
     dispatch = db.call("SCRIPT", "LOAD", (lua / "prelude.lua").read_text() + "\n" + (lua / "jobs.lua").read_text() + "\n" + (lua / "ops/dispatch.lua").read_text())
     # plain: the whole script timed in-script as one block (os.clock is CPU time, so a preempted server does not inflate it)
@@ -160,7 +160,7 @@ def main():
             lease = dict(jobId=b["jobId"], attemptId=b["attemptId"], workerInstanceId=b["workerInstanceId"], ownershipToken=b["ownershipToken"],
                          generation=b["generation"])
             body = dict(lease=lease, outcome="succeeded", elapsed=1, requested=None, error=None, usage=None)
-            args += [uuid4().hex, uuid4().hex + uuid4().hex, dl(30_000), json.dumps(body), 0.5]
+            args += [uuid4().hex, uuid4().hex + uuid4().hex, dl(30_000), json.dumps(body), 0.5, *hint(lua)]
         return args
 
     def combined(begun, k):

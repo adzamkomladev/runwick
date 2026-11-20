@@ -6,7 +6,7 @@ detail field reads as empty). Also covers a claim whose items are not plain Appl
 budget exhausted), a single Reserve, Begin and Finish, and a resend (replay) of every command. Usage: diffcheck.py --port P [--base DIR] [--new DIR]"""
 import argparse, json, re, socket, sys
 from pathlib import Path
-from luascript import compose
+from luascript import compose, hint, layout, read
 
 STORE = "11" * 16
 PREFIX = "rw:{" + b"diffapp".hex() + "}:"
@@ -41,12 +41,12 @@ def hexid(n, kind):
     return f"{kind:04x}{n:028x}"
 
 
-def run(lua, port, decoder):
+def run(lua, port, decoder, lean=True):
     db = Redis(port)
     db.call("FLUSHALL")
-    db.call("HSET", META, "store", STORE, "mode", "normal", "layout", 1, "epoch", 1, "admission", "open", "bf", "done")
+    db.call("HSET", META, "store", STORE, "mode", "normal", "layout", layout(lua), "epoch", 1, "admission", "open", "bf", "done")
     db.call("HSET", PREFIX + "queues", "default", "{}")
-    load = lambda op: db.call("SCRIPT", "LOAD", compose(lua, op))
+    load = lambda op: db.call("SCRIPT", "LOAD", compose(lua, op, lean))
     dispatch, rb, fm, fin, fc, ren = (load(op) for op in ("dispatch", "reserve_and_begin", "finish_many", "finish", "finish_and_claim", "renew"))
     replies = []
 
@@ -85,11 +85,17 @@ def run(lua, port, decoder):
                 "d", "", 600_000, many, json.dumps(leases)]
         for _ in range(2):
             replies.append(db.call(*call))
-    args = [3]
     kws = [dict(), dict(usage='{"cpuMs":1}'), dict(error='{"code":"x","message":"m\\n\\"q\\""}', requested=50)]
-    for i in range(3):
-        args += [hexid(i, 8), hexid(i, 9) * 2, dl(30_000), fbody(i, "retryable_failure" if i == 2 else "succeeded", **kws[i]), 0.5]
-    many = ["EVALSHA", fm, 1, META, 0, STORE, "FinishMany", hexid(0, 10), "", dl(30_000), 60_000, 0, "", "d", "", *args]
+
+    def finish_items(resend):
+        # A resend names the call the item was first sent in (the client's hint, 22 §3.2); the first send names none.
+        args = [3]
+        for i in range(3):
+            args += [hexid(i, 8), hexid(i, 9) * 2, dl(30_000), fbody(i, "retryable_failure" if i == 2 else "succeeded", **kws[i]), 0.5,
+                     *([hexid(0, 10)] if resend else hint(lua))[:len(hint(lua))]]
+        return ["EVALSHA", fm, 1, META, 0, STORE, "FinishMany", hexid(0, 10), "", dl(30_000), 60_000, 0, "", "d", "", *args]
+
+    many = finish_items(False)
     r = db.call(*many)
     assert r[1] == b"Applied", r
     replies.append(r)
@@ -99,14 +105,14 @@ def run(lua, port, decoder):
     assert r[1] == b"Applied", r
     replies.append(r)
     # Lost replies: each resend replays from its receipt.
-    for call in (claim, many, single):
+    for call in (claim, finish_items(True), single):
         r = db.call(*call)
         assert r[1] == b"Applied", r
         replies.append(r)
     # FinishAndClaim: the last begun job finishes and three new jobs are claimed in one call; then a resend of the same call replays.
     toks = json.dumps([hexid(i, 11) for i in range(3)])
     ents = json.dumps([f"{i + 100:020x}" for i in range(3)])
-    fargs = [1, hexid(4, 8), hexid(4, 9) * 2, dl(30_000), fbody(4, "permanent_failure"), 0.5]
+    fargs = [1, hexid(4, 8), hexid(4, 9) * 2, dl(30_000), fbody(4, "permanent_failure"), 0.5, *hint(lua)]
     call = ["EVALSHA", fc, 1, META, 0, STORE, "ReserveAndBegin", hexid(1, 5), hexid(1, 6) * 2, dl(30_000), 60_000, 600_000, "ownership", "c", "",
             hexid(1, 7), "default", "medium", 600_000, toks, "", "", json.dumps([["test", 1, "json", 1]]), 3, ents, json.dumps([0] * 3), *fargs]
     r = db.call(*call)
@@ -177,6 +183,19 @@ def run(lua, port, decoder):
             val = (db.call("GET", key) or b"").decode("latin1")
         dump[key] = val
     dump["(replies)"] = [[x.decode("latin1") if isinstance(x, bytes) else x for x in r] for r in replies]
+    # EventsSince as GET /v1/events serves it: the whole feed, and the same feed paged with every limit from 1 to 6 (pages that end
+    # inside a layout-2 pack and start in the middle of one).
+    events = db.call("SCRIPT", "LOAD", read(lua, "events"))
+    page = lambda after, limit: [x.decode() for x in db.call("EVALSHA", events, 1, META, 0, STORE, "", "", "", 0, 0, 0, "", "r", "", after, limit)[3:]]
+    feed = page(0, 1000)
+    for limit in range(1, 7):
+        rows, after = [], 0
+        while (got := page(after, limit)):
+            assert len(got) <= limit, (limit, got)
+            rows += got
+            after = json.loads(got[-1])["eventId"]
+        assert rows == feed, (limit, rows, feed)
+    dump["(events)"] = feed
     return dump
 
 
@@ -191,18 +210,23 @@ def main():
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--base", required=True, help="a copy of the baseline Lua directory (prelude.lua, jobs.lua, ops/)")
     ap.add_argument("--new", default=str(HERE.parents[2] / "src/Runwick.Redis/Lua"))
+    ap.add_argument("--base-generic", action="store_true", help="compose the base without its lean paths (lean against generic, one layout)")
+    ap.add_argument("--replies-only", action="store_true",
+                    help="compare only the replies and the EventsSince feed (a base on another layout stores them differently)")
     a = ap.parse_args()
     lua = Path(a.new)
     decoder = (lua / "prelude.lua").read_text() + "\n" + (lua / "jobs.lua").read_text() + "\n"
-    old = run(Path(a.base), a.port, decoder)
+    old = run(Path(a.base), a.port, decoder, lean=not a.base_generic)
     new = run(lua, a.port, decoder)
+    if a.replies_only:
+        old, new = ({k: d[k] for k in ("(replies)", "(events)")} for d in (old, new))
     bad = 0
     for k in sorted(set(old) | set(new)):
         o, n = old.get(k), new.get(k)
         if o is None or n is None:
             print("only in", "base" if n is None else "new", k)
             bad += 1
-        elif k == "(replies)":
+        elif k in ("(replies)", "(events)"):
             for i, (ro, rn) in enumerate(zip(o, n)):
                 if norm(ro) != norm(rn):  # the exact reply text, byte for byte apart from times
                     print("DIFF reply", i, "\n  base:", norm(ro)[:400], "\n  new: ", norm(rn)[:400])

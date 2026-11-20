@@ -7,7 +7,7 @@ Also measures a single Dispatch and a RenewMany of k. --fields adds a per-field 
 with attempt and generation ids folded (a:<attempt>:fin -> a:*:fin), so every stored field shows its bytes per job."""
 import argparse, collections, json, os, re, socket
 from pathlib import Path
-from luascript import compose
+from luascript import compose, hint, layout
 from uuid import uuid4
 
 STORE = uuid4().hex
@@ -74,7 +74,7 @@ def main():
     lua, k = Path(a.lua), a.k
     db = Redis(a.port)
     db.call("FLUSHALL")
-    db.call("HSET", META, "store", STORE, "mode", "normal", "layout", 1, "epoch", 1, "admission", "open", "bf", "done")
+    db.call("HSET", META, "store", STORE, "mode", "normal", "layout", layout(lua), "epoch", 1, "admission", "open", "bf", "done")
     db.call("HSET", PREFIX + "queues", "default", "{}")
     load = lambda op: db.call("SCRIPT", "LOAD", compose(lua, op))  # as the binary composes them (lean paths included)
     dispatch, rb, fm, fin, fc, rn = (load(x) for x in ("dispatch", "reserve_and_begin", "finish_many", "finish", "finish_and_claim", "renew"))
@@ -103,7 +103,7 @@ def main():
 
     def fitems(begun):
         out = [len(begun)]
-        for b in begun: out += [uuid4().hex, uuid4().hex * 2, dl(30_000), fbody(b), 0.5]
+        for b in begun: out += [uuid4().hex, uuid4().hex * 2, dl(30_000), fbody(b), 0.5, *hint(lua)]
         return out
 
     stats = collections.defaultdict(lambda: collections.defaultdict(lambda: [0, 0, 0]))  # op -> kind -> [bytes, commands, args]

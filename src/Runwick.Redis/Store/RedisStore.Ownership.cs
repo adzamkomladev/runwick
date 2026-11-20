@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -10,6 +11,35 @@ namespace Runwick.Redis.Store;
 internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginStore, IFinishManyStore, IFinishAndClaimStore
 {
     // Dispatch, ownership and ResolveCommand (04 §7.2–§7.9, §7.13): argument building here, decisions in the Lua scripts.
+
+    // 22 §3.2: the receipt of a finish first sent in a FinishMany or FinishAndClaim call is that call's rcpt:<call>:f entry, found
+    // only by naming the call. Each such command's first call is kept here until its NotAfter (plus a margin for clock offset to the
+    // server) and every resend of it names that call. Only the sending process resends a finish (a restarted one has given up its
+    // leases), and no finish is decided after its NotAfter, so this memory is enough and stays bounded by a minute of finishes.
+    readonly ConcurrentDictionary<Guid, Guid> _finishCalls = new();
+    readonly Queue<(long Until, Guid Command)> _finishCallsUntil = new();
+    static readonly TimeSpan FinishCallMargin = TimeSpan.FromSeconds(30);
+
+    /// <summary>The hint for an item sent in <paramref name="call"/>: '' on its first send, else the call it was first sent in.</summary>
+    string FinishHint(StoreCommand<FinishRequest> item, Guid call)
+    {
+        var now = time.GetUtcNow().ToUnixTimeMilliseconds();
+        lock (_finishCallsUntil)
+        {
+            while (_finishCallsUntil.TryPeek(out var head) && head.Until < now)
+            {
+                _finishCalls.TryRemove(_finishCallsUntil.Dequeue().Command, out _);
+            }
+
+            if (_finishCalls.TryAdd(item.CommandId, call))
+            {
+                _finishCallsUntil.Enqueue(((item.NotAfter + FinishCallMargin).ToUnixTimeMilliseconds(), item.CommandId));
+                return "";
+            }
+        }
+
+        return _finishCalls.TryGetValue(item.CommandId, out var first) ? Hex(first) : "";
+    }
 
     static readonly TimeSpan MinLease = TimeSpan.FromSeconds(1);
     static readonly TimeSpan MaxLease = TimeSpan.FromHours(1);
@@ -327,6 +357,7 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
             args.Add(Ms(item.NotAfter));
             args.Add(Json(FinishBody(item.Body)));
             args.Add(Draw());
+            args.Add(FinishHint(item, claim.CommandId));
         }
 
         var r = await Write(op, "finish_and_claim", ct, [.. args]).ConfigureAwait(false);
@@ -425,8 +456,9 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
         }
 
         var storeId = await EnsureStoreIdAsync(command.Application, ct).ConfigureAwait(false);
+        var hint = _finishCalls.TryGetValue(command.CommandId, out var call) ? Hex(call) : "";
         var r = await Write(Op(command.Application, command.CommandId, Operations.Finish, command.NotAfter, FinishFingerprint(storeId, command), RxLane.Settlement, 'd'),
-            "finish", ct, Json(FinishBody(command.Body)), Draw()).ConfigureAwait(false);
+            "finish", ct, Json(FinishBody(command.Body)), Draw(), hint).ConfigureAwait(false);
         return r.HasValue ? r.Applied(ReceiptCodec.ReadFinished(r.Result!)) : r.Reject<FinishedAttempt>();
     }
 
@@ -450,6 +482,7 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
             args.Add(Ms(item.NotAfter));
             args.Add(Json(FinishBody(item.Body)));
             args.Add(Draw());
+            args.Add(FinishHint(item, command.CommandId));
         }
 
         var r = await Write(Op(command.Application, command.CommandId, Operations.FinishMany, command.NotAfter, null, RxLane.Settlement, 'd'), "finish_many", ct,

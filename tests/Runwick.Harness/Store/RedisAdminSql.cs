@@ -246,7 +246,7 @@ internal static partial class RedisAdminSql
 
                 break;
             case "queue_events":
-                foreach (var json in (await Hash("events:data").ConfigureAwait(false)).Values)
+                foreach (var json in RedisEventRows.All(await Hash("events:data").ConfigureAwait(false)))
                 {
                     var o = JsonNode.Parse(json)!;
                     rows.Add(new() { ["event_kind"] = o["kind"]!.ToString(), ["actor_id"] = o["actorId"]?.ToString(), ["command_id"] = o["commandId"] is { } c ? Hex(c.ToString()) : null,

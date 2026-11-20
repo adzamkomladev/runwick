@@ -67,7 +67,8 @@ function L.frame()
   local mr = redis.call('HGETALL', META)
   local m = {}
   for i = 1, #mr, 2 do m[mr[i]] = mr[i + 1] end
-  if m.store ~= STORE or (m.guard and m.guard ~= '') or m.mode ~= 'normal' or m.layout ~= '1' or m.epoch ~= '1' then return nil end
+  if m.store ~= STORE or (m.guard and m.guard ~= '') or m.mode ~= 'normal' or m.layout ~= '2' or m.epoch ~= '1' then return nil end
+  if CMD == '' or sfind(CMD, '[|\n]') then return nil end -- not packable as an event pack's command id (U.flush_events writes rows)
   if GATE == 'c' then
     local re = tonumber(m.reqepoch or '1')
     if not re or re > 1 then return nil end
@@ -316,16 +317,28 @@ end
 -- fails partway the intent (the same table the generic path would pack) is stored after the fact with ipos 1, and the error goes on.
 function L.commit(m, reply)
   if #EV > 0 then
-    local id = tonumber(m.nextevent or '1')
-    local cmd = q(CMD)
-    for _, e in ipairs(EV) do
-      local ids = sformat('%d', id)
-      L.zadd('events', ids, ids)
-      L.hset('events:data', ids, '{"actorId":null,"attemptId":' .. q(e[3]) .. ',"commandId":' .. cmd .. ',"details":' .. e[4]
-        .. ',"eventId":' .. ids .. ',"jobId":' .. q(e[2]) .. ',"kind":' .. q(e[1]) .. ',"occurredAt":' .. NOWS .. '}')
-      id = id + 1
+    -- One event pack per call (layout 2, U.flush_events): no actor and the call's own command id on every lean event.
+    local first = tonumber(m.nextevent or '1')
+    local parts, i = { '~1|' .. NOWS .. '|' .. CMD }, 1
+    while i <= #EV do
+      local e, f = EV[i], EV[i + 1]
+      local g, n, x, g2
+      if e[1] == 'attempt_reserved' and f and f[1] == 'attempt_started' and f[2] == e[2] and f[3] == e[3] then
+        g, n = string.match(e[4], '^{"generation":(%d+),"reservationNumber":(%d+)}$')
+        x, g2 = string.match(f[4], '^{"executionNumber":(%d+),"generation":(%d+)}$')
+      end
+      if g and x and g == g2 then
+        parts[#parts + 1] = '~rs|' .. e[2] .. '|' .. e[3] .. '||0|' .. g .. ',' .. n .. ',' .. x
+        i = i + 2
+      else
+        parts[#parts + 1] = e[1] .. '|' .. e[2] .. '|' .. e[3] .. '||0|' .. e[4]
+        i = i + 1
+      end
     end
-    L.hset('meta', 'nextevent', sformat('%d', id))
+    local fs = sformat('%d', first)
+    L.zadd('events', fs, fs)
+    L.hset('events:data', fs, concat(parts, '\n'))
+    L.hset('meta', 'nextevent', sformat('%d', first + #EV))
   end
   local ops = {}
   for _, k in ipairs(KO) do
@@ -386,7 +399,9 @@ function L.finish_plan(body, draw)
   if requested == cjson.null then requested = nil end
   if (err ~= nil and type(err) ~= 'string') or (usage ~= nil and type(usage) ~= 'string') then return nil end
   local j = L.job(lease.job)
-  if L.ownership(j, lease, RUNNING) or (j.scopes and j.scopes ~= '') or j['a:' .. lease.attempt .. ':fin'] or not j.created then return nil end
+  -- An attempt reserved under layout 1 (a:<attempt>:res) is closed by the generic path in its own form.
+  if L.ownership(j, lease, RUNNING) or (j.scopes and j.scopes ~= '') or j['a:' .. lease.attempt .. ':res'] or j['a:' .. lease.attempt]
+    or not j.created or not j.ares then return nil end
   local started, max = tonumber(j['g:' .. j.gen .. ':started']), tonumber(j['g:' .. j.gen .. ':max'])
   local rev = L.inc(j.rev)
   if not started or not max or not rev or not tonumber(j.gen) then return nil end
@@ -420,21 +435,31 @@ function L.finish_plan(body, draw)
     err = err, usage = usage, rev = rev }
 end
 
+-- U.attempt_record: the closed attempt's packed record (layout 2).
+local ATT_KEYS = { 'gen', 'res', 'exec', 'worker', 'reserved', 'auth', 'fin', 'outcome', 'disp', 'reason', 'elapsed', 'delay', 'next' }
+local ATT_TEXT = { worker = true, outcome = true, disp = true, reason = true }
+function L.attempt_record(j, outcome, state, reason, elapsed, delay, eligible)
+  local v = { gen = j.gen, res = j.rcount, exec = j.aauth and j['g:' .. j.gen .. ':started'] or nil, worker = j.worker, reserved = j.ares,
+    auth = j.aauth, fin = NOWS, outcome = outcome, disp = state, reason = reason, elapsed = elapsed and L.S(elapsed),
+    delay = delay and L.S(delay), next = eligible and L.S(eligible) }
+  local parts = {}
+  for i, k in ipairs(ATT_KEYS) do
+    local x = v[k]
+    parts[i] = x == nil and 'null' or (ATT_TEXT[k] and q(x) or x)
+  end
+  return '[' .. concat(parts, ',') .. ']'
+end
+
 -- The after-image of one planned finish; returns the result's values (U.finish_job's v).
 function L.finish_write(p)
   local j, lease, state, reason, eligible = p.j, p.lease, p.state, p.reason, p.eligible
   local id, att, old = j.id, lease.attempt, j.state
   local a = 'a:' .. att .. ':'
   local terminal = TERMINAL[state]
-  L.jw(j, a .. 'fin', NOWS)
-  L.jw(j, a .. 'outcome', p.outcome)
-  L.jw(j, a .. 'disp', state)
-  L.jw(j, a .. 'reason', reason)
-  L.jw(j, a .. 'elapsed', L.S(p.elapsed))
-  L.jw(j, a .. 'delay', p.delay and L.S(p.delay) or nil)
-  L.jw(j, a .. 'next', eligible and L.S(eligible) or nil)
+  L.jw(j, 'a:' .. att, L.attempt_record(j, p.outcome, state, reason, p.elapsed, p.delay, eligible))
+  L.jw(j, 'ares', nil)
+  L.jw(j, 'aauth', nil)
   L.jw(j, a .. 'error', p.err)
-  L.jw(j, a .. 'closedby', CMD)
   if eligible then L.jw(j, 'eligible', L.S(eligible)) end
   L.jw(j, 'attempt', nil)
   L.jw(j, 'worker', nil)
