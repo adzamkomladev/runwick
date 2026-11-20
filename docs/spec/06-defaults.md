@@ -4,6 +4,10 @@
 
 Every numeric default used by milestone M2 is in this file. Behavior that uses each value is specified in [05-worker-engine.md](05-worker-engine.md) (cited as `05 §n`) and the storage/protocol specs. A value listed here is the default; a host may change configurable values only within the startup inequalities of §3. Values marked *profile constant* are not host-configurable (raising them requires a new serializer profile/format version).
 
+## Changes (2026-11-20, claims in flight)
+
+- **New option `WorkerOptions.ClaimsInFlight`** (05 §9.7): how many batched claims one pool may have in flight. Default **1**, the behaviour before the option, so §1.5 "Per-pool claim concurrency" keeps its value and now names the option. New rule **V-25**: 1 to 4. "Prefetch beyond tickets" stays 0: every claim still asks only for slots that are free.
+
 ## Changes (2026-11-20, grouping on by default)
 
 `SchedulerOptions.GroupMaterializations` is now **on** by default and `MaterializationGroupSize` defaults to **8** (was off and 4). With the set-based group path of schema revision 26 a group of eight costs about 2.4 ms of database time per plan; across 20 paired P-06 runs it held p99 at or under 12.85 s, and at 10.6 s in a load spike where the ungrouped path fell over 60 s behind. Stores without grouping (SQLite, Redis) are unaffected.
@@ -189,7 +193,7 @@ Implementation choices (marked *[choice]* below): whole-millisecond durations (V
 | Default pool mode | fixed, 4 | tickets | Pool with no mode configured; `FixedConcurrency(n)` sets target = maximum = n | CDB §1, REV §2 | V-15 |
 | AutoConcurrency | `(min, max)`, initial target min (1 when min = 0) | tickets | Automatic pool (11) | CDB §1, §4 | V-15 |
 | Worker/store group maximum | 16 | outstanding attempts | Σ pool maxima bound | CDB §1 | V-15 |
-| Per-pool claim concurrency | 1 | Reserve in flight (incl. resolution) | Pool coordinator | CDB §1 | — |
+| Per-pool claim concurrency | 1 (`ClaimsInFlight`, 1 to 4) | claims in flight (incl. resolution); above 1 only batched single-lane claims overlap (05 §9.7) | Pool coordinator | CDB §1, 05 Changes 2026-11-20 | V-25 |
 | Prefetch beyond tickets | 0 | reservations | Pool coordinator | CDB §1 | — |
 | Queue weight | 1 default; allowed 1–1,000 | — | Queue-level SWRR | CDB §2 | V-15 |
 | Lane weights high : medium : low | 6 : 3 : 1 | — | Lane-level SWRR | CDB §2, CC §2 | V-20 |
@@ -440,5 +444,6 @@ Startup rejects any violation with an error naming the setting(s) and the inequa
 | V-22 | For idle backoff and cooldown: `0 < base ≤ cap`; jitter fraction in [0, 1); hint max age > 0; probe spacing > 0 | 100 ms ≤ 2 s (10 s listening); 250 ms ≤ 2 s; 0.20; 2 s; 50 ms |
 | V-23 | `LeaseDuration` within the store's supported lease bounds (checked against the store compatibility manifest) | 60 s |
 | V-24 | The binary knows every capability the application requires (SP-013 builds know `rate_admission`; earlier binaries refuse a rate-enabled application) | pass |
+| V-25 | `1 ≤ ClaimsInFlight ≤ 4` (05 §9.7) | 1 |
 
 Worked failures (TIME-01): `LeaseDuration = 30 s` → V-04 (31 ≮ 20) and V-06 (StopMargin = −5 s); `ControlRequestTimeout = 10 s` → V-05 (15 ≱ 23) although V-04 holds (41 < 50); `ShutdownDrain = 20 s` → V-10 (30 > 25); `MinimumInvocationMargin = 12 s` → V-05; `LeaseWatchdogInterval = 2 s` → V-07. A host may scale leases and intervals together (e.g. lease 120 s, safety 20 s, renewal [24 s, 36 s]: 36 + 10 + 1 + 2 = 49 < 100; StopMargin = 100 − 36 − 5 − 2 = 57 s; ResumeMargin = 62 s). Static inequalities do not prove group-wide capacity, thread-pool health or store clock stability; runtime margin checks always override them.
