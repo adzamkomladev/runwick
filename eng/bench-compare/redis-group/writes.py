@@ -2,7 +2,9 @@
 """What does each worker command write? Runs claim (ReserveAndBegin), FinishMany, Finish and FinishAndClaim calls of k jobs through
 the checkout's Lua against a disposable AOF-always Redis whose AOF directory is mounted on the host, reads the AOF bytes each call
 appended, and prints per-job bytes, write commands and fields by key kind. Usage:
-  writes.py --port P --aof DIR/appendonlydir [--lua DIR] [--k 8] [--calls 20]"""
+  writes.py --port P --aof DIR/appendonlydir [--lua DIR] [--k 8] [--calls 20] [--fields]
+Also measures a single Dispatch and a RenewMany of k. --fields adds a per-field breakdown of hash writes (job hash, receipt, meta),
+with attempt and generation ids folded (a:<attempt>:fin -> a:*:fin), so every stored field shows its bytes per job."""
 import argparse, collections, json, os, re, socket
 from pathlib import Path
 from uuid import uuid4
@@ -66,6 +68,7 @@ def main():
     ap.add_argument("--lua", default=str(Path(__file__).resolve().parents[3] / "src/Runwick.Redis/Lua"))
     ap.add_argument("--k", type=int, default=8)
     ap.add_argument("--calls", type=int, default=20)
+    ap.add_argument("--fields", action="store_true")
     a = ap.parse_args()
     lua, k = Path(a.lua), a.k
     db = Redis(a.port)
@@ -74,7 +77,7 @@ def main():
     db.call("HSET", PREFIX + "queues", "default", "{}")
     pre = (lua / "prelude.lua").read_text() + "\n" + (lua / "jobs.lua").read_text() + "\n"
     load = lambda op: db.call("SCRIPT", "LOAD", pre + (lua / f"ops/{op}.lua").read_text())
-    dispatch, rb, fm, fin, fc = (load(x) for x in ("dispatch", "reserve_and_begin", "finish_many", "finish", "finish_and_claim"))
+    dispatch, rb, fm, fin, fc, rn = (load(x) for x in ("dispatch", "reserve_and_begin", "finish_many", "finish", "finish_and_claim", "renew"))
 
     def aof_file():
         d = Path(a.aof)
@@ -83,15 +86,6 @@ def main():
     def dl(ahead):
         sec, usec = map(int, db.call("TIME"))
         return sec * 1000 + usec // 1000 + ahead
-
-    for _ in range(k * (3 * a.calls + 4)):
-        policy = dict(maxExec=3, maxUn=3, retry='{"initialDelay":100,"maximumDelay":1000}', uretry='{"initialDelay":100,"maximumDelay":1000}', timeout=None)
-        body = dict(jobId=uuid4().hex, name="test", queue="default", priority="medium", pver=1, profile="json", profver=1, notBefore=None,
-                    akey=None, wkey=None, wms=None, biz="0" * 64, pol="0" * 64, headers='{"business":{},"diagnostic":{}}', policy=policy,
-                    scopes=[], rates=[])
-        r = db.call("EVALSHA", dispatch, 1, META, 0, STORE, "Dispatch", uuid4().hex, uuid4().hex * 2, dl(300_000), 600_000, 86_400_000,
-                    "durable", "c", "", 0, 0, "initial", "", 1, json.dumps(body), b"x" * 1024)
-        assert r[1] == b"Applied", r
 
     claim_args = lambda n: ["", uuid4().hex, "default", "medium", 600_000, json.dumps([uuid4().hex for _ in range(n)]), "", "",
                             json.dumps([["test", 1, "json", 1]]), n, json.dumps([uuid4().hex[:20] for _ in range(n)]), json.dumps([0] * n)]
@@ -113,7 +107,11 @@ def main():
         return out
 
     stats = collections.defaultdict(lambda: collections.defaultdict(lambda: [0, 0, 0]))  # op -> kind -> [bytes, commands, args]
+    fstats = collections.defaultdict(lambda: collections.defaultdict(int))  # op -> folded field -> bytes
     totals = collections.Counter()
+
+    def fold(f):
+        return re.sub(r"^a:[0-9a-f]{32}:", "a:*:", re.sub(r"^g:\d+:", "g:*:", f.decode("latin1")))
 
     def measured(op, jobs, fn):
         f = aof_file(); before = f.stat().st_size
@@ -133,7 +131,23 @@ def main():
                     key = "meta: guard + intent" if argv[i + 1] else "meta: publication"
             s = stats[op][key]
             s[0] += size; s[1] += 1; s[2] += max(0, (len(argv) - 2) // 2)
+            if c in (b"HSET", b"HDEL") and key in ("job hash", "receipt", "meta", "event row"):
+                step = 2 if c == b"HSET" else 1
+                for x in range(2, len(argv), step):
+                    vals = argv[x:x + step]
+                    name = "<event id>" if key == "event row" else fold(argv[x])
+                    fstats[op][f"{key} {c.decode()} {name}"] += sum(len(v) + len(str(len(v))) + 5 for v in vals)
         return out
+
+    for seq in range(k * (3 * a.calls + 4)):
+        policy = dict(maxExec=3, maxUn=3, retry='{"initialDelay":100,"maximumDelay":1000}', uretry='{"initialDelay":100,"maximumDelay":1000}', timeout=None)
+        body = dict(jobId=uuid4().hex, name="test", queue="default", priority="medium", pver=1, profile="json", profver=1, notBefore=None,
+                    akey=None, wkey=None, wms=None, biz="0" * 64, pol="0" * 64, headers='{"business":{},"diagnostic":{}}', policy=policy,
+                    scopes=[], rates=[])
+        go = lambda: db.call("EVALSHA", dispatch, 1, META, 0, STORE, "Dispatch", uuid4().hex, uuid4().hex * 2, dl(300_000), 600_000, 86_400_000,
+                    "durable", "c", "", 0, 0, "initial", "", 1, json.dumps(body), b"x" * 1024)
+        r = measured("Dispatch (single, 1 KiB payload)", 1, go) if seq < a.calls else go()
+        assert r[1] == b"Applied", r
 
     for _ in range(a.calls):
         begun = measured("claim (ReserveAndBegin)", k, lambda: claim(k))
@@ -143,6 +157,11 @@ def main():
         measured("Finish (single)", 1, lambda: db.call("EVALSHA", fin, 1, META, 0, STORE, "Finish", uuid4().hex, uuid4().hex * 2, dl(30_000), 60_000,
                                                        86_400_000, "durable", "d", "", fbody(begun[0]), 0.5))
     begun = claim(k)
+    leases = json.dumps([dict(jobId=b["jobId"], attemptId=b["attemptId"], workerInstanceId=b["workerInstanceId"], ownershipToken=b["ownershipToken"],
+                              generation=b["generation"]) for b in begun])
+    for _ in range(a.calls):
+        measured("RenewMany", k, lambda: db.call("EVALSHA", rn, 1, META, 0, STORE, "RenewMany", uuid4().hex, "", dl(30_000), 60_000, 0, "", "r", "",
+                                                  600_000, 1, leases))
     for _ in range(a.calls):
         def comb():
             r = db.call("EVALSHA", fc, 1, META, 0, STORE, "ReserveAndBegin", uuid4().hex, uuid4().hex * 2, dl(30_000), 60_000, 600_000, "ownership",
@@ -158,6 +177,9 @@ def main():
         print(f"  {'key kind':38s} {'bytes/job':>10s} {'cmds/job':>9s} {'fields/job':>11s}")
         for key, (b, c, f) in sorted(kinds.items(), key=lambda kv: -kv[1][0]):
             print(f"  {key:38s} {b / jobs:10.0f} {c / jobs:9.2f} {f / jobs:11.1f}")
+        if a.fields:
+            for name, b in sorted(fstats[op].items(), key=lambda kv: -kv[1]):
+                print(f"    field {name:44s} {b / jobs:8.0f}")
         out[op] = {"bytesPerJob": totals[op, "bytes"] / jobs, "kinds": {key: [v / jobs for v in s] for key, s in kinds.items()}}
     if os.environ.get("JSON_OUT"): Path(os.environ["JSON_OUT"]).write_text(json.dumps(out, indent=1))
 

@@ -4,7 +4,7 @@ set -uo pipefail
 export PATH=/root/.dotnet:$PATH DOTNET_ROOT=/root/.dotnet
 here="$(cd "$(dirname "$0")" && pwd)"
 bin=$1; out=$2; shift 2
-name="rwcost-$$"
+name="${NAME_PREFIX:-rwcost}-$$"   # NAME_PREFIX: container name prefix (default rwcost)
 mounts=(); [[ "${FSYNC:-disk}" == tmpfs ]] && mounts=(--mount type=tmpfs,destination=/data,tmpfs-mode=1777)
 docker run --pull=never -d --name "$name" "${mounts[@]}" -p 127.0.0.1::6379 ${IMAGE:-redis:8.2-alpine} redis-server --appendonly yes --appendfsync always --aof-load-truncated no --maxmemory-policy noeviction --save '' --auto-aof-rewrite-percentage 0 --slowlog-log-slower-than ${SLOW:-0} --slowlog-max-len 400000 >/dev/null
 for i in $(seq 1 60); do [[ "$(docker exec "$name" redis-cli ping 2>/dev/null)" == PONG ]] && break; sleep .25; done
