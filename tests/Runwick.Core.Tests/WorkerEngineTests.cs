@@ -678,7 +678,9 @@ public sealed class WorkerEngineTests
         var id = e.Add("hung");
         await e.StartAsync();
         await e.RunUntilAsync(() => e.Events.Any(x => x.Name == "handlerInvoked"), Long, "invocation");
-        await e.RunUntilAsync(() => EntryOf(e, id).IsLost, Long, "cleanup budget");
+        // The loss is marked just before the diagnostic is recorded, so wait for both.
+        await e.RunUntilAsync(() => EntryOf(e, id).IsLost
+            && e.Engine.Health().Diagnostics.Any(d => d.Contains("unconfirmed completion", StringComparison.Ordinal)), Long, "cleanup budget");
         var entry = EntryOf(e, id);
         Assert.Equal(LossCause.CleanupExpired, entry.Loss);
         Assert.Equal(0, e.Store.Count(Operations.Finish));
