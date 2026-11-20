@@ -11,6 +11,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Lua\*.lua" LogicalName="Runwick.Redis.Lua.%(Filename)%(Extension)" />
     <EmbeddedResource Include="Lua\ops\*.lua" LogicalName="Runwick.Redis.Lua.ops.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Lua\lean\*.lua" LogicalName="Runwick.Redis.Lua.lean.%(Filename)%(Extension)" />
     <InternalsVisibleTo Include="Runwick.Contract.Tests" />
     <InternalsVisibleTo Include="Runwick.Redis.Tests" />
     <InternalsVisibleTo Include="Runwick.Harness" />

@@ -49,7 +49,10 @@ public sealed class RedisCompactReceiptTests
             foreach (var (op, s) in originals)
             {
                 Assert.Contains("U.COMPACT = true", s.Text, StringComparison.Ordinal);
-                cache["w:" + op] = (RxScript)ctor.Invoke([op, s.Text.Replace("U.COMPACT = true", "U.COMPACT = false", StringComparison.Ordinal)]);
+                // The previous version had no lean paths: run the generic frame only, writing plain receipts.
+                var text = s.Text.Replace("U.COMPACT = true", "U.COMPACT = false", StringComparison.Ordinal)
+                    .Replace("\nend\n-- Lean worker paths", "\nend\ndo return GENERIC() end\n-- Lean worker paths", StringComparison.Ordinal);
+                cache["w:" + op] = (RxScript)ctor.Invoke([op, text]);
             }
 
             await body();

@@ -6,6 +6,7 @@ detail field reads as empty). Also covers a claim whose items are not plain Appl
 budget exhausted), a single Reserve, Begin and Finish, and a resend (replay) of every command. Usage: diffcheck.py --port P [--base DIR] [--new DIR]"""
 import argparse, json, re, socket, sys
 from pathlib import Path
+from luascript import compose
 
 STORE = "11" * 16
 PREFIX = "rw:{" + b"diffapp".hex() + "}:"
@@ -45,12 +46,8 @@ def run(lua, port, decoder):
     db.call("FLUSHALL")
     db.call("HSET", META, "store", STORE, "mode", "normal", "layout", 1, "epoch", 1, "admission", "open", "bf", "done")
     db.call("HSET", PREFIX + "queues", "default", "{}")
-    prelude = (lua / "prelude.lua").read_text() + "\n" + (lua / "jobs.lua").read_text() + "\n"
-    dispatch = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/dispatch.lua").read_text())
-    rb = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/reserve_and_begin.lua").read_text())
-    fm = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/finish_many.lua").read_text())
-    fin = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/finish.lua").read_text())
-    fc = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/finish_and_claim.lua").read_text())
+    load = lambda op: db.call("SCRIPT", "LOAD", compose(lua, op))
+    dispatch, rb, fm, fin, fc, ren = (load(op) for op in ("dispatch", "reserve_and_begin", "finish_many", "finish", "finish_and_claim", "renew"))
     replies = []
 
     def dl(ahead):
@@ -61,7 +58,7 @@ def run(lua, port, decoder):
     for i in range(n):
         policy = dict(maxExec=3, maxUn=3, retry='{"initialDelay":100,"maximumDelay":1000}', uretry='{"initialDelay":100,"maximumDelay":1000}', timeout=None)
         body = dict(jobId=hexid(i, 1), name="test", queue="default", priority="medium", pver=1, profile="json", profver=1, notBefore=None,
-                    akey=None, wkey=None, wms=None, biz="0" * 64, pol="0" * 64, headers='{"business":{},"diagnostic":{}}', policy=policy,
+                    akey="k0" if i == 0 else None, wkey=None, wms=None, biz="0" * 64, pol="0" * 64, headers='{"business":{},"diagnostic":{}}', policy=policy,
                     scopes=[], rates=[])
         r = db.call("EVALSHA", dispatch, 1, META, 0, STORE, "Dispatch", hexid(i, 2), hexid(i, 3) * 2, dl(300_000), 600_000, 86_400_000,
                     "durable", "c", "", 0, 0, "initial", "", 1, json.dumps(body), b"payload-%d" % i)
@@ -77,10 +74,21 @@ def run(lua, port, decoder):
     items = json.loads(r[7])["items"]
     lease = lambda b: dict(jobId=b["jobId"], attemptId=b["attemptId"], workerInstanceId=b["workerInstanceId"], ownershipToken=b["ownershipToken"],
                            generation=b["generation"])
-    fbody = lambda i, outcome: json.dumps(dict(lease=lease(items[i]["begin"]), outcome=outcome, elapsed=1, requested=None, error=None, usage=None))
+    fbody = lambda i, outcome, **kw: json.dumps(dict(dict(lease=lease(items[i]["begin"]), outcome=outcome, elapsed=1, requested=None, error=None,
+                                                         usage=None), **kw))
+    # Renewals: RenewMany of two owned leases and a stale one, a single Renew, a single Renew of the stale lease (no effect), each resent.
+    stale = dict(lease(items[2]["begin"]), ownershipToken="ff" * 16)
+    twice = dict(lease(items[3]["begin"]), ownershipToken="ff" * 16)  # the same job twice in one RenewMany
+    for many, leases in (("1", [lease(items[3]["begin"]), lease(items[4]["begin"]), stale]), ("0", [lease(items[3]["begin"])]), ("0", [stale]),
+                         ("1", [stale]), ("1", [lease(items[3]["begin"]), twice])):
+        call = ["EVALSHA", ren, 1, META, 0, STORE, "RenewMany" if many == "1" else "Renew", hexid(len(replies), 13), "", dl(30_000), 60_000, 0, "",
+                "d", "", 600_000, many, json.dumps(leases)]
+        for _ in range(2):
+            replies.append(db.call(*call))
     args = [3]
+    kws = [dict(), dict(usage='{"cpuMs":1}'), dict(error='{"code":"x","message":"m\\n\\"q\\""}', requested=50)]
     for i in range(3):
-        args += [hexid(i, 8), hexid(i, 9) * 2, dl(30_000), fbody(i, "succeeded"), 0.5]
+        args += [hexid(i, 8), hexid(i, 9) * 2, dl(30_000), fbody(i, "retryable_failure" if i == 2 else "succeeded", **kws[i]), 0.5]
     many = ["EVALSHA", fm, 1, META, 0, STORE, "FinishMany", hexid(0, 10), "", dl(30_000), 60_000, 0, "", "d", "", *args]
     r = db.call(*many)
     assert r[1] == b"Applied", r
@@ -128,8 +136,7 @@ def run(lua, port, decoder):
     ents = json.dumps([f"{i + 200:020x}" for i in range(4)])
     mixed = ["EVALSHA", rb, 1, META, 0, STORE, "ReserveAndBegin", hexid(2, 5), hexid(2, 6) * 2, dl(30_000), 60_000, 600_000, "ownership", "c", "",
              hexid(2, 7), "q2", "medium", 600_000, toks, "", "", json.dumps([["test", 1, "json", 1]]), 4, ents, json.dumps([0] * 4)]
-    reserve = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/reserve.lua").read_text())
-    begin = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/begin.lua").read_text())
+    reserve, begin = load("reserve"), load("begin")
     one = ["EVALSHA", reserve, 1, META, 0, STORE, "Reserve", hexid(3, 5), hexid(3, 6) * 2, dl(30_000), 60_000, 600_000, "ownership", "c", "",
            hexid(3, 7), "q2", "medium", 600_000, hexid(3, 12), "4", hexid(13, 1), json.dumps([["test", 1, "json", 1]]), f"{300:020x}"]
     for c in (mixed, mixed, one, one):

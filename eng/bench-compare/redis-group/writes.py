@@ -7,6 +7,7 @@ Also measures a single Dispatch and a RenewMany of k. --fields adds a per-field 
 with attempt and generation ids folded (a:<attempt>:fin -> a:*:fin), so every stored field shows its bytes per job."""
 import argparse, collections, json, os, re, socket
 from pathlib import Path
+from luascript import compose
 from uuid import uuid4
 
 STORE = uuid4().hex
@@ -75,8 +76,7 @@ def main():
     db.call("FLUSHALL")
     db.call("HSET", META, "store", STORE, "mode", "normal", "layout", 1, "epoch", 1, "admission", "open", "bf", "done")
     db.call("HSET", PREFIX + "queues", "default", "{}")
-    pre = (lua / "prelude.lua").read_text() + "\n" + (lua / "jobs.lua").read_text() + "\n"
-    load = lambda op: db.call("SCRIPT", "LOAD", pre + (lua / f"ops/{op}.lua").read_text())
+    load = lambda op: db.call("SCRIPT", "LOAD", compose(lua, op))  # as the binary composes them (lean paths included)
     dispatch, rb, fm, fin, fc, rn = (load(x) for x in ("dispatch", "reserve_and_begin", "finish_many", "finish", "finish_and_claim", "renew"))
 
     def aof_file():
