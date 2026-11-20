@@ -16,7 +16,7 @@ mkdir -p "results/$tag"
 run_arm() {
   local round=$1 arm=$2
   local prefix="results/$tag/$round-$arm"
-  local fixture="runwick-diet-run-$$-$round-$arm"
+  local fixture="${NAME_PREFIX:-runwick-diet-run}-$$-$round-$arm"   # NAME_PREFIX: container name prefix
   local mounts=()
   [[ "${FSYNC:-disk}" == tmpfs ]] && mounts=(--mount type=tmpfs,destination=/data,tmpfs-mode=1777)
   docker run --pull=never -d --name "$fixture" "${mounts[@]}" -p 127.0.0.1::6379 "$image" redis-server --appendonly yes --appendfsync always --aof-load-truncated no --maxmemory-policy noeviction --save '' --auto-aof-rewrite-percentage 0 > "$prefix.container"
@@ -24,14 +24,14 @@ run_arm() {
   local address; address="$(docker port "$fixture" 6379/tcp | head -1 | sed 's/0.0.0.0/127.0.0.1/')"
   uptime > "$prefix.load"
   local flags=()
-  local bin=$cand
+  local bin=$cand workers=16
   case "$arm" in comb) flags=(--combined-finish-claim) ;; buf) flags=(--buffered-finish) ;; both) flags=(--buffered-finish --combined-finish-claim) ;;
-    old) bin=$BASE_BIN ;; oldbuf) bin=$BASE_BIN; flags=(--buffered-finish) ;; esac
+    old) bin=$BASE_BIN ;; oldbuf) bin=$BASE_BIN; flags=(--buffered-finish) ;; oldbuf32) bin=$BASE_BIN; flags=(--buffered-finish); workers=32 ;; esac
   local rw=("$bin/Runwick.Workloads" bench --store redis --redis "$address" --out "$prefix.json" "${flags[@]}")
   local cmd=()
   case "$workload:$arm" in
     drain:bullmq)      cmd=(node "$bullmq_dir/bench-base.mjs" --redis "$address" --mode drain --n 20000 --concurrency 16 --out "$prefix.json") ;;
-    drain:*)           cmd=("${rw[@]}" --mode drain --n 20000 --workers 16 --calls 1) ;;
+    drain:*)           cmd=("${rw[@]}" --mode drain --n 20000 --workers "$workers" --calls 1) ;;
     steady500:bullmq)  cmd=(node "$bullmq_dir/bench-steady.mjs" --concurrency 16 --redis "$address" --mode steady --calls 16 --seconds 30 --rate 500 --out "$prefix.json") ;;
     steady500:*)       cmd=("${rw[@]}" --trace --workers 16 --store-warmup-seconds 12 --mode steady --calls 16 --seconds 30 --rate 500) ;;
     steady100:bullmq)  cmd=(node "$bullmq_dir/bench-steady.mjs" --concurrency 16 --redis "$address" --mode steady --calls 16 --seconds 30 --rate 100 --out "$prefix.json") ;;
