@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <!-- The whole suite runs as a host with reflection-based JSON off: the dashboard must bring its own resolver. -->
+    <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
     <NoWarn>$(NoWarn);CA2007;CA1707;CA1861;CA2234;CA1515;CA1849</NoWarn>
   </PropertyGroup>
   <ItemGroup>

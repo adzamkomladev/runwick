@@ -459,7 +459,8 @@ public sealed class UpgradeTests
         }, Ct);
 
         var slowestChange = TimeSpan.Zero;
-        for (var i = 0; i < 10; i++)
+        // A fast store finishes ten rounds before enough renewals fit, so keep changing admission until the load has run.
+        for (var i = 0; i < 10 || (Volatile.Read(ref renewals) <= 10 && i < 500); i++)
         {
             foreach (var mode in new[] { "drain", "open" })
             {

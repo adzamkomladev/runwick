@@ -1095,7 +1095,7 @@ internal sealed class ManagementSession(
     /// <summary>Binds the JSON payload to the registered type; errors name the JSON path, never a value.</summary>
     static IQueueJob Bind(CompiledJob job, System.Text.Json.Nodes.JsonNode? payload)
     {
-        var utf8 = payload is null ? "null"u8.ToArray() : JsonSerializer.SerializeToUtf8Bytes(payload);
+        var utf8 = payload is null ? "null"u8.ToArray() : System.Text.Encoding.UTF8.GetBytes(payload.ToJsonString());
         if (utf8.Length > PayloadBounds.MaxPayloadBytes)
         {
             throw new ManagementValidationException(RunwickErrorCodes.PayloadTooLarge, $"The payload exceeds {PayloadBounds.MaxPayloadBytes} bytes.");
