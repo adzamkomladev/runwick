@@ -373,7 +373,11 @@ internal sealed class PoolCoordinator
     }
 
     /// <summary>A claim that took nothing and was not followed by another claim in the same visit: the pool state follows the reply.</summary>
-    void NotApplied(LaneChoice choice, LaneKey lane, StoreReply<ClaimedJobs> reply)
+    /// <remarks>
+    /// A pipelined claim may settle after a newer probe view was applied. Its NoWork then says nothing about the newer view, so the
+    /// lane is set aside only under the view it was chosen from (<paramref name="selectedUnder"/>; null: the current view).
+    /// </remarks>
+    void NotApplied(LaneChoice choice, LaneKey lane, StoreReply<ClaimedJobs> reply, ReadyView? selectedUnder = null)
     {
         var now = _engine.Clock.Now;
         Selector.OnNotApplied(choice);
@@ -381,7 +385,11 @@ internal sealed class PoolCoordinator
         {
             case StoreStatus.NoWork:
                 _cursors[lane] = null;
-                _excluded.Add(lane);
+                if (selectedUnder is null || ReferenceEquals(selectedUnder, _excludedFor))
+                {
+                    _excluded.Add(lane);
+                }
+
                 break;
             case StoreStatus.QueuePaused:
                 Selector.CoolQueue(choice.Queue, now);
@@ -481,7 +489,7 @@ internal sealed class PoolCoordinator
                         ClaimsInFlightHighWater = n;
                     }
 
-                    TrackClaim(SettleLaterAsync(choice, lane, tickets, batch));
+                    TrackClaim(SettleLaterAsync(choice, lane, tickets, batch, _excludedFor));
                     // Not yet known to be Applied: the idle back-off resets when the reply settles as Applied, as for a claim awaited here.
                     return false;
                 }
@@ -589,7 +597,8 @@ internal sealed class PoolCoordinator
     /// Settles a pipelined batched claim once its reply is in (05 §9.7), under the claim lock as a claim of the loop's settles. A
     /// reply that takes nothing returns every ticket and updates the pool as the inline claim's does; the visit does not continue.
     /// </summary>
-    async Task SettleLaterAsync(LaneChoice choice, LaneKey lane, List<CapacityTicket> tickets, Task<(StoreReply<ClaimedJobs>? Reply, TimeSpan SentAt)> batch)
+    async Task SettleLaterAsync(LaneChoice choice, LaneKey lane, List<CapacityTicket> tickets, Task<(StoreReply<ClaimedJobs>? Reply, TimeSpan SentAt)> batch,
+        ReadyView? selectedUnder)
     {
         try
         {
@@ -603,7 +612,7 @@ internal sealed class PoolCoordinator
                     break;
                 case BatchResult.AsReserve:
                     tickets[0].Return();
-                    NotApplied(choice, lane, reply!);
+                    NotApplied(choice, lane, reply!, selectedUnder);
                     break;
                 case BatchResult.Fallback:
                     tickets[0].Return();
