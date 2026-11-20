@@ -2454,8 +2454,9 @@ Arm order rotated.
 | 1 | final (load 32.9, mean 30.4) | 100.4 | 0.14 s | 0.81 s | 1.19 s | none |
 | | main (load 16.0, mean 20.9) | 74.8 | 55 s | 113 s | 115 s | grew, drained |
 | 2 | final (load 12.9, mean 15.5) | 96.2 (staged 96.2) | 0.15 s | 0.78 s | 1.22 s | none |
+| | main (load 12.0, mean 14.8) | 65.5 | 67 s | 95 s | 98 s | grew, drained |
 
-Main's second 16-slot run and a final-code run at 120/s were still running when this was folded in.
+Above the target, 4 slots at 120 offers/s (final code, load 9.1, mean 10.1): 119.3 confirmed/s, p50 0.17 s, p95 1.02 s, p99 1.35 s, no backlog, 0 lease losses.
 
 Every run: 0 violations, no second mappings, destination jobs equal to mappings; final code 0 lease losses.
 
