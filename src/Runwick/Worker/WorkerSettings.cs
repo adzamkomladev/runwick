@@ -253,6 +253,11 @@ internal sealed class WorkerSettings
                     }
                 }
 
+                if (o.ClaimsInFlight is < 1 or > 4)
+                {
+                    Fail("V-25", nameof(o.ClaimsInFlight), "ClaimsInFlight must be 1 to 4.");
+                }
+
                 if (!(o.RecoveryScanJitter < o.RecoveryScanInterval))
                 {
                     Fail("V-13", nameof(o.RecoveryScanJitter), "0 < RecoveryScanMin ≤ RecoveryScanNominal ≤ RecoveryScanMax is required.");

@@ -121,17 +121,20 @@ public sealed class CapacityCaseTests
 
     // ------------------------------------------------------------------ CAP-02 (batched claim)
 
-    [Fact]
+    [Theory]
     [Trait("Category", "Pure")]
     [Trait("Item", "PF-06")]
     [Trait("Case", "CAP-02")]
-    public async Task A_queue_hidden_by_a_stale_hint_returns_at_zero_with_its_exact_share_while_batches_run()
+    [InlineData(1)]
+    [InlineData(2)] // 05 §9.7: pipelined batched claims keep the shares
+    public async Task A_queue_hidden_by_a_stale_hint_returns_at_zero_with_its_exact_share_while_batches_run(int claimsInFlight)
     {
         // Queues 1:3 in one pool of four slots, over the batched claim. Only "other" has work at first, so every free
         // slot is claimed in one ReserveAndBegin. Then "default" gets work behind the worker's back, as a queue resumed
         // by another process does (no wake: 05 Changes 2026-11-02, idle caps). Until the hint expires (2 s) the snapshot
         // still hides "default", so every admission goes to "other": that is §8.3 over the snapshot, not a share error.
-        await using var e = EngineFixture.Create(concurrency: 4, batch: true, configure: r => r.Queue("other"), pool: p => p.Queue("other", 3));
+        await using var e = EngineFixture.Create(concurrency: 4, batch: true, configure: r => r.Queue("other"), pool: p => p.Queue("other", 3),
+            options: o => o.ClaimsInFlight = claimsInFlight);
 
         // Each handler takes 200 ms of fake time, so four slots admit about 20 jobs a second and neither queue runs dry.
         e.Script.Default = (_, _, _) => Task.Delay(TimeSpan.FromMilliseconds(200), e.Time, CancellationToken.None);

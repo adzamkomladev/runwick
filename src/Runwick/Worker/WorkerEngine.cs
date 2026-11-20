@@ -619,7 +619,7 @@ internal sealed partial class WorkerEngine : IRunwickComponent, IAsyncDisposable
                 }
 
                 var live = _entries.Values.Where(e => e.Phase != AttemptPhase.Retired).Select(e => e.Retired).ToList();
-                var claims = Pools.Select(p => p.ClaimTask).Where(t => t is { IsCompleted: false }).Cast<Task>().ToList();
+                var claims = Pools.SelectMany(p => p.ClaimTasks).Where(t => !t.IsCompleted).ToList();
                 if (live.Count == 0 && claims.Count == 0)
                 {
                     break;

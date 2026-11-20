@@ -181,6 +181,226 @@ public sealed class WorkerEngineTests
         Assert.Equal(JobStates.Pending, e.Store.JobOf(id).State);
     }
 
+    // ------------------------------------------------------------------ claims in flight (05 §9.7)
+
+    /// <summary>Counts batched claims between arrival at the store and their reply, and checks no claim asks for more than the free slots.</summary>
+    sealed class ClaimWatch(EngineFixture e, int slots)
+    {
+        int _inFlight, _inFlightJobs;
+
+        public int MaxInFlight;
+
+        public ConcurrentQueue<string> Violations { get; } = new();
+
+        public void Arrived(StoreCall call)
+        {
+            var jobs = Assert.IsType<ReserveAndBeginRequest>(call.Body).MaxJobs;
+            var n = Interlocked.Increment(ref _inFlight);
+            var asked = Interlocked.Add(ref _inFlightJobs, jobs);
+            InterlockedMax(ref MaxInFlight, n);
+            // A lower bound of the slots held by running attempts: an admitted entry holds its ticket until it retires.
+            var held = e.Engine.Entries.Count(x => !x.Ticket.IsReleased);
+            if (asked + held > slots)
+            {
+                Violations.Enqueue($"{asked} jobs asked by {n} claims while {held} slots are held by attempts");
+            }
+        }
+
+        public void Replied(StoreCall call)
+        {
+            Interlocked.Decrement(ref _inFlight);
+            Interlocked.Add(ref _inFlightJobs, -Assert.IsType<ReserveAndBeginRequest>(call.Body).MaxJobs);
+        }
+
+        static void InterlockedMax(ref int target, int value)
+        {
+            int seen;
+            while ((seen = Volatile.Read(ref target)) < value && Interlocked.CompareExchange(ref target, value, seen) != seen)
+            {
+            }
+        }
+    }
+
+    static ClaimWatch WatchClaims(EngineFixture e, int slots, TimeSpan claimTime, Func<StoreCall, Task<CallEffect>>? also = null)
+    {
+        var watch = new ClaimWatch(e, slots);
+        e.Store.Before = async call =>
+        {
+            if (call.Operation != Operations.ReserveAndBegin)
+            {
+                return CallEffect.Proceed;
+            }
+
+            watch.Arrived(call);
+            var effect = also is null ? CallEffect.Proceed : await also(call);
+            if (effect != CallEffect.Proceed)
+            {
+                watch.Replied(call);
+                return effect;
+            }
+
+            await Task.Delay(claimTime, e.Time, CancellationToken.None);
+            return CallEffect.Proceed;
+        };
+        e.Store.Rewrite = (call, reply) =>
+        {
+            if (call.Operation == Operations.ReserveAndBegin)
+            {
+                watch.Replied(call);
+            }
+
+            return reply;
+        };
+        return watch;
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    public void Claims_in_flight_defaults_to_one_and_is_validated()
+    {
+        Assert.Equal(1, new WorkerOptions().ClaimsInFlight);
+        Assert.Empty(Validate(o => o.ClaimsInFlight = 4));
+        Assert.Contains(Validate(o => o.ClaimsInFlight = 0), x => x.Message.StartsWith("V-25", StringComparison.Ordinal));
+        Assert.Contains(Validate(o => o.ClaimsInFlight = 5), x => x.Message.StartsWith("V-25", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [Trait("Category", "Pure")]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(4)]
+    public async Task Pipelined_claims_only_fill_free_slots(int claimsInFlight)
+    {
+        await using var e = EngineFixture.Create(concurrency: 4, batch: true, options: o => o.ClaimsInFlight = claimsInFlight);
+        // Claims take 100 ms and handlers 30 ms, so slots free up while a claim waits for its reply.
+        e.Script.Default = (_, _, _) => Task.Delay(TimeSpan.FromMilliseconds(30), e.Time, CancellationToken.None);
+        var watch = WatchClaims(e, 4, TimeSpan.FromMilliseconds(100));
+        var ids = Enumerable.Range(0, 80).Select(i => e.Add("p" + i)).ToList();
+
+        await e.StartAsync();
+        await e.RunUntilAsync(() => ids.All(id => e.Store.JobOf(id).State == JobStates.Succeeded), Long, "all succeeded");
+
+        var pool = e.Engine.Pools.Single();
+        Assert.Empty(watch.Violations);
+        Assert.Equal(claimsInFlight, watch.MaxInFlight);
+        Assert.Equal(claimsInFlight == 1 ? 0 : claimsInFlight, pool.ClaimsInFlightHighWater);
+        Assert.All(ids, id => Assert.Equal(1, e.Store.JobOf(id).Executions));
+        Assert.Equal(0, e.Store.Count(Operations.Reserve));
+        await e.StopAsync();
+        Assert.Equal(0, pool.Gate.Outstanding);
+        Assert.Equal(0, pool.ClaimsInFlight);
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    public async Task Pipelining_claims_more_jobs_per_slot_second_than_one_claim_at_a_time()
+    {
+        async Task<int> Claims(int claimsInFlight)
+        {
+            await using var e = EngineFixture.Create(concurrency: 8, batch: true, options: o => o.ClaimsInFlight = claimsInFlight);
+            e.Script.Default = (_, _, _) => Task.Delay(TimeSpan.FromMilliseconds(20), e.Time, CancellationToken.None);
+            WatchClaims(e, 8, TimeSpan.FromMilliseconds(100));
+            var ids = Enumerable.Range(0, 200).Select(i => e.Add("q" + i)).ToList();
+            await e.StartAsync();
+            var start = e.Time.GetUtcNow();
+            await e.RunUntilAsync(() => ids.All(id => e.Store.JobOf(id).State == JobStates.Succeeded), Long, "all succeeded", TimeSpan.FromMilliseconds(10));
+            return (int)(e.Time.GetUtcNow() - start).TotalMilliseconds;
+        }
+
+        // Fake time only moves in the test, so this compares slot idle time, not machine speed.
+        var one = await Claims(1);
+        var two = await Claims(2);
+        Assert.True(two < one, $"two claims in flight took {two} ms of fake time, one took {one} ms");
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    public async Task Shutdown_waits_for_a_pipelined_claim_and_runs_what_it_claimed()
+    {
+        await using var e = EngineFixture.Create(concurrency: 4, batch: true, options: o => o.ClaimsInFlight = 2);
+        e.Script.Default = (_, _, _) => Task.Delay(TimeSpan.FromMilliseconds(30), e.Time, CancellationToken.None);
+        var ids = Enumerable.Range(0, 40).Select(i => e.Add("s" + i)).ToList();
+        var held = new TaskCompletionSource<StoreCall>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sentWhileDraining = 0;
+        var watch = WatchClaims(e, 4, TimeSpan.FromMilliseconds(100), async call =>
+        {
+            if (call.Submission == 1 && e.Engine.Draining)
+            {
+                Interlocked.Increment(ref sentWhileDraining);
+            }
+
+            // The first claim sent while another is in flight is held until the drain has begun.
+            if (call.Submission == 1 && e.Engine.Pools.Single().ClaimsInFlight == 2 && held.TrySetResult(call))
+            {
+                while (!e.Engine.Draining)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(10), e.Time, CancellationToken.None);
+                }
+            }
+
+            return CallEffect.Proceed;
+        });
+
+        await e.StartAsync();
+        await e.RunUntilAsync(() => held.Task.IsCompleted, Long, "a second claim in flight");
+        var claim = await held.Task;
+        await e.StopAsync();
+
+        var pool = e.Engine.Pools.Single();
+        Assert.Empty(watch.Violations);
+        Assert.Equal(0, sentWhileDraining);
+        Assert.Equal(0, pool.Gate.Outstanding);
+        Assert.Equal(0, pool.ClaimsInFlight);
+        Assert.Empty(e.Engine.Entries);
+        // Everything claimed ran once and finished; nothing is left reserved or running in the store.
+        Assert.All(ids, id => Assert.Contains(e.Store.JobOf(id).State, new[] { JobStates.Succeeded, JobStates.Pending }));
+        Assert.All(ids, id => Assert.Equal(e.Store.JobOf(id).State == JobStates.Succeeded ? 1 : 0, e.Store.JobOf(id).Executions));
+        Assert.Contains(ids, id => e.Store.JobOf(id).State == JobStates.Pending);
+        var claimed = Assert.IsType<ReserveAndBeginRequest>(claim.Body).MaxJobs;
+        Assert.True(ids.Count(id => e.Store.JobOf(id).State == JobStates.Succeeded) >= claimed);
+    }
+
+    [Theory]
+    [Trait("Category", "Pure")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_claim_that_fails_while_another_is_in_flight_resolves_by_resubmitting_the_same_command(bool timesOut)
+    {
+        await using var e = EngineFixture.Create(concurrency: 4, batch: true, options: o => o.ClaimsInFlight = 2);
+        e.Script.Default = (_, _, _) => Task.Delay(TimeSpan.FromMilliseconds(30), e.Time, CancellationToken.None);
+        var ids = Enumerable.Range(0, 40).Select(i => e.Add("f" + i)).ToList();
+        Guid? failing = null;
+        var gate = new Lock();
+        var watch = WatchClaims(e, 4, TimeSpan.FromMilliseconds(50), call =>
+        {
+            // The first claim sent while another is in flight fails: its reply is lost, or it hangs until its request timeout.
+            lock (gate)
+            {
+                if (failing is null && call.Submission == 1 && e.Engine.Pools.Single().ClaimsInFlight == 2)
+                {
+                    failing = call.CommandId;
+                }
+            }
+
+            return Task.FromResult(timesOut && call.CommandId == failing && call.Submission == 1 ? CallEffect.Hang : CallEffect.Proceed);
+        });
+        e.Store.DropReply = call => !timesOut && call.CommandId == failing && call.Submission == 1;
+
+        await e.StartAsync();
+        // A hung claim reserved nothing, so the others can drain every job before its request timeout ends and it is resubmitted.
+        await e.RunUntilAsync(() => ids.All(id => e.Store.JobOf(id).State == JobStates.Succeeded)
+            && e.Store.Calls.Count(c => c.CommandId == failing) >= 2 && e.Engine.Pools.Single().ClaimsInFlight == 0, Long, "all succeeded");
+
+        var calls = e.Store.Calls.Where(c => c.CommandId == failing).ToList();
+        Assert.True(calls.Count >= 2, "the failed claim was resubmitted");
+        Assert.All(calls, c => Assert.Equal(calls[0].Body, c.Body));
+        Assert.Empty(watch.Violations);
+        Assert.Equal(2, e.Engine.Pools.Single().ClaimsInFlightHighWater);
+        Assert.All(ids, id => Assert.Equal(1, e.Store.JobOf(id).Executions));
+        await e.StopAsync();
+        Assert.Equal(0, e.Engine.Pools.Single().Gate.Outstanding);
+    }
+
     // ------------------------------------------------------------------ TIME
 
     static List<ConfigurationError> Validate(Action<WorkerOptions> configure)

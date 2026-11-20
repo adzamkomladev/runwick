@@ -269,6 +269,11 @@ internal static class BenchMode
                     {
                         o.UseCombinedFinishClaim();
                     }
+
+                    if (a.OptInt("claims-in-flight") is { } inFlight) // 05 §9.7: batched claims a pool may have outstanding at once
+                    {
+                        o.ClaimsInFlight = inFlight;
+                    }
                 }));
         });
         await using var provider = sc.BuildServiceProvider();
@@ -792,6 +797,7 @@ internal static class BenchMode
         result["finishReplayed"] = Interlocked.Read(ref replayed);
         result["batchClaims"] = engine.Pools.Sum(p => Interlocked.Read(ref p.BatchClaims));
         result["reservesSent"] = engine.Pools.Sum(p => Interlocked.Read(ref p.ReservesSent));
+        result["claimsInFlightHighWater"] = engine.Pools.Max(p => p.ClaimsInFlightHighWater);
         result["invocations"] = Interlocked.Read(ref engine.Invocations);
         result["finishesSent"] = Interlocked.Read(ref engine.FinishesSent);
         result["finishManyCalls"] = Interlocked.Read(ref engine.Completion.BatchesSent);
