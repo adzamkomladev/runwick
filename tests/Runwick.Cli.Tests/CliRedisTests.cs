@@ -67,11 +67,11 @@ public sealed class CliRedisTests
         var doctor = await RunAsync(redis.Configuration, "doctor");
         Assert.Equal(0, doctor.Exit);
         var checks = Checks(doctor);
-        Assert.Equal(("pass", "revision 1"), checks["store.migration"]);
+        Assert.Equal(("pass", "revision 2"), checks["store.migration"]);
         Assert.Equal("pass", checks["store.settings"].Status);
         Assert.Contains("appendfsync=always", checks["store.settings"].Detail, StringComparison.Ordinal);
         Assert.Equal("unverified", checks["api.reachable"].Status);
-        Assert.Equal(1, doctor.Result!["cliSchemaRevision"]!.GetValue<long>());
+        Assert.Equal(2, doctor.Result!["cliSchemaRevision"]!.GetValue<long>());
 
         var status = await RunAsync(redis.Configuration, "store", "status");
         Assert.Equal(0, status.Exit);
