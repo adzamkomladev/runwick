@@ -14,7 +14,7 @@ internal sealed record PlannerLimits(int HorizonYears, int HorizonDays, int MaxS
     /// <summary>The default of <see cref="SchedulerOptions.EvaluationBudget"/>. 250 ms failed plans on cold or loaded hosts at startup.</summary>
     public static TimeSpan DefaultPlanBudget => TimeSpan.FromSeconds(10);
 
-    /// <summary>Registration, edit and preview: the same search bounds with a 1 s budget.</summary>
+    /// <summary>Preview: the same search bounds with a fixed 1 s budget (registration and edits use <see cref="Plan"/> with the configured budget).</summary>
     public static readonly PlannerLimits Registration = new(8, 2, 4_096, TimeSpan.FromSeconds(1));
 }
 

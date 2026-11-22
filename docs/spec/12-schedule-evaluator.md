@@ -10,7 +10,7 @@ This file is normative for SP-015: the recurrence grammar, normalization, the de
 
 ## Changes (2026-11-19, configurable plan budget)
 
-- (2026-11-19) The materialization plan's cooperative time budget is now `SchedulerOptions.EvaluationBudget`, default **10 s** (was a fixed 250 ms), range 250 ms – 5 min. On a cold or loaded host the first plans after startup (JIT, TZDB load) overran 250 ms and failed with `schedule_budget_elapsed`. The 4,096-step limit still bounds the work. Registration, edit and preview keep their 1 s budget.
+- (2026-11-19) The materialization plan's cooperative time budget is now `SchedulerOptions.EvaluationBudget`, default **10 s** (was a fixed 250 ms), range 250 ms – 5 min. On a cold or loaded host the first plans after startup (JIT, TZDB load) overran 250 ms and failed with `schedule_budget_elapsed`. The 4,096-step limit still bounds the work. Startup registration and edits use the same configurable budget, because they go through the scheduler's plan; only preview keeps a fixed 1 s budget.
 
 ## Changes (2026-11-01)
 
@@ -258,7 +258,7 @@ Each lookup searches at most **8 calendar years + 2 days** after its cursor (so 
 A plan (one or more consecutive lookups) shares one budget:
 
 - **4,096 steps**. One step = one zone interval visited, one Cronos call per stream, or one `MapLocal` call. Exceeding it is `schedule_step_limit_exceeded`.
-- **10 s** cooperative time for materialization plans by default (`SchedulerOptions.EvaluationBudget`, 250 ms – 5 min); **1 s** for registration, edit and preview. Checked at every step and once more before the plan is returned. Exceeding it is `schedule_budget_elapsed`.
+- **10 s** cooperative time for materialization plans by default (`SchedulerOptions.EvaluationBudget`, 250 ms – 5 min); **1 s** for preview (registration and edits use `EvaluationBudget`). Checked at every step and once more before the plan is returned. Exceeding it is `schedule_budget_elapsed`.
 
 The deadline is cooperative: a synchronous Cronos or NodaTime call is not preempted, and this spec does not claim a hard CPU deadline.
 
