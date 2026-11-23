@@ -6,7 +6,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"strconv"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -32,7 +35,21 @@ type NoopWorker struct {
 	river.WorkerDefaults[NoopArgs]
 }
 
-func (w *NoopWorker) Work(ctx context.Context, job *river.Job[NoopArgs]) error { return nil }
+func (w *NoopWorker) Work(ctx context.Context, job *river.Job[NoopArgs]) error { cpuWork(); return nil }
+
+// cpuWork: the shared CPU-heavy job (eng/bench-compare/ci/README.md): BENCH_CPU_ITERS rounds of SHA-256 over a 1 KiB buffer, each digest written back into its first 32 bytes.
+var cpuIters, _ = strconv.Atoi(os.Getenv("BENCH_CPU_ITERS"))
+
+func cpuWork() {
+	if cpuIters <= 0 {
+		return
+	}
+	b := bytes.Repeat([]byte("x"), 1024)
+	for i := 0; i < cpuIters; i++ {
+		d := sha256.Sum256(b)
+		copy(b, d[:])
+	}
+}
 
 func main() {
 	conn := flag.String("conn", "postgres://postgres:pg@127.0.0.1:55499/postgres", "admin connection URL")

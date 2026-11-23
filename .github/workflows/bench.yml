@@ -1,0 +1,112 @@
+# Queue library comparison (eng/bench-compare/ci/README.md). Manual only: Actions -> bench -> Run workflow.
+# Every library x workload runs on its own fresh runner in parallel (18 jobs), each with its own PostgreSQL / Redis
+# container, then one report job collects everything into the run summary and a downloadable HTML report.
+name: bench
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Rounds per test (median is reported)
+        default: "3"
+      scale:
+        description: Divide job counts and seconds by this (1 = full run; 10 = quick smoke run)
+        default: "1"
+permissions:
+  contents: read
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+jobs:
+  bench:
+    name: ${{ matrix.system }} / ${{ matrix.workload }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        system: [runwick-pg, runwick-sqlite, runwick-redis, river, pgboss, solidqueue, bullmq, horizon, celery]
+        workload: [normal, cpu]
+    env:
+      BC: eng/bench-compare
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start PostgreSQL 18
+        if: contains(fromJSON('["runwick-pg","river","pgboss","solidqueue"]'), matrix.system)
+        run: |
+          docker run -d --name bench-pg -p 127.0.0.1:55499:5432 -e POSTGRES_PASSWORD=pg postgres:18
+          until docker exec bench-pg pg_isready -U postgres -q; do sleep 1; done
+      - name: Start Redis 8.2 (Runwick profile - AOF always, no RDB, noeviction - for every Redis library)
+        if: contains(fromJSON('["runwick-redis","bullmq","horizon","celery"]'), matrix.system)
+        run: |
+          docker run -d --name bench-redis -p 127.0.0.1:56392:6379 redis:8.2-alpine redis-server --appendonly yes --appendfsync always --no-appendfsync-on-rewrite no --maxmemory-policy noeviction --aof-load-truncated no --save ""
+          until docker exec bench-redis redis-cli ping | grep -q PONG; do sleep 1; done
+
+      - if: startsWith(matrix.system, 'runwick')
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - if: startsWith(matrix.system, 'runwick')
+        run: dotnet build tests/Runwick.Workloads/Runwick.Workloads.csproj -c Release
+
+      - if: matrix.system == 'river'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: eng/bench-compare/river/go.mod
+          cache-dependency-path: eng/bench-compare/river/go.sum
+      - if: matrix.system == 'river'
+        run: cd $BC/river && go build -o bench-river .
+
+      - if: matrix.system == 'pgboss' || matrix.system == 'bullmq'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - if: matrix.system == 'pgboss' || matrix.system == 'bullmq'
+        run: cd $BC/${{ matrix.system }} && npm ci --no-audit --no-fund
+
+      - if: matrix.system == 'horizon'
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: redis
+          tools: composer
+      - if: matrix.system == 'horizon'
+        run: COMPOSER_CMD=composer bash $BC/horizon/setup.sh
+
+      - if: matrix.system == 'solidqueue'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+      - if: matrix.system == 'solidqueue'
+        run: sudo apt-get install -y -q libpq-dev && bash $BC/solidqueue/setup.sh
+
+      - if: matrix.system == 'celery'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - if: matrix.system == 'celery'
+        run: pip install -q -r $BC/celery/requirements.txt
+
+      - name: Benchmark
+        run: python3 $BC/ci/run.py --system ${{ matrix.system }} --workload ${{ matrix.workload }} --rounds ${{ inputs.rounds }} --scale ${{ inputs.scale }} --out results
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ matrix.system }}-${{ matrix.workload }}
+          path: results
+
+  report:
+    needs: bench
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bench-*
+          path: results
+          merge-multiple: true
+      - run: python3 eng/bench-compare/ci/report.py results report && cat report/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-report
+          path: report

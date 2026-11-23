@@ -1,0 +1,10 @@
+# One supervisor; BENCH_PROCESSES worker processes x BENCH_THREADS threads = the worker slots (bench.rb sets both).
+development:
+  dispatchers:
+    - polling_interval: 1
+      batch_size: 500
+  workers:
+    - queues: "*"
+      threads: <%= ENV.fetch("BENCH_THREADS", 4) %>
+      processes: <%= ENV.fetch("BENCH_PROCESSES", 4) %>
+      polling_interval: 0.1

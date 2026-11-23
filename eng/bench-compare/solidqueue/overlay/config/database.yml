@@ -1,0 +1,5 @@
+# Single database for the app and Solid Queue. DATABASE_URL (default: the CI PostgreSQL) names it.
+development:
+  adapter: postgresql
+  url: <%= ENV.fetch("DATABASE_URL", "postgres://postgres:pg@127.0.0.1:55499/bench_solidqueue") %>
+  pool: 80

@@ -5,6 +5,7 @@
 import { Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
 import { writeFileSync, readFileSync } from 'node:fs';
+import { cpuWork } from '../ci/cpu-work.mjs';
 const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i < 0 ? d : process.argv[i + 1]; };
 const [host, port] = arg('redis', '127.0.0.1:56391').split(':');
 const mode = arg('mode', 'drain'), n = +arg('n', 20000), calls = +arg('calls', 1), conc = +arg('concurrency', 16);
@@ -25,7 +26,7 @@ const result = { system: `bullmq ${version}`, mode, concurrency: conc, redisAppe
 const pct = (a, p) => a.length ? +a[Math.max(0, Math.min(a.length - 1, Math.floor(p * a.length) - 1))].toFixed(2) : 0;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let completed = 0; const lat = [];
-const startWorker = () => { const w = new Worker('noop', async job => { }, { connection: new Redis(conn), concurrency: conc });
+const startWorker = () => { const w = new Worker('noop', async job => { cpuWork(); }, { connection: new Redis(conn), concurrency: conc });
   w.on('completed', job => { completed++; if (mode === 'steady') lat.push(Date.now() - job.data.t); }); return w; };
 
 const enqueue = async (count, latencies, offset = 0) => {
