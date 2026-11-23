@@ -872,9 +872,13 @@ internal static class BenchMode
             {
                 // A short horizon for every class the policy allows (audit has a 7-day floor), so the retained fixture is eligible.
                 var h = TimeSpan.FromHours(hours);
-                var current = await session!.GetRetentionAsync(caller!).ConfigureAwait(false);
-                var edit = await session.EditRetentionPolicyAsync(caller!, Guid.NewGuid(), current.Revision,
-                    new RetentionPolicy(h, h, h, TimeSpan.FromDays(7), h, h, h)).ConfigureAwait(false);
+                // A crash-run segment reopens a large, busy store; its first management query can run past its budget, so retry.
+                var edit = await RetryBudgetAsync(async () =>
+                {
+                    var current = await session!.GetRetentionAsync(caller!).ConfigureAwait(false);
+                    return await session.EditRetentionPolicyAsync(caller!, Guid.NewGuid(), current.Revision,
+                        new RetentionPolicy(h, h, h, TimeSpan.FromDays(7), h, h, h)).ConfigureAwait(false);
+                }).ConfigureAwait(false);
                 if (!edit.Succeeded && edit.Code != "no_change")
                 {
                     throw new InvalidOperationException("retention policy edit failed: " + edit.Code);
@@ -1406,6 +1410,21 @@ internal static class BenchMode
     }
 
     static double Ms(long stopwatchTicks) => stopwatchTicks * 1000.0 / Stopwatch.Frequency;
+
+    static async Task<T> RetryBudgetAsync<T>(Func<Task<T>> call)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await call().ConfigureAwait(false);
+            }
+            catch (Runwick.Management.ManagementQueryBudgetException) when (attempt < 10)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+            }
+        }
+    }
 
     static async Task<int> DockerAsync(string verb, string container)
     {

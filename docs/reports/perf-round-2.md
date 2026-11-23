@@ -3672,3 +3672,28 @@ The 15% gap is not explained by Runwick's Sentinel or Cluster client code. Repli
 In every run nothing was lost or delivered twice, and no message was left unconfirmed.
 
 At four slots the relay kept up with the offered rate, but p99 was 0.18 s over the 2 s limit. That matches the 2.1 to 2.3 s seen at similar load on 2026-11-20, against a pass at load 7 to 13. Sixteen slots met both targets. Without grouping, four slots could not keep up at all and the backlog grew for the whole run. So grouping is what makes four slots viable, and the four-slot p99 target is met only on a quieter host.
+
+## SQLite: group commit across write kinds (tried, not merged)
+
+**Idea.** Every SQLite commit waits for a disk flush (`synchronous=FULL`). Only queued dispatches shared a commit, at most 8 per group. The Q6/Q7 runs showed that a short disk stall leaves a backlog, and the backlog drains slowly because every claim, finish and background write pays its own flush. Branch `sqlite-group-commit` (commit abcb5f4) let compatible queued writes of the same priority class share one transaction and one commit:
+- each write ran inside its own savepoint, so one failure rolled back only that write
+- groups held up to 32 writes and stopped early if a higher-priority write arrived or 25 ms passed
+- it was an opt-in setting, `SqliteOptions.GroupCommit`
+
+**Tests (2026-11-23).** These failures are why it is not merged.
+- With the option off, one existing test (`Queued_dispatches_share_a_commit_with_independent_results_and_receipts`) failed 3 of 3 times. It passes on main, so the rebuilt default dispatch grouping changed behaviour.
+- With the option on, three of the new tests failed every time: the crash image taken mid-group, the failed shared commit, and the queued-dispatch test. A fourth was timing-dependent.
+- The Contract suite passed both ways (511 of 511 off, 510 of 511 on, the failure an unrelated load-flaky Redis case).
+
+**Benchmarks.** Load was 10 to 18 and the figures are from single rounds, so they are informational.
+- **Plain steady run** (300 s, 3 rounds each way, one dispatch call at a time): no difference. Completions were 39 to 46 jobs/s on both sides, pickup p99 was about 0.2 s, and nothing was grouped at that load.
+- **Combined 18-minute run** (32 workers, crashes, cleanup, schedule, outbox):
+  - commits per completed job fell 27% (0.83 to 0.61), and dispatch groups grew to 16
+  - throughput did not improve: 84.4 against 77.3 durable completions/s
+  - pickup p50 got worse: 0.83 s against 0.39 s
+  - refusals rose: 15,000 against 10,700
+  - both runs lost their last segment at startup (see below), so there was no final drain
+
+**Conclusion.** Fewer commits did not turn into faster pickup or fewer refusals on this host. The idea is not worth the risk it adds to the writer, so it stays on its branch. The SQLite targets of under 2 s pickup p99 and no refusals at 100 offers/s remain unmet on this shared host; the Q6/Q7 sections show they depend on spare worker capacity and on disk stalls.
+
+**Harness fix found on the way.** A crash-run segment that reopens a large, busy store (about 670 MB here) could fail its first management query, setting the retention policy, with `ManagementQueryBudgetException`, and exit before running. The bench now retries that query up to 10 times, 3 s apart.
