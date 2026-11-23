@@ -11,4 +11,16 @@
 
 **Not changed.** Grouping still happens only on a PostgreSQL destination. A SQLite destination already shares commits through its producer group, and a Redis destination sends each message alone. Redis grouping is still open.
 
-**P-09 qualification.** Pending: Sonnet is running the four-slot and 16-slot runs with the commands below. The target is at least 100 deliveries/s and a ready-to-confirm p99 of 2 s or less at four relay slots; 16 slots are measured separately. The last results (2026-11-20, report "Outbox D: the relay at four slots (P-09)") met the target at four slots at host load 7 to 13. At load 16 to 29 the throughput held, but p99 rose to 2.1 to 2.3 s.
+**Test results.** On the loaded host, all 17 grouped-delivery tests passed when run on their own. The whole outbox suite passed 78 of 79, with 2 bench tests skipped by design. The one failure was OUTBOX-09 on PostgreSQL: it timed out after 30 s waiting for relay 1's stale marks to be refused. It passed 3 of 3 times alone at load 21 to 30, so its wait was raised to 90 s.
+
+**P-09 qualification (2026-11-23).** The host was at load 17 to 37, so the timings are informational. Each run offered 100 messages/s and measured 3 minutes.
+
+| | confirmed/s | ready-to-confirm p50 | p99 | max |
+|---|---|---|---|---|
+| 4 slots, groups of 4 | 99.5 | 0.30 s | 2.18 s | 2.48 s |
+| 16 slots, groups of 4 | 101.6 | 0.15 s | 1.29 s | 3.77 s |
+| 4 slots, no grouping | 45.7 | 127 s | 147 s | 148 s |
+
+In every run nothing was lost or delivered twice, and no message was left unconfirmed.
+
+At four slots the relay kept up with the offered rate, but p99 was 0.18 s over the 2 s limit. That matches the 2.1 to 2.3 s seen at similar load on 2026-11-20, against a pass at load 7 to 13. Sixteen slots met both targets. Without grouping, four slots could not keep up at all and the backlog grew for the whole run. So grouping is what makes four slots viable, and the four-slot p99 target is met only on a quieter host.

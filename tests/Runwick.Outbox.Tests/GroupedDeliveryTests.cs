@@ -364,7 +364,7 @@ public sealed class GroupedDeliveryTests
         // Relay 1's group now answers (the receipts or mappings replay relay 2's deliveries); every mark it tries carries a stale token.
         hung.Release();
         await hung.Applied;
-        await WaitAsync(() => Interlocked.Read(ref stalled.Relay.LeaseLosses) >= 4, "relay 1's stale marks to be refused");
+        await WaitAsync(() => Interlocked.Read(ref stalled.Relay.LeaseLosses) >= 4, "relay 1's stale marks to be refused", seconds: 90); // the full suite on a loaded host needed more than 30 s
         Assert.Equal(0, stalled.Relay.Delivered);
         Assert.Equal(4, takeover.Relay.Delivered);
         foreach (var message in staged)
@@ -420,9 +420,9 @@ public sealed class GroupedDeliveryTests
         Assert.Equal(4, second.Relay.Delivered);
     }
 
-    static async Task WaitAsync(Func<bool> condition, string what)
+    static async Task WaitAsync(Func<bool> condition, string what, int seconds = 30)
     {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(seconds);
         while (!condition())
         {
             Assert.True(DateTime.UtcNow < deadline, "timed out waiting for " + what);
