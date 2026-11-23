@@ -192,33 +192,46 @@ public sealed class WorkerEngineTests
 
         public ConcurrentQueue<string> Violations { get; } = new();
 
+        // Arrival and reply are serialized: a reply landing between reading "asked" and "held" would count its jobs in both
+        // (CI and local reruns: "3 jobs asked by 2 claims while 2 slots are held"). Entries appear only after their reply.
+        readonly Lock _lock = new();
+
         public void Arrived(StoreCall call)
         {
             var jobs = Assert.IsType<ReserveAndBeginRequest>(call.Body).MaxJobs;
-            var n = Interlocked.Increment(ref _inFlight);
-            var asked = Interlocked.Add(ref _inFlightJobs, jobs);
-            InterlockedMax(ref MaxInFlight, n);
-            // A lower bound of the slots held by running attempts: an admitted entry holds its ticket until it retires.
-            var held = e.Engine.Entries.Count(x => !x.Ticket.IsReleased);
-            if (asked + held > slots)
+            lock (_lock)
             {
-                Violations.Enqueue($"{asked} jobs asked by {n} claims while {held} slots are held by attempts");
+                var n = ++_inFlight;
+                var asked = _inFlightJobs += jobs;
+                MaxInFlight = Math.Max(MaxInFlight, n);
+                // A lower bound of the slots held by running attempts: an admitted entry holds its ticket until it retires.
+                var held = e.Engine.Entries.Count(x => !x.Ticket.IsReleased);
+                if (asked + held > slots)
+                {
+                    Violations.Enqueue($"{asked} jobs asked by {n} claims while {held} slots are held by attempts");
+                }
             }
         }
 
         public void Replied(StoreCall call)
         {
-            Interlocked.Decrement(ref _inFlight);
-            Interlocked.Add(ref _inFlightJobs, -Assert.IsType<ReserveAndBeginRequest>(call.Body).MaxJobs);
-        }
-
-        static void InterlockedMax(ref int target, int value)
-        {
-            int seen;
-            while ((seen = Volatile.Read(ref target)) < value && Interlocked.CompareExchange(ref target, value, seen) != seen)
+            var jobs = Assert.IsType<ReserveAndBeginRequest>(call.Body).MaxJobs;
+            lock (_lock)
             {
+                _inFlight--;
+                _inFlightJobs -= jobs;
             }
         }
+    }
+
+    /// <summary>
+    /// Handlers of 30, 80 and 130 ms in turn. Equal handlers free every slot in the same 50 ms fake-time step, and a loaded
+    /// runner then wakes the pool only after all are free, so it sends one full claim each time and never pipelines (CI).
+    /// </summary>
+    static Func<WorkJob, IJobContext, CancellationToken, Task> StaggeredHandlers(EngineFixture e)
+    {
+        var n = 0;
+        return (_, _, _) => Task.Delay(TimeSpan.FromMilliseconds(30 + 50 * (Interlocked.Increment(ref n) % 3)), e.Time, CancellationToken.None);
     }
 
     static ClaimWatch WatchClaims(EngineFixture e, int slots, TimeSpan claimTime, Func<StoreCall, Task<CallEffect>>? also = null)
@@ -272,8 +285,8 @@ public sealed class WorkerEngineTests
     public async Task Pipelined_claims_only_fill_free_slots(int claimsInFlight)
     {
         await using var e = EngineFixture.Create(concurrency: 4, batch: true, options: o => o.ClaimsInFlight = claimsInFlight);
-        // Claims take 100 ms and handlers 30 ms, so slots free up while a claim waits for its reply.
-        e.Script.Default = (_, _, _) => Task.Delay(TimeSpan.FromMilliseconds(30), e.Time, CancellationToken.None);
+        // Claims take 100 ms and handlers 30-130 ms, so slots free up while a claim waits for its reply.
+        e.Script.Default = StaggeredHandlers(e);
         var watch = WatchClaims(e, 4, TimeSpan.FromMilliseconds(100));
         var ids = Enumerable.Range(0, 80).Select(i => e.Add("p" + i)).ToList();
 
@@ -285,7 +298,15 @@ public sealed class WorkerEngineTests
         // Reaching the full cap needs every slot free while claims are pending, which a loaded runner can miss by one
         // (CI: 3 of 4); the cap is the bound, and more than one in flight proves pipelining happened.
         Assert.InRange(watch.MaxInFlight, Math.Min(2, claimsInFlight), claimsInFlight);
-        Assert.Equal(claimsInFlight == 1 ? 0 : watch.MaxInFlight, pool.ClaimsInFlightHighWater);
+        // The pool counts a claim from send to settlement, the store from arrival to reply, so the pool may see one more.
+        if (claimsInFlight == 1)
+        {
+            Assert.Equal(0, pool.ClaimsInFlightHighWater);
+        }
+        else
+        {
+            Assert.InRange(pool.ClaimsInFlightHighWater, watch.MaxInFlight, claimsInFlight);
+        }
         Assert.All(ids, id => Assert.Equal(1, e.Store.JobOf(id).Executions));
         Assert.Equal(0, e.Store.Count(Operations.Reserve));
         await e.StopAsync();
@@ -320,7 +341,7 @@ public sealed class WorkerEngineTests
     public async Task Shutdown_waits_for_a_pipelined_claim_and_runs_what_it_claimed()
     {
         await using var e = EngineFixture.Create(concurrency: 4, batch: true, options: o => o.ClaimsInFlight = 2);
-        e.Script.Default = (_, _, _) => Task.Delay(TimeSpan.FromMilliseconds(30), e.Time, CancellationToken.None);
+        e.Script.Default = StaggeredHandlers(e);
         var ids = Enumerable.Range(0, 40).Select(i => e.Add("s" + i)).ToList();
         var held = new TaskCompletionSource<StoreCall>(TaskCreationOptions.RunContinuationsAsynchronously);
         var sentWhileDraining = 0;

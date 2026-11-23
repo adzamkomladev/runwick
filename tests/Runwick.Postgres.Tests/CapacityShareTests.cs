@@ -192,7 +192,9 @@ public sealed class CapacityShareTests
         await using var w = WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults, concurrency: 4,
             configure: r => r.Queue("other"), pool: p => p.Queue("other", 3));
         await DispatchManyAsync(w, Enumerable.Range(0, 60).Select(i => "d" + i));
-        await DispatchManyAsync(w, Enumerable.Range(0, 200).Select(i => "o" + i), new DispatchOptions { Queue = "other" });
+        // "other" must stay claimable through the return window: every admission between the pause and default's first
+        // post-resume claim goes to it, and on a fast runner 200 ran out there (CI: 40 of 40 to "default" after the return).
+        await DispatchManyAsync(w, Enumerable.Range(0, 600).Select(i => "o" + i), new DispatchOptions { Queue = "other" });
         await w.StartAsync();
 
         // Queues weighted 1:3, both continuously claimable: 10 of every 40 admissions go to "default", never two in a row.
