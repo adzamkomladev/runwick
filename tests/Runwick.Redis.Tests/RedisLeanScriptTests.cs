@@ -59,6 +59,7 @@ public sealed class RedisLeanScriptTests
     {
         // The lean frame and the generic chunk in one script (GENERIC is never called: the key is valid), then each pair compared.
         const string Body = """
+            L.libs()
             local fails = {}
             local function same(name, got, want)
               if got ~= want then fails[#fails + 1] = name .. ': ' .. tostring(got) .. ' ~= ' .. tostring(want) end

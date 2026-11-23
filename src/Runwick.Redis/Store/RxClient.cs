@@ -42,6 +42,12 @@ internal sealed class RxScript
 
     public byte[] Sha { get; }
 
+    /// <summary>
+    /// The function this operation is in the Redis Functions library (22 §4.1), called with FCALL; null for a script that only runs by
+    /// EVALSHA (every operation without a lean path, and any script built from other text).
+    /// </summary>
+    public string? Function { get; private init; }
+
     static readonly ConcurrentDictionary<string, RxScript> Cache = new(StringComparer.Ordinal);
 
     internal static string Resource(string name)
@@ -54,9 +60,45 @@ internal sealed class RxScript
 
     /// <summary>A script that may write (Redis checks memory and MISCONF before it runs any of it).</summary>
     public static RxScript Write(string op) =>
-        Cache.GetOrAdd("w:" + op, _ => new RxScript(op, "#!lua\n" + (Lean.Contains(op)
-            ? "local function GENERIC()\n" + Generic(op) + "\nend\n" + Resource("lean.frame.lua") + "\n" + Resource("lean." + op + ".lua")
-            : Generic(op))));
+        Cache.GetOrAdd("w:" + op, _ => Lean.Contains(op)
+            ? new RxScript(op, "#!lua\nlocal function GENERIC()\n" + Generic(op) + "\nend\n" + Resource("lean.frame.lua") + "\n" + Resource("lean." + op + ".lua"))
+            {
+                Function = Library.Name + "_" + op,
+            }
+            : new RxScript(op, "#!lua\n" + Generic(op)));
+
+    /// <summary>
+    /// The Redis Functions library of the lean worker operations (22 §4.1): the same texts as their EVALSHA scripts, but the lean frame's
+    /// helpers are defined once per server instead of once per call. Each operation's generic frame is a function defined ahead of the
+    /// frame (so its names resolve as in the script); each registered function sets KEYS and ARGV and runs the lean body. The name carries
+    /// a hash of the text, so binaries with different scripts load different libraries side by side.
+    /// </summary>
+    internal static (string Name, string Text) Library => LazyLibrary.Value;
+
+    static readonly Lazy<(string Name, string Text)> LazyLibrary = new(ComposeLibrary);
+
+    static (string Name, string Text) ComposeLibrary()
+    {
+        var ops = Lean.Order(StringComparer.Ordinal).ToList();
+        var sb = new StringBuilder("local KEYS, ARGV\nlocal G = {}\n");
+        foreach (var op in ops)
+        {
+            sb.Append("G['").Append(op).Append("'] = function()\n").Append(Generic(op)).Append("\nend\n");
+        }
+
+        sb.Append(Resource("lean.frame.lua")).Append('\n');
+        foreach (var op in ops)
+        {
+            sb.Append("do\nlocal GENERIC = G['").Append(op).Append("']\nredis.register_function('{LIB}_").Append(op)
+                .Append("', function(keys, args)\nKEYS, ARGV = keys, args\n").Append(Resource("lean." + op + ".lua")).Append("\nend)\nend\n");
+        }
+
+        var body = sb.ToString();
+#pragma warning disable CA5350 // a content name, not a security use
+        var name = "rw_" + Convert.ToHexStringLower(SHA1.HashData(Encoding.UTF8.GetBytes(body)))[..16];
+#pragma warning restore CA5350
+        return (name, "#!lua name=" + name + "\n" + body.Replace("{LIB}", name, StringComparison.Ordinal));
+    }
 
     /// <summary>
     /// Worker operations with a lean path (22 §4.1, REDIS-22): the script defines the generic frame as <c>GENERIC()</c> without running
@@ -428,16 +470,41 @@ internal sealed class RxClient : IAsyncDisposable
         try
         {
             var db = await DbAsync(lane).ConfigureAwait(false);
-            for (var attempt = 0; ; attempt++)
+            bool reloaded = false, resent = false;
+            while (true)
             {
                 try
                 {
+                    if (script.Function is { } fn && FunctionsRefused is null)
+                    {
+                        var f = (RedisResult[])(await db.ExecuteAsync("FCALL", [fn, 1, meta, .. args.Select(a => (object)a)]).ConfigureAwait(false))!;
+                        Traced?.Invoke(script, args, f);
+                        return f;
+                    }
+
                     var r = (RedisResult[])(await db.ScriptEvaluateAsync(script.Sha, [meta], args).ConfigureAwait(false))!;
                     Traced?.Invoke(script, args, r);
                     return r;
                 }
-                catch (RedisServerException ex) when (attempt == 0 && ex.Message.StartsWith("NOSCRIPT", StringComparison.Ordinal))
+                catch (RedisServerException ex) when (script.Function is not null && FunctionsRefused is null && !reloaded
+                    && ex.Message.StartsWith("ERR Function not found", StringComparison.Ordinal))
                 {
+                    // Not run (a new or restarted server, FUNCTION FLUSH, a primary that never had it): load it where the key lives and resend once.
+                    reloaded = true;
+                    var server = db.Multiplexer.GetServer((await db.IdentifyEndpointAsync(meta).ConfigureAwait(false))!);
+                    if (await LoadLibraryAsync(server).ConfigureAwait(false) is { } refused)
+                    {
+                        FunctionsRefused = refused;
+                    }
+                }
+                catch (RedisServerException ex) when (script.Function is not null && FunctionsRefused is null && FcallRefused(ex.Message))
+                {
+                    // Not run: FCALL is not allowed here (ACL, a renamed command). The same scripts go by EVALSHA from now on.
+                    FunctionsRefused = "FCALL refused: " + ex.Message;
+                }
+                catch (RedisServerException ex) when (!resent && ex.Message.StartsWith("NOSCRIPT", StringComparison.Ordinal))
+                {
+                    resent = true;
                     if (Cluster)
                     {
                         // Not run. An unkeyed SCRIPT LOAD would go to any node; sending the text by key loads it on the slot's owner (22 §2.6).
@@ -482,10 +549,56 @@ internal sealed class RxClient : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Why this client calls the lean worker scripts by EVALSHA instead of FCALL (the server refused FUNCTION LOAD or FCALL); null while
+    /// the Functions library is in use. Reported as the <c>functions</c> engine fact by the next profile check.
+    /// </summary>
+    internal string? FunctionsRefused { get; set; }
+
+    static bool FcallRefused(string message) =>
+        message.StartsWith("ERR unknown command", StringComparison.Ordinal)
+        || (message.StartsWith("NOPERM", StringComparison.Ordinal) && message.Contains("fcall", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Loads the Functions library on <paramref name="server"/> (22 §4.1): null when it is there (loaded now or already), else the refusal
+    /// (ACL, a renamed command, a library the server will not compile), after which the scripts go by EVALSHA. A refusal that only means
+    /// "not now" (LOADING, BUSY, READONLY, OOM, MISCONF) is thrown like any call refused before it ran.
+    /// </summary>
+    internal static async Task<string?> LoadLibraryAsync(IServer server)
+    {
+        try
+        {
+            // The profile check calls this on every recheck: look first, so the library's text is sent only when it is missing.
+            if (((RedisResult[])(await server.ExecuteAsync("FUNCTION", "LIST", "LIBRARYNAME", RxScript.Library.Name).ConfigureAwait(false))!).Length > 0)
+            {
+                return null;
+            }
+        }
+        catch (RedisServerException)
+        {
+            // Not listable (an ACL): the load below decides.
+        }
+
+        try
+        {
+            await server.ExecuteAsync("FUNCTION", "LOAD", RxScript.Library.Text).ConfigureAwait(false);
+            return null;
+        }
+        catch (RedisServerException ex) when (ex.Message.Contains("already exists", StringComparison.Ordinal))
+        {
+            return null;
+        }
+        catch (RedisServerException ex) when (!RefusedBeforeRun(ex.Message) || ex.Message.StartsWith("NOPERM", StringComparison.Ordinal))
+        {
+            return "FUNCTION LOAD refused: " + ex.Message;
+        }
+    }
+
     static bool RefusedBeforeRun(string message) =>
         message.StartsWith("OOM", StringComparison.Ordinal) || message.StartsWith("MISCONF", StringComparison.Ordinal)
         || message.StartsWith("READONLY", StringComparison.Ordinal) || message.StartsWith("LOADING", StringComparison.Ordinal)
-        || message.StartsWith("BUSY", StringComparison.Ordinal) || message.StartsWith("NOPERM", StringComparison.Ordinal);
+        || message.StartsWith("BUSY", StringComparison.Ordinal) || message.StartsWith("NOPERM", StringComparison.Ordinal)
+        || message.StartsWith("ERR Function not found", StringComparison.Ordinal);
 
     public async ValueTask DisposeAsync()
     {

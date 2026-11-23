@@ -2861,6 +2861,8 @@ At startup, on every reconnect and every `ProfileRecheckInterval`, Runwick check
 | At startup | The app does not start. The error names the setting and the value it saw, for example `appendfsync=everysec`. |
 | While running | Runwick stops sending new work: no new claims, dispatches or schedule runs. Health reports the store as unhealthy (`store_profile_mismatch`) until a later check passes. Calls already sent finish as usual. |
 
+The same check also loads Runwick's worker commands (claim, finish, renew) into Redis as a function library with `FUNCTION LOAD`. The library's name, `rw_` and 16 hex digits, comes from its contents, so an older and a newer Runwick version can share one server, each with its own library. Redis keeps the library in the AOF and copies it to replicas. If it goes missing (for example after `FUNCTION FLUSH`), Runwick loads it again on the next call. This is not part of the check's verdict. If an ACL or a renamed command blocks `FUNCTION` or `FCALL`, Runwick runs the same commands as ordinary scripts (`EVALSHA`), a little slower, and the store description's `functions` value says so. To use the library, allow `FUNCTION LOAD` and `FCALL` for Runwick's user.
+
 Replicas attached to the primary are allowed and reported. But a replica promoted to primary is a different history, and without the Sentinel option Runwick does not follow a failover.
 
 ### History checks

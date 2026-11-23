@@ -6,7 +6,7 @@ detail field reads as empty). Also covers a claim whose items are not plain Appl
 budget exhausted), a single Reserve, Begin and Finish, and a resend (replay) of every command. Usage: diffcheck.py --port P [--base DIR] [--new DIR]"""
 import argparse, json, re, socket, sys
 from pathlib import Path
-from luascript import compose, hint, layout, read
+from luascript import LEAN, compose, hint, layout, library, read
 
 STORE = "11" * 16
 PREFIX = "rw:{" + b"diffapp".hex() + "}:"
@@ -32,6 +32,8 @@ class Redis:
         return [self.read() for _ in range(size)]
 
     def call(self, *values):
+        if values[0] == "EVALSHA" and isinstance(values[1], str):  # a function of the Functions library (run(functions=True))
+            values = ("FCALL",) + values[1:]
         enc = [v if isinstance(v, bytes) else str(v).encode() for v in values]
         self.s.sendall(b"*%d\r\n" % len(enc) + b"".join(b"$%d\r\n%s\r\n" % (len(v), v) for v in enc))
         return self.read()
@@ -41,12 +43,16 @@ def hexid(n, kind):
     return f"{kind:04x}{n:028x}"
 
 
-def run(lua, port, decoder, lean=True):
+def run(lua, port, decoder, lean=True, functions=False):
     db = Redis(port)
     db.call("FLUSHALL")
     db.call("HSET", META, "store", STORE, "mode", "normal", "layout", layout(lua), "epoch", 1, "admission", "open", "bf", "done")
     db.call("HSET", PREFIX + "queues", "default", "{}")
     load = lambda op: db.call("SCRIPT", "LOAD", compose(lua, op, lean))
+    if functions:  # the lean operations by FCALL from the library, as the binary calls them; the others by EVALSHA
+        name, text = library(lua)
+        db.call("FUNCTION", "LOAD", "REPLACE", text)
+        load = lambda op: f"{name}_{op}" if op in LEAN else db.call("SCRIPT", "LOAD", compose(lua, op, lean))
     dispatch, rb, fm, fin, fc, ren = (load(op) for op in ("dispatch", "reserve_and_begin", "finish_many", "finish", "finish_and_claim", "renew"))
     replies = []
 
@@ -213,11 +219,12 @@ def main():
     ap.add_argument("--base-generic", action="store_true", help="compose the base without its lean paths (lean against generic, one layout)")
     ap.add_argument("--replies-only", action="store_true",
                     help="compare only the replies and the EventsSince feed (a base on another layout stores them differently)")
+    ap.add_argument("--functions", action="store_true", help="run the new side's lean operations by FCALL from the Functions library")
     a = ap.parse_args()
     lua = Path(a.new)
     decoder = (lua / "prelude.lua").read_text() + "\n" + (lua / "jobs.lua").read_text() + "\n"
     old = run(Path(a.base), a.port, decoder, lean=not a.base_generic)
-    new = run(lua, a.port, decoder)
+    new = run(lua, a.port, decoder, functions=a.functions)
     if a.replies_only:
         old, new = ({k: d[k] for k in ("(replies)", "(events)")} for d in (old, new))
     bad = 0
