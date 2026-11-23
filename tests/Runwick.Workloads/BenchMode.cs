@@ -1178,6 +1178,15 @@ internal static class BenchMode
             }
         }
 
+        // Whole-process GC cost over the run, to tell GC pauses apart from store stalls.
+        result["gc"] = new JsonObject
+        {
+            ["pauseTotalMs"] = Math.Round(GC.GetTotalPauseDuration().TotalMilliseconds, 1),
+            ["pauseTimePercentage"] = GC.GetGCMemoryInfo(GCKind.Any).PauseTimePercentage,
+            ["gen0"] = GC.CollectionCount(0), ["gen1"] = GC.CollectionCount(1), ["gen2"] = GC.CollectionCount(2),
+            ["allocatedMB"] = Math.Round(GC.GetTotalAllocatedBytes() / 1048576.0, 1),
+            ["serverGC"] = System.Runtime.GCSettings.IsServerGC,
+        };
         result["diagnostics"] = new JsonArray([.. engine.Health().Diagnostics.Select(x => (JsonNode?)x)]);
 
         if (crash)
