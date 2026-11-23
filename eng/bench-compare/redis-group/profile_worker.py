@@ -95,6 +95,40 @@ end""")
     return "\n".join([prelude, jobs, wraps, op])
 
 
+# Lean-path marks (--lean-marks): (anchor text, mark name, before|after); an anchor missing from a script is skipped.
+LEAN_MARKS = [
+    ("local META = KEYS[1]", "chunk", "before"),
+    ("local L = {}\n", "frame_head", "after"),
+    ("local m = L.frame()\n", "frame_meta", "after"),
+    ("local cands, jobs, offset, examined", "queue", "before"),
+    ("if #cands == 0 then return", "candidates", "before"),
+    ("if not L.can_commit(m) then return GENERIC() end\n\n-- Decided", "decide", "before"),
+    ("local items, retain = {}, 0", "plans", "before"),
+    ("if FP ~= '' then L.receipt(CMD, CLS, OP, FP, NOT_AFTER, FLOOR, '{", "image", "before"),
+    ("L.zadd('rcpt:exp:durable'", "image", "before"),
+    ("local reply = L.reply(", "receipt", "before"),
+    ("L.commit(m, reply)\n", "reply", "before"),
+    ("  local ops = {}\n  for _, k in ipairs(KO)", "c_events", "before"),
+    ("  local intent = { id = CMD", "c_ops", "before"),
+    ("    wake(ops)\n", "c_writes", "before"),
+    ("    wake(ops)\n", "c_wake", "after"),
+    ("L.commit(m, reply)\n", "commit", "after"),
+]
+
+
+def lean_marked(text):
+    head, sep, lean = text.partition("\nend\n-- Lean worker paths")
+    assert sep, "not a lean script"
+    for anchor, name, where in LEAN_MARKS:
+        if lean.count(anchor) != 1:
+            continue
+        mark = "MK('%s')\n" % name
+        lean = lean.replace(anchor, mark + anchor if where == "before" else anchor + mark)
+    return ("local C0 = os.clock()\nlocal PM = {}\nlocal function MK(n) PM[#PM + 1] = n .. ':' .. math.floor((os.clock() - C0) * 1000000) end\n"
+            "local R = (function()\n" + head + sep + lean + "\nend)()\n"
+            "MK('payloads')\nredis.call('SET', 'prof:last', table.concat(PM, ','))\nreturn R")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, required=True)
@@ -105,7 +139,9 @@ def main():
     ap.add_argument("--combined", action="store_true", help="also time finish_and_claim (k finishes + a claim of k) against the two calls")
     ap.add_argument("--plain", action="store_true", help="load the scripts as the binary composes them (lean paths included, luascript.py) "
                     "and report only Redis time per call (commandstats); the phase marks need the generic frame")
+    ap.add_argument("--lean-marks", action="store_true", help="as --plain, with os.clock marks at the lean path's steps (lean scripts only)")
     a = ap.parse_args()
+    a.plain = a.plain or a.lean_marks
     lua = Path(a.lua)
     db = Redis(a.port)
     db.call("FLUSHALL")
@@ -116,6 +152,8 @@ def main():
     timed = lambda text: ("local C0 = os.clock()\nlocal R = (function()\n" + text + "\nend)()\n"
                           "redis.call('SET', 'prof:last', 'payloads:' .. math.floor((os.clock() - C0) * 1000000))\nreturn R")
     load = (lambda op: timed(compose(lua, op))) if a.plain else (lambda op: patched(lua, (lua / f"ops/{op}.lua").read_text()))
+    if a.lean_marks:
+        load = lambda op: lean_marked(compose(lua, op))
     rb = db.call("SCRIPT", "LOAD", load("reserve_and_begin"))
     fm = db.call("SCRIPT", "LOAD", load("finish_many"))
     fc = db.call("SCRIPT", "LOAD", patched(lua, (lua / "ops/finish_and_claim.lua").read_text())) if a.combined else None
@@ -181,6 +219,13 @@ def main():
         return marks(), len(r[7])
 
     def show(name, rows, k):
+        if a.lean_marks:
+            prev = 0
+            print(f"{name} k={k}: calls={len(rows)}")
+            for key in rows[0]:
+                m = statistics.median(r[key] for r in rows)
+                print(f"  {key:12s} at {m:7.0f} us  (+{m - prev:6.0f})")
+                prev = m
         if a.plain:
             total = statistics.median(r["payloads"] for r in rows)
             print(f"{name} k={k}: calls={len(rows)}\n  per job: {total / k:.0f} us (in-script total {total:.0f} us)")

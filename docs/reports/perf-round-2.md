@@ -3167,3 +3167,27 @@ Overhead, 20,000-job drain, 16 workers, 8 calls, always-fsync, all nodes on one 
 - Load was 3 to 6 during the runs. Every run finished all 20,000 jobs with no failed dispatch.
 - Why it is slower is not known yet. Two likely causes to check first: with Cluster, the three primaries share one host's CPU and disk; with Sentinel, the primary also streams every write to two replicas on the same host. A test with nodes on separate machines would show how much is the host and how much is Runwick.
 - Raw files: `artifacts/perf/round-two/redis-ha-overhead`.
+
+## Redis: lean-path trims and a Functions library, not merged
+
+### Short answer
+
+- **Test fixture race: fixed and merged.** On a brand-new, empty Redis, a test class that writes `rw:*` keys without migrating first (for example `StoreDiagnosticsTests`) could run before the first migration. Every later migration then refused, which caused the 52 setup failures seen earlier. The Redis test project now migrates the shared test server once, before any test class starts (`tests/Runwick.Redis.Tests/RedisServerMigrated.cs`, an xUnit assembly fixture). Full Redis suite on a fresh server: 143 of 143.
+- **Three small trims to the lean claim and finish scripts: not merged.** They remove three Redis commands per claim call and two per finish call, but the drain speed did not change (median ratio 0.96 on disk, 1.02 in memory over five rounds). The time per call is spread over many small steps, and no single step is big enough to matter. Branch `redis-next` (7ac41df) keeps them.
+- **The worker commands as a Redis Functions library: not merged.** The Functions version defines the shared helpers once per server instead of once per call, and calls them with `FCALL`. It stores, replies and replays exactly what the scripts do (0 differences). On drains it was not faster: buffered finish with Functions finished 0.83 times as many jobs per second as without it on disk, and 0.89 times in memory (medians of five rounds; the rounds scatter widely, from 0.71 to 1.17). Branch `redis-functions` (8cbb8f7) keeps it.
+- **Shorter job-hash field names (layout revision 3): not done.** The stored-data design measured them at about 3% of the log bytes and no CPU change.
+- The tools stay: `profile_worker.py --lean-marks` times the steps inside the lean scripts, and `diffcheck.py` now matches any UUIDv7 decision time.
+
+### Drain results (2026-11-23)
+
+Five rounds per build, 20,000 jobs, always fsync, load 2.5 to 6.5 on disk and 2.5 to 12 in memory. `old` and `oldbuf` are main (ce9d0b5) without and with buffered finish. `base` and `buf` are the Functions build without and with it. Median jobs finished per second:
+
+| Build | Disk | Memory |
+|---|---:|---:|
+| old (main) | 565 | 913 |
+| base (Functions) | 554 | 972 |
+| oldbuf (main, buffered finish) | 821 | 1,177 |
+| buf (Functions, buffered finish) | 710 | 1,043 |
+| BullMQ | 1,507 | 3,157 |
+
+Buffered finish on main is about 55% of BullMQ on disk and 37% in memory. AOF bytes per job did not change (about 5.0 to 5.3 KB; BullMQ writes about 2.8 KB). The next real gain on Redis has to come from writing less per job or from fewer calls per job, not from trimming script steps.
