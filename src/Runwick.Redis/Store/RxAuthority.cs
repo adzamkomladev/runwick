@@ -74,10 +74,12 @@ internal sealed class RxAuthority : IAsyncDisposable
     DateTimeOffset? _expiresAt;
     (string Primary, string RunId, string ReplId, long Offset)? _last;
     int _invalidations;
+    readonly bool _functions;
 
     public RxAuthority(RxSentinelSeeds seeds, RedisAuthorityOptions options, TimeProvider time, ConfigurationOptions data, RedisPersistence persistence,
-        TimeSpan? fullCheckEvery = null, int? clusterSlot = null)
+        TimeSpan? fullCheckEvery = null, int? clusterSlot = null, bool functions = false)
     {
+        _functions = functions;
         _cluster = clusterSlot is not null;
         _slot = clusterSlot ?? 0;
         _fullEvery = fullCheckEvery ?? TimeSpan.FromSeconds(30);
@@ -279,7 +281,7 @@ internal sealed class RxAuthority : IAsyncDisposable
                 var now = _time.GetUtcNow();
                 if (probe is not null || now - _lastFull >= _fullEvery)
                 {
-                    var report = await RxProfile.CheckAsync(server, db, _persistence, _cluster ? RxTopology.Cluster : RxTopology.Sentinel, _data.User).ConfigureAwait(false);
+                    var report = await RxProfile.CheckAsync(server, db, _persistence, _cluster ? RxTopology.Cluster : RxTopology.Sentinel, _data.User, _functions).ConfigureAwait(false);
                     OnReport?.Invoke(report);
                     if (!report.Verified)
                     {

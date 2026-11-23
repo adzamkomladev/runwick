@@ -2793,6 +2793,7 @@ The configuration string is a StackExchange.Redis string. Runwick uses only the 
 | `Sentinel` | none | none or settings | Follow a Sentinel-managed primary with strict write authority. See below. |
 | `Cluster` | none | none or settings | Run on a Redis Cluster, writing only to the node that owns the application's slot. See below. |
 | `GroupDispatches` | off | on or off | Sends plain dispatches that arrive while another send is in flight together, in one Redis call. See below. |
+| `UseFunctions` | off | on or off | Runs the worker commands from a Redis function library (`FCALL`) instead of scripts (`EVALSHA`). Off by default because it measured slower. See [What Runwick checks](#what-runwick-checks). |
 | `MaxGroupItems` | 8 | 2 to 16 | Most dispatches in one grouped call. |
 | `MaxGroupBytes` | 128 KiB | 16 to 128 KiB | Most request bytes in one grouped call. A larger dispatch goes alone. |
 | `MaxGroupsInFlight` | 2 | 1 to 16 | Sends per application that may be in flight at once. |
@@ -2886,6 +2887,10 @@ At startup, on every reconnect and every `ProfileRecheckInterval`, Runwick check
 |---|---|
 | At startup | The app does not start. The error names the setting and the value it saw, for example `appendfsync=everysec`. |
 | While running | Runwick stops sending new work: no new claims, dispatches or schedule runs. Health reports the store as unhealthy (`store_profile_mismatch`) until a later check passes. Calls already sent finish as usual. |
+
+Runwick sends its worker commands (claim, finish, renew) as ordinary Lua scripts (`EVALSHA`). The `UseFunctions` option (off by default) loads them instead as a Redis function library and calls them with `FCALL`. It is off by default because on drains it measured slower, not faster: 0.83 times as many jobs per second on disk and 0.89 times in memory. It gives the same results either way. It is for experiments, and for low-rate traffic where most calls carry a single job, since each call then skips redefining the script's helper functions. With it off, Runwick sends no `FUNCTION` or `FCALL` command, and the store description's `functions` value is `off`.
+
+With `UseFunctions` on, the startup check loads the library with `FUNCTION LOAD`. The library's name, `rw_` and 16 hex digits, comes from its contents, so an older and a newer Runwick version can share one server, each with its own library. Redis keeps the library in the AOF and copies it to replicas. If it goes missing (for example after `FUNCTION FLUSH`), Runwick loads it again on the next call. This is not part of the check's verdict, and there is nothing to migrate: `runwick migrate --provider redis` does not touch it. If an ACL, a renamed command or a managed service blocks `FUNCTION` or `FCALL`, Runwick runs the same commands with `EVALSHA`, and the store description's `functions` value says so. To use the library, allow `FUNCTION LIST`, `FUNCTION LOAD` and `FCALL` for Runwick's user (for example `+function|list +function|load +fcall`). After an upgrade the older version's library stays on the server; once no running process uses that version, you can remove it with `FUNCTION DELETE <name>` (`FUNCTION LIST` shows the names).
 
 Replicas attached to the primary are allowed and reported. But a replica promoted to primary is a different history, and without the Sentinel option Runwick does not follow a failover.
 

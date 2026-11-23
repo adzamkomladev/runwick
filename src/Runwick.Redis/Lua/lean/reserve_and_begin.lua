@@ -87,15 +87,14 @@ for i, j in ipairs(jobs) do
   L.jw(j, 'g:' .. gen .. ':unstarted', '0')
   L.jw(j, 'xcount', b.txnum)
   L.jw(j, 'aauth', NOWS)
-  -- U.set_state(reserved) then U.set_state(running): the net index changes.
+  -- U.set_state(reserved) then U.set_state(running): the net index changes. The generic path also removes the job from
+  -- idx:created:s:reserved and idx:terminal; a pending or retrying job is in neither (every state change goes through U.set_state),
+  -- so those removals change nothing and are not sent.
   L.zrem('idx:created:s:' .. old, id)
-  L.zrem('idx:created:s:reserved', id)
   L.zadd('idx:created:s:running', j.created, id)
   L.zrem('ready:' .. j.queue .. ':' .. j.priority, id)
   L.zadd('leases', lease, id)
-  L.zrem('idx:terminal', id)
-  L.event('attempt_reserved', id, v.att, '{"generation":' .. sformat('%d', tonumber(gen)) .. ',"reservationNumber":' .. v.rnum .. '}')
-  L.event('attempt_started', id, v.att, '{"executionNumber":' .. sformat('%d', tonumber(b.xnum)) .. ',"generation":' .. sformat('%d', tonumber(gen)) .. '}')
+  L.event_rs(id, v.att, sformat('%d', tonumber(gen)), v.rnum, sformat('%d', tonumber(b.xnum)))
   items[i] = L.claim_text(i - 1, v, b)
   local pv, pb = vs[i - 1], bs[i - 1]
   packed[i] = '[' .. (i - 1) .. ',' .. L.texts(v, L.RKEYS, pv) .. ',' .. L.texts(b, L.BKEYS, pb) .. ']'

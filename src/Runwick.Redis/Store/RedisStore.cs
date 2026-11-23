@@ -36,11 +36,15 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
             authority.HistoryCheck = HistoryFailureAsync;
             authority.OnReport = report =>
             {
-                EngineFacts = report.Facts;
+                EngineFacts = WithFunctions(report.Facts);
                 runner.ProfileFailure = report.Verified ? null : $"{report.FailureCode}: {report.Failure}";
             };
         }
     }
+
+    /// <summary>The profile facts, with the <c>functions</c> fact saying so when this client fell back to EVALSHA after the check (22 §4.1).</summary>
+    IReadOnlyDictionary<string, string> WithFunctions(IReadOnlyDictionary<string, string> facts) =>
+        runner.Client.FunctionsRefused is { } why ? new Dictionary<string, string>(facts, StringComparer.Ordinal) { ["functions"] = "evalsha: " + why } : facts;
 
     /// <summary>The Sentinel authority's view of the primary (22 §2.5); null for a standalone primary.</summary>
     internal RxAuthoritySnapshot? AuthoritySnapshot => runner.Client.Authority?.Snapshot();
@@ -212,7 +216,7 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
                 // A server still loading its AOF answers LOADING to some checks: that is not a profile verdict, so wait it out (bounded).
                 for (var i = 0; ; i++)
                 {
-                    report = await RxProfile.CheckAsync(server, db, options.Persistence, user: runner.Client.User).ConfigureAwait(false);
+                    report = await RxProfile.CheckAsync(server, db, options.Persistence, user: runner.Client.User, functions: options.UseFunctions).ConfigureAwait(false);
                     if (report.Facts.GetValueOrDefault("loading") != "1" || i >= 150)
                     {
                         break;
@@ -232,7 +236,7 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
                 return;
             }
 
-            EngineFacts = report.Facts;
+            EngineFacts = WithFunctions(report.Facts);
             runner.ProfileFailure = report.Verified ? null : $"{report.FailureCode}: {report.Failure}";
             var runId = report.Facts.GetValueOrDefault("run_id");
             if (_runId is not null && runId != _runId)

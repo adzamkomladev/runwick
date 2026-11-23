@@ -60,7 +60,7 @@ namespace Runwick.Redis.Migrations
             WithLockAsync(configuration, (db, primaries) => ApplyAsync(db, primaries, ct), ct, target);
 
         /// <summary>Which topology and persistence profile an operator command runs against, from the same <see cref="RedisOptions"/> a host uses.</summary>
-        internal readonly record struct Target(RxTopology Topology, RedisPersistence Persistence)
+        internal readonly record struct Target(RxTopology Topology, RedisPersistence Persistence, bool Functions = false)
         {
             public static Target Of(RedisOptions options)
             {
@@ -76,7 +76,7 @@ namespace Runwick.Redis.Migrations
                     throw new RedisMigrationException("invalid_policy", "The Sentinel and Cluster profiles need appendfsync always.");
                 }
 
-                return new(topology, options.Persistence);
+                return new(topology, options.Persistence, options.UseFunctions);
             }
         }
 
@@ -129,7 +129,7 @@ namespace Runwick.Redis.Migrations
                 {
                     try
                     {
-                        reports[i] = await RxProfile.CheckAsync(primaries[i], db, target.Persistence, target.Topology, options.User).ConfigureAwait(false);
+                        reports[i] = await RxProfile.CheckAsync(primaries[i], db, target.Persistence, target.Topology, options.User, target.Functions).ConfigureAwait(false);
                     }
                     catch (Exception ex) when (ex is RedisException)
                     {
@@ -158,7 +158,7 @@ namespace Runwick.Redis.Migrations
         static async Task<ConfigurationOptions> SentinelPrimaryAsync(string configuration, Target target, CancellationToken ct)
         {
             var (data, seeds) = RxClient.SentinelOptions(configuration, TimeSpan.FromSeconds(5));
-            var authority = new RxAuthority(seeds, new RedisSentinelOptions(), TimeProvider.System, data, target.Persistence);
+            var authority = new RxAuthority(seeds, new RedisSentinelOptions(), TimeProvider.System, data, target.Persistence, functions: target.Functions);
             await using (authority.ConfigureAwait(false))
             {
                 var snapshot = await authority.VerifyAsync(ct).ConfigureAwait(false);

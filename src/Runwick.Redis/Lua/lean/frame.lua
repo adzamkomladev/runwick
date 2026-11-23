@@ -5,19 +5,20 @@
 -- duplicate items or a counter at its limit. Nothing is written before that choice, so GENERIC() starts from the same store.
 -- What the lean path writes is exactly the after-image the generic path writes (the same keys, fields, members and texts; diffcheck.py
 -- and REDIS-22 compare them), applied as one direct projection with the same crash rule: the intent is stored only if a write fails.
-local META = KEYS[1]
-if not string.match(META, '^rw:{[0-9a-f][0-9a-f]+}:meta$') or #META > 266 then return GENERIC() end
-local P = string.sub(META, 1, #META - 4)
-local FAIL = tonumber(ARGV[1]) or 0
-local STORE, OP, CMD, FP = ARGV[2], ARGV[3], ARGV[4], ARGV[5]
-local NOT_AFTER, CAP, FLOOR, CLS, GATE = tonumber(ARGV[6]), tonumber(ARGV[7]), tonumber(ARGV[8]), ARGV[9], ARGV[10]
+-- Nothing below runs a Redis command or reads the call's arguments until L.frame(): the same text is the tail of an EVALSHA script and
+-- the body of the Redis Functions library (22 §4.1), where these definitions run once per server and every call's state is set (and
+-- reset) by L.frame(). Per-call state: the frame (META to NOWS) and the after-image records (REC to writes).
+local META, P, FAIL, STORE, OP, CMD, FP, NOT_AFTER, CAP, FLOOR, CLS, GATE, NOW, NOWS
+local REC, KO, JR, EV, QS, writes = {}, {}, {}, {}, {}, 0
 local function ARGS(i) return ARGV[11 + i] end
-local sformat, sfind, sgsub, ssub, byte, concat = string.format, string.find, string.gsub, string.sub, string.byte, table.concat
-local t0 = redis.call('TIME')
-local NOW = tonumber(t0[1]) * 1000 + math.floor(tonumber(t0[2]) / 1000)
-local NOWS = sformat('%d', NOW)
+local sformat, sfind, sgsub, ssub, byte, concat
 local MAX_SCORE = 9007199254740991
 local L = {}
+
+-- The string and table functions, read at each call: a Functions library cannot read globals while it loads.
+function L.libs()
+  sformat, sfind, sgsub, ssub, byte, concat = string.format, string.find, string.gsub, string.sub, string.byte, table.concat
+end
 
 function L.S(n)
   if type(n) == 'string' then return n end
@@ -51,7 +52,6 @@ end
 
 local esc = { ['"'] = '\\"', ['\\'] = '\\\\', ['\n'] = '\\n', ['\r'] = '\\r', ['\t'] = '\\t' }
 local function escape(c) return esc[c] or sformat('\\u%04x', byte(c)) end
-local QS = {}
 -- A JSON string (U.str).
 function L.str(s)
   local q = QS[s]
@@ -64,6 +64,17 @@ local q = L.str
 
 -- The gates, the receipt check and the deadline checks of U.run; meta when the lean path may decide, nil to hand over to GENERIC().
 function L.frame()
+  L.libs()
+  META = KEYS[1]
+  if not string.match(META, '^rw:{[0-9a-f][0-9a-f]+}:meta$') or #META > 266 then return nil end
+  P = string.sub(META, 1, #META - 4)
+  FAIL = tonumber(ARGV[1]) or 0
+  STORE, OP, CMD, FP = ARGV[2], ARGV[3], ARGV[4], ARGV[5]
+  NOT_AFTER, CAP, FLOOR, CLS, GATE = tonumber(ARGV[6]), tonumber(ARGV[7]), tonumber(ARGV[8]), ARGV[9], ARGV[10]
+  local t0 = redis.call('TIME')
+  NOW = tonumber(t0[1]) * 1000 + math.floor(tonumber(t0[2]) / 1000)
+  NOWS = sformat('%d', NOW)
+  REC, KO, JR, EV, QS, writes = {}, {}, {}, {}, {}, 0
   local mr = redis.call('HGETALL', META)
   local m = {}
   for i = 1, #mr, 2 do m[mr[i]] = mr[i + 1] end
@@ -122,7 +133,6 @@ end
 
 -- Per key: a deletion op and a set op ({ 'HD'|'ZR', key, ... }, { 'H'|'Z', key, ... }), in first-touch order, as build_ops lists them.
 -- The lean paths touch each (key, field) and (key, member) at most once, so no op needs the overlay's bookkeeping.
-local REC, KO = {}, {}
 local function rec(k)
   local r = REC[k]
   if not r then
@@ -172,7 +182,6 @@ function L.zrem(k, m)
 end
 
 -- A job field as U.jw writes it, given its final value in this command: nothing when unchanged, a deletion when cleared.
-local JR = {}
 function L.jw(j, f, v)
   if j[f] == v then return end
   j[f] = v
@@ -200,9 +209,15 @@ function L.jw(j, f, v)
 end
 
 -- Event rows, written at commit as flush_events writes them.
-local EV = {}
 function L.event(kind, job, attempt, details)
   EV[#EV + 1] = { kind, job, attempt, details }
+end
+
+-- A claim's attempt_reserved and attempt_started events (two event ids), given as the folded '~rs' line U.flush_events writes for
+-- them, so the pack needs no JSON details and no parsing back. gen, rnum and xnum are decimal digits.
+function L.event_rs(job, attempt, gen, rnum, xnum)
+  EV[#EV + 1] = { rs = '~rs|' .. job .. '|' .. attempt .. '||0|' .. gen .. ',' .. rnum .. ',' .. xnum }
+  EV[#EV + 1] = false
 end
 
 -- ------------------------------------------------------------------ texts shared with jobs.lua (same functions, same bytes)
@@ -268,7 +283,6 @@ function L.reply(text)
   return { 'R', 'Applied', 'A', '0', '', '', NOWS, text, '', '', '', '' }
 end
 
-local writes = 0
 local function w(...)
   if FAIL > 0 and writes >= FAIL then error('INJECTED failure after write ' .. writes) end
   writes = writes + 1
@@ -323,11 +337,14 @@ function L.commit(m, reply)
     while i <= #EV do
       local e, f = EV[i], EV[i + 1]
       local g, n, x, g2
-      if e[1] == 'attempt_reserved' and f and f[1] == 'attempt_started' and f[2] == e[2] and f[3] == e[3] then
+      if not e.rs and e[1] == 'attempt_reserved' and f and f[1] == 'attempt_started' and f[2] == e[2] and f[3] == e[3] then
         g, n = string.match(e[4], '^{"generation":(%d+),"reservationNumber":(%d+)}$')
         x, g2 = string.match(f[4], '^{"executionNumber":(%d+),"generation":(%d+)}$')
       end
-      if g and x and g == g2 then
+      if e.rs then
+        parts[#parts + 1] = e.rs
+        i = i + 2
+      elseif g and x and g == g2 then
         parts[#parts + 1] = '~rs|' .. e[2] .. '|' .. e[3] .. '||0|' .. g .. ',' .. n .. ',' .. x
         i = i + 2
       else
@@ -349,8 +366,19 @@ function L.commit(m, reply)
   local intent = { id = CMD, op = OP, rev = L.inc(m.rev or '0'), decided = NOWS, ops = ops, reply = reply }
   writes = writes + 1 -- the guard's place, as in U.run
   local ok, err = pcall(function()
-    for i = 1, #ops do apply(ops[i]) end
-    w('HSET', META, 'rev', intent.rev)
+    -- The event pack's meta op (nextevent, always the last op) goes out with the revision as one HSET.
+    local n, last = #ops, ops[#ops]
+    if last and last[1] == 'H' and last[2] == 'meta' then n = n - 1 else last = nil end
+    for i = 1, n do apply(ops[i]) end
+    if last then
+      local a = { 'HSET', META }
+      for i = 3, #last do a[#a + 1] = last[i] end
+      a[#a + 1] = 'rev'
+      a[#a + 1] = intent.rev
+      w(unpack(a))
+    else
+      w('HSET', META, 'rev', intent.rev)
+    end
     wake(ops)
   end)
   if not ok then
@@ -470,12 +498,13 @@ function L.finish_write(p)
   L.jw(j, 'rev', p.rev)
   L.jw(j, 'updated', NOWS)
   L.jw(j, 'state', state)
-  -- U.set_state from running
+  -- U.set_state from running. A running job is in no ready set and not in idx:terminal (every state change goes through
+  -- U.set_state), so the generic path's removals from those change nothing and are not sent.
   L.zrem('idx:created:s:' .. old, id)
   L.zadd('idx:created:s:' .. state, j.created, id)
-  if state == 'retrying' then L.zadd('ready:' .. j.queue .. ':' .. j.priority, j.eligible, id) else L.zrem('ready:' .. j.queue .. ':' .. j.priority, id) end
+  if state == 'retrying' then L.zadd('ready:' .. j.queue .. ':' .. j.priority, j.eligible, id) end
   L.zrem('leases', id)
-  if terminal then L.zadd('idx:terminal', NOWS, id) else L.zrem('idx:terminal', id) end
+  if terminal then L.zadd('idx:terminal', NOWS, id) end
   if terminal and j.akey then
     local f = j.name .. '\0' .. j.akey
     if redis.call('HGET', P .. 'keys:active', f) == id then L.hdel('keys:active', f) end
