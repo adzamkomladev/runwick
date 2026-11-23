@@ -31,7 +31,7 @@ namespace Runwick.Workloads;
 /// finish per job; then wait up to 60 s for the rest to finish.</item>
 /// </list>
 /// Usage: <c>bench --mode drain|enqueue|bulk|steady [--no-usage] [--n 20000] [--rate 100] [--seconds 120] [--workers 16]
-/// [--payload 1024] [--job-ms 0] [--calls 1] [--store postgres|sqlite|redis] [--out file.json] [--trace] [--sqlite-count-statements]</c>.
+/// [--payload 1024] [--job-ms 0] [--calls 1] [--store postgres|sqlite|redis] [--redis-topology standalone|sentinel|cluster] [--out file.json] [--trace] [--sqlite-count-statements]</c>.
 /// <c>--warmup-jobs</c> adds jobs on the same producer before timing an enqueue run.
 /// SQLite uses a fresh file. <c>--sqlite-keep</c> keeps it, and <c>--sqlite-seed path</c> copies a drained fixture before the run.
 /// <c>--sqlite-profile-statements</c> groups native writer time by statement prefix for diagnosis.
@@ -201,14 +201,25 @@ internal static class BenchMode
         else if (store == "redis")
         {
             var redisCfg = a.OptStr("redis") ?? throw new ArgumentException("--store redis needs --redis host:port (a dedicated, throwaway instance: it is FLUSHALLed)");
+            // --redis-topology sentinel|cluster: the opt-in write-authority modes (22 §2.5, §2.6); --redis then lists the Sentinels and serviceName,
+            // or the cluster's nodes. Every primary the connection reaches is flushed.
+            var topology = a.OptStr("redis-topology") ?? "standalone";
             using (var adminRedis = await StackExchange.Redis.ConnectionMultiplexer.ConnectAsync(redisCfg + ",allowAdmin=true").ConfigureAwait(false))
             {
-                await adminRedis.GetServer(adminRedis.GetEndPoints()[0]).FlushAllDatabasesAsync().ConfigureAwait(false);
+                foreach (var server in adminRedis.GetServers().Where(s => s.IsConnected && !s.IsReplica))
+                {
+                    await server.FlushAllDatabasesAsync().ConfigureAwait(false);
+                }
             }
 
             // --redis-everysec: the opt-in appendfsync everysec profile (the server must run it); default is appendfsync always.
             var persistence = a.Has("redis-everysec") ? RedisPersistence.AofEverySecond : RedisPersistence.AofAlways;
-            await RunwickRedisMigrations.MigrateAsync(redisCfg, persistence).ConfigureAwait(false);
+            await RunwickRedisMigrations.MigrateAsync(redisCfg, new RedisOptions
+            {
+                Persistence = persistence,
+                Sentinel = topology == "sentinel" ? new() : null,
+                Cluster = topology == "cluster" ? new() : null,
+            }).ConfigureAwait(false);
             // --redis-group [--group-items n]: the opt-in grouped producer dispatch (perf plan F); default off.
             var group = a.Has("redis-group");
             var groupItems = a.Int("group-items", 8);
@@ -216,6 +227,8 @@ internal static class BenchMode
             useStore = r => r.UseRedis(redisCfg, o =>
             {
                 o.Persistence = persistence;
+                o.Sentinel = topology == "sentinel" ? new() : null;
+                o.Cluster = topology == "cluster" ? new() : null;
                 o.GroupDispatches = group;
                 o.MaxGroupItems = groupItems;
                 o.MaxGroupsInFlight = groupSlots;

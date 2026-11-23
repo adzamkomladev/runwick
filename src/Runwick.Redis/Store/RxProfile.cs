@@ -39,7 +39,10 @@ internal static class RxProfile
     /// <summary>The newest version a conformance report covers (00 §9 rule 10); newer ones are accepted, uncertified.</summary>
     public static readonly Version CertifiedVersion = new(8, 2, 11);
 
-    public static async Task<RxProfileReport> CheckAsync(IServer server, IDatabase db, RedisPersistence persistence = RedisPersistence.AofAlways, RxTopology topology = RxTopology.Standalone)
+    // user: the configured ACL user, if any; the connection must be that user. StackExchange.Redis falls back to `default` when the login is
+    // refused and `default` is open, so a wrong password would otherwise go unnoticed.
+    public static async Task<RxProfileReport> CheckAsync(IServer server, IDatabase db, RedisPersistence persistence = RedisPersistence.AofAlways, RxTopology topology = RxTopology.Standalone,
+        string? user = null)
     {
         var facts = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -59,6 +62,24 @@ internal static class RxProfile
         {
             failure ??= what;
             code ??= c;
+        }
+
+        if (!string.IsNullOrEmpty(user))
+        {
+            string whoami;
+            try
+            {
+                whoami = (string?)await server.ExecuteAsync("ACL", "WHOAMI").ConfigureAwait(false) ?? "";
+            }
+            catch (RedisServerException)
+            {
+                whoami = "";
+            }
+
+            if (!string.Equals(whoami, user, StringComparison.Ordinal))
+            {
+                Fail("the connection is not the configured ACL user (login refused or ACL WHOAMI denied)", "primary_authentication_failed");
+            }
         }
 
         foreach (var (name, value) in Required(persistence))

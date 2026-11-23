@@ -61,7 +61,7 @@ Size `maxmemory` with room to spare. With `noeviction`, a full server refuses wr
 
 <Callout type="warning" title="Keep CONFIG GET readable">
 
-Runwick reads the settings with `CONFIG GET` and `MODULE LIST`. If an ACL blocks either, the value counts as unverifiable and the store refuses to run. Restrict `CONFIG SET` with ACLs if you need to, but leave `CONFIG GET` and `MODULE LIST` allowed for Runwick's user. Do not remove `CONFIG` with `rename-command`. Managed Redis services that hide `CONFIG` are not supported.
+Runwick reads the settings with `CONFIG GET` and `MODULE LIST`. If an ACL blocks either, the value counts as unverifiable and the store refuses to run. Restrict `CONFIG SET` with ACLs if you need to, but leave `CONFIG GET` and `MODULE LIST` allowed for Runwick's user. Do not remove `CONFIG` with `rename-command`. Managed Redis services that hide `CONFIG` are not supported. If you name a user (`user=` in the connection string), Runwick also checks with `ACL WHOAMI` that it is connected as that user and refuses with `primary_authentication_failed` otherwise: the Redis client otherwise falls back to the `default` user when the password is wrong and `default` is open. Leave `ACL WHOAMI` allowed too.
 
 </Callout>
 
@@ -142,7 +142,13 @@ builder.UseRedis(
     o => o.Sentinel = new RedisSentinelOptions());
 ```
 
-List your Sentinels and the service name, not the data servers. Use `user` and `password` for the data servers and `sentinelUser` and `sentinelPassword` for the Sentinels (the TLS setting applies to both). Every data server must run the same settings as above, `appendfsync always` included; `everysec` cannot be combined with Sentinel. Run `RunwickRedisMigrations.MigrateAsync` against the current primary's address.
+List your Sentinels and the service name, not the data servers. Use `user` and `password` for the data servers and `sentinelUser` and `sentinelPassword` for the Sentinels (the TLS setting applies to both). Every data server must run the same settings as above, `appendfsync always` included; `everysec` cannot be combined with Sentinel. Run the migrator with the same string and options; it finds the primary through the Sentinels and checks it the same way before it writes anything:
+
+```csharp
+await RunwickRedisMigrations.MigrateAsync(sentinelString, new RedisOptions { Sentinel = new RedisSentinelOptions() });
+```
+
+From the command line: `runwick migrate --provider redis --redis-topology sentinel --connection-env RUNWICK_REDIS`. The `store` commands and `doctor` take the same flag. If the data servers refuse the password, the error says `primary_authentication_failed` (or `primary_permission_denied` for a missing ACL permission) rather than "unreachable".
 
 | Option | Default | Allowed | What it does |
 |---|---|---|---|
@@ -174,7 +180,7 @@ builder.UseRedis(
     o => o.Cluster = new RedisClusterOptions());
 ```
 
-List the cluster's nodes, every primary at least (replicas may be listed too), and no `serviceName`. Every primary must run the same settings as above, `appendfsync always` included; `everysec` cannot be combined with Cluster, and neither can Sentinel. Run `RunwickRedisMigrations.MigrateClusterAsync` with the same node list before you start the application: it checks every primary, and refuses one that holds Runwick keys but no store record.
+List the cluster's nodes, every primary at least (replicas may be listed too), and no `serviceName`. Every primary must run the same settings as above, `appendfsync always` included; `everysec` cannot be combined with Cluster, and neither can Sentinel. Run `RunwickRedisMigrations.MigrateClusterAsync` (or `MigrateAsync` with `new RedisOptions { Cluster = new RedisClusterOptions() }`, or `runwick migrate --provider redis --redis-topology cluster`) with the same node list before you start the application: it checks every primary, and refuses one that holds Runwick keys but no store record. The `store` commands (status, admission, capability activation, re-identification) and `doctor` take the same option and look at every primary; if a primary that owns slots cannot be reached they refuse with `store_unavailable` instead of reporting part of the store.
 
 `AuthorityRecheckInterval` and `AuthorityTtl` work as for Sentinel. Set `AuthorityTtl` well under the cluster's `cluster-node-timeout`, so that a process cut off from the cluster stops before a replica can be promoted.
 
@@ -189,7 +195,7 @@ List the cluster's nodes, every primary at least (replicas may be listed too), a
 
 Calls that are stopped are never sent. A call that was in flight when the slot moved can fail partway; it ends as "outcome unknown", and the half-finished change is completed on the new owner (the same recovery as after a crash). The Store page shows the state, the slot, its owner, the nodes the cluster reports and how many listed nodes agree.
 
-**What this does not promise.** Everything said under Sentinel applies: Redis copies writes to replicas after it replies, a failover can lose writes confirmed after Runwick's last check, and Runwick cannot stop other programs from writing to a cut-off former owner. In addition: the store record (`rw:store`) lives on one slot's owner, which must be reachable when a process starts; the management tools that list applications and the command-line tools read one node and do not look across the cluster; one application is never spread over several nodes. Receipts carry `redis.aof-always-cluster-v1`.
+**What this does not promise.** Everything said under Sentinel applies: Redis copies writes to replicas after it replies, a failover can lose writes confirmed after Runwick's last check, and Runwick cannot stop other programs from writing to a cut-off former owner. In addition: the store record (`rw:store`) lives on one slot's owner, which must be reachable when a process starts; one application is never spread over several nodes. Receipts carry `redis.aof-always-cluster-v1`.
 
 ## What Runwick checks
 

@@ -129,6 +129,24 @@ public sealed class CliRedisTests
         Fails(await RunAsync("a:1,b:2", "migrate"), "topology_unsupported", 1);
     }
 
+    [Fact]
+    [Trait("Case", "CLI-08")]
+    public async Task Redis_topology_selects_the_Sentinel_or_Cluster_reading_of_the_connection_string()
+    {
+        // Sentinel mode needs the Sentinels and a serviceName; a plain address is refused before anything connects.
+        Fails(await RunAsync("127.0.0.1:6379", "migrate", "--redis-topology", "sentinel"), "topology_unsupported", 1);
+
+        // Several endpoints are a cluster's nodes, not a refusal, once the topology says so: unreachable here.
+        var nowhere = $"127.0.0.1:{Container.FreePort()},127.0.0.1:{Container.FreePort()},connectTimeout=500";
+        Fails(await RunAsync(nowhere, "store", "status", "--redis-topology", "cluster"), "store_unavailable", 4);
+
+        // No Sentinel answers: no verified primary, so nothing is read or written.
+        var sentinels = $"127.0.0.1:{Container.FreePort()},127.0.0.1:{Container.FreePort()},127.0.0.1:{Container.FreePort()},serviceName=mymaster,connectTimeout=300";
+        Fails(await RunAsync(sentinels, "migrate", "--redis-topology", "sentinel"), "store_unavailable", 4);
+        var doctor = await RunAsync(sentinels, "doctor", "--redis-topology", "sentinel");
+        Assert.Equal(("fail", "store_unavailable"), Checks(doctor)["store.migration"]);
+    }
+
     /// <summary>A Redis container this test owns; only containers created here are ever touched.</summary>
     sealed class Container : IAsyncDisposable
     {

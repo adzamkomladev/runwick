@@ -62,6 +62,9 @@ internal static class CliCommands
     static readonly CliOption ConnectionEnv = Opt("--connection-env", V.String, "Name of the environment variable holding the connection string.");
     static readonly CliOption ConnectionStdin = Opt("--connection-stdin", V.Flag, "Read the connection string from the first line of stdin.");
     static readonly CliOption Provider = Opt("--provider", V.String, "Store provider.", allowed: ["postgres", "sqlite", "redis"], def: "postgres");
+    static readonly CliOption RedisTopology = Opt("--redis-topology", V.String,
+        "Redis only: standalone (one primary address), sentinel (the Sentinels and serviceName; the primary they name is verified) or cluster (the nodes; every primary is read).",
+        allowed: ["standalone", "sentinel", "cluster"], def: "standalone");
 
     static CliCommand Read(string name, string summary, string permission, Type result, Func<CliInvocation, string> path, CliArgument[]? args = null,
         CliOption[]? options = null, HumanColumn[]? columns = null, bool list = false) =>
@@ -145,23 +148,23 @@ internal static class CliCommands
         Read("settings", "Show the management host's settings (allowlisted).", ManagementPermissions.SettingsRead, typeof(ManagementSettings), _ => "settings"),
 
         Local("migrate", "Apply this CLI's store migrations.", typeof(PostgresMigrationResult), MigrateAsync,
-            options: [Opt("--provider", V.String, "Store provider.", required: true, allowed: ["postgres", "sqlite", "redis"]), ConnectionEnv, ConnectionStdin],
+            options: [Opt("--provider", V.String, "Store provider.", required: true, allowed: ["postgres", "sqlite", "redis"]), RedisTopology, ConnectionEnv, ConnectionStdin],
             permission: "migration role"),
         Local("store status", "Show the store's revision, mode, application gates and the lease and presence rows (never proof that processes stopped).", typeof(StoreAdminStatus), StoreStatusAsync,
-            options: [Provider, ConnectionEnv, ConnectionStdin], permission: "migration role"),
+            options: [Provider, RedisTopology, ConnectionEnv, ConnectionStdin], permission: "migration role"),
         Local("store admission", "Set application admission: drain blocks new work, maintenance blocks everything but status reads; open reopens.", typeof(AdmissionResult), StoreAdmissionAsync,
             options: [Opt("--mode", V.String, "Target admission mode.", required: true, allowed: ["open", "drain", "maintenance"]),
-                      Opt("--application", V.String, "Application name; every registered application when absent."), Provider, ConnectionEnv, ConnectionStdin],
+                      Opt("--application", V.String, "Application name; every registered application when absent."), Provider, RedisTopology, ConnectionEnv, ConnectionStdin],
             permission: "migration role"),
         Local("store activate-capability", "Raise capability scheduler or rate_admission for an application (never lowers one); schedules and rate scopes are refused until then.", typeof(CapabilityResult), StoreActivateCapabilityAsync,
             options: [Opt("--name", V.String, "Capability to activate.", required: true, allowed: [.. StoreAdminRules.ActivatableCapabilities]),
-                      Opt("--application", V.String, "Application name; every registered application when absent."), Provider, ConnectionEnv, ConnectionStdin],
+                      Opt("--application", V.String, "Application name; every registered application when absent."), Provider, RedisTopology, ConnectionEnv, ConnectionStdin],
             permission: "migration role"),
         Local("store reidentify", "Give a restored or copied store a new logical identity (offline: every application in maintenance, no live leases).", typeof(StoreIdentityChange), StoreReidentifyAsync,
-            options: [Opt("--confirm", V.Flag, "Required: old prepared envelopes and in-flight commands stop resolving.", required: true), Provider, ConnectionEnv, ConnectionStdin],
+            options: [Opt("--confirm", V.Flag, "Required: old prepared envelopes and in-flight commands stop resolving.", required: true), Provider, RedisTopology, ConnectionEnv, ConnectionStdin],
             permission: "migration role"),
         Local("doctor", "Check the server, credentials, clock and (with a connection) the store.", typeof(DoctorResult), DoctorAsync,
-            options: [Provider, ConnectionEnv, ConnectionStdin], permission: "authenticated"),
+            options: [Provider, RedisTopology, ConnectionEnv, ConnectionStdin], permission: "authenticated"),
         Local("version", "Print the CLI version.", typeof(VersionResult),
             (_, _) => Task.FromResult(CommandOutcome.Ok(JsonSerializer.SerializeToNode(new VersionResult(RunwickCli.Version, "v1"), RunwickCli.Json)))),
         Local("describe", "Machine-readable description of every command (use with --agent).", typeof(RunwickCli.DescribeDocument),
@@ -631,13 +634,31 @@ internal static class CliCommands
 
     static string ProviderOf(CliInvocation inv) => inv.Opt("--provider") ?? "postgres";
 
+    /// <summary>The Redis topology the operator named, as the <see cref="RedisOptions"/> a host would use (22 §2.5, §2.6).</summary>
+    static RedisOptions RedisOptionsOf(CliInvocation inv)
+    {
+        var topology = inv.Opt("--redis-topology") ?? "standalone";
+        if (topology != "standalone" && ProviderOf(inv) != "redis")
+        {
+            throw CliErrors.Usage("--redis-topology applies to --provider redis only.");
+        }
+
+        return topology switch
+        {
+            "sentinel" => new RedisOptions { Sentinel = new() },
+            "cluster" => new RedisOptions { Cluster = new() },
+            _ => new RedisOptions(),
+        };
+    }
+
     static async Task<CommandOutcome> MigrateAsync(CliInvocation inv, CancellationToken ct)
     {
         var cs = await ConnectionAsync(inv) ?? throw CliErrors.Usage("migrate needs --connection-env or --connection-stdin.");
+        var redis = RedisOptionsOf(inv);
         return await ProviderCallAsync(async () => ProviderOf(inv) switch
         {
             "sqlite" => JsonSerializer.SerializeToNode(await RunwickSqliteMigrations.MigrateAsync(cs, ct), RunwickCli.Json),
-            "redis" => JsonSerializer.SerializeToNode(await RunwickRedisMigrations.MigrateAsync(cs, ct), RunwickCli.Json),
+            "redis" => JsonSerializer.SerializeToNode(await RunwickRedisMigrations.MigrateAsync(cs, redis, ct), RunwickCli.Json),
             _ => JsonSerializer.SerializeToNode(await RunwickPostgresMigrations.MigrateAsync(cs, ct), RunwickCli.Json),
         });
     }
@@ -645,6 +666,7 @@ internal static class CliCommands
     static async Task<CommandOutcome> StoreAsync<T>(CliInvocation inv, Func<string, Task<T>> postgres, Func<string, Task<T>> sqlite, Func<string, Task<T>> redis)
     {
         var cs = await ConnectionAsync(inv) ?? throw CliErrors.Usage(inv.Command.Name + " needs --connection-env or --connection-stdin.");
+        RedisOptionsOf(inv); // a misplaced --redis-topology is a usage error before anything connects
         var run = ProviderOf(inv) switch { "sqlite" => sqlite, "redis" => redis, _ => postgres };
         return await ProviderCallAsync(async () => JsonSerializer.SerializeToNode(await run(cs), RunwickCli.Json));
     }
@@ -671,7 +693,7 @@ internal static class CliCommands
 
     static Task<CommandOutcome> StoreStatusAsync(CliInvocation inv, CancellationToken ct) =>
         StoreAsync(inv, cs => RunwickPostgresMigrations.GetStatusAsync(cs, ct), cs => RunwickSqliteMigrations.GetStatusAsync(cs, ct),
-            cs => RunwickRedisMigrations.GetStatusAsync(cs, ct));
+            cs => RunwickRedisMigrations.GetStatusAsync(cs, RedisOptionsOf(inv), ct));
 
     static Task<CommandOutcome> StoreAdmissionAsync(CliInvocation inv, CancellationToken ct)
     {
@@ -680,7 +702,7 @@ internal static class CliCommands
         return StoreAsync(inv,
             async cs => new AdmissionResult(await RunwickPostgresMigrations.SetAdmissionModeAsync(cs, application, mode, "cli", ct)),
             async cs => new AdmissionResult(await RunwickSqliteMigrations.SetAdmissionModeAsync(cs, application, mode, "cli", ct)),
-            async cs => new AdmissionResult(await RunwickRedisMigrations.SetAdmissionModeAsync(cs, application, mode, "cli", ct)));
+            async cs => new AdmissionResult(await RunwickRedisMigrations.SetAdmissionModeAsync(cs, application, mode, "cli", RedisOptionsOf(inv), ct)));
     }
 
     static Task<CommandOutcome> StoreActivateCapabilityAsync(CliInvocation inv, CancellationToken ct)
@@ -690,7 +712,7 @@ internal static class CliCommands
         return StoreAsync(inv,
             async cs => new CapabilityResult(await RunwickPostgresMigrations.ActivateCapabilityAsync(cs, application, name, "cli", ct)),
             async cs => new CapabilityResult(await RunwickSqliteMigrations.ActivateCapabilityAsync(cs, application, name, "cli", ct)),
-            async cs => new CapabilityResult(await RunwickRedisMigrations.ActivateCapabilityAsync(cs, application, name, "cli", ct)));
+            async cs => new CapabilityResult(await RunwickRedisMigrations.ActivateCapabilityAsync(cs, application, name, "cli", RedisOptionsOf(inv), ct)));
     }
 
     internal sealed record CapabilityResult(IReadOnlyList<CapabilityChange> Changes);
@@ -699,7 +721,7 @@ internal static class CliCommands
 
     static Task<CommandOutcome> StoreReidentifyAsync(CliInvocation inv, CancellationToken ct) =>
         StoreAsync(inv, cs => RunwickPostgresMigrations.ReassignStoreIdAsync(cs, ct), cs => RunwickSqliteMigrations.ReassignStoreIdAsync(cs, ct),
-            cs => RunwickRedisMigrations.ReassignStoreIdAsync(cs, ct));
+            cs => RunwickRedisMigrations.ReassignStoreIdAsync(cs, RedisOptionsOf(inv), ct));
 
     /// <summary>Provider codes pass through unchanged; never the inner exception (it may name the server or the file).</summary>
     static CommandOutcome MigrationFailed(string code, string message)
@@ -729,6 +751,7 @@ internal static class CliCommands
         }
 
         var provider = ProviderOf(inv);
+        var redis = RedisOptionsOf(inv);
         if (connection is not null)
         {
             switch (provider)
@@ -737,7 +760,7 @@ internal static class CliCommands
                     SqliteStoreChecks(connection, checks);
                     break;
                 case "redis":
-                    await RedisStoreChecksAsync(connection, checks, ct);
+                    await RedisStoreChecksAsync(connection, redis, checks, ct);
                     break;
                 default:
                     await StoreChecksAsync(connection, checks, ct);
@@ -905,30 +928,27 @@ internal static class CliCommands
     }
 
     /// <summary>
-    /// Redis store checks (22 §2.3, §9): the store's own profile and topology check, then <c>rw:store</c>'s layout revision, mode and
-    /// manifest digest against this CLI's. Reads only: no migration lock, nothing written.
+    /// Redis store checks (22 §2.3, §9): the store's own profile and topology check on each primary (the one standalone primary, the primary the
+    /// Sentinels name, or every primary of a cluster), then <c>rw:store</c>'s layout revision, mode and manifest digest against this CLI's.
+    /// Reads only: no migration lock, nothing written.
     /// </summary>
-    static async Task RedisStoreChecksAsync(string configuration, List<DoctorCheck> checks, CancellationToken ct)
+    static async Task RedisStoreChecksAsync(string configuration, RedisOptions redis, List<DoctorCheck> checks, CancellationToken ct)
     {
         try
         {
-            var options = RxClient.Options(configuration, TimeSpan.FromSeconds(5));
-            options.AllowAdmin = true; // CONFIG GET for the profile check
-            options.ClientName = "runwick:doctor";
-            var mux = await ConnectionMultiplexer.ConnectAsync(options).WaitAsync(ct);
+            var (mux, primaries, reports) = await RedisMigrator.ConnectAsync(configuration, RedisMigrator.Target.Of(redis), "runwick:doctor", ct, requireVerified: false)
+                .WaitAsync(ct);
             await using (mux)
             {
-                if (!mux.IsConnected)
-                {
-                    throw new TimeoutException("Could not connect to Redis.");
-                }
-
                 var db = mux.GetDatabase();
-                var report = await RxProfile.CheckAsync(mux.GetServer(mux.GetEndPoints(configuredOnly: true).Single()), db);
-                var facts = $"redis_version={report.Facts["redis_version"]} appendonly={report.Facts["config.appendonly"]} appendfsync={report.Facts["config.appendfsync"]}";
+                var failed = Array.FindIndex(reports, r => !r.Verified);
+                var report = reports[failed < 0 ? 0 : failed];
+                var node = primaries.Length > 1 ? $" on primary {(failed < 0 ? 0 : failed) + 1} of {primaries.Length}" : "";
+                var facts = $"redis_version={report.Facts["redis_version"]} appendonly={report.Facts["config.appendonly"]} appendfsync={report.Facts["config.appendfsync"]}"
+                    + (primaries.Length > 1 ? $" primaries={primaries.Length}" : "");
                 checks.Add(report.Verified
                     ? new DoctorCheck("store.settings", "pass", facts)
-                    : new DoctorCheck("store.settings", "fail", $"{report.FailureCode}: {report.Failure} ({facts})"));
+                    : new DoctorCheck("store.settings", "fail", $"{report.FailureCode}: {report.Failure}{node} ({facts})"));
 
                 var store = (await db.HashGetAllAsync(RedisMigrator.StoreKey)).ToDictionary(e => (string)e.Name!, e => (string?)e.Value, StringComparer.Ordinal);
                 if (store.Count == 0)
@@ -944,7 +964,12 @@ internal static class CliCommands
                     : MigrationCheck(layout, mode, RedisMigrator.CurrentLayout));
             }
         }
-        catch (RxProfileException ex)
+        catch (RedisMigrationException ex) when (ex.Code == "store_unavailable")
+        {
+            checks.Add(new DoctorCheck("store.settings", "unverified", "could not connect"));
+            checks.Add(new DoctorCheck("store.migration", "fail", "store_unavailable"));
+        }
+        catch (RedisMigrationException ex)
         {
             checks.Add(new DoctorCheck("store.settings", "fail", ex.Code));
             checks.Add(new DoctorCheck("store.migration", "fail", ex.Code));
