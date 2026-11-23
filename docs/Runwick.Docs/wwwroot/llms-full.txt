@@ -601,7 +601,7 @@ runwick.Application("my-app").UseRedis("redis:6379");
 ### Redis
 
 - One primary, no high availability by default. An opt-in Sentinel mode, or an opt-in Cluster mode (one owner node per application), follows a failover and stops writing when it cannot verify the primary, but a promoted replica may still have lost jobs that were acknowledged after the last check.
-- The server must run with `appendonly yes`, `appendfsync always`, `no-appendfsync-on-rewrite no`, `maxmemory-policy noeviction` and `aof-load-truncated no`. Redis without `appendfsync always` is not a supported configuration.
+- The server must run with `appendonly yes`, `appendfsync always`, `no-appendfsync-on-rewrite no`, `maxmemory-policy noeviction` and `aof-load-truncated no`. The one exception is the opt-in `everysec` profile, which trades about the last second of confirmed writes after a machine crash for faster drains; any other setting is refused.
 - One application lives in one hash slot. Its throughput is bounded by one server thread, and one very large command can delay everything else for that application.
 - Redis cannot join your business transaction. There is no same-transaction completion.
 - Nothing here says Redis is faster than PostgreSQL. No speed comparison is claimed.
@@ -2728,7 +2728,7 @@ Use `RunwickRedisMigrations.MigrateAsync(configuration, RedisPersistence.AofEver
 | Failover to a replica | only with the Sentinel or Cluster option below | not supported |
 | Receipt's `ConfirmedAcknowledgementProfile` | `redis.aof-always-single-primary-v1` | `redis.aof-everysec-single-primary-v1` |
 
-In our drain test (20,000 jobs, 16 workers, one shared host) `everysec` drained about 1.5 times faster and inserted about 1.16 times faster, in every one of five pairs. A lost write after a crash looks like a dispatch that was confirmed but is not there, so use this only for work you can resend or regenerate.
+In our drain test (20,000 jobs, 16 workers, one shared host) `everysec` drained about 1.5 times faster and inserted about 1.16 times faster, in every one of five pairs. A second test on 2026-11-23 found about 1.8 to 1.9 times faster drains; the bytes Redis writes per job do not change, only how often they are flushed to disk. A lost write after a crash looks like a dispatch that was confirmed but is not there, so use this only for work you can resend or regenerate.
 
 Size `maxmemory` with room to spare. With `noeviction`, a full server refuses writes, and dispatches fail until you free space.
 
@@ -2843,6 +2843,8 @@ Calls that are stopped are never sent, so they have no effect. A call that was a
 
 **What this does not promise.** Redis copies writes to replicas after it replies. A failover can lose writes confirmed after Runwick's last check, which is at most a recheck interval plus the lease. The check proves the new primary has everything Runwick saw at its last check, not that nothing was lost. Runwick stops itself; it cannot stop other programs that write to a cut-off former primary. Receipts carry `redis.aof-always-sentinel-v1`.
 
+**What it costs.** Expect a Sentinel setup to be somewhat slower than a lone primary, mostly because Redis copies every write to its replicas. In our one-host drain test, attaching two replicas cost about 7%. Runwick's own Sentinel checks added no cost we could separate from noise on a shared machine.
+
 ## Cluster: many nodes, one owner per application (opt-in)
 
 Every key of one application sits in one hash slot, so one cluster node (the slot's owner) holds the whole application and every script runs on that node. Different applications usually land on different nodes, so a cluster spreads applications, not the work of one application. Set `cluster-require-full-coverage no` on the nodes if you want one failing node to stop only its own applications: with the default `yes`, the whole cluster stops answering from the moment a node is seen as failed until its replica takes over. The Cluster option keeps the same rule as Sentinel: **Runwick only writes to the node it has just checked as the slot's owner, and stops writing the moment it cannot tell.**
@@ -2869,6 +2871,8 @@ List the cluster's nodes, every primary at least (replicas may be listed too), a
 Calls that are stopped are never sent. A call that was in flight when the slot moved can fail partway; it ends as "outcome unknown", and the half-finished change is completed on the new owner (the same recovery as after a crash). The Store page shows the state, the slot, its owner, the nodes the cluster reports and how many listed nodes agree.
 
 **What this does not promise.** Everything said under Sentinel applies: Redis copies writes to replicas after it replies, a failover can lose writes confirmed after Runwick's last check, and Runwick cannot stop other programs from writing to a cut-off former owner. In addition: the store record (`rw:store`) lives on one slot's owner, which must be reachable when a process starts; one application is never spread over several nodes. Receipts carry `redis.aof-always-cluster-v1`.
+
+**What it costs.** Because every key of one application sits on one node, Runwick's Cluster path sends about the same commands as standalone; finishes are split per slot, so a worker makes somewhat more round trips. In our one-host drain test a one-node Cluster was not slower than standalone. Replicas behind each primary cost what they cost under Sentinel.
 
 ## What Runwick checks
 
@@ -2909,7 +2913,7 @@ For jobs that are delayed or waiting to retry, no message is sent when they fall
 
 - No high availability by default. With the Sentinel or Cluster option, a failover is followed and checked, but a promoted replica may have lost jobs confirmed after Runwick's last check. A cluster spreads applications over its nodes; it does not spread one application.
 - Durability is the primary's disk and `appendfsync always`. Restoring an AOF or RDB file is a break in history.
-- Running Redis without `appendfsync always` is not a supported configuration, even for benchmarks.
+- Running Redis without `appendfsync always` is supported only through the `everysec` option above, which Runwick checks and records on every receipt. Any other setting is refused.
 - Results on Redis say nothing about speed compared with PostgreSQL.
 
 ## Next steps

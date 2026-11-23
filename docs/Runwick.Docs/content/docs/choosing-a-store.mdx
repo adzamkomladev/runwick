@@ -72,7 +72,7 @@ runwick.Application("my-app").UseRedis("redis:6379");
 ### Redis
 
 - One primary, no high availability by default. An opt-in Sentinel mode, or an opt-in Cluster mode (one owner node per application), follows a failover and stops writing when it cannot verify the primary, but a promoted replica may still have lost jobs that were acknowledged after the last check.
-- The server must run with `appendonly yes`, `appendfsync always`, `no-appendfsync-on-rewrite no`, `maxmemory-policy noeviction` and `aof-load-truncated no`. Redis without `appendfsync always` is not a supported configuration.
+- The server must run with `appendonly yes`, `appendfsync always`, `no-appendfsync-on-rewrite no`, `maxmemory-policy noeviction` and `aof-load-truncated no`. The one exception is the opt-in `everysec` profile, which trades about the last second of confirmed writes after a machine crash for faster drains; any other setting is refused.
 - One application lives in one hash slot. Its throughput is bounded by one server thread, and one very large command can delay everything else for that application.
 - Redis cannot join your business transaction. There is no same-transaction completion.
 - Nothing here says Redis is faster than PostgreSQL. No speed comparison is claimed.
