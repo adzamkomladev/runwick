@@ -814,34 +814,41 @@ internal static class BenchMode
             // --calls 1 (default): one Dispatch at a time on a fixed schedule, like the River and pg-boss steady modes
             // (a slow call delays the next arrival; the schedule catches up). --calls n: open loop, each arrival sent on
             // schedule with up to n calls in flight (beyond that the producer's local admission refuses it).
-            while (clock.Elapsed < stopAt)
-            {
-                var task = DispatchOneAsync(LoadJob.Create(++sequence, payload));
-                if (calls == 1)
-                {
-                    await task.ConfigureAwait(false);
-                }
-                else
-                {
-                    pending.Add(task);
-                    if (pending.Count >= 256)
-                    {
-                        pending.RemoveAll(t => t.IsCompleted);
-                    }
-                }
-
-                next += interval;
-                if (next - clock.Elapsed is { Ticks: > 0 } wait)
-                {
-                    await Task.Delay(wait).ConfigureAwait(false);
-                }
-            }
-
+            await OfferAsync(() => clock.Elapsed < stopAt).ConfigureAwait(false);
             var completedByEndOfOffers = Interlocked.Read(ref finished);
+            // A crashing segment keeps offering until it is killed, so the kill lands with jobs queued and (with --job-ms)
+            // inside their handler; otherwise the queue drains while the segment writes its result and no job crosses a crash.
+            _ = crash ? OfferAsync(() => true) : Task.CompletedTask;
             await outboxStager.ConfigureAwait(false);
             if (!crash) // a crashing segment dies with its dispatch calls still in flight
             {
                 await Task.WhenAll(pending).ConfigureAwait(false);
+            }
+
+            async Task OfferAsync(Func<bool> keepGoing)
+            {
+                while (keepGoing())
+                {
+                    var task = DispatchOneAsync(LoadJob.Create(Interlocked.Increment(ref sequence), payload));
+                    if (calls == 1)
+                    {
+                        await task.ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        pending.Add(task);
+                        if (pending.Count >= 256)
+                        {
+                            pending.RemoveAll(t => t.IsCompleted);
+                        }
+                    }
+
+                    next += interval;
+                    if (next - clock.Elapsed is { Ticks: > 0 } wait)
+                    {
+                        await Task.Delay(wait).ConfigureAwait(false);
+                    }
+                }
             }
 
             async Task DispatchOneAsync(LoadJob job)
