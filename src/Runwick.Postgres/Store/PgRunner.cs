@@ -130,6 +130,11 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
                 commitSent = true;
                 await transaction.CommitAsync(ct).ConfigureAwait(false);
                 PhaseTimings.Lap(lap, op.Operation, "commit");
+                foreach (var after in tx.AfterCommit)
+                {
+                    after();
+                }
+
                 await tx.Fault(FaultPoint.AfterCommitBeforeReply).ConfigureAwait(false);
                 return commit.Reply;
             }

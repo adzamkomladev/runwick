@@ -9,8 +9,10 @@ namespace Runwick.Postgres.Store;
 internal sealed partial class PgStore
 {
     // Direct calls use dispatch_v4 and can publish a wake after commit, also for a delayed job that is its lane's earliest. Staged
-    // calls use dispatch_v3 and its transactional wake (due jobs only), as do the outbox, management and schedule paths through
-    // rw_dispatch_core_v3 (04 §7.2).
+    // calls use dispatch_v5: dispatch_v3's transactional wake for due jobs, plus one for a created delayed job that is its lane's
+    // earliest. The outbox, management and schedule paths keep rw_dispatch_core_v3's transactional wake for due jobs; outbox and
+    // management hand their created delayed jobs to the same post-commit pump as direct calls (a scheduled job is never delayed,
+    // 13 §3.2) (04 §7.2).
 
     public async Task<StoreReply<DispatchResult>> DispatchAsync(StoreCommand<DispatchRequest> command, CancellationToken ct)
     {
@@ -63,6 +65,22 @@ internal sealed partial class PgStore
         }
     }
 
+    /// <summary>
+    /// After a committed, non-replayed command whose SQL wakes only due jobs (outbox, management): each created delayed
+    /// job goes to the pump, which wakes its queue only if the job is then the earliest not-yet-due job of its lane.
+    /// </summary>
+    void WakeCreatedDelayed(string application, IEnumerable<DispatchItem> created, DateTimeOffset decidedAt)
+    {
+        var decidedMs = PgTime.Ms(decidedAt);
+        foreach (var item in created)
+        {
+            if (item.Intent.NotBeforeMs is { } notBefore && notBefore > decidedMs)
+            {
+                sources.WakeDelayed(application, item.Intent.Queue, item.Intent.Priority, notBefore, item.Intent.ProposedJobId);
+            }
+        }
+    }
+
     /// <summary>Dispatch/1 on a caller-owned transaction (01 §15, 04 §6.1).</summary>
     public Task<StoreReply<DispatchResult>> StageDispatchAsync(NpgsqlTransaction transaction, StoreCommand<DispatchRequest> command, CancellationToken ct) =>
         runner.StageCallAsync(transaction, DispatchOp(command), DispatchCall([command.Body.Item], many: false, continueOnConflict: false, staged: true),
@@ -81,7 +99,7 @@ internal sealed partial class PgStore
 
     static PgCall DispatchCall(IReadOnlyList<DispatchItem> items, bool many, bool continueOnConflict, bool staged = false)
     {
-        var call = new PgCall(staged ? "dispatch_v3" : "dispatch_v4").P("p_many", many).P("p_continue", continueOnConflict);
+        var call = new PgCall(staged ? "dispatch_v5" : "dispatch_v4").P("p_many", many).P("p_continue", continueOnConflict);
         foreach (var (name, value, type) in DispatchArgs(items))
         {
             call.P(name, value, type);
@@ -200,9 +218,16 @@ internal sealed partial class PgStore
             tx.DecidedAt(now);
         }
 
-        return row.Status is { } status
-            ? new DispatchOutcome([], (Enum.Parse<StoreStatus>(status), new StoreError(row.Code!, ConflictingJobId: row.Conflicting, Detail: row.Detail)))
-            : new DispatchOutcome(ReceiptCodec.ReadDispatchMany(new JsonObject { ["items"] = JsonNode.Parse(row.Items!) }).Items, null);
+        if (row.Status is { } status)
+        {
+            return new DispatchOutcome([], (Enum.Parse<StoreStatus>(status), new StoreError(row.Code!, ConflictingJobId: row.Conflicting, Detail: row.Detail)));
+        }
+
+        var results = ReceiptCodec.ReadDispatchMany(new JsonObject { ["items"] = JsonNode.Parse(row.Items!) }).Items;
+        var created = results.Where(i => i.Result?.Disposition == DispatchDisposition.Created).Select(i => items[i.Ordinal]).ToList();
+        var decidedAt = tx.Now;
+        tx.AfterCommit.Add(() => WakeCreatedDelayed(tx.Application, created, decidedAt));
+        return new DispatchOutcome(results, null);
     }
 
     static bool ValidRetry(RetryPolicy r) =>

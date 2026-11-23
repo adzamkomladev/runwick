@@ -54,7 +54,7 @@ internal sealed partial class PgStore : IOutboxGroupDestinationStore
         // The call envelope bounds transport for the group. Each command keeps its own deadline in SQL.
         var op = Op(application, Guid.CreateVersion7(), OutboxOperations.ReceiveOutbox, commands.Max(c => c.NotAfter), null, PgLane.Producer,
             commands[0].Body.StoreId);
-        return await runner.CallAsync(op, new PgCall("receive_outbox_group_v1").Json("p_items", items), row =>
+        var reply = await runner.CallAsync(op, new PgCall("receive_outbox_group_v1").Json("p_items", items), row =>
             row.HasValue
                 ? row.Applied(new OutboxGroupDelivery([.. commands.Select(c =>
                 {
@@ -62,5 +62,14 @@ internal sealed partial class PgStore : IOutboxGroupDestinationStore
                     return item.HasValue ? item.Applied(ReadDeliveryJson(item.Result!)) : item.Reject<OutboxDelivery>();
                 })]))
                 : row.Reject<OutboxGroupDelivery>(), ct).ConfigureAwait(false);
+        if (reply.Value is { } group)
+        {
+            for (var i = 0; i < commands.Count; i++)
+            {
+                WakeDelivered(commands[i], group.Outcomes[i]);
+            }
+        }
+
+        return reply;
     }
 }

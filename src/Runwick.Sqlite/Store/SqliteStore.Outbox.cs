@@ -22,11 +22,20 @@ internal sealed partial class SqliteStore : IOutboxDestinationStore
         var fp = OutboxFingerprints.Command(storeId, command.Application, command.CommandId, command.NotAfter, r.DeliveryFingerprint);
         var acceptUntil = SqTime.Floor(r.AcceptUntil);
         // D4: concurrent relay slots share one commit through the producer group (each command keeps its own receipt and mapping).
-        return await runner.DispatchAsync(
+        var reply = await runner.DispatchAsync(
             Op(command.Application, command.CommandId, OutboxOperations.ReceiveOutbox, command.NotAfter, fp, SqLane.Producer, r.StoreId),
             tx => ReceiveBody(tx, r, acceptUntil, AcknowledgementProfile),
             row => row.HasValue ? row.Applied(ReadDeliveryJson(row.Result!)) : row.Reject<OutboxDelivery>(),
             PreparedEnvelopeCodec.UpperBound(command.Application, r.Item.Intent), ct).ConfigureAwait(false);
+        // The first delivery wakes as a direct dispatch does; a redelivery answered from the mapping or a replay does not.
+        if (reply.Status == StoreStatus.Applied && !reply.Replayed && reply.Value is { FirstDelivery: true } d
+            && LocalListenersFor(command.Application) is { } listeners)
+        {
+            await WakeLocalAsync(listeners, command.Application, [(r.Item, new DispatchResult(d.JobId, d.Disposition, d.Match, d.PolicyDrift))],
+                reply.DecidedAt).ConfigureAwait(false);
+        }
+
+        return reply;
     }
 
     /// <summary>receive_outbox_v3 after the frame (the frame already checked expiry and the deadline cap at the decision time).</summary>

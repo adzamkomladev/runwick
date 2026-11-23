@@ -23,7 +23,7 @@ internal sealed partial class SqliteStore
         var storeId = await EnsureStoreIdAsync(command.Application, ct).ConfigureAwait(false);
         var fp = CommandEnvelopes.Fingerprint(storeId, command.Application, Operations.ManagementDispatch, command.CommandId, command.NotAfter,
             CommandEnvelopes.ManagementDispatch(r));
-        return await runner.ExecuteAsync(Op(command.Application, command.CommandId, Operations.ManagementDispatch, command.NotAfter, fp, SqLane.Producer, storeId),
+        var reply = await runner.ExecuteAsync(Op(command.Application, command.CommandId, Operations.ManagementDispatch, command.NotAfter, fp, SqLane.Producer, storeId),
             tx =>
             {
                 var core = DispatchCore(tx, [r.Item], continueOnConflict: false, "initial");
@@ -50,6 +50,12 @@ internal sealed partial class SqliteStore
             },
             (tx, row) => StoreReply<ManagementDispatched>.Applied(ReadManagementDispatch(row.Result!), row.DecidedAt!.Value, replayed: true),
             ct).ConfigureAwait(false);
+        if (reply.Status == StoreStatus.Applied && !reply.Replayed && reply.Value is { } v && LocalListenersFor(command.Application) is { } listeners)
+        {
+            await WakeLocalAsync(listeners, command.Application, [(r.Item, v.Dispatch)], reply.DecidedAt).ConfigureAwait(false);
+        }
+
+        return reply;
     }
 
     /// <summary>The Dispatch/1 receipt result plus the job's position and queue.</summary>

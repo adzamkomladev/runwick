@@ -4,6 +4,17 @@
 
 Numeric values are restated here where the engine behavior depends on them; [06-defaults.md](06-defaults.md) is the single table of defaults, derived formulas and startup inequalities. Where the two disagree, 06 is authoritative for the number and this file for the behavior.
 
+## Changes (2026-11-22, delayed pickup on every creation path)
+
+No engine rule changes. The wake rule of the 2026-11-19 entries (a created job that is not yet due wakes its queue when it is then the earliest not-yet-due job of its lane in claim order (`eligible_at`, `job_id`); never on replay; jobs queued behind an earlier delayed job wake nothing) now holds for every path that creates jobs, not only direct `Dispatch/1` and `DispatchMany/1`:
+
+- **Staging** (caller-owned transaction). PostgreSQL: `dispatch_v5` (migration 0027) sends the notification inside the caller's transaction, so it is delivered only if the caller commits. SQLite: once the caller's transaction has ended, the store checks each created delayed job as for a direct dispatch; a rolled-back job is not found and wakes nothing. Redis has no staging.
+- **Outbox delivery** (`ReceiveOutbox/1`, grouped or not). Only the first delivery wakes; a redelivery answered from the mapping and a replay do not.
+- **Management dispatch** (`ManagementDispatch/1`).
+- **Schedule materialization** needs no delayed wake: a schedule template refuses `NotBefore` and an occurrence is materialized only once due, so its job is always due now and wakes its queue as a due dispatch does.
+
+On PostgreSQL the outbox and management paths hand their delayed creations to the post-commit wake pump (04 Changes 2026-11-11). On SQLite the outbox, management and schedule paths now send the in-process hint after commit for due jobs too; before, only direct dispatch did. Redis already published the hint from every script through its shared projection step; tests now cover each path. Still not woken by a store hint: retry back-off (a running worker's own finish wakes its pool, see the 2026-11-19 entry). Report: docs/reports/fragments/delayed-wake-paths.md.
+
 ## Changes (2026-11-19, delayed pickup on PostgreSQL and SQLite)
 
 No engine rule changes. PostgreSQL and SQLite now do what the Redis entry below describes. (1) ReadinessProbe/2 returns `NextDueAt`, the earliest `eligible_at` after the observation time among `pending` and `retrying` jobs of the probed, unpaused lanes (any tuple), read from the ready index (04 and 20 Changes 2026-11-19). (2) A committed, non-replayed `Dispatch/1` or `DispatchMany/1` whose created job is not yet due wakes its queue when that job is then the earliest not-yet-due job of its lane in claim order (`eligible_at`, `job_id`): on PostgreSQL through the post-commit NOTIFY pump of 04 Changes 2026-11-11, on SQLite through the in-process local hint. Jobs queued behind an earlier delayed job wake nothing. So in the idle caps entry below, delayed dispatch through the driver-owned paths is no longer in "Cost: work that becomes due by time" on any store. Still not notified there: delayed jobs created by staging, outbox delivery, management dispatch or schedule materialization, and retry back-off. A retry is scheduled by a finish of this process, whose slot release wakes its own pool (`Gate.Released`), and that pool's next probe (from 100 ms) names the retry's due time, so a running worker starts its own retries on time without a store hint. Report: docs/reports/fragments/delayed-pickup-pg-sqlite.md.

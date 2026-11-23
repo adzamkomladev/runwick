@@ -6,6 +6,11 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-22, staged delayed wake)
+
+- Migration `0027_staged_delayed_wake`, schema revision 27, adds `dispatch_v5`. It takes `dispatch_v3`'s arguments, runs `dispatch_v3` unchanged and, when that applied and was not a replay, notifies `runwick_wake` for each created job of the reply whose `eligible_at` is after the decision time, while it is `pending` or `retrying` and no not-yet-due job of its lane precedes it in claim order `(eligible_at, job_id)` (the check of the 2026-11-19 entry, run inside the transaction: one primary-key and one `jobs_ready` lookup per created delayed job). NOTIFY is transactional, so the caller's COMMIT delivers it and a rollback drops it. Staged `Dispatch/1` and `DispatchMany/1` now call version 5; `dispatch_v3` stays for clients at revisions 16 to 26. No table, index, receipt, reply or manifest entry changes other than the schema revision.
+- No SQL change for the driver-owned paths: after a committed, non-replayed `ReceiveOutbox/1` first delivery (single or grouped) or `ManagementDispatch/1` that created a delayed job, the client hands it to the post-commit wake pump of the 2026-11-11 entry, as `dispatch_v4` does. `rw_dispatch_core_v3` keeps its transactional wake for due jobs. Schedule materialization never creates a delayed job (13 §3.2), so it is unchanged (05 Changes 2026-11-22).
+
 ## Changes (2026-11-19, set-based schedule groups)
 
 - Migration `0026_schedule_group_set`, schema revision 26, adds `materialize_schedule_group_v3` and its helper `rw_schedule_group_set_v1`. The driver now sends every group of two to eight plans to version 3. No table, index, trigger, event kind, receipt codec or manifest entry changes other than the schema revision; versions 1 and 2 stay for clients at revisions 22 to 25.

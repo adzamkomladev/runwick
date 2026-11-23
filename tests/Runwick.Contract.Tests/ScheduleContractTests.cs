@@ -1144,4 +1144,29 @@ public sealed class ScheduleContractTests
             new Runwick.Management.ManagementCaller(new("none", null, "test"), []), cancellationToken: Ct));
         await Assert.ThrowsAsync<Runwick.Management.ManagementValidationException>(() => session.GetScheduleStatsAsync(admin, stats.To, stats.From, Ct));
     }
+
+    [Theory]
+    [MemberData(nameof(CoreContractTests.Kinds), MemberType = typeof(CoreContractTests))]
+    [Trait("Case", "WAKE-01")]
+    public async Task A_materialized_occurrence_wakes_its_queue_once_and_never_on_replay(StoreKind kind)
+    {
+        // A schedule template refuses NotBefore and an occurrence is materialized once it is due, so its job is always due now
+        // and wakes its queue like a due direct dispatch (05 §7.2); a resent command replays without a wake.
+        var (f, c) = await OpenAsync(kind, "schwake");
+        await using var _ = f;
+        await using var wakes = await WakeProbe.StartAsync(c);
+        var due = (await Store(c).StoreNowAsync(Ct)).AddSeconds(-1);
+        Assert.Equal(StoreStatus.Applied, (await RegisterAsync(c, "once", d =>
+        {
+            d.Cron = null;
+            d.DueAt = due;
+        })).Status);
+        var (_, _, plan) = await PlanAsync(c, "once");
+        var command = c.Command(plan!);
+        var first = await Store(c).MaterializeOccurrencesAsync(command, Ct);
+        Assert.Equal("created", Assert.Single(first.Value!.Occurrences).Disposition);
+        await wakes.ExpectAsync(1);
+        Assert.True((await Store(c).MaterializeOccurrencesAsync(command, Ct)).Replayed);
+        await wakes.ExpectAsync(1);
+    }
 }

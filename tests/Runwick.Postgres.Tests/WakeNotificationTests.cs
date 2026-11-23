@@ -167,6 +167,58 @@ public sealed class WakeNotificationTests
     [Fact]
     [Trait("Category", "Contract")]
     [Trait("Case", "WAKE-01")]
+    public async Task A_staged_delayed_job_notifies_on_commit_only_as_its_lanes_earliest_and_never_on_replay_or_rollback()
+    {
+        // dispatch_v5 (migration 0027): the caller's transaction delivers the notification only if it commits.
+        await using var f = await DriverFixture.StartAsync(Ns("wake_staged"));
+        var c = await f.OpenClient(configure: r => TestJobs.Register(r));
+        await using var listener = await Listener.StartAsync(f);
+        var payload = f.Application + "/default";
+        var now = DateTimeOffset.UtcNow;
+        var first = c.Prepared.Prepare(new PingJob("first"), new DispatchOptions { NotBefore = now.AddMinutes(5) });
+
+        async Task StageAsync(Func<NpgsqlTransaction, Task> stage, bool commit = true)
+        {
+            await using var conn = await OpenBusinessAsync(f);
+            await using var tx = await conn.BeginTransactionAsync();
+            var before = listener.Payloads.Count(p => p == payload);
+            await stage(tx);
+            await listener.PumpAsync(TimeSpan.FromMilliseconds(300));
+            Assert.Equal(before, listener.Payloads.Count(p => p == payload)); // nothing before the caller's COMMIT
+            if (commit)
+            {
+                await tx.CommitAsync();
+            }
+            else
+            {
+                await tx.RollbackAsync();
+            }
+        }
+
+        async Task ExpectAsync(int wakes)
+        {
+            await listener.PumpAsync(TimeSpan.FromSeconds(10), () => listener.Payloads.Count(p => p == payload) >= wakes);
+            await listener.PumpAsync(TimeSpan.FromMilliseconds(500));
+            Assert.Equal(wakes, listener.Payloads.Count(p => p == payload));
+        }
+
+        await StageAsync(tx => Staging(c).StageAsync(c.Prepared.Prepare(new PingJob("rolled-back"), new DispatchOptions { NotBefore = now.AddMinutes(1) }), tx), commit: false);
+        await ExpectAsync(0);
+        await StageAsync(tx => Staging(c).StageAsync(first, tx));
+        await ExpectAsync(1);
+        await StageAsync(tx => Staging(c).StageAsync(first, tx)); // a replay of the committed command
+        await StageAsync(tx => Staging(c).StageAsync(c.Prepared.Prepare(new PingJob("later"), new DispatchOptions { NotBefore = now.AddMinutes(10) }), tx));
+        await ExpectAsync(1);
+        await StageAsync(tx => Staging(c).StageManyAsync([
+            new BatchDispatchItem(new PingJob("behind"), new DispatchOptions { NotBefore = now.AddMinutes(20) }),
+            new BatchDispatchItem(new PingJob("earliest"), new DispatchOptions { NotBefore = now.AddMinutes(2) }),
+        ], tx));
+        await ExpectAsync(2);
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    [Trait("Case", "WAKE-01")]
     public async Task A_delayed_wake_held_up_by_a_busy_background_lane_is_sent_once_the_lane_frees()
     {
         // The jobs queued behind the first delayed job never repeat its hint, so a send skipped for a busy lane must be kept.

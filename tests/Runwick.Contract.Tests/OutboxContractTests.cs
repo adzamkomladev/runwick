@@ -128,4 +128,41 @@ public sealed class OutboxContractTests
         var after = await destination.FindDeliveryAsync(c.Application, delivered.Body.Source, delivered.Body.DeliveryFingerprint, Ct);
         Assert.Equal(prepared.Intent.ProposedJobId, after.Delivery!.JobId);
     }
+
+    [Theory]
+    [MemberData(nameof(Kinds))]
+    [Trait("Case", "WAKE-01")]
+    public async Task A_delivered_delayed_job_wakes_its_queue_only_as_its_lanes_earliest_and_never_on_replay(StoreKind kind)
+    {
+        // 05 §7.2 (2026-11-22): an idle worker's last probe cannot name a delayed job that arrived after it, so the delivery that
+        // makes it the lane's earliest not-yet-due job wakes the queue; one queued behind it, a resend or a redelivery does not.
+        var (f, c) = await OpenAsync(kind, "outwake");
+        await using var _ = f;
+        await using var wakes = await WakeProbe.StartAsync(c);
+        var destination = (IOutboxDestinationStore)c.Driver;
+        var acceptUntil = DateTimeOffset.UtcNow.AddDays(1);
+        var now = DateTimeOffset.UtcNow;
+        StoreCommand<ReceiveOutboxRequest> Delayed(string id, double minutes) => Receive(c,
+            c.Services.GetRequiredService<DispatchPreparer>().Prepare(c.Runtime.StoreId, new PingJob(id), new DispatchOptions { NotBefore = now.AddMinutes(minutes) }),
+            new OutboxSourceIdentity(Guid.NewGuid(), Guid.CreateVersion7()), acceptUntil);
+
+        var first = Delayed("first", 5);
+        Assert.True((await destination.ReceiveOutboxAsync(first, Ct)).Value!.FirstDelivery);
+        await wakes.ExpectAsync(1);
+        Assert.True((await destination.ReceiveOutboxAsync(first, Ct)).Replayed);
+        var redelivery = first with { CommandId = Guid.CreateVersion7() };
+        Assert.False((await destination.ReceiveOutboxAsync(redelivery, Ct)).Value!.FirstDelivery);
+        Assert.Equal(StoreStatus.Applied, (await destination.ReceiveOutboxAsync(Delayed("later", 10), Ct)).Status);
+        await wakes.ExpectAsync(1);
+        Assert.Equal(StoreStatus.Applied, (await destination.ReceiveOutboxAsync(Delayed("earlier", 2), Ct)).Status);
+        await wakes.ExpectAsync(2);
+
+        // Grouped delivery (PostgreSQL): the group's earliest item wakes once, the one queued behind it does not.
+        if (destination is IOutboxGroupDestinationStore grouped)
+        {
+            var group = await grouped.ReceiveOutboxGroupAsync([Delayed("group-behind", 3), Delayed("group-earliest", 1)], Ct);
+            Assert.All(group.Value!.Outcomes, o => Assert.Equal(StoreStatus.Applied, o.Status));
+            await wakes.ExpectAsync(3);
+        }
+    }
 }

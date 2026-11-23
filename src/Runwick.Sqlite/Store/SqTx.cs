@@ -24,6 +24,9 @@ internal sealed class SqTx(SqliteConnection connection, SqliteTransaction? trans
     /// <summary>Decision time: ms floor of the clock read after the write lock (20 §4.1 step 3).</summary>
     public DateTimeOffset Now { get; set; }
 
+    /// <summary>Hints to send once this write transaction has committed (driver-owned runs only; never on replay or rollback).</summary>
+    public List<Action> AfterCommit { get; } = [];
+
     /// <summary>RegisterApplication's gate inserted the application row in this transaction.</summary>
     public bool ApplicationSeeded { get; set; }
 
