@@ -11,20 +11,37 @@ internal sealed partial class PgStore : IReserveAndBeginStore
     public Task<StoreReply<ClaimedJobs>> ReserveAndBeginAsync(StoreCommand<ReserveAndBeginRequest> command, CancellationToken ct)
     {
         var request = command.Body;
-        var contracts = request.SupportedContracts.Distinct().ToArray();
-        if (request.LeaseDuration < MinLease || request.LeaseDuration > MaxLease || contracts.Length is < 1 or > 512
-            || request.MaxJobs is < 1 or > IReserveAndBeginStore.MaxJobs)
+        if (!ValidClaim(request))
         {
             return Task.FromResult(StoreReply<ClaimedJobs>.NoEffect(StoreStatus.InvalidRequest, new StoreError("invalid_request"), time.GetUtcNow()));
         }
 
-        var fingerprint = CommandEnvelopes.Fingerprint(StoreId, command.Application, Operations.ReserveAndBegin, command.CommandId, command.NotAfter,
-            CommandEnvelopes.ReserveAndBegin(request));
-
         // Q, C (up to MaxJobs candidates, SKIP LOCKED), K/S/R across the claimed jobs in lock order, one fresh clock, then
         // runs of plain jobs set-based (rw_claim_plain_v2) and every other job through rw_reserve_job_v1 and rw_begin_job_v1, in
         // candidate order, and one R4 for the command, run in runwick.reserve_and_begin_v3.
-        // One ownership token and one defer jitter per possible job are drawn here and sent with the call.
+        return runner.CallAsync(ClaimOp(command, PgLane.Admission), ClaimArgs(new PgCall("reserve_and_begin_v3"), request),
+            row => row.HasValue ? row.Applied(ReadClaimed(row)) : row.Reject<ClaimedJobs>(),
+            ct);
+    }
+
+    static bool ValidClaim(ReserveAndBeginRequest request) =>
+        request.LeaseDuration >= MinLease && request.LeaseDuration <= MaxLease
+        && request.SupportedContracts.Distinct().Count() is >= 1 and <= 512
+        && request.MaxJobs is >= 1 and <= IReserveAndBeginStore.MaxJobs;
+
+    /// <summary>The claim command's frame: its own ID, deadline and fingerprint.</summary>
+    PgOp ClaimOp(StoreCommand<ReserveAndBeginRequest> command, PgLane lane) =>
+        Op(command.Application, command.CommandId, Operations.ReserveAndBegin, command.NotAfter,
+            CommandEnvelopes.Fingerprint(StoreId, command.Application, Operations.ReserveAndBegin, command.CommandId, command.NotAfter,
+                CommandEnvelopes.ReserveAndBegin(command.Body)), lane);
+
+    /// <summary>
+    /// The claim arguments of reserve_and_begin_v3 (also finish_and_claim_v1). One ownership token and one defer jitter per
+    /// possible job are drawn here and sent with the call.
+    /// </summary>
+    static PgCall ClaimArgs(PgCall call, ReserveAndBeginRequest request)
+    {
+        var contracts = request.SupportedContracts.Distinct().ToArray();
         var tokens = new Guid[request.MaxJobs];
         var jitters = new int[request.MaxJobs];
         for (var i = 0; i < tokens.Length; i++)
@@ -33,19 +50,15 @@ internal sealed partial class PgStore : IReserveAndBeginStore
             jitters[i] = Random.Shared.Next(0, MaxDeferJitterMs + 1);
         }
 
-        return runner.CallAsync(
-            Op(command.Application, command.CommandId, Operations.ReserveAndBegin, command.NotAfter, fingerprint, PgLane.Admission),
-            new PgCall("reserve_and_begin_v3").P("p_queue", request.Queue).P("p_priority", request.Priority)
-                .P("p_after_eligible_at", request.After?.EligibleAt).P("p_after_job_id", request.After?.JobId)
-                .Arr("p_names", [.. contracts.Select(x => x.Name)], NpgsqlDbType.Text)
-                .Arr("p_versions", [.. contracts.Select(x => x.PayloadVersion)], NpgsqlDbType.Integer)
-                .Arr("p_profile_ids", [.. contracts.Select(x => x.SerializerProfileId)], NpgsqlDbType.Text)
-                .Arr("p_profile_versions", [.. contracts.Select(x => x.SerializerProfileVersion)], NpgsqlDbType.Integer)
-                .P("p_lease", request.LeaseDuration).P("p_worker_id", request.WorkerInstanceId)
-                .Arr("p_tokens", tokens, NpgsqlDbType.Uuid)
-                .P("p_min_defer", MinimumDefer).Arr("p_defer_jitters_ms", jitters, NpgsqlDbType.Integer),
-            row => row.HasValue ? row.Applied(ReadClaimed(row)) : row.Reject<ClaimedJobs>(),
-            ct);
+        return call.P("p_queue", request.Queue).P("p_priority", request.Priority)
+            .P("p_after_eligible_at", request.After?.EligibleAt).P("p_after_job_id", request.After?.JobId)
+            .Arr("p_names", [.. contracts.Select(x => x.Name)], NpgsqlDbType.Text)
+            .Arr("p_versions", [.. contracts.Select(x => x.PayloadVersion)], NpgsqlDbType.Integer)
+            .Arr("p_profile_ids", [.. contracts.Select(x => x.SerializerProfileId)], NpgsqlDbType.Text)
+            .Arr("p_profile_versions", [.. contracts.Select(x => x.SerializerProfileVersion)], NpgsqlDbType.Integer)
+            .P("p_lease", request.LeaseDuration).P("p_worker_id", request.WorkerInstanceId)
+            .Arr("p_tokens", tokens, NpgsqlDbType.Uuid)
+            .P("p_min_defer", MinimumDefer).Arr("p_defer_jitters_ms", jitters, NpgsqlDbType.Integer);
     }
 
     /// <summary>Decodes the command's receipt result (applied now or replayed) and the payload rows of the begun jobs.</summary>

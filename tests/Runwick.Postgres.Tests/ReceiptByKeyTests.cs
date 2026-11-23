@@ -35,13 +35,14 @@ public sealed class ReceiptByKeyTests
               AND relname IN ('storage_commands_ownership', 'storage_commands_durable') AND reloptions @> '{fillfactor=70}'
             """);
 
-    /// <summary>Puts back what revision 29 had and 0030 changes: the index, the default fill factor and three function bodies.</summary>
+    /// <summary>Puts back what revision 29 had and 0030 changes: the index, the default fill factor and three function bodies (and drops what later migrations add).</summary>
     static async Task RestoreRevision29ShapeAsync(DriverFixture f)
     {
         var sql = new StringBuilder("""
             CREATE INDEX command_by_id ON runwick.storage_commands (application, command_id);
             ALTER TABLE runwick.storage_commands_ownership RESET (fillfactor);
             ALTER TABLE runwick.storage_commands_durable RESET (fillfactor);
+            DROP FUNCTION runwick.finish_and_claim_v1; -- 0031, after revision 30
 
             """);
         var v30 = PgMigrator.Migrations.Single(m => m.Id == MigrationId).SqlFor(hooks: true);
@@ -97,11 +98,12 @@ public sealed class ReceiptByKeyTests
         Assert.True((await SendAsync(c, p)).Replayed);
 
         // Mark the store as revision 29 (0030 not applied), then upgrade it the way the migrator does.
-        await f.ExecAsync($"DELETE FROM runwick.schema_migrations WHERE migration_id = '{MigrationId}'");
+        var later = PgMigrator.Migrations.Where(m => m.TargetRevision > 29).Select(m => m.Id).ToArray();
+        await f.ExecAsync($"DELETE FROM runwick.schema_migrations WHERE migration_id IN ({string.Join(", ", later.Select(id => "'" + id + "'"))})");
         await f.ExecAsync("UPDATE runwick.store_metadata SET schema_revision = 29");
         var receiptsBefore = await f.CountAsync("SELECT count(*) FROM runwick.storage_commands");
         var result = await new PgMigrator(f.Server.ConnectionStringFor(f.DatabaseName, pooling: false)) { FaultHooks = true }.RunAsync(Ct);
-        Assert.Equal([MigrationId + ":expand", MigrationId + ":validate", MigrationId + ":activate"], result.AppliedPhases);
+        Assert.Equal([.. later.SelectMany(id => new[] { id + ":expand", id + ":validate", id + ":activate" })], result.AppliedPhases);
         Assert.Equal(PgMigrator.CurrentRevision, result.SchemaRevision);
         Assert.Equal((0L, 2L), (await ByIdIndexes(f), await FilledTo70(f)));
         Assert.Equal(receiptsBefore, await f.CountAsync("SELECT count(*) FROM runwick.storage_commands"));

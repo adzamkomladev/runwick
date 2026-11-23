@@ -2437,6 +2437,18 @@ runwick.UsePostgres(connectionString, o => o.GroupProducerAdmission = true);
 
 It helps when many callers dispatch at once from one process, more than its producer slots. It is off by default while it is being measured.
 
+### Combined finish and claim
+
+`o.UseCombinedFinishClaim()` on the worker (see [Configuration](/docs/configuration)) works with PostgreSQL too, from schema revision 31. When a worker finishes jobs and already knows that more work is waiting, it saves the results and claims the same number of new jobs in one transaction, so a finished job and its replacement share one round trip and one commit instead of two.
+
+- Each finished job keeps its own finish record and the claim keeps its own record, so re-sending any of them works exactly as without the option.
+- The finishes are saved first. If a finished job frees a concurrency slot, the claim in the same transaction can use it.
+- If no job is waiting, the queue is paused or every waiting job is blocked by a concurrency limit, the finishes are still saved and nothing is claimed.
+- If the call fails or its reply is lost, each finish and the claim are confirmed one by one by their own IDs.
+- Jobs with concurrency or rate scopes can make two such transactions wait on each other more often. PostgreSQL then cancels one, and Runwick retries it with the same IDs.
+
+It is off by default.
+
 ### Connections
 
 Runwick keeps separate connection pools for lease work (claim, renew, finish) and for everything else, so a burst of dispatches cannot starve lease renewals. With default settings, plan for about 23 connections per worker process: 8 for lease work, 14 for other work and 1 for the listener described below. A process that only dispatches opens no lease-work pool. Raising `ProducerOptions.MaxConcurrentCalls` adds the same number of connections. Add your own business connections on top when you size `max_connections`.
@@ -4499,6 +4511,8 @@ On PostgreSQL, the step to schema revision 28 rebuilds one retention index and c
 
 The step to schema revision 30 drops one receipt index and leaves 30% of each new receipt-table page free, so updating a receipt writes less to the WAL. Nothing is rewritten and the lock is brief; the receipt tables use about 14% more space, and stored receipts replay as before.
 
+The step to schema revision 31 only adds one database function, used by the opt-in combined finish and claim. No table or index changes.
+
 </Step>
 <Step title="Reopen">
 
@@ -4801,7 +4815,7 @@ Set with `runwick.AddWorker(w => w.Configure(o => ...))`. Most apps never touch 
 
 **Buffered finish.** `o.UseBufferedFinish()` inside `Configure` lets a worker start the next job as soon as the previous handler returns, instead of waiting for the database to confirm that the previous job finished. Finishes wait in a bounded buffer (256 jobs or 4 MiB, by default) and go to the store together about every 25 ms. A job keeps its lease, its concurrency and rate permits until the store has accepted its finish. If a worker is killed while finishes are still in memory, those jobs run again once their leases expire, so handlers must be safe to run twice. A normal shutdown sends the buffer first. When the buffer is full, slots are held until finishes settle, as without the option. Use it when the finish round trip, not the handler, limits how many jobs a worker completes. In our runs at a steady 100 jobs per second it kept PostgreSQL and SQLite workers from building a backlog (PostgreSQL pickup p99 fell from about 24 s to under 4 s on a busy host; SQLite stayed under 2 s); with Redis it made no difference, so leave it off there.
 
-**Combined finish and claim.** `o.UseCombinedFinishClaim()` inside `Configure` lets a worker send a finished job's result and the claim of its replacement in one call to the store, instead of two. It is available with Redis; with other stores the option does nothing and the worker finishes and claims separately. Every job still has its own finish record and its own claim record, and nothing is held in memory, so a crash loses nothing it would not lose without the option. The combined call is used only when the worker already knows from a recent check that exactly one queue and priority has work; otherwise it finishes and claims separately, as before. If the call fails or its reply is lost, each finish and the claim are confirmed one by one by their own IDs. Use it when each Redis call waits for the disk (appendfsync always) and a worker's throughput is limited by the number of calls.
+**Combined finish and claim.** `o.UseCombinedFinishClaim()` inside `Configure` lets a worker send a finished job's result and the claim of its replacement in one call to the store, instead of two. It is available with Redis and PostgreSQL; with SQLite the option does nothing and the worker finishes and claims separately. Every job still has its own finish record and its own claim record, and nothing is held in memory, so a crash loses nothing it would not lose without the option. The combined call is used only when the worker already knows from a recent check that exactly one queue and priority has work; otherwise it finishes and claims separately, as before. If the call fails or its reply is lost, each finish and the claim are confirmed one by one by their own IDs. Use it when each Redis call waits for the disk (appendfsync always), or each PostgreSQL commit waits for the disk, and a worker's throughput is limited by the number of calls.
 
 **Claims in flight.** `o.ClaimsInFlight = 2` inside `Configure` lets a pool ask the store for more jobs while its previous request for jobs is still waiting for an answer. Each request only asks for slots that are free, so a worker never holds more jobs than its concurrency. A request sent next to another one must fill at least a share of the pool's slots (half of them at 2, a quarter at 4), because many small requests cost the store more than they save. The overlap is used only when one queue and priority has work; with several, the worker still asks for each job in turn, so queue weights and priorities work as before. In our measurements at 16 slots, 2 in flight drained about 1.2 to 1.3 times as fast with Redis and buffered finish, and about 1.1 times as fast with PostgreSQL (4 in flight: about 1.13). SQLite did not gain at 2 and got slower at 4, because it has one writer and the requests wait for each other. The default stays 1. Try 2 when a worker on Redis or PostgreSQL spends its time waiting for claims rather than running handlers, and measure the pickup delay of delayed jobs if that matters to you.
 

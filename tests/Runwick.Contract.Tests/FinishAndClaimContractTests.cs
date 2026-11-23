@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Runwick.Harness.Engine;
 using Runwick.Harness.Store;
+using Runwick.Postgres.Store;
 using Runwick.Protocol;
 using Runwick.Redis.Store;
 using static Runwick.Contract.Tests.Cx;
@@ -9,8 +10,8 @@ namespace Runwick.Contract.Tests;
 
 /// <summary>
 /// Combined finish and claim (05 §12.7) in the worker: with the option on, every job still settles exactly once with one Finish receipt on every
-/// store (stores without the call keep finishing and claiming separately); on Redis the call is used, and a refused or lost call falls back to
-/// resolving each command by its own ID.
+/// store (stores without the call keep finishing and claiming separately); on Redis and PostgreSQL the call is used, and a refused or lost call
+/// falls back to resolving each command by its own ID.
 /// </summary>
 [Trait("Category", "Contract")]
 [Trait("Item", "PF2-F")]
@@ -19,11 +20,16 @@ public sealed class FinishAndClaimContractTests
 {
     public static TheoryData<StoreKind> Kinds => CoreContractTests.Kinds;
 
+    /// <summary>The stores that offer the combined call, among those this run tests.</summary>
+    public static TheoryData<StoreKind> CombinedKinds => [.. CoreContractTests.Kinds.Select(k => k.Data).Where(Combined)];
+
+    static bool Combined(StoreKind kind) => kind is StoreKind.Redis or StoreKind.Postgres;
+
     static WorkerHost Host(DriverFixture f, int concurrency, Action<BatchStoreDouble>? made = null) =>
         WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults, concurrency, options: o => o.UseCombinedFinishClaim(),
             overrides: made is null ? null : s => s.AddSingleton<IRunwickStore>(sp =>
             {
-                var store = new BatchStoreDouble(sp.GetRequiredService<RedisStore>());
+                var store = new BatchStoreDouble(f.Kind == StoreKind.Postgres ? sp.GetRequiredService<PgStore>() : sp.GetRequiredService<RedisStore>());
                 made(store);
                 return store;
             }));
@@ -49,7 +55,7 @@ public sealed class FinishAndClaimContractTests
         Assert.Equal(80, await FinishReceipts(f));
         Assert.Empty(await History(f));
         Assert.DoesNotContain(w.Engine.Health().Diagnostics, d => d.Contains("unconfirmed outcome", StringComparison.Ordinal));
-        if (kind == StoreKind.Redis)
+        if (Combined(kind))
         {
             Assert.True(w.Engine.Completion.CombinedCalls > 0, "the combined call was never used");
         }
@@ -59,11 +65,12 @@ public sealed class FinishAndClaimContractTests
         }
     }
 
-    [Fact]
+    [Theory]
+    [MemberData(nameof(CombinedKinds))]
     [Trait("Case", "FC-11")]
-    public async Task A_refused_call_stops_the_option_and_separate_calls_finish_everything()
+    public async Task A_refused_call_stops_the_option_and_separate_calls_finish_everything(StoreKind kind)
     {
-        await using var f = await DriverFixture.StartAsync(Ns("fc11"), StoreKind.Redis);
+        await using var f = await DriverFixture.StartAsync(Ns("fc11"), kind);
         await using var w = Host(f, 4, s => s.Refused.Add("FinishAndClaim"));
         await DispatchAsync(w, 40);
         await w.StartAsync();
@@ -74,11 +81,12 @@ public sealed class FinishAndClaimContractTests
         Assert.True(w.Engine.Completion.CombinedFallbacks >= 1);
     }
 
-    [Fact]
+    [Theory]
+    [MemberData(nameof(CombinedKinds))]
     [Trait("Case", "FC-12")]
-    public async Task A_lost_reply_resolves_each_command_by_its_own_id_and_nothing_runs_twice()
+    public async Task A_lost_reply_resolves_each_command_by_its_own_id_and_nothing_runs_twice(StoreKind kind)
     {
-        await using var f = await DriverFixture.StartAsync(Ns("fc12"), StoreKind.Redis);
+        await using var f = await DriverFixture.StartAsync(Ns("fc12"), kind);
         BatchStoreDouble? store = null;
         await using var w = Host(f, 4, s =>
         {

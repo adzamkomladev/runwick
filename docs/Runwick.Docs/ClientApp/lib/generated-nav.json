@@ -734,6 +734,11 @@
           "depth": 3
         },
         {
+          "id": "combined-finish-and-claim",
+          "text": "Combined finish and claim",
+          "depth": 3
+        },
+        {
           "id": "connections",
           "text": "Connections",
           "depth": 3

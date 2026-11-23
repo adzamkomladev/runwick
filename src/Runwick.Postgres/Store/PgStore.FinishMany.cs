@@ -18,10 +18,7 @@ internal sealed partial class PgStore : IFinishManyStore
     public Task<StoreReply<FinishedMany>> FinishManyAsync(StoreCommand<FinishManyRequest> command, CancellationToken ct)
     {
         var items = command.Body.Items;
-        if (items.Count is 0 or > IFinishManyStore.MaxItems
-            || items.Any(i => i.Application != command.Application || i.Body.RequestedRetryDelay < TimeSpan.Zero)
-            || items.Select(i => i.CommandId).Distinct().Count() != items.Count
-            || items.Select(i => i.Body.Lease.JobId).Distinct().Count() != items.Count)
+        if (items.Count is 0 or > IFinishManyStore.MaxItems || !ValidFinishes(items, command.Application))
         {
             return Task.FromResult(StoreReply<FinishedMany>.NoEffect(StoreStatus.InvalidRequest, new StoreError("invalid_request"), time.GetUtcNow()));
         }
@@ -29,30 +26,42 @@ internal sealed partial class PgStore : IFinishManyStore
         // Gates; each item's receipt (R1-R3) in command-ID order; J (UUID order), K (terminal plans), S (UUID order); one
         // fresh clock; then runs of plain succeeded items set-based (rw_finish_plain_v1) and every other item through
         // rw_finish_job_v1 and its own R4, in request order, run in runwick.finish_many_v2.
+        return runner.CallAsync(
+            Op(command.Application, command.CommandId, Operations.FinishMany, command.NotAfter, null, PgLane.Settlement),
+            FinishArgs(new PgCall("finish_many_v3"), items, "p_tokens"),
+            row => row.HasValue ? new StoreReply<FinishedMany>(StoreStatus.Applied, StoreEffect.Applied, false, ReadFinishedMany(row), null, row.Decided)
+                : row.Reject<FinishedMany>(),
+            ct);
+    }
+
+    /// <summary>Finish/1 validation of each item, plus distinct command IDs and distinct jobs across the items.</summary>
+    static bool ValidFinishes(IReadOnlyList<StoreCommand<FinishRequest>> items, string application) =>
+        !items.Any(i => i.Application != application || i.Body.RequestedRetryDelay < TimeSpan.Zero)
+        && items.Select(i => i.CommandId).Distinct().Count() == items.Count
+        && items.Select(i => i.Body.Lease.JobId).Distinct().Count() == items.Count;
+
+    /// <summary>The per-item arguments of finish_many_v3 (also finish_and_claim_v1, where the lease tokens are named <paramref name="tokens"/>).</summary>
+    PgCall FinishArgs(PgCall call, IReadOnlyList<StoreCommand<FinishRequest>> items, string tokens)
+    {
         var fingerprints = items.Select(i => CommandEnvelopes.Fingerprint(StoreId, i.Application, Operations.Finish, i.CommandId, i.NotAfter,
             CommandEnvelopes.Finish(i.Body))).ToArray();
         var entropy = new long[items.Count];
         System.Security.Cryptography.RandomNumberGenerator.Fill(System.Runtime.InteropServices.MemoryMarshal.AsBytes(entropy.AsSpan()));
-        return runner.CallAsync(
-            Op(command.Application, command.CommandId, Operations.FinishMany, command.NotAfter, null, PgLane.Settlement),
-            new PgCall("finish_many_v3")
-                .Arr("p_command_ids", [.. items.Select(i => i.CommandId)], NpgsqlDbType.Uuid)
-                .Arr("p_not_afters", [.. items.Select(i => PgTime.Floor(i.NotAfter).UtcDateTime)], NpgsqlDbType.TimestampTz)
-                .Arr("p_fingerprints", fingerprints, NpgsqlDbType.Bytea)
-                .Arr("p_job_ids", [.. items.Select(i => i.Body.Lease.JobId)], NpgsqlDbType.Uuid)
-                .Arr("p_attempt_ids", [.. items.Select(i => i.Body.Lease.AttemptId)], NpgsqlDbType.Uuid)
-                .Arr("p_worker_ids", [.. items.Select(i => i.Body.Lease.WorkerInstanceId)], NpgsqlDbType.Uuid)
-                .Arr("p_tokens", [.. items.Select(i => i.Body.Lease.OwnershipToken)], NpgsqlDbType.Uuid)
-                .Arr("p_generations", [.. items.Select(i => i.Body.Lease.Generation)], NpgsqlDbType.Integer)
-                .Arr("p_outcomes", [.. items.Select(i => Snake(i.Body.Outcome))], NpgsqlDbType.Text)
-                .Arr("p_elapsed_ms", [.. items.Select(i => (long)Math.Max(0, i.Body.ExecutionElapsed.TotalMilliseconds))], NpgsqlDbType.Bigint)
-                .Arr("p_requested_delays_ms", [.. items.Select(i => i.Body.RequestedRetryDelay is { } d ? (long?)Math.Max(1, CeilMs(d)) : null)], NpgsqlDbType.Bigint)
-                .Arr("p_errors", [.. items.Select(i => ErrorJson(i.Body.Error)?.ToJsonString())], NpgsqlDbType.Jsonb)
-                .Arr("p_entropies", entropy, NpgsqlDbType.Bigint)
-                .Arr("p_usages", [.. items.Select(i => i.Body.Usage is { } u ? ResourceUsageJson.Write(u) : null)], NpgsqlDbType.Jsonb),
-            row => row.HasValue ? new StoreReply<FinishedMany>(StoreStatus.Applied, StoreEffect.Applied, false, ReadFinishedMany(row), null, row.Decided)
-                : row.Reject<FinishedMany>(),
-            ct);
+        return call
+            .Arr("p_command_ids", [.. items.Select(i => i.CommandId)], NpgsqlDbType.Uuid)
+            .Arr("p_not_afters", [.. items.Select(i => PgTime.Floor(i.NotAfter).UtcDateTime)], NpgsqlDbType.TimestampTz)
+            .Arr("p_fingerprints", fingerprints, NpgsqlDbType.Bytea)
+            .Arr("p_job_ids", [.. items.Select(i => i.Body.Lease.JobId)], NpgsqlDbType.Uuid)
+            .Arr("p_attempt_ids", [.. items.Select(i => i.Body.Lease.AttemptId)], NpgsqlDbType.Uuid)
+            .Arr("p_worker_ids", [.. items.Select(i => i.Body.Lease.WorkerInstanceId)], NpgsqlDbType.Uuid)
+            .Arr(tokens, [.. items.Select(i => i.Body.Lease.OwnershipToken)], NpgsqlDbType.Uuid)
+            .Arr("p_generations", [.. items.Select(i => i.Body.Lease.Generation)], NpgsqlDbType.Integer)
+            .Arr("p_outcomes", [.. items.Select(i => Snake(i.Body.Outcome))], NpgsqlDbType.Text)
+            .Arr("p_elapsed_ms", [.. items.Select(i => (long)Math.Max(0, i.Body.ExecutionElapsed.TotalMilliseconds))], NpgsqlDbType.Bigint)
+            .Arr("p_requested_delays_ms", [.. items.Select(i => i.Body.RequestedRetryDelay is { } d ? (long?)Math.Max(1, CeilMs(d)) : null)], NpgsqlDbType.Bigint)
+            .Arr("p_errors", [.. items.Select(i => ErrorJson(i.Body.Error)?.ToJsonString())], NpgsqlDbType.Jsonb)
+            .Arr("p_entropies", entropy, NpgsqlDbType.Bigint)
+            .Arr("p_usages", [.. items.Select(i => i.Body.Usage is { } u ? ResourceUsageJson.Write(u) : null)], NpgsqlDbType.Jsonb);
     }
 
     /// <summary>One <see cref="StoreReply{FinishedAttempt}"/> per item, exactly as <see cref="MapFinished"/> reads a Finish/1 row.</summary>
@@ -69,8 +78,14 @@ internal sealed partial class PgStore : IFinishManyStore
             result = JsonNode.Parse(utf8)!.AsObject();
         }
 
+        return ReadFinishItems(result!["items"]!.AsArray());
+    }
+
+    /// <summary>FinishMany/1 items (JSON) as one Finish/1 reply each.</summary>
+    static FinishedMany ReadFinishItems(JsonArray items)
+    {
         var outcomes = new List<StoreReply<FinishedAttempt>>();
-        foreach (var node in result!["items"]!.AsArray())
+        foreach (var node in items)
         {
             var item = node!.AsObject();
             var status = Enum.Parse<StoreStatus>(item["status"]!.GetValue<string>());

@@ -62,6 +62,8 @@ On PostgreSQL, the step to schema revision 28 rebuilds one retention index and c
 
 The step to schema revision 30 drops one receipt index and leaves 30% of each new receipt-table page free, so updating a receipt writes less to the WAL. Nothing is rewritten and the lock is brief; the receipt tables use about 14% more space, and stored receipts replay as before.
 
+The step to schema revision 31 only adds one database function, used by the opt-in combined finish and claim. No table or index changes.
+
 </Step>
 <Step title="Reopen">
 

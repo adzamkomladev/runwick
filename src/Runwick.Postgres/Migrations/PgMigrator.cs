@@ -199,6 +199,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         new("0028_jobs_index_diet", LoadSql("0028_jobs_index_diet.sql"), 28),
         new("0029_dispatch_group", LoadSql("0029_dispatch_group.sql"), 29),
         new("0030_receipt_by_key", LoadSql("0030_receipt_by_key.sql"), 30),
+        new("0031_finish_and_claim", LoadSql("0031_finish_and_claim.sql"), 31),
     ];
 
     /// <summary>The schema revision this binary writes to (03 §10.1): the last migration's target.</summary>
