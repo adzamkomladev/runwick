@@ -177,6 +177,36 @@ internal interface IJobDispatchStore
     Task<ReceiptResolution> ResolveOperationAsync(string application, Guid commandId, DateTimeOffset notAfterBound, CancellationToken ct);
 }
 
+/// <summary>One grouped command's outcome: the reply Dispatch/1 would give it, or the failure its caller should see.</summary>
+internal readonly record struct GroupedDispatchReply(StoreReply<DispatchResult>? Reply, Exception? Failure);
+
+/// <summary>
+/// Optional grouped producer admission (PF2-B1, opt-in per driver). Several plain Dispatch/1 commands from callers that were
+/// already waiting for a producer slot are sent in one transaction. Every command keeps its own ID, fingerprint, deadline,
+/// receipt and reply. The driver answers each command as Dispatch/1 would: a group that commits nothing is retried command by
+/// command under the original identities; a lost COMMIT reply is outcome unknown for each command under its own ID.
+/// </summary>
+internal interface IGroupedDispatchStore : IJobDispatchStore
+{
+    /// <summary>The most commands one group carries.</summary>
+    const int MaxGroupItems = 8;
+
+    /// <summary>The most retained bytes one group carries, counting each payload plus <see cref="ItemOverhead"/>.</summary>
+    const long MaxGroupBytes = 2 * 1024 * 1024;
+
+    /// <summary>Per-command allowance for headers, fingerprints and policy beyond the payload.</summary>
+    const int ItemOverhead = 2048;
+
+    /// <summary>True when grouping is switched on for this store.</summary>
+    bool GroupsDispatch { get; }
+
+    /// <summary>True when the command has the one shape a group carries (no uniqueness key, scope, rate or schedule).</summary>
+    bool CanGroup(StoreCommand<DispatchRequest> command);
+
+    /// <summary>One outcome per command, in order. Never throws for one command's failure.</summary>
+    Task<GroupedDispatchReply[]> DispatchGroupAsync(IReadOnlyList<StoreCommand<DispatchRequest>> commands, CancellationToken ct);
+}
+
 // ---- 3.3 reservation
 
 internal sealed record ReserveRequest(

@@ -817,6 +817,8 @@ The payload is serialized with `runwick.json` v1 (02-serialization-and-wire) int
 
 Producer/admin mutations pass a bounded local admission gate before any storage command is sent (budgets in 06-defaults: 8 concurrent calls by default, `MaxConcurrentCalls`, at most 64 waiting operations, 1 s admission wait, or the caller's earlier cancellation). When the gate rejects, the call throws `LocalCapacityExceededException` with stable code **`local_capacity_exceeded`** and disposition known-not-submitted (`ErrorDisposition.KnownNotApplied`): no storage command was sent and no `DispatchReceipt` exists. It is never reported as a durable queue rejection or an unknown commit.
 
+A store may offer grouped producer admission (PostgreSQL `GroupProducerAdmission`, 04 Changes 2026-11-23). Then a plain single dispatch that has to wait for a slot may be carried, when a slot frees, by another waiting caller's transaction of up to 8 commands. The bounds above are unchanged; a dispatch that finds a slot free is sent at once; each command keeps its own operation ID, receipt and result; a caller cancelled before its command was taken sends nothing, and one cancelled after gets `DispatchCanceledAfterSendException`.
+
 - The convenience dispatcher acquires admission **before** preparing, so a rejected call allocates no envelope; its exception carries no prepared request.
 - `IPreparedJobDispatcher.DispatchAsync(prepared)` keeps the caller's envelope; the exception references it and the caller may retry the same prepared request later.
 - A batch counts as one operation holding one envelope.

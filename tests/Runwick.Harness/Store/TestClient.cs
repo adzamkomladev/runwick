@@ -18,7 +18,8 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
 {
     /// <summary>Builds a client over <c>AddRunwick(...).UsePostgres(...)</c> with the given fault injector.</summary>
     internal static async Task<TestClient> CreateAsync(string connectionString, string application, IFaultInjector faults,
-        Action<RunwickBuilder>? configure = null, TimeProvider? time = null, bool ensureReady = true)
+        Action<RunwickBuilder>? configure = null, TimeProvider? time = null, bool ensureReady = true,
+        Action<Runwick.Postgres.PostgresOptions>? postgres = null)
     {
         var services = new ServiceCollection();
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
@@ -41,7 +42,7 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
             }
             else
             {
-                r.UsePostgres(connectionString);
+                r.UsePostgres(connectionString, postgres);
             }
 
             configure?.Invoke(r);

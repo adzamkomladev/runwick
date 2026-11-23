@@ -238,7 +238,8 @@ internal static class BenchMode
                 MaxPoolSize = Math.Max(100, workers + 16),
                 Options = a.Has("trace") ? "-c track_functions=all" : null, // --trace: per-function server time in pg_stat_user_functions
             }.ConnectionString;
-            useStore = r => r.UsePostgres(storeCs);
+            // --pg-group: grouped producer admission (PF2-B1); it only groups callers beyond the producer slots (--producer-calls).
+            useStore = r => r.UsePostgres(storeCs, o => o.GroupProducerAdmission = a.Has("pg-group"));
         }
 
         var sc = new ServiceCollection();
@@ -255,7 +256,8 @@ internal static class BenchMode
             useStore(r);
             LoadRegistration.Register(r, typeCeiling: null);
             r.AddHandler<LoadJob, LoadHandler>();
-            r.Producer(o => o.MaxConcurrentCalls = Math.Max(2, calls));
+            // --producer-calls n: producer slots (connections) independent of the caller count; default one per caller.
+            r.Producer(o => o.MaxConcurrentCalls = a.OptInt("producer-calls") ?? Math.Max(2, calls));
             r.AddWorker(w => w.MaxOutstandingAttempts(workers).Pool("main", p => p.Queues(LoadRegistration.Queue).FixedConcurrency(workers))
                 .Configure(o =>
                 {
@@ -462,6 +464,15 @@ internal static class BenchMode
                 ["p95"] = Math.Round(es.P95Ms, 2),
                 ["p99"] = Math.Round(es.P99Ms, 2),
             };
+            result["producerCalls"] = a.OptInt("producer-calls") ?? Math.Max(2, calls);
+            if (driver is Runwick.Postgres.Store.PgStore { GroupsDispatch: true } grouped)
+            {
+                result["pgGroup"] = new JsonObject
+                {
+                    ["groups"] = grouped.DispatchGroups, ["groupedCommands"] = grouped.GroupedDispatches, ["fallbacks"] = grouped.GroupFallbacks,
+                    ["meanGroupSize"] = grouped.DispatchGroups == 0 ? 0 : Math.Round((double)grouped.GroupedDispatches / grouped.DispatchGroups, 2),
+                };
+            }
 
             Task EnqueueAsync(int count, LatencyReservoir? timings)
             {

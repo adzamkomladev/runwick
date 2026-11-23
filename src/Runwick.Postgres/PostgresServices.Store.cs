@@ -21,7 +21,8 @@ internal static partial class PostgresServices
         services.AddSingleton(sp => new PgRunner(
             sp.GetRequiredService<PgDataSources>(), sp.GetRequiredService<IFaultInjector>(), sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton(sp => new PgStore(
-            sp.GetRequiredService<PgDataSources>(), sp.GetRequiredService<PgRunner>(), sp.GetRequiredService<TimeProvider>()));
+            sp.GetRequiredService<PgDataSources>(), sp.GetRequiredService<PgRunner>(), sp.GetRequiredService<TimeProvider>(),
+            sp.GetRequiredService<PostgresStoreRegistration>().Options));
         services.AddSingleton<IRunwickStore>(sp => sp.GetRequiredService<PgStore>());
         services.AddSingleton<IJobControlStore>(sp => sp.GetRequiredService<PgStore>());
         services.AddSingleton<IRateControlStore>(sp => sp.GetRequiredService<PgStore>());
