@@ -1886,7 +1886,29 @@ Findings:
   - In the second part, the counter of frames copied back stayed at 0 in every sample while the log sat at its ceiling. The log did not keep growing, so it was probably being reset between samples, but this run does not prove that.
 - **The crash check is weaker than it looks.**
   - The reconciliation counts 0 accepted jobs that crossed a crash, so neither kill landed on a job the ledgers saw as started but not finished.
-  - "Nothing lost across a crash" is therefore shown for jobs queued at the kill, not for jobs mid-run. Making the kill land mid-handler (a longer handler or a kill timed on a started job) would close that.
+  - "Nothing lost across a crash" is therefore shown for jobs queued at the kill, not for jobs mid-run. Making the kill land mid-handler (a longer handler or a kill timed on a started job) would close that. The rerun below does.
+
+### Rerun with kills that land mid-job (2026-11-23)
+
+Why the first run's kills never caught a job: after a crash segment stopped offering, it waited for the outbox stager and sampler and built its result before killing itself. In those seconds the workers finished every queued job.
+
+The harness change (commit 2ca469d) makes a crash segment keep offering until the moment it dies. The run also used `--job-ms 50`, so each handler takes 50 ms and some jobs are inside their handler at the kill. Everything else matched the first run: 18 minutes, 100 offers/s, cleanup, viewers, schedule, outbox, two kills. Load was 4.2 at the start and 5.4 at the end. Output is in `artifacts/perf/round-two/sqlite-q67-midjob/`.
+
+A 40-second smoke run came first: 5 accepted jobs crossed a crash, and all of them ran again after the restart.
+
+It also showed 2 store jobs without a producer receipt. That is now expected: the kill can land while a dispatch call is in flight, after the store has committed the job but before the reply reaches the producer. Both jobs ran and succeeded. Only receipt-less jobs that did *not* succeed would be a fault.
+
+Full run:
+- **Nothing lost.** 25 accepted jobs crossed a crash. Every accepted job is in the store and succeeded, every finish was confirmed to its worker, and nothing was unfinished after the final drain.
+- **Reruns.** 11 jobs ran more than once, and every rerun is explained by a crash (the earlier run started in a killed segment that never confirmed its finish). 18 store rows have an execution count above one: these include starts that the killed process never got to write in its ledger.
+- **Side work.** The outbox delivered all 10,800 messages it staged, and the schedule finished 1,127 jobs.
+- **Throughput and refusals.** 94.8 durable completions/s, a little higher than the first run. 2.3% of offers were refused (`local_capacity_exceeded`), against 5.6%. There were 0 busy conflicts.
+- **Pickup has a long tail.** Offer to pickup p50 was 0.42 s and p99 11.1 s, against 4.1 s in the first run.
+  - Per segment, pickup p99 was 3.5 s, 4.4 s and 11.2 s, and the last segment's median was 5.3 s.
+  - The ledgers show the delay comes in waves. Every few minutes, offers and completions both drop to a quarter or half of normal for 10 to 30 seconds. The backlog that builds up then drains slowly, because completions only rise to about 125/s during catch-up.
+  - The job-path store calls are not the cause: in the last segment, dispatch waited 0.46 s p99 for the writer and reserve 0.21 s. Cleanup batches waited 4.8 s, schedule materialization 3.9 s and presence publishing 2.5 s.
+  - The WAL stayed small and SQLite never reported busy.
+  - The cause of the stalls is not found yet. Candidates are a whole-process pause (garbage collection or the host), the dashboard reads, or catch-up limited by something other than the writer queue.
 
 ## Redis: delayed jobs picked up seconds late (fixed)
 
