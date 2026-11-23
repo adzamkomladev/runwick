@@ -205,6 +205,13 @@ function L.event(kind, job, attempt, details)
   EV[#EV + 1] = { kind, job, attempt, details }
 end
 
+-- A claim's attempt_reserved and attempt_started events (two event ids), given as the folded '~rs' line U.flush_events writes for
+-- them, so the pack needs no JSON details and no parsing back. gen, rnum and xnum are decimal digits.
+function L.event_rs(job, attempt, gen, rnum, xnum)
+  EV[#EV + 1] = { rs = '~rs|' .. job .. '|' .. attempt .. '||0|' .. gen .. ',' .. rnum .. ',' .. xnum }
+  EV[#EV + 1] = false
+end
+
 -- ------------------------------------------------------------------ texts shared with jobs.lua (same functions, same bytes)
 
 function L.claim_text(ordinal, v, b)
@@ -323,11 +330,14 @@ function L.commit(m, reply)
     while i <= #EV do
       local e, f = EV[i], EV[i + 1]
       local g, n, x, g2
-      if e[1] == 'attempt_reserved' and f and f[1] == 'attempt_started' and f[2] == e[2] and f[3] == e[3] then
+      if not e.rs and e[1] == 'attempt_reserved' and f and f[1] == 'attempt_started' and f[2] == e[2] and f[3] == e[3] then
         g, n = string.match(e[4], '^{"generation":(%d+),"reservationNumber":(%d+)}$')
         x, g2 = string.match(f[4], '^{"executionNumber":(%d+),"generation":(%d+)}$')
       end
-      if g and x and g == g2 then
+      if e.rs then
+        parts[#parts + 1] = e.rs
+        i = i + 2
+      elseif g and x and g == g2 then
         parts[#parts + 1] = '~rs|' .. e[2] .. '|' .. e[3] .. '||0|' .. g .. ',' .. n .. ',' .. x
         i = i + 2
       else
@@ -349,8 +359,19 @@ function L.commit(m, reply)
   local intent = { id = CMD, op = OP, rev = L.inc(m.rev or '0'), decided = NOWS, ops = ops, reply = reply }
   writes = writes + 1 -- the guard's place, as in U.run
   local ok, err = pcall(function()
-    for i = 1, #ops do apply(ops[i]) end
-    w('HSET', META, 'rev', intent.rev)
+    -- The event pack's meta op (nextevent, always the last op) goes out with the revision as one HSET.
+    local n, last = #ops, ops[#ops]
+    if last and last[1] == 'H' and last[2] == 'meta' then n = n - 1 else last = nil end
+    for i = 1, n do apply(ops[i]) end
+    if last then
+      local a = { 'HSET', META }
+      for i = 3, #last do a[#a + 1] = last[i] end
+      a[#a + 1] = 'rev'
+      a[#a + 1] = intent.rev
+      w(unpack(a))
+    else
+      w('HSET', META, 'rev', intent.rev)
+    end
     wake(ops)
   end)
   if not ok then
@@ -470,12 +491,13 @@ function L.finish_write(p)
   L.jw(j, 'rev', p.rev)
   L.jw(j, 'updated', NOWS)
   L.jw(j, 'state', state)
-  -- U.set_state from running
+  -- U.set_state from running. A running job is in no ready set and not in idx:terminal (every state change goes through
+  -- U.set_state), so the generic path's removals from those change nothing and are not sent.
   L.zrem('idx:created:s:' .. old, id)
   L.zadd('idx:created:s:' .. state, j.created, id)
-  if state == 'retrying' then L.zadd('ready:' .. j.queue .. ':' .. j.priority, j.eligible, id) else L.zrem('ready:' .. j.queue .. ':' .. j.priority, id) end
+  if state == 'retrying' then L.zadd('ready:' .. j.queue .. ':' .. j.priority, j.eligible, id) end
   L.zrem('leases', id)
-  if terminal then L.zadd('idx:terminal', NOWS, id) else L.zrem('idx:terminal', id) end
+  if terminal then L.zadd('idx:terminal', NOWS, id) end
   if terminal and j.akey then
     local f = j.name .. '\0' .. j.akey
     if redis.call('HGET', P .. 'keys:active', f) == id then L.hdel('keys:active', f) end
