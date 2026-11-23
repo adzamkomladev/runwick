@@ -1,6 +1,6 @@
 # Round two performance handoff
 
-Updated 2026-11-15 UTC. Start here when resuming in a new model or session. Keep this file current after each result, decision, failed run, or change to the work queue. Keep detailed results in the report and raw evidence in the artifact directory.
+Updated 2026-11-23 UTC. Start here when resuming in a new model or session. Keep this file current after each result, decision, failed run, or change to the work queue. Keep detailed results in the report and raw evidence in the artifact directory.
 
 - Scope and acceptance gates: [perf-plan-2.md](perf-plan-2.md).
 - Remaining implementation and qualification: [perf-plan-2-remaining.md](perf-plan-2-remaining.md).
@@ -9,7 +9,31 @@ Updated 2026-11-15 UTC. Start here when resuming in a new model or session. Keep
 - Detailed chronological checkpoint and raw logs on the current host: `artifacts/perf/round-two/resume.md` and its neighboring experiment directories. Git ignores these artifacts. Preserve or copy them separately if moving hosts.
 - Workspace: `/root/work/Spindle`, local `main`. Preserve the pre-existing untracked cloud plan and cloud report. No remote publication or deployment requested.
 
-## Current state
+## Update 2026-11-23
+
+Main now includes all of the following. The full test suites passed on the merge before the push; see the report for the numbers.
+
+- **Claims in flight:** an opt-in setting with values 1 to 4.
+- **Redis:** lean worker scripts and stored-data layout revision 2.
+- **Delayed wake:** delayed jobs from staging, the outbox, management and schedules now wake idle workers (PostgreSQL migration 0027).
+- **Q6/Q7 combined SQLite run:** nothing was lost or run twice across two hard kills.
+- **Redis Sentinel and Cluster:** the remaining gaps are closed, including a security fix for a wrong password that logged in silently.
+- **Redis test fixture race:** fixed.
+- **PostgreSQL `jobs` index diet:** migration 0028. Paired drains ran a median 1.10 times as fast, with about 10% less WAL per job.
+- **B1 redesigned:** grouped producer admission is opt-in, with migration 0029. It gives 1.5 times the throughput at 16 callers and 2.2 times at 32.
+- **SQLite outbox:** delivered marks are batched, giving 1.6 to 3.3 times the delivery rate.
+
+Tried and not merged, because neither was faster: the Redis lean-script trims (branch `redis-next`) and the Redis Functions library (branch `redis-functions`).
+
+Open:
+- **Redis Sentinel and Cluster overhead:** about 15% on one host, against a 5% budget. The cause has not been found yet.
+- **G1:** the Redis benchmark.
+- **G4:** BullMQ under the `everysec` setting.
+- **G5:** a timeout sweep on a real store.
+- **Quiet-host qualification:** SP-029, excluding the soak run.
+- **Default settings:** decide them once a quiet host confirms the results.
+
+## Current state (2026-11-15)
 
 SQLite producer grouping and retained receipt indexing landed, along with PostgreSQL direct dispatch wakes, worker claim and allocation improvements, Redis bounded inline projection, opt-in scheduler grouping, and the Store page. The report records the exact commits, suite results, and durability settings.
 
