@@ -124,7 +124,10 @@ internal sealed partial class PgStore : IManagementQueryStore
     {
         var read = await ReadAsync<DateTimeOffset[]>(application, async tx =>
         {
-            using var q = tx.Sql("SELECT not_after FROM runwick.storage_commands WHERE application = @application AND command_id = @id LIMIT 1")
+            using var q = tx.Sql("""
+                SELECT not_after FROM runwick.storage_commands
+                WHERE application = @application AND retention_class IN ('ownership', 'durable') AND command_id = @id LIMIT 1
+                """)
                 .P("id", commandId);
             return [.. await tx.QueryAsync(q, r => PgTime.Read(r, 0)).ConfigureAwait(false)];
         }, ct).ConfigureAwait(false);

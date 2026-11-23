@@ -198,6 +198,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         new("0027_staged_delayed_wake", LoadSql("0027_staged_delayed_wake.sql"), 27),
         new("0028_jobs_index_diet", LoadSql("0028_jobs_index_diet.sql"), 28),
         new("0029_dispatch_group", LoadSql("0029_dispatch_group.sql"), 29),
+        new("0030_receipt_by_key", LoadSql("0030_receipt_by_key.sql"), 30),
     ];
 
     /// <summary>The schema revision this binary writes to (03 §10.1): the last migration's target.</summary>
@@ -547,15 +548,28 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
     [GeneratedRegex(@"DROP CONSTRAINT (?:IF EXISTS )?([a-z0-9_]+)")]
     private static partial Regex DroppedConstraintPattern();
 
+    [GeneratedRegex(@"^DROP INDEX runwick\.([a-z_]+);", RegexOptions.Multiline)]
+    private static partial Regex DroppedIndexPattern();
+
     /// <summary>Relations every migration up to and including the last one creates.</summary>
     internal static IReadOnlySet<string> ExpectedRelations => RelationsOf(Migrations);
 
     /// <summary>Constraints after the last migration (created minus dropped, in order).</summary>
     internal static IReadOnlySet<string> ExpectedConstraints => ConstraintsOf(Migrations);
 
-    static HashSet<string> RelationsOf(IEnumerable<Migration> migrations) =>
-        migrations.SelectMany(m => TablePattern().Matches(m.Sql).Select(x => x.Groups[1].Value)
-            .Concat(IndexPattern().Matches(m.Sql).Select(x => x.Groups[1].Value))).ToHashSet(StringComparer.Ordinal);
+    static HashSet<string> RelationsOf(IEnumerable<Migration> migrations)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var m in migrations)
+        {
+            // An index a migration drops and does not recreate (0030: command_by_id) is no longer expected.
+            set.ExceptWith(DroppedIndexPattern().Matches(m.Sql).Select(x => x.Groups[1].Value));
+            set.UnionWith(TablePattern().Matches(m.Sql).Select(x => x.Groups[1].Value));
+            set.UnionWith(IndexPattern().Matches(m.Sql).Select(x => x.Groups[1].Value));
+        }
+
+        return set;
+    }
 
     static HashSet<string> ConstraintsOf(IEnumerable<Migration> migrations)
     {
