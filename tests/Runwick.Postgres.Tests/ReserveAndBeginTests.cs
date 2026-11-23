@@ -469,6 +469,9 @@ public sealed class ReserveAndBeginTests
         // claim must still read only the jobs it claims, not every ready job once per statement.
         await using var f = await DriverFixture.StartAsync(Ns("rab12"));
         await using var w = Host(f, concurrency: 8);
+        // Autoanalyze would refresh the statistics after the 1,500 inserts (CI: then the claim reads every ready row once,
+        // 1,532 fetches), and the case is stale statistics; this database is the test's own.
+        await f.ExecAsync("ALTER TABLE runwick.jobs SET (autovacuum_enabled = off)");
         await f.ExecAsync("ANALYZE runwick.jobs");
         for (var batch = 0; batch < 15; batch++)
         {
