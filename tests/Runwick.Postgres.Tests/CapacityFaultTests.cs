@@ -194,17 +194,12 @@ public sealed class CapacityFaultTests
         var strict = 3 * renewP90 < TimeSpan.FromMilliseconds(350);
         TestContext.Current.TestOutputHelper?.WriteLine(
             $"CAP-10 no-latency phase: Renew p90 {renewP90.TotalMilliseconds:F0} ms, {(strict ? "strict" : "store-bound")} branch, {calmStops.Count} stops");
-        if (strict)
-        {
-            Assert.Empty(calmStops);
-        }
-        else
-        {
-            // Lane queueing (controlWait) or runtime timer lag from the suite's own parallel load (lag): both are
-            // environment stops, and neither may admit work while stopped or skip the resume checks.
-            Assert.All(calmStops, e => Assert.Contains(e.Name, new[] { "pressureStop:controlWait", "pressureStop:lag" }));
-            CheckStops(w, calm);
-        }
+        // Runtime timer lag from the suite's own parallel load (lag) is an environment stop on any store; lane queueing
+        // (controlWait) is allowed only where the store's round trip explains it. Neither may admit work while stopped
+        // or skip the resume checks.
+        var allowed = strict ? new[] { "pressureStop:lag" } : new[] { "pressureStop:controlWait", "pressureStop:lag" };
+        Assert.All(calmStops, e => Assert.Contains(e.Name, allowed));
+        CheckStops(w, calm);
 
         await w.StopAsync();
         Assert.Equal(0, await f.CountAsync("SELECT count(*) FROM (SELECT job_id FROM runwick.job_attempts GROUP BY job_id HAVING count(*) > 1) x"));
@@ -218,7 +213,9 @@ public sealed class CapacityFaultTests
         {
             var resume = events.FirstOrDefault(e => e.Name == "pressureResume" && e.At > stop.At);
             Assert.True(resume.Name is not null, $"no resume after {stop.Name} at {stop.At}");
-            Assert.True(resume.At - stop.At >= TimeSpan.FromSeconds(3), $"resumed {(resume.At - stop.At).TotalSeconds:F1} s after {stop.Name}");
+            // Checks are >= 1 s apart, but an event is stamped when it is recorded, which can trail its check by a few ms
+            // on a loaded runner (CI: "resumed 3.0 s", i.e. just under 3 s); three checks still put the resume near 3 s.
+            Assert.True(resume.At - stop.At >= TimeSpan.FromSeconds(2.75), $"resumed {(resume.At - stop.At).TotalSeconds:F3} s after {stop.Name}");
             // The pool checks the gate before every Reserve and claims serially, so a stop can only be overtaken by the
             // one claim already in flight; no Reserve is sent while stopped.
             var late = events.Where(e => e.Name == "reserved" && e.At > stop.At && e.At < resume.At).ToList();

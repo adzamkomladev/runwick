@@ -382,10 +382,27 @@ public sealed class ScheduleCaseTests
                 WHERE gs.schedule_key = 'good')
             FROM runwick.schedules AS s WHERE s.schedule_id = d.schedule_id AND s.schedule_key = 'profile'
             """);
-        await CapacityFaultTests.WaitCount(f, """
-            SELECT count(*) FROM runwick.schedule_occurrences AS o JOIN runwick.schedules AS s USING (application, schedule_id)
-            WHERE s.schedule_key = 'profile'
-            """, 1, "the restored profile materializes");
+        var passes = Interlocked.Read(ref scheduler.Passes);
+        try
+        {
+            await CapacityFaultTests.WaitCount(f, """
+                SELECT count(*) FROM runwick.schedule_occurrences AS o JOIN runwick.schedules AS s USING (application, schedule_id)
+                WHERE s.schedule_key = 'profile'
+                """, 1, "the restored profile materializes");
+        }
+        catch (Xunit.Sdk.XunitException)
+        {
+            // Failed once in CI (2026-11-20) with no other trace; record what the scheduler and the row looked like.
+            var row = await TextAsync(f, """
+                SELECT format('scan_after_at=%s next_due_at=%s evaluated_through=%s needs_review=%s paused=%s enabled=%s now=%s',
+                    scan_after_at, next_due_at, evaluated_through, needs_review, paused, enabled, clock_timestamp())
+                FROM runwick.schedules WHERE schedule_key = 'profile'
+                """);
+            Assert.Fail($"the restored profile did not materialize: {Interlocked.Read(ref scheduler.Passes) - passes} passes since restore, "
+                + $"diagnostics [{string.Join(", ", scheduler.LocalDiagnostics.Select(d => d.Key + "=" + d.Value))}], "
+                + $"commands {Interlocked.Read(ref scheduler.MaterializationCommands)}, conflicts {Interlocked.Read(ref scheduler.RevisionConflicts)}, "
+                + $"listener healthy {scheduler.ListenerHealthy}; {string.Join("; ", row)}");
+        }
     }
 
     // ------------------------------------------------------------------ SCHED-14 (scheduler half)
