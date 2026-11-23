@@ -4,6 +4,7 @@
 # Arms cif1 to cif4 run the candidate with buffered finish and that many claims in flight per pool (05 §9.7); ucif1 to ucif4 the same without buffered finish.
 # Arms old and oldbuf run a second build given by BASE_BIN (without and with buffered finish), for base-against-change pairs; midbuf runs a
 # third build given by MID_BIN with buffered finish (two changes stacked on one base, measured in the same rounds).
+# APPENDFSYNC=everysec runs every Redis with appendfsync everysec and the Runwick arms with --redis-everysec (G4); default always.
 # FSYNC=tmpfs puts the AOF on memory (fsync costs almost nothing): the CPU-bound view. Default is the host disk (fsync about 7 ms here).
 set -uo pipefail
 cd "$(dirname "$0")"
@@ -21,7 +22,7 @@ run_arm() {
   local fixture="${NAME_PREFIX:-runwick-diet-run}-$$-$round-$arm"   # NAME_PREFIX: container name prefix
   local mounts=()
   [[ "${FSYNC:-disk}" == tmpfs ]] && mounts=(--mount type=tmpfs,destination=/data,tmpfs-mode=1777)
-  docker run --pull=never -d --name "$fixture" "${mounts[@]}" -p 127.0.0.1::6379 "$image" redis-server --appendonly yes --appendfsync always --aof-load-truncated no --maxmemory-policy noeviction --save '' --auto-aof-rewrite-percentage 0 > "$prefix.container"
+  docker run --pull=never -d --name "$fixture" "${mounts[@]}" -p 127.0.0.1::6379 "$image" redis-server --appendonly yes --appendfsync "${APPENDFSYNC:-always}" --aof-load-truncated no --maxmemory-policy noeviction --save '' --auto-aof-rewrite-percentage 0 > "$prefix.container"
   for i in $(seq 1 60); do [[ "$(docker exec "$fixture" redis-cli ping 2>/dev/null || true)" == PONG ]] && break; sleep .25; done
   local address; address="$(docker port "$fixture" 6379/tcp | head -1 | sed 's/0.0.0.0/127.0.0.1/')"
   uptime > "$prefix.load"
@@ -30,6 +31,7 @@ run_arm() {
   case "$arm" in comb) flags=(--combined-finish-claim) ;; buf) flags=(--buffered-finish) ;; both) flags=(--buffered-finish --combined-finish-claim) ;;
     cif[1-4]) flags=(--buffered-finish --claims-in-flight "${arm#cif}") ;; ucif[1-4]) flags=(--claims-in-flight "${arm#ucif}") ;;
     old) bin=$BASE_BIN ;; oldbuf) bin=$BASE_BIN; flags=(--buffered-finish) ;; midbuf) bin=$MID_BIN; flags=(--buffered-finish) ;; oldbuf32) bin=$BASE_BIN; flags=(--buffered-finish); workers=32 ;; esac
+  [[ "${APPENDFSYNC:-always}" == everysec ]] && flags+=(--redis-everysec)
   local rw=("$bin/Runwick.Workloads" bench --store redis --redis "$address" --out "$prefix.json" "${flags[@]}")
   local cmd=()
   case "$workload:$arm" in
