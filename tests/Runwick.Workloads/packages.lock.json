@@ -383,6 +383,13 @@
           "Runwick.Outbox": "[0.1.4, )"
         }
       },
+      "runwick.outbox.sqlite": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Data.Sqlite": "[10.0.14, )",
+          "Runwick.Outbox": "[0.1.4, )"
+        }
+      },
       "runwick.postgres": {
         "type": "Project",
         "dependencies": {
