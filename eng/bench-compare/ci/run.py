@@ -133,6 +133,7 @@ def run_sampled(c, cwd, env, store):
     th = threading.Thread(target=loop, daemon=True); th.start()
     killer = threading.Timer(MAX_SECONDS + 600, lambda: os.killpg(p.pid, signal.SIGKILL)); killer.start()
     out, err = p.communicate(); t1 = time.time(); killer.cancel(); stop.set(); th.join()
+    if store.ok: st_s.append((t1, *store.sample()))  # closing reading: a run shorter than one interval would otherwise have none after its work
     ru = resource.getrusage(resource.RUSAGE_CHILDREN)  # communicate() reaped it: its CPU, and its reaped children's, is now in ours
     return p.returncode, out, err, app_s, st_s, st0, t1, ru
 
