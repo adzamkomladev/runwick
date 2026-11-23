@@ -210,4 +210,28 @@ public sealed class ManagementContractTests
         Assert.Equal(2, await Count(f, "SELECT count(*) FROM runwick.jobs"));
         Assert.Equal(3, await Count(f, "SELECT count(*) FROM runwick.management_audit"));
     }
+
+    [Theory]
+    [MemberData(nameof(Kinds))]
+    [Trait("Case", "WAKE-01")]
+    public async Task A_delayed_management_dispatch_wakes_its_queue_only_as_its_lanes_earliest_and_never_on_replay(StoreKind kind)
+    {
+        // 05 §7.2 (2026-11-22): the same rule as a direct dispatch.
+        var (f, c) = await OpenAsync(kind, "mgmtwake", Jobs);
+        await using var _ = f;
+        await using var wakes = await WakeProbe.StartAsync(c);
+        var s = Session(c);
+        var now = DateTimeOffset.UtcNow;
+        ManagementDispatchRequest Delayed(Guid id, string v, double minutes) =>
+            new(id, "test.ping", System.Text.Json.Nodes.JsonNode.Parse($$"""{"id":"{{v}}"}"""), NotBefore: now.AddMinutes(minutes));
+
+        var id = Guid.NewGuid();
+        Assert.Equal("created", (await s.DispatchAsync(Admin, Delayed(id, "first", 5), Ct)).Disposition);
+        await wakes.ExpectAsync(1);
+        Assert.True((await s.DispatchAsync(Admin, Delayed(id, "first", 5), Ct)).Replayed);
+        Assert.Equal("created", (await s.DispatchAsync(Admin, Delayed(Guid.NewGuid(), "later", 10), Ct)).Disposition);
+        await wakes.ExpectAsync(1);
+        Assert.Equal("created", (await s.DispatchAsync(Admin, Delayed(Guid.NewGuid(), "earlier", 2), Ct)).Disposition);
+        await wakes.ExpectAsync(2);
+    }
 }

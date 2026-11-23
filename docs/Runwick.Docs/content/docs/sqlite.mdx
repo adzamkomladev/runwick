@@ -114,7 +114,7 @@ This has two practical effects:
 
 There are no wake-up notifications between processes. Workers find new jobs by polling, which is enough for correctness. Within one process, a commit wakes that process's own workers, scheduler and outbox relay straight away. A job dispatched by another process is picked up on the next poll.
 
-For jobs that are delayed or waiting to retry, each readiness check tells the worker when the next such job is due, and an idle worker sleeps until then rather than on its usual back-off. Within one process, a delayed dispatch that becomes the earliest waiting job of its queue and priority also wakes that process's workers once it has committed, so they learn its due time at once.
+For jobs that are delayed or waiting to retry, each readiness check tells the worker when the next such job is due, and an idle worker sleeps until then rather than on its usual back-off. Within one process, a delayed job that becomes the earliest waiting job of its queue and priority also wakes that process's workers once it has committed, so they learn its due time at once. This holds for direct dispatch, outbox delivery and management dispatch, and for staging inside your own transaction once that transaction has committed. Outbox delivery, management dispatch and schedules also wake the process's workers for jobs that are due now.
 
 ## Your transaction, the same file
 

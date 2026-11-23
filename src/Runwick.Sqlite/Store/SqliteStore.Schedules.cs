@@ -307,6 +307,7 @@ internal sealed partial class SqliteStore : IScheduleStore
                 new StoreError(reject.Code ?? "invariant_fault", ConflictingJobId: reject.ConflictingJobId, Detail: reject.Detail), tx.Now));
         }
 
+        WakeLocalAfterCommit(tx, [.. core.Items!.Select((i, n) => (items[n], (DispatchResult?)ReceiptCodec.ReadDispatch(JsonNode.Parse(i!.ToJsonString())!)))]);
         return ([.. core.Items!.Select(i => (i!["jobId"]!.GetValue<Guid>(),
             i["disposition"]!.GetValue<string>() == "Created" ? "created" : "linked_existing"))], null);
     }

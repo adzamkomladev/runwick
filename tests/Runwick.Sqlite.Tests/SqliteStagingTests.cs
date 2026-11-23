@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Runwick.Harness.Engine;
 using Runwick.Harness.Jobs;
 using Runwick.Harness.Store;
+using Runwick.Protocol;
 
 namespace Runwick.Sqlite.Tests;
 
@@ -48,6 +49,72 @@ public sealed class SqliteStagingTests
 
     static Task<long> Receipts(DriverFixture f, Guid commandId) =>
         f.CountAsync("SELECT count(*) FROM runwick_storage_commands WHERE command_id = @c", ("c", commandId));
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    [Trait("Case", "WAKE-01")]
+    public async Task A_staged_delayed_job_wakes_local_workers_after_commit_only_as_its_lanes_earliest_and_never_on_replay_or_rollback()
+    {
+        // 05 §7.2 (2026-11-22): the hint waits for the caller's transaction to end; a rolled-back job is not found.
+        var (f, c) = await StartAsync("tx_wake");
+        await using var _ = f;
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var woke = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var listening = Assert.IsAssignableFrom<ILocalWorkWakeSource>(c.Driver).ListenForLocalWorkAsync(c.Application, woke.Enqueue, stop.Token);
+        var now = DateTimeOffset.UtcNow;
+        var first = c.Prepared.Prepare(new PingJob("first"), new DispatchOptions { NotBefore = now.AddMinutes(5) });
+
+        async Task StageAsync(Func<SqliteTransaction, Task> stage, bool commit = true)
+        {
+            using var conn = Business(f);
+            using var tx = conn.BeginTransaction(deferred: false);
+            var before = woke.Count;
+            await stage(tx);
+            await Task.Delay(300, Ct);
+            Assert.Equal(before, woke.Count); // nothing before the caller's COMMIT
+            if (commit)
+            {
+                tx.Commit();
+            }
+            else
+            {
+                tx.Rollback();
+            }
+        }
+
+        async Task ExpectAsync(int wakes)
+        {
+            for (var i = 0; i < 100 && woke.Count < wakes; i++)
+            {
+                await Task.Delay(100, Ct);
+            }
+
+            await Task.Delay(500, Ct);
+            Assert.Equal(Enumerable.Repeat("default", wakes), woke.ToArray());
+        }
+
+        try
+        {
+            await StageAsync(tx => Staging(c).StageAsync(c.Prepared.Prepare(new PingJob("rolled-back"), new DispatchOptions { NotBefore = now.AddMinutes(1) }), tx, Ct),
+                commit: false);
+            await ExpectAsync(0);
+            await StageAsync(tx => Staging(c).StageAsync(first, tx, Ct));
+            await ExpectAsync(1);
+            await StageAsync(tx => Staging(c).StageAsync(first, tx, Ct)); // a replay of the committed command
+            await StageAsync(tx => Staging(c).StageAsync(c.Prepared.Prepare(new PingJob("later"), new DispatchOptions { NotBefore = now.AddMinutes(10) }), tx, Ct));
+            await ExpectAsync(1);
+            await StageAsync(tx => Staging(c).StageManyAsync([
+                new BatchDispatchItem(new PingJob("behind"), new DispatchOptions { NotBefore = now.AddMinutes(20) }),
+                new BatchDispatchItem(new PingJob("earliest"), new DispatchOptions { NotBefore = now.AddMinutes(2) }),
+            ], tx, cancellationToken: Ct));
+            await ExpectAsync(2);
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => listening);
+        }
+    }
 
     [Fact]
     [Trait("Category", "Contract")]

@@ -31,11 +31,22 @@ internal sealed partial class PgStore : IOutboxDestinationStore
             call.P(name, value, type);
         }
 
-        return await runner.CallAsync(
+        var reply = await runner.CallAsync(
             Op(command.Application, command.CommandId, OutboxOperations.ReceiveOutbox, command.NotAfter, fp, PgLane.Producer, r.StoreId),
             call,
             row => row.HasValue ? row.Applied(ReadDeliveryJson(row.Result!)) : row.Reject<OutboxDelivery>(),
             ct).ConfigureAwait(false);
+        WakeDelivered(command, reply);
+        return reply;
+    }
+
+    /// <summary>A first delivery that created a delayed job goes to the wake pump; a redelivery or a replay does not.</summary>
+    void WakeDelivered(StoreCommand<ReceiveOutboxRequest> command, StoreReply<OutboxDelivery> reply)
+    {
+        if (reply.Status == StoreStatus.Applied && !reply.Replayed && reply.Value is { FirstDelivery: true, Disposition: DispatchDisposition.Created })
+        {
+            WakeCreatedDelayed(command.Application, [command.Body.Item], reply.DecidedAt);
+        }
     }
 
     public async Task<OutboxLookup> FindDeliveryAsync(string application, OutboxSourceIdentity source, byte[] deliveryFingerprint, CancellationToken ct)

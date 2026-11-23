@@ -4,6 +4,17 @@
 
 Numeric values are restated here where the engine behavior depends on them; [06-defaults.md](06-defaults.md) is the single table of defaults, derived formulas and startup inequalities. Where the two disagree, 06 is authoritative for the number and this file for the behavior.
 
+## Changes (2026-11-22, delayed pickup on every creation path)
+
+No engine rule changes. The wake rule of the 2026-11-19 entries (a created job that is not yet due wakes its queue when it is then the earliest not-yet-due job of its lane in claim order (`eligible_at`, `job_id`); never on replay; jobs queued behind an earlier delayed job wake nothing) now holds for every path that creates jobs, not only direct `Dispatch/1` and `DispatchMany/1`:
+
+- **Staging** (caller-owned transaction). PostgreSQL: `dispatch_v5` (migration 0027) sends the notification inside the caller's transaction, so it is delivered only if the caller commits. SQLite: once the caller's transaction has ended, the store checks each created delayed job as for a direct dispatch; a rolled-back job is not found and wakes nothing. Redis has no staging.
+- **Outbox delivery** (`ReceiveOutbox/1`, grouped or not). Only the first delivery wakes; a redelivery answered from the mapping and a replay do not.
+- **Management dispatch** (`ManagementDispatch/1`).
+- **Schedule materialization** needs no delayed wake: a schedule template refuses `NotBefore` and an occurrence is materialized only once due, so its job is always due now and wakes its queue as a due dispatch does.
+
+On PostgreSQL the outbox and management paths hand their delayed creations to the post-commit wake pump (04 Changes 2026-11-11). On SQLite the outbox, management and schedule paths now send the in-process hint after commit for due jobs too; before, only direct dispatch did. Redis already published the hint from every script through its shared projection step; tests now cover each path. Still not woken by a store hint: retry back-off (a running worker's own finish wakes its pool, see the 2026-11-19 entry). Report: docs/reports/fragments/delayed-wake-paths.md.
+
 ## Changes (2026-11-20, claims in flight)
 
 New **§9.7 Claims in flight (perf round two)**, an option on `WorkerOptions`: `ClaimsInFlight`, 1 to 4, default 1 (V-25). At 1 the engine claims exactly as before. The measurements are in [claim-pipelining.md](../reports/fragments/claim-pipelining.md).

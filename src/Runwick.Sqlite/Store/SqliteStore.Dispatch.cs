@@ -49,13 +49,31 @@ internal sealed partial class SqliteStore
     }
 
     /// <summary>Dispatch/1 on a caller-owned transaction (20 §8).</summary>
-    public StoreReply<DispatchResult> StageDispatch(SqliteTransaction transaction, StoreCommand<DispatchRequest> command, CancellationToken ct) =>
-        runner.Stage(transaction, DispatchOp(command), tx => DispatchBody(tx, [command.Body.Item], many: false, continueOnConflict: false), MapDispatch, null, ct);
+    public StoreReply<DispatchResult> StageDispatch(SqliteTransaction transaction, StoreCommand<DispatchRequest> command, CancellationToken ct)
+    {
+        var reply = runner.Stage(transaction, DispatchOp(command), tx => DispatchBody(tx, [command.Body.Item], many: false, continueOnConflict: false),
+            MapDispatch, null, ct);
+        if (reply.Status == StoreStatus.Applied && !reply.Replayed)
+        {
+            WakeLocalAfterCaller(transaction, command.Application, [(command.Body.Item, reply.Value)], reply.DecidedAt);
+        }
+
+        return reply;
+    }
 
     /// <summary>DispatchMany/1 on a caller-owned transaction.</summary>
-    public StoreReply<DispatchBatchResult> StageDispatchMany(SqliteTransaction transaction, StoreCommand<DispatchBatchRequest> command, CancellationToken ct) =>
-        runner.Stage(transaction, DispatchManyOp(command), tx => DispatchBody(tx, command.Body.Items, many: true, command.Body.ContinueOnConflict),
+    public StoreReply<DispatchBatchResult> StageDispatchMany(SqliteTransaction transaction, StoreCommand<DispatchBatchRequest> command, CancellationToken ct)
+    {
+        var items = command.Body.Items;
+        var reply = runner.Stage(transaction, DispatchManyOp(command), tx => DispatchBody(tx, items, many: true, command.Body.ContinueOnConflict),
             MapDispatchMany, null, ct);
+        if (reply.Status == StoreStatus.Applied && !reply.Replayed && reply.Value is { } value)
+        {
+            WakeLocalAfterCaller(transaction, command.Application, value.Items.Select(o => (items[o.Ordinal], o.Result)), reply.DecidedAt);
+        }
+
+        return reply;
+    }
 
     static SqOp DispatchOp(StoreCommand<DispatchRequest> command) =>
         Op(command.Application, command.CommandId, Operations.Dispatch, command.NotAfter, command.Body.CommandFingerprint, SqLane.Producer, command.Body.StoreId);

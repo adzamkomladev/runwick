@@ -461,6 +461,11 @@ internal sealed class SqRunner(SqExecutor executor, SqliteOptions options, IFaul
             PhaseTimings.DispatchCommit(1);
         }
 
+        foreach (var after in tx.AfterCommit)
+        {
+            after();
+        }
+
         tx.Fault(FaultPoint.AfterCommitBeforeReply);
     }
 

@@ -22,6 +22,9 @@ internal sealed class PgTx(NpgsqlConnection connection, NpgsqlTransaction transa
     /// <summary>Decision time (ms floor of the fresh clock read after the last blocking lock).</summary>
     public DateTimeOffset Now { get; private set; }
 
+    /// <summary>Hints to send once this transaction has committed (a driver-owned run only; never on replay or rollback).</summary>
+    public List<Action> AfterCommit { get; } = [];
+
     public NpgsqlCommand Sql(string sql)
     {
         var cmd = new NpgsqlCommand(sql, connection, transaction);

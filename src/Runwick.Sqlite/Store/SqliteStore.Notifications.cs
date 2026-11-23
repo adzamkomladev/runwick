@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Runwick.Protocol;
 
 namespace Runwick.Sqlite.Store;
@@ -69,6 +70,56 @@ internal sealed partial class SqliteStore : ILocalWorkWakeSource
                 // A process-local hint is best effort. The dispatch has already committed and workers keep polling.
             }
         }
+    }
+
+    /// <summary>The local hint of <see cref="WakeLocalAsync"/> from a write transaction's after-commit step (schedule paths).</summary>
+    void WakeLocalAfterCommit(SqTx tx, IReadOnlyList<(DispatchItem Item, DispatchResult? Result)> outcomes)
+    {
+        var decidedAt = tx.Now;
+        tx.AfterCommit.Add(() =>
+        {
+            if (LocalListenersFor(tx.Application) is { } listeners)
+            {
+                _ = Task.Run(() => WakeLocalAsync(listeners, tx.Application, outcomes, decidedAt));
+            }
+        });
+    }
+
+    /// <summary>
+    /// A staged dispatch commits with the caller's transaction, which has no commit hook. Its created delayed jobs are checked once
+    /// that transaction has ended: a committed job that is its lane's earliest wakes its queue, a rolled-back one is not found.
+    /// </summary>
+    void WakeLocalAfterCaller(SqliteTransaction transaction, string application, IEnumerable<(DispatchItem Item, DispatchResult? Result)> outcomes,
+        DateTimeOffset decidedAt)
+    {
+        if (LocalListenersFor(application) is not { } listeners)
+        {
+            return;
+        }
+
+        var delayed = outcomes.Where(o => o.Result?.Disposition == DispatchDisposition.Created
+            && o.Item.Intent.NotBeforeMs > decidedAt.ToUnixTimeMilliseconds()).ToList();
+        if (delayed.Count == 0)
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            // shortcut: polls for the end of the caller's transaction (Connection becomes null at commit or rollback) every 20 ms for
+            // at most a minute; past that the worker's back-off poll finds the job. Upgrade if staged transactions often run longer.
+            for (var waited = 0; transaction.Connection is not null; waited += 20)
+            {
+                if (waited >= 60_000)
+                {
+                    return;
+                }
+
+                await Task.Delay(20).ConfigureAwait(false);
+            }
+
+            await WakeLocalAsync(listeners, application, delayed, decidedAt).ConfigureAwait(false);
+        });
     }
 
     /// <summary>
