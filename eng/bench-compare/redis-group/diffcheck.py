@@ -201,7 +201,7 @@ def run(lua, port, decoder, lean=True):
 
 def norm(x):
     s = json.dumps(x, sort_keys=True)
-    s = re.sub(r"01a1[0-9a-f]{8}7", "A7", s)  # the 12 hex digits of a UUIDv7 attempt id are the decision time
+    s = re.sub(r"01[0-9a-f]{10}7", "A7", s)  # the 12 hex digits of a UUIDv7 attempt id are the decision time
     return re.sub(r"\d{13}", "T", s)
 
 
