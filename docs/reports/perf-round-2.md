@@ -3697,3 +3697,171 @@ At four slots the relay kept up with the offered rate, but p99 was 0.18 s over t
 **Conclusion.** Fewer commits did not turn into faster pickup or fewer refusals on this host. The idea is not worth the risk it adds to the writer, so it stays on its branch. The SQLite targets of under 2 s pickup p99 and no refusals at 100 offers/s remain unmet on this shared host; the Q6/Q7 sections show they depend on spare worker capacity and on disk stalls.
 
 **Harness fix found on the way.** A crash-run segment that reopens a large, busy store (about 670 MB here) could fail its first management query, setting the retention policy, with `ManagementQueryBudgetException`, and exit before running. The bench now retries that query up to 10 times, 3 s apart.
+
+## G5 fewer lease renewals: measurement modes
+
+The fewer-renewals profile (`WorkerOptions.UseFewerLeaseRenewals()`: a 5 minute lease renewed about every 90 s) only had a
+fake-time test. The `bench` command in `tests/Runwick.Workloads` can now measure it on a real store in three ways. Every flag is
+opt-in; a bench run without them behaves and reports exactly as before.
+
+### What was built
+
+1. **Lease settings and a cost report.** `--fewer-lease-renewals` turns the profile on. `--lease-seconds n` and
+   `--renew-seconds m` set the lease and renewal interval by hand (jitter is kept at no more than a fifth of the interval). Any of
+   these flags, or `--lease-report` for the default profile, adds a `lease` block to the result JSON.
+2. **Crash-detection latency.** `bench --lease-crash` starts a worker process that takes one long job per slot, kills it with
+   SIGKILL as soon as every slot is busy, and starts a second worker on the same store at once. It reports how long each of the
+   killed worker's jobs took to start on the second worker. Works on SQLite, PostgreSQL and Redis.
+3. **Store outage.** In steady mode, `--outage-container NAME --outage-at s --outage-seconds d` runs `docker pause NAME` s seconds
+   into the run and `docker unpause NAME` d seconds later, then reports what happened to the jobs that were running. PostgreSQL and
+   Redis only (SQLite has no container).
+
+### The new output fields
+
+`lease` block (sweep and outage runs):
+
+| Field | Meaning |
+|---|---|
+| `leaseSeconds`, `renewSeconds`, `renewJitterSeconds` | The lease settings the worker actually ran with. |
+| `runSeconds` | Time from just before the worker started to the end of the measurement. |
+| `jobsFinished`, `completionsPerSec` | Load jobs whose finish the store confirmed, and that number per second of `runSeconds`. |
+| `renewsSent` | Lease renewals the worker sent (one per running job per renewal, whether sent alone or in a batch). |
+| `renewManyCalls` | How many of those went out as one batched RenewMany store call. |
+| `renewsPerJob`, `renewsPerSec` | `renewsSent` per finished job and per second. |
+| `lostByCause` | Leases the worker lost, by cause (for example `SafetyDeadline`, `StaleLease`). Empty means none was lost. |
+| `storeCounters` | What the store itself counted during the run (after minus before). Redis: `cpuSeconds` (server CPU), `commandCalls`, `commandUsec` and `calls:<command>`. PostgreSQL: `transactions` and `rowsWritten`; with `--trace` also `functionCalls:<fn>` and `functionMs:<fn>` per Runwick SQL function (PostgreSQL does not report its own CPU). SQLite: `null`; the existing `sqlite.writeCommits` field gives the write count. |
+
+`outage` block (outage runs):
+
+| Field | Meaning |
+|---|---|
+| `pauseExit`, `unpauseExit`, `pausedForMs` | Exit codes of the docker commands and how long the store was actually paused. |
+| `runningAtPause` | Load jobs whose handler was running when the store was paused. |
+| `keptLeaseAndFinishedOnce` | Of those, how many kept their lease, ran once and finished. |
+| `lostLease` | Of those, how many lost their lease (the worker gave the job up; it runs again later). |
+| `ranTwice` | Of those, how many had their handler started more than once. |
+| `finishedAfterStoreBack` | Of those, how many finished after the store came back. |
+| `notFinished` | Of those, how many had not finished when the run ended. |
+| `allJobsRunMoreThanOnce` | Every load job of the run whose handler started more than once. |
+
+Error codes during the outage are in the existing fields: `failedDispatchByCode` (refused dispatch calls), `lease.lostByCause`,
+and `diagnostics`.
+
+`--lease-crash` result:
+
+| Field | Meaning |
+|---|---|
+| `leaseSeconds` | The lease the run used (300 with `--fewer-lease-renewals`). |
+| `jobsAccepted` | Jobs the first worker dispatched. |
+| `orphans` | Jobs the first worker was running when it was killed. |
+| `orphansPickedUp`, `orphansNotPickedUp` | How many of those the second worker started, and how many it never started before `--detect-seconds` (default twice the lease plus 60 s). |
+| `detectionMinMs`, `detectionMs` | Time from the kill to the second worker starting each orphan (minimum, and count/p50/p95/p99/max). Expect about the lease length plus up to one recovery scan (5 s) and the second worker's startup. The kill comes right after the jobs started, so this is the upper end: a worker that dies just before a renewal frees its jobs one renewal interval sooner. |
+| `secondWorker` | The second worker's own bench result. |
+| `directory` | Ledgers, child logs and (SQLite) the database file; kept for inspection. |
+
+### Full-run commands
+
+Run each from `tests/Runwick.Workloads` after `dotnet build -c Release`, one at a time, under the bench lock. `B` stands for
+`flock /tmp/runwick-bench.lock dotnet bin/Release/net10.0/Runwick.Workloads.dll bench`. PostgreSQL uses the default bench
+container (`runwick-bench-pg` on port 55499). Redis needs a throwaway instance started with `--appendonly yes --appendfsync always
+--aof-load-truncated no --maxmemory-policy noeviction --save ''`; `$REDIS` is its `host:port` and `$REDIS_CONTAINER` its container
+name. Put the store flags (`--store sqlite`, `--store postgres`, or `--store redis --redis $REDIS`) where `STORE` is written.
+
+**1. Timeout sweep** (three arms per store, about 7 minutes each, about 1 hour for all nine):
+
+```
+$B STORE --mode steady --workers 16 --job-ms 120000 --rate 0.12 --seconds 300 --lease-report --out sweep-STORE-default.json
+$B STORE --mode steady --workers 16 --job-ms 120000 --rate 0.12 --seconds 300 --lease-seconds 120 --renew-seconds 30 --out sweep-STORE-120.json
+$B STORE --mode steady --workers 16 --job-ms 120000 --rate 0.12 --seconds 300 --fewer-lease-renewals --out sweep-STORE-fewer.json
+```
+
+Add `--trace` on PostgreSQL to get per-function call counts in `storeCounters`. Compare `lease.renewsPerSec`, `lease.renewsPerJob`,
+`lease.completionsPerSec` and `lease.storeCounters` across the arms. Jobs still running at the end are cancelled by the graceful stop.
+
+**2. Crash-detection latency** (three arms per store; about 40 s, 75 s and 5.5 minutes; about 22 minutes for all nine):
+
+```
+$B STORE --lease-crash --workers 16 --lease-seconds 30 --renew-seconds 5 --out crash-STORE-30.json
+$B STORE --lease-crash --workers 16 --out crash-STORE-default.json
+$B STORE --lease-crash --workers 16 --fewer-lease-renewals --out crash-STORE-fewer.json
+```
+
+**3. Pause and outage** (PostgreSQL and Redis; four arms each, an outage below and above the lease for each profile; about
+5 minutes each except the 360 s arm at about 8 minutes; about 45 minutes for all eight):
+
+```
+$B STORE --mode steady --workers 16 --job-ms 20000 --rate 0.5 --seconds 240 --outage-container C --outage-at 60 --outage-seconds 20  --out outage-STORE-default-20.json
+$B STORE --mode steady --workers 16 --job-ms 20000 --rate 0.5 --seconds 240 --outage-container C --outage-at 60 --outage-seconds 90  --out outage-STORE-default-90.json
+$B STORE --mode steady --workers 16 --job-ms 20000 --rate 0.5 --seconds 240 --outage-container C --outage-at 60 --outage-seconds 120 --fewer-lease-renewals --out outage-STORE-fewer-120.json
+$B STORE --mode steady --workers 16 --job-ms 20000 --rate 0.5 --seconds 240 --outage-container C --outage-at 60 --outage-seconds 360 --fewer-lease-renewals --out outage-STORE-fewer-360.json
+```
+
+`C` is `runwick-bench-pg` for PostgreSQL and `$REDIS_CONTAINER` for Redis. The outage pauses the whole container, so nothing else
+may use it during the run. If a run is killed while the store is paused, run `docker unpause C` by hand.
+
+### Not built
+
+- Store CPU for PostgreSQL and SQLite: neither reports it; PostgreSQL gives transactions, rows and (with `--trace`) function calls.
+- The crash run kills right after the jobs start; there is no flag to kill at a chosen point in the renewal cycle.
+- No SQLite outage mode (an in-process store has nothing to pause).
+
+### Measured results (2026-11-23, Sonnet run)
+
+All 24 runs exited cleanly. Raw files are in `artifacts/perf/round-two/g5-leases/`. The host was shared: the 1-minute load before a run ranged from 0.6 to 51, and 14 of 26 readings were 8 or more. The crash-detection times are bounded by the lease and agree across stores, so the load hardly touches them. Treat the store CPU figures with care.
+
+#### Lease sweep: what each setting costs
+
+Each run kept long jobs (20 s each) running; 29 jobs finished per run in every arm, and no lease was lost.
+
+| Store | Lease / renew (s) | Renewals per job | Renewals per second | Store counters |
+|---|---|---|---|---|
+| SQLite | 60 / 15 (default) | 9.07 | 0.73 | 382 write commits |
+| SQLite | 120 / 30 | 4.31 | 0.35 | 342 write commits |
+| SQLite | 300 / 90 (fewer) | 1.10 | 0.09 | 284 write commits |
+| PostgreSQL | 60 / 15 | 9.17 | 0.74 | 1,104 transactions; 41 single and 80 batched renew calls |
+| PostgreSQL | 120 / 30 | 4.14 | 0.33 | 1,061 transactions; 58 and 28 |
+| PostgreSQL | 300 / 90 | 1.14 | 0.09 | 992 transactions; 12 and 10 |
+| Redis | 60 / 15 | 9.21 | 0.74 | 10,072 commands; 6.20 s CPU |
+| Redis | 120 / 30 | 4.28 | 0.34 | 9,565 commands; 5.83 s CPU |
+| Redis | 300 / 90 | 1.14 | 0.09 | 9,022 commands; 4.69 s CPU |
+
+The fewer-renewals profile sends about 8 times fewer renewals. Total store traffic falls only 10 to 20% in this test, because the jobs' own claim and finish work is most of it. The saving grows with how long jobs run: renewals matter for jobs that run minutes, not milliseconds.
+
+#### Crash detection: how long until another worker takes over
+
+A worker was killed with 16 jobs running. A second worker picked up all 16 in every run; none were missed.
+
+| Store | 30 s lease | Default (60 s) | Fewer renewals (300 s) |
+|---|---|---|---|
+| SQLite | 36.2 s (35.3–37.5) | 65.6 s (64.6–67.7) | 304.4 s (303.3–305.4) |
+| PostgreSQL | 36.2 s (35.4–37.4) | 65.9 s (64.4–66.9) | 307.9 s (307.3–308.5) |
+| Redis | 34.3 s (33.7–36.1) | 65.3 s (64.6–66.8) | 305.0 s (304.1–306.2) |
+
+Medians, with minimum and maximum in brackets. Takeover comes at the lease length plus 4 to 8 seconds on every store. That is the price of the fewer-renewals profile: about 5 minutes instead of about 1 before a crashed worker's jobs run again.
+
+#### Store outage: the store paused while 10 jobs run
+
+| Store | Profile | Pause | Kept lease, ran once | Lost lease | Ran twice | Finished after store came back | Not finished at end | Error codes |
+|---|---|---|---|---|---|---|---|---|
+| PostgreSQL | default | 20 s | 10 | 0 | 0 | 10 | 0 | none |
+| PostgreSQL | default | 90 s | 1 | 7 | 9 | 9 | 0 | 7 safety deadline; 17 `store_unavailable` |
+| PostgreSQL | fewer | 120 s | 0 | 0 | 0 | 0 | 10 | 23 `store_unavailable` |
+| PostgreSQL | fewer | 360 s | 1 | 1 | 9 | 9 | 0 | 1 safety deadline; 36 `store_unavailable` |
+| Redis | default | 20 s | 10 | 0 | 0 | 6 | 0 | 3 `outcome_unknown` |
+| Redis | default | 90 s | 1 | 0 | 9 | 9 | 0 | 4 `outcome_unknown`; 41 `store_unavailable` |
+| Redis | fewer | 120 s | 0 | 0 | 0 | 0 | 10 | 4 `outcome_unknown`; 56 `store_unavailable` |
+| Redis | fewer | 360 s | 0 | 0 | 11 | 11 | 0 | 4 `outcome_unknown`; 85 `store_unavailable` |
+
+(Redis fewer 360 s had 11 jobs running at the pause, not 10.)
+
+What it shows:
+
+- **An outage shorter than the lease is harmless.** With the default profile and a 20 s pause, every running job kept its lease and finished once, on both stores.
+- **An outage longer than the lease makes jobs run again.** With the default profile and a 90 s pause, 9 of 10 jobs ran twice on both stores. With fewer renewals and a 360 s pause (longer than its 5 min lease), 9 to 11 ran twice. No job was lost; this is the at-least-once rule working as documented.
+- **Fewer renewals rides out longer outages, but this run didn't wait long enough to see the end.** With a 120 s pause no job lost its lease or ran twice, but all 10 were still unfinished when the 240 s run ended. The finishes were still backed up behind the pause. A longer run window is needed to confirm they then finish once.
+- Every outage longer than 20 s left an "unconfirmed outcome: Finish" entry in diagnostics, as expected when a finish call is in flight while the store disappears.
+
+Not explained yet, and worth a look before trusting the Redis outage rows in detail:
+
+- Redis default 90 s: 9 jobs ran twice, but the worker reported no lost lease. On PostgreSQL the same case reported 7 lost leases. Either the Redis path loses the lease without counting it, or the harness counts it differently on Redis.
+- Redis default 20 s: all 10 kept their lease and finished once, but only 6 are counted as finished after the store came back. The other 4 probably finished before the pause took effect, or ended in `outcome_unknown` (3 of those were seen).
