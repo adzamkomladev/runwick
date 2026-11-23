@@ -38,6 +38,10 @@ namespace Runwick.Workloads;
 /// <c>--sqlite-hold-read</c> pins a read snapshot during a traced drain and measures checkpoint progress after releasing it.
 /// <c>--store-viewers</c> enables the co-hosted management sampler and polls the cached Store snapshot every five seconds per viewer during steady mode.
 /// <c>--store-warmup-seconds</c> lets the host sample before timing steady mode and primes snapshot serialization when viewers are enabled.
+/// SQLite steady side load (Q6/Q7): <c>--retention-hours h</c> sets a short retention policy and keeps cleanup polling (with
+/// <c>--cleanup-batch-rows n</c>), <c>--schedule</c> adds a schedule firing every second, <c>--outbox-rate r</c> stages r outbox
+/// messages/s in a second SQLite file that the relay delivers, <c>--sample-seconds s</c> records completions, refusals and WAL
+/// checkpoint progress over time, and <c>--crash-cycles k</c> kills and reopens the process k times (<see cref="SteadyCrashRun"/>).
 /// Trace adds per-job stage gaps, held-job and settlement-queue samples, and store call phases. Writes the same JSON shape as the River and pg-boss
 /// benches: <c>system</c>, <c>mode</c>, <c>completionsPerSec</c>, <c>latencyMs {p50, p95, p99, max}</c> (steady).
 /// </summary>
@@ -47,15 +51,18 @@ internal static class BenchMode
     // Leave space in the 2 MiB envelope for base64 expansion and per-item metadata.
     const int BatchPayloadBudget = 1024 * 1024;
 
-    sealed class SqliteBenchDirectory(string parent, bool keep) : IDisposable
+    // existing: --sqlite-reuse, a file another run (a crash-run segment) owns; it is never deleted here.
+    sealed class SqliteBenchDirectory(string parent, bool keep, string? existing = null) : IDisposable
     {
-        public string FullName { get; } = Directory.CreateDirectory(Path.Combine(parent, "bench-runwick-" + Guid.NewGuid().ToString("N"))).FullName;
+        public string FullName { get; } = existing is not null
+            ? Path.GetDirectoryName(Path.GetFullPath(existing))!
+            : Directory.CreateDirectory(Path.Combine(parent, "bench-runwick-" + Guid.NewGuid().ToString("N"))).FullName;
 
-        public string DatabasePath => Path.Combine(FullName, "runwick.db");
+        public string DatabasePath => existing ?? Path.Combine(FullName, "runwick.db");
 
         public void Dispose()
         {
-            if (!keep)
+            if (!keep && existing is null)
             {
                 try { Directory.Delete(FullName, recursive: true); } catch (IOException) { }
             }
@@ -64,6 +71,11 @@ internal static class BenchMode
 
     public static async Task<int> RunAsync(Args a)
     {
+        if (a.Has("crash-cycles") && !a.Has("segment"))
+        {
+            return await SteadyCrashRun.RunAsync(a).ConfigureAwait(false);
+        }
+
         var mode = a.OptStr("mode") ?? "drain";
         if (mode is not ("drain" or "steady" or "enqueue" or "bulk"))
         {
@@ -120,9 +132,26 @@ internal static class BenchMode
             return 2;
         }
 
+        // Q6/Q7 side load (steady, SQLite): --retention-hours h [--cleanup-batch-rows n], --schedule, --outbox-rate r, --sample-seconds s.
+        // A crash-run segment also gets --sqlite-reuse, --ledger, and --crash or --drain-store-seconds (SteadyCrashRun).
+        var retentionHours = a.OptInt("retention-hours");
+        var schedule = a.Has("schedule");
+        var outboxRate = a.Double("outbox-rate", 0);
+        var sampleSeconds = a.Double("sample-seconds", 0);
+        var crash = a.Has("crash");
+        if ((retentionHours is not null || schedule || outboxRate > 0 || sampleSeconds > 0 || crash || a.Has("ledger") || a.Has("drain-store-seconds"))
+            && (store != "sqlite" || mode != "steady"))
+        {
+            Console.Error.WriteLine("--retention-hours, --schedule, --outbox-rate, --sample-seconds, --crash-cycles and the segment flags need --store sqlite --mode steady");
+            return 2;
+        }
+
         Action<RunwickBuilder> useStore;
         var keepSqlite = a.Has("sqlite-keep");
-        using var sqliteDirectory = store == "sqlite" ? new SqliteBenchDirectory(a.OptStr("sqlite-dir") ?? Path.GetTempPath(), keepSqlite) : null;
+        using var sqliteDirectory = store == "sqlite"
+            ? new SqliteBenchDirectory(a.OptStr("sqlite-dir") ?? Path.GetTempPath(), keepSqlite, a.OptStr("sqlite-reuse"))
+            : null;
+        string? outboxSourceCs = null;
         if (sqliteDirectory is not null)
         {
             var sqliteCs = new SqliteConnectionStringBuilder { DataSource = sqliteDirectory.DatabasePath, Pooling = false }.ConnectionString;
@@ -156,6 +185,18 @@ internal static class BenchMode
             }
 
             useStore = r => r.UseSqlite(sqliteCs);
+            if (schedule && (await RunwickSqliteMigrations.ActivateCapabilityAsync(sqliteCs, "bench", "scheduler", "ops").ConfigureAwait(false)).Count == 0)
+            {
+                Console.Error.WriteLine("--schedule needs a store where application 'bench' already exists (use --sqlite-seed)");
+                return 2;
+            }
+
+            if (outboxRate > 0)
+            {
+                // The outbox source is the application's own database: a second file next to the store, not the store file.
+                outboxSourceCs = new SqliteConnectionStringBuilder { DataSource = Path.Combine(sqliteDirectory.FullName, "outbox-source.db"), Pooling = false }.ConnectionString;
+                await Runwick.Outbox.Sqlite.SqliteOutboxSchema.InstallAsync(outboxSourceCs).ConfigureAwait(false);
+            }
         }
         else if (store == "redis")
         {
@@ -243,12 +284,18 @@ internal static class BenchMode
 
         var sc = new ServiceCollection();
         sc.AddLogging(b => b.AddSimpleConsole(o => o.SingleLine = true).SetMinimumLevel(LogLevel.Warning));
-        if (storeViewers > 0)
+        if (storeViewers > 0 || retentionHours is not null)
         {
             sc.AddSingleton<ManagementRoleMarker>();
         }
 
         sc.AddSingleton(new LoadBehaviour(TimeSpan.FromMilliseconds(a.Double("job-ms", 0))));
+        sc.AddSingleton(new G2Behaviour(TimeSpan.Zero, Spin: false));
+        if (outboxSourceCs is not null)
+        {
+            sc.AddRunwickSqliteOutbox(outboxSourceCs);
+        }
+
         sc.AddRunwick(r =>
         {
             r.Application("bench");
@@ -256,7 +303,40 @@ internal static class BenchMode
             LoadRegistration.Register(r, typeCeiling: null);
             r.AddHandler<LoadJob, LoadHandler>();
             r.Producer(o => o.MaxConcurrentCalls = Math.Max(2, calls));
-            r.AddWorker(w => w.MaxOutstandingAttempts(workers).Pool("main", p => p.Queues(LoadRegistration.Queue).FixedConcurrency(workers))
+            if (schedule)
+            {
+                // One schedule firing every second on its own queue, so its jobs never count as load jobs.
+                r.AddJob<G2Tick>().Named("wl.tick").ToQueue(SideQueues.Schedule);
+                r.AddHandler<G2Tick, G2Handler<G2Tick>>();
+                r.AddScheduler();
+                r.AddSchedule("bench-tick", new G2Tick("bench-tick")).Cron("* * * * * *", ScheduleCronFormat.SixField);
+            }
+
+            if (outboxSourceCs is not null)
+            {
+                r.AddJob<G2Out>().Named("wl.out").ToQueue(SideQueues.Outbox);
+                r.AddHandler<G2Out, G2Handler<G2Out>>();
+            }
+
+            var sideQueues = (schedule ? 1 : 0) + (outboxSourceCs is not null ? 1 : 0);
+            r.AddWorker(w =>
+            {
+                if (sideQueues > 0)
+                {
+                    w.Pool("side", p => p.Queues([.. new[] { schedule ? SideQueues.Schedule : null, outboxSourceCs is not null ? SideQueues.Outbox : null }.OfType<string>()])
+                        .FixedConcurrency(2 * sideQueues));
+                }
+
+                w.MaxOutstandingAttempts(workers + 2 * sideQueues).Pool("main", p => p.Queues(LoadRegistration.Queue).FixedConcurrency(workers))
+                .Retention(o =>
+                {
+                    if (retentionHours is not null)
+                    {
+                        // Keep cleanup busy for the whole window: small batches, and look again soon after an empty pass.
+                        o.BatchRows = a.Int("cleanup-batch-rows", o.BatchRows);
+                        o.IdlePoll = TimeSpan.FromSeconds(5);
+                    }
+                })
                 .Configure(o =>
                 {
                     o.RecordResourceUsage = !a.Has("no-usage"); // --no-usage: the attempt-usage overhead baseline
@@ -274,11 +354,13 @@ internal static class BenchMode
                     {
                         o.ClaimsInFlight = inFlight;
                     }
-                }));
+                });
+            });
         });
         await using var provider = sc.BuildServiceProvider();
         var engine = provider.GetRequiredService<WorkerEngine>();
-        var hosted = provider.GetServices<IHostedService>().Single();
+        // The Runwick host, plus the outbox relay when --outbox-rate is set.
+        var hosted = new HostedGroup([.. provider.GetServices<IHostedService>()]);
         var dispatcher = provider.GetRequiredService<IJobDispatcher>();
         var driver = provider.GetRequiredService<IRunwickStore>();
         var sqlite = driver as SqliteStore;
@@ -334,9 +416,39 @@ internal static class BenchMode
         var reservedAt = new ConcurrentDictionary<Guid, long>();
         var invokedAt = new ConcurrentDictionary<Guid, long>();
         long reservedCount = 0;
+        // --ledger: one line per accepted load job (a), handler start (i) and confirmed finish (f), with wall-clock ms, for
+        // the crash-run reconciliation. Each line is its own write, so a killed process loses no line it finished writing.
+        var ledgerPath = a.OptStr("ledger");
+        using var ledger = ledgerPath is null ? null : new StreamWriter(ledgerPath, append: true) { AutoFlush = true };
+        void Ledger(char kind, Guid id, long unixMs)
+        {
+            if (ledger is not null)
+            {
+                lock (ledger)
+                {
+                    ledger.WriteLine(FormattableString.Invariant($"{kind} {id:N} {unixMs}"));
+                }
+            }
+        }
+
+        var sideFinished = new ConcurrentDictionary<string, long>(StringComparer.Ordinal);
         engine.Hooks.Event = (name, entry) =>
         {
             var now = clock.ElapsedTicks;
+            if (entry is not null && entry.Reserved.Queue != LoadRegistration.Queue)
+            {
+                if (name is "finished" or "finishReplayed")
+                {
+                    sideFinished.AddOrUpdate(entry.Reserved.Queue, 1, (_, c) => c + 1);
+                }
+
+                return; // schedule and outbox jobs are side load, not counted as load jobs
+            }
+
+            if (ledger is not null && entry is not null && name is "handlerInvoked" or "finished" or "finishReplayed")
+            {
+                Ledger(name == "handlerInvoked" ? 'i' : 'f', entry.Reserved.Position.JobId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            }
             if (trace && name.StartsWith("pressure", StringComparison.Ordinal))
             {
                 stages.Count(name);
@@ -638,9 +750,21 @@ internal static class BenchMode
         else
         {
             await hosted.StartAsync(CancellationToken.None).ConfigureAwait(false);
-            var session = storeViewers > 0 ? provider.GetRequiredService<IManagementSession>() : null;
-            var caller = storeViewers > 0 ? new ManagementCaller(new ManagementActor("svc:bench-store", null, "host"),
-                [new(ManagementPermissions.SettingsRead), new(ManagementPermissions.StoreDiagnosticsRead)]) : null;
+            var session = storeViewers > 0 || retentionHours is not null ? provider.GetRequiredService<IManagementSession>() : null;
+            var caller = session is not null ? new ManagementCaller(new ManagementActor("svc:bench-store", null, "host"),
+                [new(ManagementPermissions.SettingsRead), new(ManagementPermissions.StoreDiagnosticsRead), new(ManagementPermissions.RetentionManage)]) : null;
+            if (retentionHours is { } hours)
+            {
+                // A short horizon for every class the policy allows (audit has a 7-day floor), so the retained fixture is eligible.
+                var h = TimeSpan.FromHours(hours);
+                var current = await session!.GetRetentionAsync(caller!).ConfigureAwait(false);
+                var edit = await session.EditRetentionPolicyAsync(caller!, Guid.NewGuid(), current.Revision,
+                    new RetentionPolicy(h, h, h, TimeSpan.FromDays(7), h, h, h)).ConfigureAwait(false);
+                if (!edit.Succeeded && edit.Code != "no_change")
+                {
+                    throw new InvalidOperationException("retention policy edit failed: " + edit.Code);
+                }
+            }
             if (storeWarmupSeconds > 0)
             {
                 await Task.Delay(TimeSpan.FromSeconds(storeWarmupSeconds)).ConfigureAwait(false);
@@ -653,10 +777,14 @@ internal static class BenchMode
             var interval = TimeSpan.FromSeconds(1 / rate);
             var startTicks = clock.ElapsedTicks;
             var stopAt = clock.Elapsed + TimeSpan.FromSeconds(seconds);
-            long snapshots = 0, snapshotsWithDiagnostics = 0;
+            long snapshots = 0, snapshotsWithDiagnostics = 0, dispatched = 0;
             var viewers = Task.WhenAll(Enumerable.Range(0, storeViewers).Select(i => Task.Run(() => PollStoreAsync(i))));
+            long outboxStaged = 0, outboxStageErrors = 0;
+            var outboxStager = outboxSourceCs is null ? Task.CompletedTask : Task.Run(StageOutboxAsync);
+            var samples = new JsonArray();
+            using var sampling = new CancellationTokenSource();
+            var sampler = sampleSeconds > 0 ? Task.Run(SampleAsync) : Task.CompletedTask;
             var next = clock.Elapsed;
-            long dispatched = 0;
             var pending = new List<Task>();
             var failures = new ConcurrentDictionary<string, long>(StringComparer.Ordinal);
             // --calls 1 (default): one Dispatch at a time on a fixed schedule, like the River and pg-boss steady modes
@@ -686,17 +814,23 @@ internal static class BenchMode
             }
 
             var completedByEndOfOffers = Interlocked.Read(ref finished);
-            await Task.WhenAll(pending).ConfigureAwait(false);
+            await outboxStager.ConfigureAwait(false);
+            if (!crash) // a crashing segment dies with its dispatch calls still in flight
+            {
+                await Task.WhenAll(pending).ConfigureAwait(false);
+            }
 
             async Task DispatchOneAsync(LoadJob job)
             {
                 var started = clock.ElapsedTicks;
                 try
                 {
+                    var offeredAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     var receipt = await dispatcher.DispatchAsync(job, delayMs > 0 ? new DispatchOptions { NotBefore = DateTimeOffset.UtcNow.AddMilliseconds(delayMs) } : null).ConfigureAwait(false);
                     enqueueCallLatency.Add(Ms(clock.ElapsedTicks - started));
                     Interlocked.Increment(ref dispatched);
                     var id = receipt.JobId.Value;
+                    Ledger('a', id, offeredAtMs);
                     if (finishedAt.TryRemove(id, out var done))
                     {
                         latency.Add(Ms(done - started));
@@ -716,11 +850,27 @@ internal static class BenchMode
                 }
             }
 
-            var drainUntil = clock.Elapsed + TimeSpan.FromSeconds(60);
+            var drainUntil = clock.Elapsed + TimeSpan.FromSeconds(crash ? 0 : 60);
             while (Interlocked.Read(ref finished) < Interlocked.Read(ref dispatched) && clock.Elapsed < drainUntil)
             {
                 await Task.Delay(5).ConfigureAwait(false);
             }
+
+            // --drain-store-seconds (last crash-run segment): jobs a killed segment held come back after their lease expires,
+            // so wait until the store has no unfinished load or outbox job and the outbox source has nothing left to deliver.
+            if (a.OptInt("drain-store-seconds") is { } storeDrain)
+            {
+                var until = clock.Elapsed + TimeSpan.FromSeconds(storeDrain);
+                while (await UnfinishedAsync().ConfigureAwait(false) > 0 && clock.Elapsed < until)
+                {
+                    await Task.Delay(500).ConfigureAwait(false);
+                }
+
+                result["unfinishedAfterStoreDrain"] = await UnfinishedAsync().ConfigureAwait(false);
+            }
+
+            await sampling.CancelAsync().ConfigureAwait(false);
+            await sampler.ConfigureAwait(false);
 
             var elapsed = Ms(clock.ElapsedTicks - startTicks) / 1000;
             await viewers.ConfigureAwait(false);
@@ -783,6 +933,139 @@ internal static class BenchMode
                 return snapshot;
             }
             result["latencySamples"] = s.Count;
+            if (sampleSeconds > 0)
+            {
+                result["samples"] = samples;
+            }
+
+            if (schedule)
+            {
+                var scheduler = provider.GetRequiredService<Runwick.Scheduling.SchedulerService>();
+                result["schedule"] = new JsonObject
+                {
+                    ["plannedOccurrences"] = Interlocked.Read(ref scheduler.PlannedOccurrences),
+                    ["materializations"] = Interlocked.Read(ref scheduler.Materializations),
+                    ["jobsFinished"] = sideFinished.GetValueOrDefault(SideQueues.Schedule),
+                };
+            }
+
+            if (outboxSourceCs is not null)
+            {
+                result["outbox"] = new JsonObject
+                {
+                    ["staged"] = outboxStaged,
+                    ["stageErrors"] = outboxStageErrors,
+                    ["jobsFinished"] = sideFinished.GetValueOrDefault(SideQueues.Outbox),
+                    ["sourceByState"] = await CountOutboxSourceAsync(outboxSourceCs).ConfigureAwait(false),
+                };
+            }
+
+            if (retentionHours is not null)
+            {
+                var view = await session!.GetRetentionAsync(caller!).ConfigureAwait(false);
+                result["cleanup"] = new JsonObject
+                {
+                    ["policyRevision"] = view.Revision,
+                    ["classes"] = new JsonArray([.. view.Classes.Select(c => (JsonNode?)new JsonObject
+                    {
+                        ["recordClass"] = c.RecordClass,
+                        ["kind"] = c.Kind,
+                        ["totalRows"] = c.TotalRows,
+                        ["todayRows"] = c.TodayRows,
+                        ["todayBatches"] = c.TodayBatches,
+                        ["todayFailures"] = c.TodayFailures,
+                        ["caughtUpAt"] = c.CaughtUpAt?.ToString("O"),
+                        ["lastErrorCode"] = c.LastErrorCode,
+                    })]),
+                };
+            }
+
+            async Task StageOutboxAsync()
+            {
+                // --outbox-rate r: stage r messages/s, each in its own source transaction, as an application would.
+                var outbox = provider.GetRequiredService<Runwick.Outbox.Sqlite.ISqliteOutbox>();
+                using var source = new SqliteConnection(outboxSourceCs);
+                source.Open();
+                var every = TimeSpan.FromSeconds(1 / outboxRate);
+                var due = clock.Elapsed;
+                while (clock.Elapsed < stopAt)
+                {
+                    try
+                    {
+                        using var tx = source.BeginTransaction(deferred: false);
+                        var number = Interlocked.Increment(ref outboxStaged).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                        await outbox.StageAsync(new G2Out(number, "x"), tx).ConfigureAwait(false);
+                        tx.Commit();
+                    }
+                    catch (Exception ex) when (ex is SqliteException or RunwickException)
+                    {
+                        Interlocked.Decrement(ref outboxStaged);
+                        Interlocked.Increment(ref outboxStageErrors);
+                    }
+
+                    due += every;
+                    if (due - clock.Elapsed is { Ticks: > 0 } wait)
+                    {
+                        await Task.Delay(wait).ConfigureAwait(false);
+                    }
+                }
+            }
+
+            async Task SampleAsync()
+            {
+                // --sample-seconds s: completions, refusals and checkpoint progress over time. A separate connection reads the
+                // WAL counters with a NOOP checkpoint, so sampling never queues behind the store's writer.
+                using var probe = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = sqliteDirectory!.DatabasePath, Pooling = false }.ConnectionString);
+                probe.Open();
+                var wal = new FileInfo(sqliteDirectory.DatabasePath + "-wal");
+                while (!sampling.IsCancellationRequested)
+                {
+                    var sample = new JsonObject
+                    {
+                        ["t"] = Math.Round(Ms(clock.ElapsedTicks - startTicks) / 1000, 1),
+                        ["completed"] = Interlocked.Read(ref finished),
+                        ["accepted"] = Interlocked.Read(ref dispatched),
+                        ["refused"] = Interlocked.Read(ref failedDispatch),
+                    };
+                    try
+                    {
+                        using var cmd = probe.CreateCommand();
+                        cmd.CommandText = "PRAGMA wal_checkpoint(NOOP)";
+                        using var row = cmd.ExecuteReader();
+                        row.Read();
+                        sample["walBusy"] = row.GetInt32(0) != 0;
+                        sample["walFrames"] = row.GetInt32(1);
+                        sample["checkpointedFrames"] = row.GetInt32(2);
+                    }
+                    catch (SqliteException ex)
+                    {
+                        sample["walError"] = ex.SqliteErrorCode;
+                    }
+
+                    wal.Refresh();
+                    sample["walBytes"] = wal.Exists ? wal.Length : 0;
+                    samples.Add(sample);
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(sampleSeconds), sampling.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            async Task<long> UnfinishedAsync()
+            {
+                using var probe = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = sqliteDirectory!.DatabasePath, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ConnectionString);
+                await probe.OpenAsync().ConfigureAwait(false);
+                using var cmd = probe.CreateCommand();
+                cmd.CommandText = $"SELECT count(*) FROM runwick_jobs WHERE application = 'bench' AND queue IN ('{LoadRegistration.Queue}', '{SideQueues.Outbox}') AND terminal_at IS NULL";
+                var jobs = (long)(await cmd.ExecuteScalarAsync().ConfigureAwait(false))!;
+                return jobs + (outboxSourceCs is null ? 0 : (await CountOutboxSourceAsync(outboxSourceCs).ConfigureAwait(false))
+                    .Where(kv => kv.Key is "pending" or "leased").Sum(kv => (long)kv.Value!));
+            }
         }
 
         if (driver is RedisStore groupStore && a.Has("redis-group"))
@@ -849,11 +1132,31 @@ internal static class BenchMode
         {
             result["finishesSent"] = Interlocked.Read(ref engine.FinishesSent);
             result["finishManyCalls"] = Interlocked.Read(ref engine.Completion.BatchesSent);
-            result["trace"] = stages.LatenciesJson();
+            var traced = stages.LatenciesJson();
+            result["trace"] = traced;
             result["traceCounters"] = stages.CountersJson();
+            // Short views of the trace: how long store calls waited for the single SQLite writer, and due-to-handler pickup.
+            result["writerQueueMs"] = new JsonObject([.. traced.Where(kv => kv.Key.EndsWith(":writerQueue", StringComparison.Ordinal))
+                .Select(kv => KeyValuePair.Create(kv.Key["phase:".Length..^":writerQueue".Length], (JsonNode?)new JsonObject
+                {
+                    ["count"] = kv.Value!["count"]!.DeepClone(), ["p99"] = kv.Value["p99Ms"]!.DeepClone(), ["max"] = kv.Value["maxMs"]!.DeepClone(),
+                }))]);
+            if (traced["stage:due->handlerInvoked"] is { } pickup)
+            {
+                result["pickupMs"] = new JsonObject { ["p50"] = pickup["p50Ms"]!.DeepClone(), ["p99"] = pickup["p99Ms"]!.DeepClone(), ["max"] = pickup["maxMs"]!.DeepClone() };
+            }
         }
 
         result["diagnostics"] = new JsonArray([.. engine.Health().Diagnostics.Select(x => (JsonNode?)x)]);
+
+        if (crash)
+        {
+            // Crash-run segment: write what this process measured, then die without a graceful stop. Leases, the writer
+            // connection and the WAL are left as a killed process leaves them; the next segment reopens the file.
+            result["crashed"] = true;
+            await File.WriteAllTextAsync(a.Str("out"), result.ToJsonString(Json.Indented)).ConfigureAwait(false);
+            Process.GetCurrentProcess().Kill();
+        }
 
         if (mode is not ("enqueue" or "bulk")) // those never started the worker
         {
@@ -908,4 +1211,45 @@ internal static class BenchMode
     }
 
     static double Ms(long stopwatchTicks) => stopwatchTicks * 1000.0 / Stopwatch.Frequency;
+
+    internal static async Task<JsonObject> CountOutboxSourceAsync(string sourceCs)
+    {
+        using var source = new SqliteConnection(new SqliteConnectionStringBuilder(sourceCs) { Mode = SqliteOpenMode.ReadOnly }.ConnectionString);
+        await source.OpenAsync().ConfigureAwait(false);
+        using var cmd = source.CreateCommand();
+        cmd.CommandText = "SELECT state, count(*) FROM runwick_outbox_messages GROUP BY state ORDER BY state";
+        using var rows = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+        var counts = new JsonObject();
+        while (await rows.ReadAsync().ConfigureAwait(false))
+        {
+            counts[rows.GetString(0)] = rows.GetInt64(1);
+        }
+
+        return counts;
+    }
+
+    sealed class HostedGroup(IReadOnlyList<IHostedService> services)
+    {
+        public async Task StartAsync(CancellationToken ct)
+        {
+            foreach (var service in services)
+            {
+                await service.StartAsync(ct).ConfigureAwait(false);
+            }
+        }
+
+        public async Task StopAsync(CancellationToken ct)
+        {
+            foreach (var service in services.Reverse())
+            {
+                await service.StopAsync(ct).ConfigureAwait(false);
+            }
+        }
+    }
+}
+
+internal static class SideQueues
+{
+    public const string Schedule = "schedule";
+    public const string Outbox = "outbox";
 }

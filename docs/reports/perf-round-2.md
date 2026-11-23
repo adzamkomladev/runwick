@@ -1829,8 +1829,22 @@ SQLite 55/55, Core 453/453, Contract 496/496 (Redis-backed rows used a fresh AOF
 
 ### What is left
 
-- A steady run that also does crash/reopen, scheduler and outbox work under the same load, and samples checkpoint progress during the run. This needs a harness change.
+- A steady run that also does crash/reopen, scheduler and outbox work under the same load, and samples checkpoint progress during the run. The harness for it is now built (next section); the run itself is still to do.
 - A quiet-host repeat to confirm whether the remaining 1.3% of refusals is host load or a real limit.
+
+### Harness for the combined run (built, not yet run)
+
+`bench --store sqlite --mode steady` has new opt-in flags. Without them a run behaves exactly as before.
+
+- `--retention-hours h` sets the application's retention policy to `h` hours for every class (audit keeps its 7-day minimum), and cleanup looks for work every 5 s instead of every 60 s. The smallest allowed horizon is 1 hour, so during a run shorter than that, cleanup deletes the old retained fixture, not the run's own jobs. `--cleanup-batch-rows n` makes batches smaller so cleanup lasts the whole window: the 5,000-job fixture at 5 rows per batch takes about 17 minutes.
+- `--schedule` adds one schedule that fires every second. Its jobs go to their own queue (`schedule`) and never count as load jobs.
+- `--outbox-rate r` stages `r` outbox messages per second, each in its own transaction, in a second SQLite file next to the store (the application's own database). The relay delivers them to the store's `outbox` queue.
+- `--sample-seconds s` records, every `s` seconds: completed and accepted load jobs, refusals, and the WAL counters (frames in the log, frames already copied back to the database, WAL file size). The WAL counters come from a separate connection, so sampling does not wait for the writer.
+- `--crash-cycles k` splits the window into `k + 1` parts, each a separate process on the same database file. The first `k` processes are killed (SIGKILL, no graceful stop) at the end of their part, with calls and jobs still in flight. The next process reopens the file and carries on; the last one waits until the store and the outbox source have nothing left unfinished (up to `--drain-store-seconds`, default 300). Each process writes a ledger of accepted, started and finished jobs, and at the end the parent checks the ledgers against the store.
+
+With `--trace`, each part also reports `writerQueueMs` (how long each kind of store call waited for the single SQLite writer: count, p99, max) and `pickupMs` (due to handler start).
+
+A 40-second smoke check (50 offers/s, one crash, all flags on) wrote its JSON and reconciled: 992 accepted jobs, all succeeded, none missing, no job run twice. It is not a measurement.
 
 ## Redis: delayed jobs picked up seconds late (fixed)
 

@@ -10,6 +10,7 @@ internal sealed class Args
 
     public Args(IReadOnlyList<string> args)
     {
+        Raw = args;
         for (var i = 0; i < args.Count; i++)
         {
             if (!args[i].StartsWith("--", StringComparison.Ordinal))
@@ -24,6 +25,9 @@ internal sealed class Args
     }
 
     public List<string> Positional { get; } = [];
+
+    /// <summary>The arguments as given, for a parent that re-launches itself with some of them changed.</summary>
+    public IReadOnlyList<string> Raw { get; }
 
     public bool Has(string name) => _values.ContainsKey(name);
 
