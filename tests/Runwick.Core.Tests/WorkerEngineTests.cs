@@ -321,7 +321,7 @@ public sealed class WorkerEngineTests
         async Task<int> Claims(int claimsInFlight)
         {
             await using var e = EngineFixture.Create(concurrency: 8, batch: true, options: o => o.ClaimsInFlight = claimsInFlight);
-            e.Script.Default = (_, _, _) => Task.Delay(TimeSpan.FromMilliseconds(20), e.Time, CancellationToken.None);
+            e.Script.Default = StaggeredHandlers(e);
             WatchClaims(e, 8, TimeSpan.FromMilliseconds(100));
             var ids = Enumerable.Range(0, 200).Select(i => e.Add("q" + i)).ToList();
             await e.StartAsync();
@@ -390,11 +390,13 @@ public sealed class WorkerEngineTests
     public async Task A_claim_that_fails_while_another_is_in_flight_resolves_by_resubmitting_the_same_command(bool timesOut)
     {
         await using var e = EngineFixture.Create(concurrency: 4, batch: true, options: o => o.ClaimsInFlight = 2);
-        e.Script.Default = (_, _, _) => Task.Delay(TimeSpan.FromMilliseconds(30), e.Time, CancellationToken.None);
+        e.Script.Default = StaggeredHandlers(e);
         var ids = Enumerable.Range(0, 40).Select(i => e.Add("f" + i)).ToList();
         Guid? failing = null;
         var gate = new Lock();
-        var watch = WatchClaims(e, 4, TimeSpan.FromMilliseconds(50), call =>
+        // A second claim needs 2 free slots while the first waits (limit 2): staggered slots free one per 50 ms step, so a
+        // claim must span several steps (CI and local: 50 ms claims never overlapped, high-water 1, nothing chosen to fail).
+        var watch = WatchClaims(e, 4, TimeSpan.FromMilliseconds(150), call =>
         {
             // The first claim sent while another is in flight fails: its reply is lost, or it hangs until its request timeout.
             lock (gate)
@@ -411,8 +413,19 @@ public sealed class WorkerEngineTests
 
         await e.StartAsync();
         // A hung claim reserved nothing, so the others can drain every job before its request timeout ends and it is resubmitted.
-        await e.RunUntilAsync(() => ids.All(id => e.Store.JobOf(id).State == JobStates.Succeeded)
-            && e.Store.Calls.Count(c => c.CommandId == failing) >= 2 && e.Engine.Pools.Single().ClaimsInFlight == 0, Long, "all succeeded");
+        try
+        {
+            await e.RunUntilAsync(() => ids.All(id => e.Store.JobOf(id).State == JobStates.Succeeded)
+                && e.Store.Calls.Count(c => c.CommandId == failing) >= 2 && e.Engine.Pools.Single().ClaimsInFlight == 0, Long, "all succeeded");
+        }
+        catch (TimeoutException)
+        {
+            var pool = e.Engine.Pools.Single();
+            Assert.Fail($"failing={failing?.ToString() ?? "none"}, its calls={e.Store.Calls.Count(c => c.CommandId == failing)}, "
+                + $"states=[{string.Join(", ", ids.GroupBy(id => e.Store.JobOf(id).State).Select(g => g.Key + ":" + g.Count()))}], "
+                + $"inFlight={pool.ClaimsInFlight}, highWater={pool.ClaimsInFlightHighWater}, outstanding={pool.Gate.Outstanding}, "
+                + $"claims={e.Store.Count(Operations.ReserveAndBegin)}");
+        }
 
         var calls = e.Store.Calls.Where(c => c.CommandId == failing).ToList();
         Assert.True(calls.Count >= 2, "the failed claim was resubmitted");
