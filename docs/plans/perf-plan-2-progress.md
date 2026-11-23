@@ -137,3 +137,10 @@ Use .NET SDK 10.0.403 with `DOTNET_ROOT=/root/.dotnet` and its directory on `PAT
 - 2026-11-23: merged Redis lean worker scripts. Claim, finish and renew scripts take a hand-written fast path in the usual case and fall back to the full steps for anything unusual; nothing stored changes. Script CPU per job fell about a quarter, but drains did not get faster on their own on the shared host (0.90× disk, 0.96× memory).
 - 2026-11-23: merged Redis stored-layout revision 2 (an upgrade that needs drain, stop, migrate, start). One finish receipt per call, attempt records packed at close, events packed per call, no stored nulls. AOF bytes per drained job about 6,830 to 5,050; buffered drains 1.19× main on disk and 1.21× on memory, now 0.59× BullMQ on disk. Replies and the events feed are unchanged.
 - Still open: a quiet-host repeat of the combined finish-and-claim benchmark, the Q6/Q7 and E review, quiet-host reruns, and the final qualification (soak excluded).
+
+## 2026-11-23 update
+
+- The host rebooted on 2026-11-22 and stopped the claims-in-flight test run; the work survived and was merged again.
+- Merged to `main`: claims in flight (`WorkerOptions.ClaimsInFlight`, 1 to 4, default 1), Redis lean worker scripts and stored layout revision 2 (Redis layout upgrade: drain, stop, migrate, start), delayed wake on staging, outbox and management dispatch (PostgreSQL migration `0027_staged_delayed_wake`, schema revision 27), and PR #1 (dashboard and management API with reflection-based JSON off).
+- The Q6/Q7 combined SQLite harness is built on branch `q67-harness`; its full run is pending a quiet host.
+- From now on test runs are done by Sonnet agents; Opus sessions only write code, merge and edit docs.
