@@ -54,7 +54,18 @@ internal sealed class RxScript
 
     /// <summary>A script that may write (Redis checks memory and MISCONF before it runs any of it).</summary>
     public static RxScript Write(string op) =>
-        Cache.GetOrAdd("w:" + op, _ => new RxScript(op, "#!lua\n" + Resource("prelude.lua") + "\n" + Resource("jobs.lua") + Lib(op) + "\n" + Resource("ops." + op + ".lua")));
+        Cache.GetOrAdd("w:" + op, _ => new RxScript(op, "#!lua\n" + (Lean.Contains(op)
+            ? "local function GENERIC()\n" + Generic(op) + "\nend\n" + Resource("lean.frame.lua") + "\n" + Resource("lean." + op + ".lua")
+            : Generic(op))));
+
+    /// <summary>
+    /// Worker operations with a lean path (22 §4.1, REDIS-22): the script defines the generic frame as <c>GENERIC()</c> without running
+    /// it, then runs the hand-written path, which calls <c>GENERIC()</c> before any write when it cannot decide the command itself.
+    /// </summary>
+    internal static readonly HashSet<string> Lean = new(StringComparer.Ordinal) { "reserve_and_begin", "finish", "finish_many", "renew" };
+
+    /// <summary>The generic frame of a write operation: prelude, shared job steps and the operation body.</summary>
+    static string Generic(string op) => Resource("prelude.lua") + "\n" + Resource("jobs.lua") + Lib(op) + "\n" + Resource("ops." + op + ".lua");
 
     /// <summary>A read-only script (<c>flags=no-writes</c>, 22 §4.6).</summary>
     public static RxScript Read(string op) =>

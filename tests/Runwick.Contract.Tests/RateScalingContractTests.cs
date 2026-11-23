@@ -53,6 +53,7 @@ public sealed class RateScalingContractTests
     /// <summary>The JSON object rows of a hash (the scope hashes also hold plain field-to-id entries, which are skipped).</summary>
     static async Task<List<(string Field, JsonNode Row)>> RedisFieldRows(DriverFixture f, string key) =>
         [.. (await f.ReadCommittedSnapshot()).Tables.GetValueOrDefault(key, []).Select(r => (r[..r.IndexOf('=')], r[(r.IndexOf('=') + 1)..]))
+            .SelectMany(r => key == "events:data" ? RedisEventRows.Expand(r.Item1, r.Item2).Select(v => (r.Item1, v)) : [r])
             .Where(r => r.Item2.StartsWith('{')).Select(r => (r.Item1, JsonNode.Parse(r.Item2)!))];
 
     static async Task<List<JsonNode>> RedisRows(DriverFixture f, string key) => [.. (await RedisFieldRows(f, key)).Select(r => r.Row)];

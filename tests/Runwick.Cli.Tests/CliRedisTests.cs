@@ -56,7 +56,7 @@ public sealed class CliRedisTests
 
         var first = await RunAsync(redis.Configuration, "migrate");
         Assert.Equal(0, first.Exit);
-        Assert.Equal(1, first.Result!["layoutRevision"]!.GetValue<long>());
+        Assert.Equal(2, first.Result!["layoutRevision"]!.GetValue<long>());
         Assert.Equal(3, first.Result["appliedPhases"]!.AsArray().Count);
         var again = await RunAsync(redis.Configuration, "migrate");
         Assert.Equal(0, again.Exit);
@@ -67,11 +67,11 @@ public sealed class CliRedisTests
         var doctor = await RunAsync(redis.Configuration, "doctor");
         Assert.Equal(0, doctor.Exit);
         var checks = Checks(doctor);
-        Assert.Equal(("pass", "revision 1"), checks["store.migration"]);
+        Assert.Equal(("pass", "revision 2"), checks["store.migration"]);
         Assert.Equal("pass", checks["store.settings"].Status);
         Assert.Contains("appendfsync=always", checks["store.settings"].Detail, StringComparison.Ordinal);
         Assert.Equal("unverified", checks["api.reachable"].Status);
-        Assert.Equal(1, doctor.Result!["cliSchemaRevision"]!.GetValue<long>());
+        Assert.Equal(2, doctor.Result!["cliSchemaRevision"]!.GetValue<long>());
 
         var status = await RunAsync(redis.Configuration, "store", "status");
         Assert.Equal(0, status.Exit);
@@ -84,7 +84,7 @@ public sealed class CliRedisTests
         Fails(changed, "check_failed", 1);
         Assert.Contains("schema_validation_failed", Checks(changed)["store.migration"].Detail, StringComparison.Ordinal);
 
-        await redis.CliAsync("HSET", "rw:store", "layout", "2");
+        await redis.CliAsync("HSET", "rw:store", "layout", "3");
         var ahead = await RunAsync(redis.Configuration, "doctor");
         Fails(ahead, "check_failed", 1);
         Assert.Contains("CLI older than store", Checks(ahead)["store.migration"].Detail, StringComparison.Ordinal);

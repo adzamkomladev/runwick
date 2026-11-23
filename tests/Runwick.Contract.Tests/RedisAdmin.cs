@@ -35,8 +35,9 @@ internal static partial class RedisAdmin
     public static async Task<Dictionary<string, string>> Hash(string application, string key) =>
         (await (await Db()).HashGetAllAsync(P(application) + key)).ToDictionary(e => (string)e.Name!, e => (string)e.Value!, StringComparer.Ordinal);
 
-    static async Task<List<JsonObject>> Json(string application, string key) =>
-        [.. (await Hash(application, key)).Values.Select(v => JsonNode.Parse(v)!.AsObject())];
+    static async Task<List<JsonObject>> Json(string application, string key) => key == "events:data"
+        ? [.. RedisEventRows.All(await Hash(application, key)).Select(v => JsonNode.Parse(v)!.AsObject())]
+        : [.. (await Hash(application, key)).Values.Select(v => JsonNode.Parse(v)!.AsObject())];
 
     public static async Task<bool> Exists(string application, string key) => await (await Db()).KeyExistsAsync(P(application) + key);
 

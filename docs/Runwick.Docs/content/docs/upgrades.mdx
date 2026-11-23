@@ -84,6 +84,7 @@ Start workers, then producers, then dashboards. Check with `runwick doctor --con
 | `schema_validation_failed` | Something in the database differs from what this release expects | Do not force it. The store stays at the last good revision and no release can run on it. Read the message, repair or restore, run again |
 | `migration_checksum_mismatch` | A released migration was changed | Stop. You are running a different build from the one that migrated this store |
 | `migration_unknown` | The store is **newer** than this CLI | You are rolling back by accident. Use the matching CLI, or restore |
+| `intent_pending` (Redis) | One application still has a write that was interrupted and not yet finished | Wait a few seconds and run again. If it persists, a process is still running against that application: stop it. A run that stopped here is safe to repeat; no release runs on the store until it completes |
 
 ### If it goes wrong
 

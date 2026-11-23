@@ -233,7 +233,7 @@ public sealed class UpgradeContractTests
             if (kind == StoreKind.Redis)
             {
                 // rw:store is shared by every application on the server: put the layout back.
-                await (await RedisServer.AdminAsync()).GetDatabase().HashSetAsync("rw:store", "layout", "1");
+                await (await RedisServer.AdminAsync()).GetDatabase().HashSetAsync("rw:store", "layout", "2");
             }
         }
     }

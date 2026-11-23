@@ -10,7 +10,8 @@ namespace Runwick.Redis.Tests;
 /// <summary>
 /// Perf plan F, dispatch script diet: the script writes the fields of a dispatch in bytewise order without sorting them at run time.
 /// A small hash keeps its insertion order, so reading it back shows the order the script wrote. These tests pin it to the order the
-/// old sorting gave, and pin the field sets, so a field that is dropped from the pre-ordered lists fails here.
+/// old sorting gave, and pin the field sets, so a field that is dropped from the pre-ordered lists fails here. Layout 2 (2026-11-20)
+/// changed the stored event from a row to a pack; the row EventsSince serves from it is pinned unchanged.
 /// </summary>
 [Trait("Category", "Contract")]
 [Trait("Item", "PF2-F")]
@@ -77,9 +78,14 @@ public sealed class RedisDispatchLayoutTests
             var receiptFields = (await db.HashKeysAsync(RedisServer.Key(application, "rcpt:" + command))).Select(f => (string)f!).Order(StringComparer.Ordinal).ToArray();
             Assert.Equal(ReceiptFields, receiptFields);
 
-            // Event row: keys in bytewise order, one dispatched event attributed to the command.
-            var rows = await db.HashValuesAsync(RedisServer.Key(application, "events:data"));
-            var row = Assert.Single(rows.Select(r => JsonNode.Parse((string)r!)!.AsObject()), o => o["kind"]!.GetValue<string>() == "dispatched");
+            // Event (layout 2, 22 §3.2): the call's events are stored as one pack keyed by its first event id, with no null actor or
+            // attempt written out; the dispatch's pack holds one entry. Expanded, as EventsSince serves it, it is the layout-1 row: keys in
+            // bytewise order, one dispatched event attributed to the command.
+            var stored = (await db.HashGetAllAsync(RedisServer.Key(application, "events:data"))).ToDictionary(e => (string)e.Name!, e => (string)e.Value!);
+            var pack = Assert.Single(stored.Values, v => v.Contains("\ndispatched|", StringComparison.Ordinal));
+            Assert.Matches(@"^~1\|\d+\|" + command + @"\ndispatched\|" + job + @"\|\|\|0\|\{""generation"":", pack);
+            var rows = RedisEventRows.All(stored);
+            var row = Assert.Single(rows.Select(r => JsonNode.Parse(r)!.AsObject()), o => o["kind"]!.GetValue<string>() == "dispatched");
             var keys = row.Select(p => p.Key).ToArray();
             Assert.Equal(Bytewise(keys), keys);
             Assert.Equal(["actorId", "attemptId", "commandId", "details", "eventId", "jobId", "kind", "occurredAt"], keys);

@@ -299,7 +299,9 @@ public sealed class RedisCrashTests(R01Server server) : IClassFixture<R01Server>
                 case RedisType.Hash:
                     foreach (var e in await db.HashGetAllAsync(key))
                     {
-                        if (!(e.Name == "confirmed" && (k == "rcpt:" + command || (command == "*" && k.StartsWith("rcpt:", StringComparison.Ordinal)))))
+                        // The confirmation time is the resend's own: "confirmed" in a per-item receipt, c:<item> in a call's finish receipts (22 §3.2).
+                        var confirmation = e.Name == "confirmed" || (k.EndsWith(":f", StringComparison.Ordinal) && ((string)e.Name!).StartsWith("c:", StringComparison.Ordinal));
+                        if (!(confirmation && (k == "rcpt:" + command || k == "rcpt:" + command + ":f" || (command == "*" && k.StartsWith("rcpt:", StringComparison.Ordinal)))))
                         {
                             lines.Add($"{k}|{H(e.Name)}|{H(e.Value)}");
                         }

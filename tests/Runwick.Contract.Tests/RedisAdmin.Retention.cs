@@ -57,13 +57,39 @@ internal static partial class RedisAdmin
             }
 
             var h = await Hash(application, k);
+            if (k.EndsWith(":f", StringComparison.Ordinal))
+            {
+                // A call's finish receipts (22 §3.2): only the call's expiry entry carries a time that retention reads.
+                var score = await db.SortedSetScoreAsync(P(application) + "rcpt:exp:durable", k["rcpt:".Length..]) ?? 0;
+                await db.SortedSetAddAsync(P(application) + "rcpt:exp:durable", k["rcpt:".Length..], score - ms);
+                continue;
+            }
+
             await db.HashSetAsync(P(application) + k, [new HashEntry("notafter", long.Parse(h["notafter"], CultureInfo.InvariantCulture) - ms),
                 new HashEntry("retain", long.Parse(h["retain"], CultureInfo.InvariantCulture) - ms)]);
             await db.SortedSetAddAsync(P(application) + "rcpt:exp:" + h["cls"], k["rcpt:".Length..], long.Parse(h["retain"], CultureInfo.InvariantCulture) - ms);
         }
     }
 
-    public static async Task<long> Receipts(string application, Guid command) => await Exists(application, "rcpt:" + command.ToString("N")) ? 1 : 0;
+    public static async Task<long> Receipts(string application, Guid command)
+    {
+        if (await Exists(application, "rcpt:" + command.ToString("N")))
+        {
+            return 1;
+        }
+
+        // A finish item's receipt in its call's rcpt:<call>:f (22 §3.2).
+        var db = await Db();
+        foreach (var k in (await Keys(application, "rcpt:*")).Where(k => k.EndsWith(":f", StringComparison.Ordinal)))
+        {
+            if (await db.HashExistsAsync(P(application) + k, command.ToString("N")))
+            {
+                return 1;
+            }
+        }
+
+        return 0;
+    }
 
     static async Task<List<(string Field, JsonObject Row)>> Windows(string application, string? key = null) =>
         [.. (await Hash(application, "keys:window")).Where(p => key is null || p.Key.EndsWith("\0" + key, StringComparison.Ordinal))

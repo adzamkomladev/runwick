@@ -65,14 +65,14 @@ internal static partial class RedisAdmin
 
     /// <summary>The recorded execution time (ms) of the (single) closed attempt of a job.</summary>
     public static async Task<long> AttemptElapsed(string application, Guid job) =>
-        (await Hash(application, "job:" + job.ToString("N"))).Where(p => p.Key.StartsWith("a:", StringComparison.Ordinal) && p.Key.EndsWith(":elapsed", StringComparison.Ordinal))
-            .Select(p => long.Parse(p.Value, CultureInfo.InvariantCulture)).Single();
+        (await Hash(application, "job:" + job.ToString("N"))).Where(p => p.Key.StartsWith("a:", StringComparison.Ordinal) && p.Key.Length == 34)
+            .Select(p => JsonNode.Parse(p.Value)![10]!.GetValue<long>()).Single(); // the packed record's elapsed (22 §3.1, layout 2)
 
     /// <summary>The store record (<c>rw:store</c>): store id, layout, manifest and its digest.</summary>
     public static async Task<Dictionary<string, string>> StoreHash() =>
         (await (await Db()).HashGetAllAsync(Runwick.Redis.Migrations.RedisMigrator.StoreKey)).ToDictionary(e => (string)e.Name!, e => (string)e.Value!, StringComparer.Ordinal);
 
-    /// <summary>Setup: sets the layout revision the application's gate reads (the binary's is "1").</summary>
+    /// <summary>Setup: sets the layout revision the application's gate reads (the binary's is "2").</summary>
     public static async Task SetLayout(string application, string layout) => await (await Db()).HashSetAsync(P(application) + "meta", "layout", layout);
 
     /// <summary>Gives a waiting job a spent execution budget: its generation's started count reaches the maximum.</summary>

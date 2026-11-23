@@ -39,7 +39,7 @@ namespace Runwick.Redis.Migrations
 {
     internal static class RedisMigrator
     {
-        public const long CurrentLayout = 1;
+        public const long CurrentLayout = 2;
         public const string StoreKey = "rw:store";
         const string LockKey = "rw:migration-lock";
         const string ManifestDomain = "runwick.manifest.v1";
@@ -146,6 +146,11 @@ namespace Runwick.Redis.Migrations
                     throw new RedisMigrationException("migration_unknown", $"rw:store holds layout revision {layout}, which this binary does not know (newer store).");
                 }
 
+                if (map.GetValueOrDefault("layout") == "1" && map.GetValueOrDefault("digest") == Convert.ToHexStringLower(Manifest(1).Digest))
+                {
+                    return await UpgradeFromLayout1Async(db, server, cluster, map, manifest, digest, ct).ConfigureAwait(false);
+                }
+
                 if (map.GetValueOrDefault("layout") != CurrentLayout.ToString(System.Globalization.CultureInfo.InvariantCulture)
                     || map.GetValueOrDefault("digest") != Convert.ToHexStringLower(digest))
                 {
@@ -176,6 +181,45 @@ namespace Runwick.Redis.Migrations
             return new RedisMigrationResult(storeId, CurrentLayout, ["expand", "validate", "activate"]);
         }
 
+        static readonly LuaScript SetLayout = LuaScript.Prepare(
+            "local l = redis.call('HGET', @meta, 'layout') if l == @to then return 'DONE' end " +
+            "if l ~= @from then return 'OTHER' end " +
+            "local i = redis.call('HGET', @meta, 'intent') if i and i ~= '' then return 'PENDING' end " +
+            "redis.call('HSET', @meta, 'layout', @to) return 'OK'");
+
+        /// <summary>
+        /// Layout revision 1 to 2 (22 §9.2 step 5, 23 §4): each application's meta copy first, one script each, refused with
+        /// <c>intent_pending</c> while that application has a pending intent; then rw:store. A run stopped partway is run again:
+        /// rw:store still says 1 until every application is done, so no binary runs on the half-changed store (a layout-2 binary
+        /// refuses rw:store, a layout-1 binary the changed meta copies). No data is rewritten: layout-2 readers read both forms.
+        /// </summary>
+        static async Task<RedisMigrationResult> UpgradeFromLayout1Async(IDatabase db, IServer server, bool cluster, Dictionary<string, string> store,
+            JsonObject manifest, byte[] digest, CancellationToken ct)
+        {
+            foreach (var node in cluster ? PrimariesOf(db.Multiplexer) : [server])
+            {
+                foreach (var (name, meta) in await RedisOps.ApplicationsAsync(node, db, null, ct).ConfigureAwait(false))
+                {
+                    var result = (string?)await db.ScriptEvaluateAsync(SetLayout, new { meta, from = "1", to = "2" }).ConfigureAwait(false);
+                    if (result == "PENDING")
+                    {
+                        throw new RedisMigrationException("intent_pending", $"Application {name} has a pending intent; let recovery finish and retry.");
+                    }
+
+                    if (result == "OTHER")
+                    {
+                        throw new RedisMigrationException("schema_validation_failed", $"Application {name} holds a layout revision other than 1 or 2.");
+                    }
+                }
+            }
+
+            await db.HashSetAsync(StoreKey,
+            [
+                new("layout", CurrentLayout), new("manifest", manifest.ToJsonString()), new("digest", Convert.ToHexStringLower(digest)),
+            ]).ConfigureAwait(false);
+            return new RedisMigrationResult(Guid.Parse(store["store"]), CurrentLayout, ["layout-2"]);
+        }
+
         // ------------------------------------------------------------------ manifest (22 §9.3)
 
         /// <summary>The PostgreSQL revision-17 operation set and versions (as SQLite's).</summary>
@@ -190,7 +234,7 @@ namespace Runwick.Redis.Migrations
             "CleanupBatch", "EditRetentionPolicy", "ManagementDispatch",
         ];
 
-        internal static (JsonObject Json, byte[] Digest) Manifest()
+        internal static (JsonObject Json, byte[] Digest) Manifest(long layout = CurrentLayout)
         {
             var map = new SortedDictionary<string, SortedSet<int>>(StringComparer.Ordinal);
             foreach (var entry in ManifestOperations)
@@ -216,7 +260,7 @@ namespace Runwick.Redis.Migrations
             var json = new JsonObject
             {
                 ["manifestVersion"] = 1,
-                ["layoutRevision"] = CurrentLayout,
+                ["layoutRevision"] = layout,
                 ["protocolEpochs"] = new JsonArray(1),
                 ["receiptCodecs"] = new JsonArray(1),
                 ["commandFingerprintVersions"] = new JsonArray(1),
@@ -228,7 +272,7 @@ namespace Runwick.Redis.Migrations
             var one = CanonicalValue.Array(CanonicalValue.Int(1));
             var canonical = CanonicalValue.Object()
                 .Add("manifestVersion", 1)
-                .Add("layoutRevision", CurrentLayout)
+                .Add("layoutRevision", layout)
                 .Add("protocolEpochs", one)
                 .Add("receiptCodecs", one)
                 .Add("commandFingerprintVersions", one)

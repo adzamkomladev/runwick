@@ -72,10 +72,28 @@ internal static class RedisSnapshotReader
                 j["queue"], j.GetValueOrDefault("reason") is { Length: > 0 } r ? r : null));
             foreach (var a in j.Keys.Where(f => f.StartsWith("a:", StringComparison.Ordinal) && f.EndsWith(":res", StringComparison.Ordinal)))
             {
+                // Layout 1: one field per value.
                 var aid = a[2..^4];
                 string? F(string f) => j.GetValueOrDefault($"a:{aid}:{f}") is { Length: > 0 } v ? v : null;
                 attempts.Add(new AttemptRow(G(aid), id, I(F("gen")), long.Parse(F("res")!, CultureInfo.InvariantCulture),
                     F("exec") is { } e ? I(e) : null, F("outcome"), T(F("reserved")!), Tn(F("auth")), Tn(F("fin"))));
+            }
+
+            foreach (var a in j.Keys.Where(f => f.Length == 34 && f.StartsWith("a:", StringComparison.Ordinal)))
+            {
+                // Layout 2, closed: [gen, reservation, execution, worker, reserved, authorized, finished, outcome, ...].
+                var rec = JsonNode.Parse(j[a])!.AsArray();
+                string? V(int i) => rec[i] is { } v ? v.ToString() : null;
+                attempts.Add(new AttemptRow(G(a[2..]), id, I(V(0)!), long.Parse(V(1)!, CultureInfo.InvariantCulture), V(2) is { } e ? I(e) : null,
+                    V(7), T(V(4)!), Tn(V(5)), Tn(V(6))));
+            }
+
+            if (j.GetValueOrDefault("attempt") is { Length: > 0 } open && j.TryGetValue("ares", out var ares) && !j.ContainsKey($"a:{open}")
+                && !j.ContainsKey($"a:{open}:res"))
+            {
+                // Layout 2, open: the job's own fields.
+                attempts.Add(new AttemptRow(G(open), id, I(gen), long.Parse(j["rcount"], CultureInfo.InvariantCulture),
+                    j.TryGetValue("aauth", out var auth) ? I(j[$"g:{gen}:started"]) : null, null, T(ares), Tn(auth), null));
             }
         }
 
@@ -100,8 +118,12 @@ internal static class RedisSnapshotReader
         }
 
         var receipts = hashes.Where(p => p.Key.StartsWith("rcpt:", StringComparison.Ordinal) && !p.Key.StartsWith("rcpt:exp:", StringComparison.Ordinal))
-            .Select(p => new ReceiptRow(G(p.Key[5..]), p.Value.GetValueOrDefault("op", ""), p.Value.GetValueOrDefault("cls", ""),
-                p.Value.GetValueOrDefault("result") is { Length: > 0 }))
+            .SelectMany(p => p.Key.EndsWith(":f", StringComparison.Ordinal)
+                // A call's finish receipts (22 §3.2): field = item command id, value "1|fp|NotAfter|decided|result"; c:<id> are markers.
+                ? p.Value.Where(e => !e.Key.StartsWith("c:", StringComparison.Ordinal))
+                    .Select(e => new ReceiptRow(G(e.Key), "Finish", "durable", e.Value.Split('|', 5) is { Length: 5 } v && v[4].Length > 0))
+                : [new ReceiptRow(G(p.Key[5..]), p.Value.GetValueOrDefault("op", ""), p.Value.GetValueOrDefault("cls", ""),
+                    p.Value.GetValueOrDefault("result") is { Length: > 0 })])
             .OrderBy(r => r.RetentionClass, StringComparer.Ordinal).ThenBy(r => r.CommandId).ToList();
         return new HarnessSnapshot(new StoreSnapshot(readAt, jobs, attempts, permits, dispatchKeys, receipts), tables);
     }

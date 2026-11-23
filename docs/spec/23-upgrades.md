@@ -15,6 +15,8 @@ Four things are new in code:
 
 ## Changes
 
+- (2026-11-20, Redis stored-data cuts) Redis layout revision 2 (22 §3.2: attempt records packed at close, events packed per call, no null fields written). The same rule: back up, drain, stop old binaries, migrate, reopen, start new. `migrate` changes each application's `meta` copy (refused with `intent_pending` while one holds a pending intent) and then `rw:store`; a run stopped partway is run again, and until `rw:store` changes no binary of either layout runs on the store. No data is rewritten: layout-1 attempt fields and event rows stay readable for as long as they are kept, and an attempt still open from layout 1 (a store migrated without draining) is closed in its own form. The rollback floor for Redis becomes 2; the way back is the backup. PostgreSQL and SQLite are unchanged.
+
 - (2026-11-10, exact stats) PostgreSQL revision 20 (`0020_stats_indexes`) and SQLite revision 4 (`0004_stats_indexes`) add two indexes each; the same drain, stop, migrate, start rule. Building the indexes takes a write lock on `jobs` and `job_attempts` for its duration (not `CONCURRENTLY`, like the earlier index migrations). Redis stays at layout revision 1; the first stats read after the upgrade backfills its new projections (22).
 
 - (2026-11-10, worker detail) PostgreSQL revision 19 (`0019_worker_detail`) and SQLite revision 3 (`0003_worker_detail`) add a nullable worker-presence column; Redis stays at layout revision 1. Same rule: drain, stop old binaries, migrate, start new. A row written before the migration, or by an older worker, has no detail (16 §2.3).
@@ -31,7 +33,7 @@ Four things are new in code:
 
 ## 1. Targets and boundaries
 
-- A binary declares exactly one store revision (`PgMigrator.CurrentRevision`, `SqliteMigrator.CurrentRevision`, Redis revision 1) and protocol epoch 1. Every operation checks it inside its transaction (03 §10.1). A store at another revision gives `UnsupportedVersion schema_incompatible` for every operation, creation or settlement, in both directions: old binary on newer store, new binary on older store.
+- A binary declares exactly one store revision (`PgMigrator.CurrentRevision`, `SqliteMigrator.CurrentRevision`, Redis layout revision 2) and protocol epoch 1. Every operation checks it inside its transaction (03 §10.1). A store at another revision gives `UnsupportedVersion schema_incompatible` for every operation, creation or settlement, in both directions: old binary on newer store, new binary on older store.
 - The manifest field `expandCompatibleBinaries` is empty in every manifest v1 writes. A store whose `migration_mode` is `expand` therefore admits no binary (`store_maintenance`) [choice]. The migrator never writes `expand`; the mode exists for a future migration that declares compatible binaries, and until one does, "additive and invisible to old clients" is **not** a v1 promise.
 - Migrations only go forward. There are no down migrations. Each migration advances the **rollback floor** (§5).
 - A migration's three phases (expand, validate, activate) run in separate short transactions, each with `lock_timeout` 5 s and `statement_timeout` 60 s (04 §8.1). None of migrations 0001 to 0017 has a backfill or a concurrent index build; the checkpoint column and the `CREATE INDEX CONCURRENTLY` ledger phase of 04 §8.4 are specified but have no user yet. A migration that adds one must come with its own interrupted-phase test (UPG-05).
@@ -47,7 +49,7 @@ Four things are new in code:
 | UPG-02 only compatible old/new clients run; activation rejects old required-semantic writers | Applies | Applies (revision gate); required-capability rejection is covered by the shared RATE cases | Applies (layout gate; capability rejection by the shared RATE cases) |
 | UPG-03 long caller transaction blocks the gate change; no partial commit | Applies | Applies: an open caller write transaction holds the file write lock; the change waits then fails with `migration_lock_timeout` | N/A: Redis has no caller transactions (22 §8); the only concurrent writer is a pending intent, which the change refuses with `intent_pending` (tested) |
 | UPG-04 drain and maintenance block every creation path, keep settlement | Applies | Applies | Applies |
-| UPG-05 interrupted DDL, index and backfill phases resume from the real catalog | Applies | N/A: the whole migration is one transaction; a crash leaves nothing (SQL-10) | N/A: install is one `HSET`; a crash leaves nothing or a complete `rw:store` |
+| UPG-05 interrupted DDL, index and backfill phases resume from the real catalog | Applies | N/A: the whole migration is one transaction; a crash leaves nothing (SQL-10) | N/A: install is one `HSET`; a crash leaves nothing or a complete `rw:store`. The 1 → 2 change is one `HSET` per application and then one on `rw:store`; a rerun finishes it (L2-05) |
 | UPG-06 rollback after semantic activation is refused | Applies | Applies (revision gate and capability gate) | Applies (layout gate and capability gate) |
 | UPG-07 old receipt resolves without reapplication; unknown codec is explicit | Applies | Applies (§8) | Applies (§8) |
 | UPG-08 expired presence or lease is not proof of a stopped writer | Applies | Applies | Applies (counts from the `leases`, `workers` and `workers:exp` keys) |
@@ -130,7 +132,7 @@ The rollback floor is the lowest store revision a deployed binary accepts: **the
 - The way back is restoring the backup taken in step 1 and running the previous binary and CLI. Everything written after the backup is lost (§7.3).
 - A binary also refuses to migrate a store that is ahead of it: a ledger row for a migration it does not know is `migration_unknown`, and the CLI `doctor` reports "CLI older than store".
 - Raising a required capability (`ActivateCapabilities`) is a second, separate floor: the capability cannot be lowered, and a binary without it fails every creation path with `capability_unsupported` while its Renew, Finish, Recover and ReleaseReservation still work (10 §6.1; the UPG-02 and UPG-06 subset).
-- The documented floor for this release is revision 18 for PostgreSQL, 2 for SQLite and 1 for Redis.
+- The documented floor for this release is revision 18 for PostgreSQL, 2 for SQLite and 2 for Redis (layout revision 2, 2026-11-20).
 
 ## 6. Status and quiescence
 

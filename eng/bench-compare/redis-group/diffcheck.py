@@ -6,6 +6,7 @@ detail field reads as empty). Also covers a claim whose items are not plain Appl
 budget exhausted), a single Reserve, Begin and Finish, and a resend (replay) of every command. Usage: diffcheck.py --port P [--base DIR] [--new DIR]"""
 import argparse, json, re, socket, sys
 from pathlib import Path
+from luascript import compose, hint, layout, read
 
 STORE = "11" * 16
 PREFIX = "rw:{" + b"diffapp".hex() + "}:"
@@ -40,17 +41,13 @@ def hexid(n, kind):
     return f"{kind:04x}{n:028x}"
 
 
-def run(lua, port, decoder):
+def run(lua, port, decoder, lean=True):
     db = Redis(port)
     db.call("FLUSHALL")
-    db.call("HSET", META, "store", STORE, "mode", "normal", "layout", 1, "epoch", 1, "admission", "open", "bf", "done")
+    db.call("HSET", META, "store", STORE, "mode", "normal", "layout", layout(lua), "epoch", 1, "admission", "open", "bf", "done")
     db.call("HSET", PREFIX + "queues", "default", "{}")
-    prelude = (lua / "prelude.lua").read_text() + "\n" + (lua / "jobs.lua").read_text() + "\n"
-    dispatch = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/dispatch.lua").read_text())
-    rb = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/reserve_and_begin.lua").read_text())
-    fm = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/finish_many.lua").read_text())
-    fin = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/finish.lua").read_text())
-    fc = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/finish_and_claim.lua").read_text())
+    load = lambda op: db.call("SCRIPT", "LOAD", compose(lua, op, lean))
+    dispatch, rb, fm, fin, fc, ren = (load(op) for op in ("dispatch", "reserve_and_begin", "finish_many", "finish", "finish_and_claim", "renew"))
     replies = []
 
     def dl(ahead):
@@ -61,7 +58,7 @@ def run(lua, port, decoder):
     for i in range(n):
         policy = dict(maxExec=3, maxUn=3, retry='{"initialDelay":100,"maximumDelay":1000}', uretry='{"initialDelay":100,"maximumDelay":1000}', timeout=None)
         body = dict(jobId=hexid(i, 1), name="test", queue="default", priority="medium", pver=1, profile="json", profver=1, notBefore=None,
-                    akey=None, wkey=None, wms=None, biz="0" * 64, pol="0" * 64, headers='{"business":{},"diagnostic":{}}', policy=policy,
+                    akey="k0" if i == 0 else None, wkey=None, wms=None, biz="0" * 64, pol="0" * 64, headers='{"business":{},"diagnostic":{}}', policy=policy,
                     scopes=[], rates=[])
         r = db.call("EVALSHA", dispatch, 1, META, 0, STORE, "Dispatch", hexid(i, 2), hexid(i, 3) * 2, dl(300_000), 600_000, 86_400_000,
                     "durable", "c", "", 0, 0, "initial", "", 1, json.dumps(body), b"payload-%d" % i)
@@ -77,11 +74,28 @@ def run(lua, port, decoder):
     items = json.loads(r[7])["items"]
     lease = lambda b: dict(jobId=b["jobId"], attemptId=b["attemptId"], workerInstanceId=b["workerInstanceId"], ownershipToken=b["ownershipToken"],
                            generation=b["generation"])
-    fbody = lambda i, outcome: json.dumps(dict(lease=lease(items[i]["begin"]), outcome=outcome, elapsed=1, requested=None, error=None, usage=None))
-    args = [3]
-    for i in range(3):
-        args += [hexid(i, 8), hexid(i, 9) * 2, dl(30_000), fbody(i, "succeeded"), 0.5]
-    many = ["EVALSHA", fm, 1, META, 0, STORE, "FinishMany", hexid(0, 10), "", dl(30_000), 60_000, 0, "", "d", "", *args]
+    fbody = lambda i, outcome, **kw: json.dumps(dict(dict(lease=lease(items[i]["begin"]), outcome=outcome, elapsed=1, requested=None, error=None,
+                                                         usage=None), **kw))
+    # Renewals: RenewMany of two owned leases and a stale one, a single Renew, a single Renew of the stale lease (no effect), each resent.
+    stale = dict(lease(items[2]["begin"]), ownershipToken="ff" * 16)
+    twice = dict(lease(items[3]["begin"]), ownershipToken="ff" * 16)  # the same job twice in one RenewMany
+    for many, leases in (("1", [lease(items[3]["begin"]), lease(items[4]["begin"]), stale]), ("0", [lease(items[3]["begin"])]), ("0", [stale]),
+                         ("1", [stale]), ("1", [lease(items[3]["begin"]), twice])):
+        call = ["EVALSHA", ren, 1, META, 0, STORE, "RenewMany" if many == "1" else "Renew", hexid(len(replies), 13), "", dl(30_000), 60_000, 0, "",
+                "d", "", 600_000, many, json.dumps(leases)]
+        for _ in range(2):
+            replies.append(db.call(*call))
+    kws = [dict(), dict(usage='{"cpuMs":1}'), dict(error='{"code":"x","message":"m\\n\\"q\\""}', requested=50)]
+
+    def finish_items(resend):
+        # A resend names the call the item was first sent in (the client's hint, 22 §3.2); the first send names none.
+        args = [3]
+        for i in range(3):
+            args += [hexid(i, 8), hexid(i, 9) * 2, dl(30_000), fbody(i, "retryable_failure" if i == 2 else "succeeded", **kws[i]), 0.5,
+                     *([hexid(0, 10)] if resend else hint(lua))[:len(hint(lua))]]
+        return ["EVALSHA", fm, 1, META, 0, STORE, "FinishMany", hexid(0, 10), "", dl(30_000), 60_000, 0, "", "d", "", *args]
+
+    many = finish_items(False)
     r = db.call(*many)
     assert r[1] == b"Applied", r
     replies.append(r)
@@ -91,14 +105,14 @@ def run(lua, port, decoder):
     assert r[1] == b"Applied", r
     replies.append(r)
     # Lost replies: each resend replays from its receipt.
-    for call in (claim, many, single):
+    for call in (claim, finish_items(True), single):
         r = db.call(*call)
         assert r[1] == b"Applied", r
         replies.append(r)
     # FinishAndClaim: the last begun job finishes and three new jobs are claimed in one call; then a resend of the same call replays.
     toks = json.dumps([hexid(i, 11) for i in range(3)])
     ents = json.dumps([f"{i + 100:020x}" for i in range(3)])
-    fargs = [1, hexid(4, 8), hexid(4, 9) * 2, dl(30_000), fbody(4, "permanent_failure"), 0.5]
+    fargs = [1, hexid(4, 8), hexid(4, 9) * 2, dl(30_000), fbody(4, "permanent_failure"), 0.5, *hint(lua)]
     call = ["EVALSHA", fc, 1, META, 0, STORE, "ReserveAndBegin", hexid(1, 5), hexid(1, 6) * 2, dl(30_000), 60_000, 600_000, "ownership", "c", "",
             hexid(1, 7), "default", "medium", 600_000, toks, "", "", json.dumps([["test", 1, "json", 1]]), 3, ents, json.dumps([0] * 3), *fargs]
     r = db.call(*call)
@@ -128,8 +142,7 @@ def run(lua, port, decoder):
     ents = json.dumps([f"{i + 200:020x}" for i in range(4)])
     mixed = ["EVALSHA", rb, 1, META, 0, STORE, "ReserveAndBegin", hexid(2, 5), hexid(2, 6) * 2, dl(30_000), 60_000, 600_000, "ownership", "c", "",
              hexid(2, 7), "q2", "medium", 600_000, toks, "", "", json.dumps([["test", 1, "json", 1]]), 4, ents, json.dumps([0] * 4)]
-    reserve = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/reserve.lua").read_text())
-    begin = db.call("SCRIPT", "LOAD", prelude + (lua / "ops/begin.lua").read_text())
+    reserve, begin = load("reserve"), load("begin")
     one = ["EVALSHA", reserve, 1, META, 0, STORE, "Reserve", hexid(3, 5), hexid(3, 6) * 2, dl(30_000), 60_000, 600_000, "ownership", "c", "",
            hexid(3, 7), "q2", "medium", 600_000, hexid(3, 12), "4", hexid(13, 1), json.dumps([["test", 1, "json", 1]]), f"{300:020x}"]
     for c in (mixed, mixed, one, one):
@@ -170,6 +183,19 @@ def run(lua, port, decoder):
             val = (db.call("GET", key) or b"").decode("latin1")
         dump[key] = val
     dump["(replies)"] = [[x.decode("latin1") if isinstance(x, bytes) else x for x in r] for r in replies]
+    # EventsSince as GET /v1/events serves it: the whole feed, and the same feed paged with every limit from 1 to 6 (pages that end
+    # inside a layout-2 pack and start in the middle of one).
+    events = db.call("SCRIPT", "LOAD", read(lua, "events"))
+    page = lambda after, limit: [x.decode() for x in db.call("EVALSHA", events, 1, META, 0, STORE, "", "", "", 0, 0, 0, "", "r", "", after, limit)[3:]]
+    feed = page(0, 1000)
+    for limit in range(1, 7):
+        rows, after = [], 0
+        while (got := page(after, limit)):
+            assert len(got) <= limit, (limit, got)
+            rows += got
+            after = json.loads(got[-1])["eventId"]
+        assert rows == feed, (limit, rows, feed)
+    dump["(events)"] = feed
     return dump
 
 
@@ -184,18 +210,23 @@ def main():
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--base", required=True, help="a copy of the baseline Lua directory (prelude.lua, jobs.lua, ops/)")
     ap.add_argument("--new", default=str(HERE.parents[2] / "src/Runwick.Redis/Lua"))
+    ap.add_argument("--base-generic", action="store_true", help="compose the base without its lean paths (lean against generic, one layout)")
+    ap.add_argument("--replies-only", action="store_true",
+                    help="compare only the replies and the EventsSince feed (a base on another layout stores them differently)")
     a = ap.parse_args()
     lua = Path(a.new)
     decoder = (lua / "prelude.lua").read_text() + "\n" + (lua / "jobs.lua").read_text() + "\n"
-    old = run(Path(a.base), a.port, decoder)
+    old = run(Path(a.base), a.port, decoder, lean=not a.base_generic)
     new = run(lua, a.port, decoder)
+    if a.replies_only:
+        old, new = ({k: d[k] for k in ("(replies)", "(events)")} for d in (old, new))
     bad = 0
     for k in sorted(set(old) | set(new)):
         o, n = old.get(k), new.get(k)
         if o is None or n is None:
             print("only in", "base" if n is None else "new", k)
             bad += 1
-        elif k == "(replies)":
+        elif k in ("(replies)", "(events)"):
             for i, (ro, rn) in enumerate(zip(o, n)):
                 if norm(ro) != norm(rn):  # the exact reply text, byte for byte apart from times
                     print("DIFF reply", i, "\n  base:", norm(ro)[:400], "\n  new: ", norm(rn)[:400])

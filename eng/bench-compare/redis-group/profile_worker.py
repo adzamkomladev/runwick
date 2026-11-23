@@ -3,6 +3,7 @@
 against a disposable Redis and prints median microseconds per phase, per call and per job, for claim/finish batches of k.
 os.clock is process CPU time, so it is not distorted by other load on the host. Usage: profile_worker.py --port P [--lua DIR] [--k 1,4,16] [--calls 40]"""
 import argparse, json, os, socket, statistics
+from luascript import compose, hint, layout
 from pathlib import Path
 from uuid import uuid4
 
@@ -102,15 +103,21 @@ def main():
     ap.add_argument("--calls", type=int, default=40)
     ap.add_argument("--payload", type=int, default=1024)
     ap.add_argument("--combined", action="store_true", help="also time finish_and_claim (k finishes + a claim of k) against the two calls")
+    ap.add_argument("--plain", action="store_true", help="load the scripts as the binary composes them (lean paths included, luascript.py) "
+                    "and report only Redis time per call (commandstats); the phase marks need the generic frame")
     a = ap.parse_args()
     lua = Path(a.lua)
     db = Redis(a.port)
     db.call("FLUSHALL")
-    db.call("HSET", META, "store", STORE, "mode", "normal", "layout", 1, "epoch", 1, "admission", "open", "bf", "done")
+    db.call("HSET", META, "store", STORE, "mode", "normal", "layout", layout(lua), "epoch", 1, "admission", "open", "bf", "done")
     db.call("HSET", PREFIX + "queues", "default", "{}")
     dispatch = db.call("SCRIPT", "LOAD", (lua / "prelude.lua").read_text() + "\n" + (lua / "jobs.lua").read_text() + "\n" + (lua / "ops/dispatch.lua").read_text())
-    rb = db.call("SCRIPT", "LOAD", patched(lua, (lua / "ops/reserve_and_begin.lua").read_text()))
-    fm = db.call("SCRIPT", "LOAD", patched(lua, (lua / "ops/finish_many.lua").read_text()))
+    # plain: the whole script timed in-script as one block (os.clock is CPU time, so a preempted server does not inflate it)
+    timed = lambda text: ("local C0 = os.clock()\nlocal R = (function()\n" + text + "\nend)()\n"
+                          "redis.call('SET', 'prof:last', 'payloads:' .. math.floor((os.clock() - C0) * 1000000))\nreturn R")
+    load = (lambda op: timed(compose(lua, op))) if a.plain else (lambda op: patched(lua, (lua / f"ops/{op}.lua").read_text()))
+    rb = db.call("SCRIPT", "LOAD", load("reserve_and_begin"))
+    fm = db.call("SCRIPT", "LOAD", load("finish_many"))
     fc = db.call("SCRIPT", "LOAD", patched(lua, (lua / "ops/finish_and_claim.lua").read_text())) if a.combined else None
     payload = b"x" * a.payload
     def dl(ahead):
@@ -153,7 +160,7 @@ def main():
             lease = dict(jobId=b["jobId"], attemptId=b["attemptId"], workerInstanceId=b["workerInstanceId"], ownershipToken=b["ownershipToken"],
                          generation=b["generation"])
             body = dict(lease=lease, outcome="succeeded", elapsed=1, requested=None, error=None, usage=None)
-            args += [uuid4().hex, uuid4().hex + uuid4().hex, dl(30_000), json.dumps(body), 0.5]
+            args += [uuid4().hex, uuid4().hex + uuid4().hex, dl(30_000), json.dumps(body), 0.5, *hint(lua)]
         return args
 
     def combined(begun, k):
@@ -174,6 +181,10 @@ def main():
         return marks(), len(r[7])
 
     def show(name, rows, k):
+        if a.plain:
+            total = statistics.median(r["payloads"] for r in rows)
+            print(f"{name} k={k}: calls={len(rows)}\n  per job: {total / k:.0f} us (in-script total {total:.0f} us)")
+            return
         keys = list(rows[0])
         prev = 0
         print(f"{name} k={k}: calls={len(rows)}")
@@ -200,7 +211,11 @@ def main():
                 if line.startswith("cmdstat_evalsha:"):
                     f = dict(x.split("=") for x in line.split(":")[1].split(","))
                     return float(f["usec_per_call"]), int(f["calls"])
+        def main_cpu():  # seconds of Redis main-thread CPU (user + system): not inflated when the host preempts the server
+            f = dict(l.split(":", 1) for l in db.call("INFO", "cpu").decode().splitlines() if ":" in l)
+            return float(f["used_cpu_user_main_thread"]) + float(f["used_cpu_sys_main_thread"])
         db.call("CONFIG", "RESETSTAT")
+        c0 = main_cpu()
         pending = []
         for _ in range(a.calls):
             begun, m1, n1 = claim(k)
@@ -208,16 +223,18 @@ def main():
             creply.append(n1)
             pending.append(begun)
         claim_stat = evalsha_usec()
+        c1 = main_cpu()
         db.call("CONFIG", "RESETSTAT")
         for begun in pending:
             m2, n2 = finish(begun)
             fmk.append(m2)
             freply.append(n2)
         finish_stat = evalsha_usec()
+        c2 = main_cpu()
         show("claim (ReserveAndBegin)", cm, k)
-        print(f"  reply bytes per call {statistics.median(creply):.0f}; server evalsha {claim_stat[0]:.0f} us per call = {claim_stat[0] / k:.0f} us per job")
+        print(f"  reply bytes per call {statistics.median(creply):.0f}; server evalsha {claim_stat[0]:.0f} us per call = {claim_stat[0] / k:.0f} us per job; main-thread CPU {(c1 - c0) * 1e6 / a.calls / k:.0f} us per job")
         show("finish (FinishMany)", fmk, k)
-        print(f"  reply bytes per call {statistics.median(freply):.0f}; server evalsha {finish_stat[0]:.0f} us per call = {finish_stat[0] / k:.0f} us per job")
+        print(f"  reply bytes per call {statistics.median(freply):.0f}; server evalsha {finish_stat[0]:.0f} us per call = {finish_stat[0] / k:.0f} us per job; main-thread CPU {(c2 - c1) * 1e6 / a.calls / k:.0f} us per job")
         if fc:
             seed(k * (a.calls + 2))
             begun = claim(k)[0]

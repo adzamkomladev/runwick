@@ -3,6 +3,7 @@
 the production Lua on a disposable AOF-always Redis. Usage: rawthroughput.py --port P [--conns 8] [--group 8] [--seconds 10]"""
 import argparse, json, socket, threading, time
 from pathlib import Path
+from luascript import layout
 from uuid import uuid4
 
 LUA = Path(__file__).resolve().parents[3] / "src/Runwick.Redis/Lua"
@@ -42,7 +43,7 @@ def run(port, conns, group, seconds, payload):
     prefix = "rw:{" + b"raw".hex() + uuid4().hex[:8] + "}:"
     meta = prefix + "meta"
     db = Redis(port)
-    db.call("HSET", meta, "store", store, "mode", "normal", "layout", 1, "epoch", 1, "admission", "open", "bf", "done")
+    db.call("HSET", meta, "store", store, "mode", "normal", "layout", layout(LUA), "epoch", 1, "admission", "open", "bf", "done")
     db.call("HSET", prefix + "queues", "default", "{}")
     single = db.call("SCRIPT", "LOAD", script((LUA / "ops/dispatch.lua").read_text()))
     grouped = db.call("SCRIPT", "LOAD", script((LUA / "ops/dispatch_group.lua").read_text()))

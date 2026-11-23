@@ -1,7 +1,7 @@
 -- FinishAndClaim (opt-in, one script call): FinishMany/1's items and one ReserveAndBegin/1 claim decided together, one intent, so a
 -- worker that finishes jobs gets its next jobs in the same round trip. The call runs as the claim command: its receipt (command id,
 -- fingerprint, ownership class) is the claim's own and holds only the claim result, so a plain ReserveAndBegin resend of the same
--- command replays it. Each finish item keeps its own durable receipt. When no job is claimed the finishes are still decided, and the
+-- command replays it. The finish items' durable receipts are rcpt:<call>:f, apart from the claim's. When no job is claimed the finishes are still decided, and the
 -- claim's status travels in the reply (no claim receipt, as for any no-effect claim).
 -- ARGS: 1 to 11 as ReserveAndBegin/1, 12 n, then per item as FinishMany/1.
 local M = {}
