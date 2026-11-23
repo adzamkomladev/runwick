@@ -166,6 +166,17 @@ internal static class RxProfile
             Fail("MODULE LIST=unverifiable");
         }
 
+        // Not a profile verdict: the worker scripts' Functions library is loaded here, at startup and on every newly verified primary
+        // (22 §4.1); a refusal only means those scripts go by EVALSHA.
+        try
+        {
+            facts["functions"] = await RxClient.LoadLibraryAsync(server).ConfigureAwait(false) is { } refused ? "evalsha: " + refused : RxScript.Library.Name;
+        }
+        catch (RedisServerException ex)
+        {
+            facts["functions"] = "not loaded: " + ex.Message;
+        }
+
         facts["profile_status"] = failure is null ? "verified" : "unavailable: " + failure;
         return new RxProfileReport(failure, code, facts);
     }

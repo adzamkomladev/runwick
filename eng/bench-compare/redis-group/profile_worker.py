@@ -3,7 +3,7 @@
 against a disposable Redis and prints median microseconds per phase, per call and per job, for claim/finish batches of k.
 os.clock is process CPU time, so it is not distorted by other load on the host. Usage: profile_worker.py --port P [--lua DIR] [--k 1,4,16] [--calls 40]"""
 import argparse, json, os, socket, statistics
-from luascript import compose, hint, layout
+from luascript import compose, hint, layout, library
 from pathlib import Path
 from uuid import uuid4
 
@@ -31,6 +31,8 @@ class Redis:
         return [self.read() for _ in range(size)]
 
     def call(self, *values):
+        if values[0] == "EVALSHA" and isinstance(values[1], str):  # a function of the Functions library (--functions)
+            values = ("FCALL",) + values[1:]
         enc = [v if isinstance(v, bytes) else str(v).encode() for v in values]
         self.s.sendall(b"*%d\r\n" % len(enc) + b"".join(b"$%d\r\n%s\r\n" % (len(v), v) for v in enc))
         return self.read()
@@ -97,7 +99,7 @@ end""")
 
 # Lean-path marks (--lean-marks): (anchor text, mark name, before|after); an anchor missing from a script is skipped.
 LEAN_MARKS = [
-    ("local META = KEYS[1]", "chunk", "before"),
+    ("local META, P, FAIL", "chunk", "before"),
     ("local L = {}\n", "frame_head", "after"),
     ("local m = L.frame()\n", "frame_meta", "after"),
     ("local cands, jobs, offset, examined", "queue", "before"),
@@ -139,9 +141,12 @@ def main():
     ap.add_argument("--combined", action="store_true", help="also time finish_and_claim (k finishes + a claim of k) against the two calls")
     ap.add_argument("--plain", action="store_true", help="load the scripts as the binary composes them (lean paths included, luascript.py) "
                     "and report only Redis time per call (commandstats); the phase marks need the generic frame")
+    ap.add_argument("--functions", action="store_true", help="as --plain, with the claim and finish called by FCALL from the Functions "
+                    "library (luascript.library); each lean body is timed in-script, so the per-call definitions the library saves are not counted")
     ap.add_argument("--lean-marks", action="store_true", help="as --plain, with os.clock marks at the lean path's steps (lean scripts only)")
     a = ap.parse_args()
-    a.plain = a.plain or a.lean_marks
+    a.plain = a.plain or a.lean_marks or a.functions
+    kind = "fcall" if a.functions else "evalsha"
     lua = Path(a.lua)
     db = Redis(a.port)
     db.call("FLUSHALL")
@@ -154,8 +159,13 @@ def main():
     load = (lambda op: timed(compose(lua, op))) if a.plain else (lambda op: patched(lua, (lua / f"ops/{op}.lua").read_text()))
     if a.lean_marks:
         load = lambda op: lean_marked(compose(lua, op))
-    rb = db.call("SCRIPT", "LOAD", load("reserve_and_begin"))
-    fm = db.call("SCRIPT", "LOAD", load("finish_many"))
+    if a.functions:
+        name, text = library(lua, lambda op, body: timed(body))
+        db.call("FUNCTION", "LOAD", "REPLACE", text)
+        rb, fm = name + "_reserve_and_begin", name + "_finish_many"
+    else:
+        rb = db.call("SCRIPT", "LOAD", load("reserve_and_begin"))
+        fm = db.call("SCRIPT", "LOAD", load("finish_many"))
     fc = db.call("SCRIPT", "LOAD", patched(lua, (lua / "ops/finish_and_claim.lua").read_text())) if a.combined else None
     payload = b"x" * a.payload
     def dl(ahead):
@@ -253,7 +263,7 @@ def main():
         cm, fmk, creply, freply = [], [], [], []
         def evalsha_usec():
             for line in db.call("INFO", "commandstats").decode().splitlines():
-                if line.startswith("cmdstat_evalsha:"):
+                if line.startswith("cmdstat_fcall:" if a.functions else "cmdstat_evalsha:"):
                     f = dict(x.split("=") for x in line.split(":")[1].split(","))
                     return float(f["usec_per_call"]), int(f["calls"])
         def main_cpu():  # seconds of Redis main-thread CPU (user + system): not inflated when the host preempts the server
@@ -277,9 +287,9 @@ def main():
         finish_stat = evalsha_usec()
         c2 = main_cpu()
         show("claim (ReserveAndBegin)", cm, k)
-        print(f"  reply bytes per call {statistics.median(creply):.0f}; server evalsha {claim_stat[0]:.0f} us per call = {claim_stat[0] / k:.0f} us per job; main-thread CPU {(c1 - c0) * 1e6 / a.calls / k:.0f} us per job")
+        print(f"  reply bytes per call {statistics.median(creply):.0f}; server {kind} {claim_stat[0]:.0f} us per call = {claim_stat[0] / k:.0f} us per job; main-thread CPU {(c1 - c0) * 1e6 / a.calls / k:.0f} us per job")
         show("finish (FinishMany)", fmk, k)
-        print(f"  reply bytes per call {statistics.median(freply):.0f}; server evalsha {finish_stat[0]:.0f} us per call = {finish_stat[0] / k:.0f} us per job; main-thread CPU {(c2 - c1) * 1e6 / a.calls / k:.0f} us per job")
+        print(f"  reply bytes per call {statistics.median(freply):.0f}; server {kind} {finish_stat[0]:.0f} us per call = {finish_stat[0] / k:.0f} us per job; main-thread CPU {(c2 - c1) * 1e6 / a.calls / k:.0f} us per job")
         if fc:
             seed(k * (a.calls + 2))
             begun = claim(k)[0]
