@@ -60,6 +60,8 @@ It prints the store ID, the new revision and what it applied. Running it again a
 
 On PostgreSQL, the step to schema revision 28 rebuilds one retention index and checks that every stored payload belongs to a stored job. Both read the whole jobs and payloads tables, so the migration takes longer on a large store: about 2 seconds for 205,000 stored jobs on our test machine. That is one more reason to migrate while the store is drained.
 
+The step to schema revision 30 drops one receipt index and leaves 30% of each new receipt-table page free, so updating a receipt writes less to the WAL. Nothing is rewritten and the lock is brief; the receipt tables use about 14% more space, and stored receipts replay as before.
+
 </Step>
 <Step title="Reopen">
 
