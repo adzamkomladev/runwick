@@ -8,7 +8,8 @@ using Runwick.Serialization;
 namespace Runwick.Postgres.Store;
 
 /// <summary>The PostgreSQL implementation of the storage protocol (03) per 04 §7.</summary>
-internal sealed partial class PgStore(PgDataSources sources, PgRunner runner, TimeProvider time) : IRunwickStore, IAsyncDisposable
+internal sealed partial class PgStore(PgDataSources sources, PgRunner runner, TimeProvider time, PostgresOptions? options = null)
+    : IRunwickStore, IAsyncDisposable
 {
     public Guid StoreId => runner.StoreId ?? throw new InvalidOperationException("Describe has not run yet.");
 

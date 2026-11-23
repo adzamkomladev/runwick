@@ -14,6 +14,10 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
 {
     static readonly TimeSpan DurableFloor = TimeSpan.FromHours(24);
 
+    /// <summary>Grouped producer admission (PF2-B1) when the store offers it and it is switched on; otherwise null.</summary>
+    readonly Lazy<DispatchGrouper?> _grouper = new(() =>
+        runtime.Store is IGroupedDispatchStore { GroupsDispatch: true } grouped ? new DispatchGrouper(admission, grouped) : null);
+
     public async Task<DispatchReceipt> DispatchAsync<TJob>(TJob job, DispatchOptions? options = null, CancellationToken cancellationToken = default)
         where TJob : class, IQueueJob
     {
@@ -24,6 +28,14 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
         try
         {
             await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+            if (_grouper.Value is { } grouper)
+            {
+                // Admission happens in the grouper, after the command is known to be groupable or not.
+                var early = preparer.Prepare(runtime.StoreId, job, options);
+                send.Queue(early.Intent.Queue);
+                return send.Done(await SendAsync(early, cancellationToken, grouper).ConfigureAwait(false));
+            }
+
             using var lease = await admission.TryEnterAsync(cancellationToken).ConfigureAwait(false) ?? throw new LocalCapacityExceededException();
             var prepared = preparer.Prepare(runtime.StoreId, job, options);
             send.Queue(prepared.Intent.Queue);
@@ -79,6 +91,11 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
         try
         {
             await runtime.EnsureReadyAsync(cancellationToken).ConfigureAwait(false);
+            if (_grouper.Value is { } grouper)
+            {
+                return send.Done(await SendAsync(prepared, cancellationToken, grouper).ConfigureAwait(false));
+            }
+
             using var lease = await admission.TryEnterAsync(cancellationToken).ConfigureAwait(false) ?? throw new LocalCapacityExceededException(prepared);
             return send.Done(await SendAsync(prepared, cancellationToken).ConfigureAwait(false));
         }
@@ -157,7 +174,8 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
         };
     }
 
-    async Task<DispatchReceipt> SendAsync(PreparedDispatch prepared, CancellationToken ct)
+    /// <summary>Sends one dispatch. With a <paramref name="grouper"/> the caller holds no admission lease yet: this takes it.</summary>
+    async Task<DispatchReceipt> SendAsync(PreparedDispatch prepared, CancellationToken ct, DispatchGrouper? grouper = null)
     {
         var item = new DispatchItem(prepared.Intent, prepared.Scopes, prepared.Digests) { Rates = preparer.RatesFor(prepared.Intent) };
         var command = new StoreCommand<DispatchRequest>(prepared.Application, prepared.OperationId.Value, prepared.NotAfter,
@@ -165,7 +183,20 @@ internal sealed class JobDispatcher(RunwickRuntime runtime, DispatchPreparer pre
         StoreReply<DispatchResult> reply;
         try
         {
-            reply = await runtime.Store.DispatchAsync(command, ct).ConfigureAwait(false);
+            if (grouper is null)
+            {
+                reply = await runtime.Store.DispatchAsync(command, ct).ConfigureAwait(false);
+            }
+            else if (grouper.CanGroup(command))
+            {
+                reply = await grouper.DispatchAsync(command, ct).ConfigureAwait(false) ?? throw new LocalCapacityExceededException(prepared);
+            }
+            else
+            {
+                using var lease = await admission.TryEnterAsync(ct).ConfigureAwait(false) ?? throw new LocalCapacityExceededException(prepared);
+                reply = await runtime.Store.DispatchAsync(command, ct).ConfigureAwait(false);
+            }
+
             runtime.Producer.Ok();
         }
         catch (Exception ex) when (ex is StoreNotAppliedException or StoreOutcomeUnknownException)

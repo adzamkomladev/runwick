@@ -729,6 +729,11 @@
           "depth": 2
         },
         {
+          "id": "grouped-producer-admission",
+          "text": "Grouped producer admission",
+          "depth": 3
+        },
+        {
           "id": "connections",
           "text": "Connections",
           "depth": 3

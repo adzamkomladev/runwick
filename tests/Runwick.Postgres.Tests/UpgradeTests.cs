@@ -194,7 +194,7 @@ public sealed class UpgradeTests
             Assert.Contains("invalid index " + damaged, failure.Message, StringComparison.Ordinal);
 
             // The last recorded safe mode: previous revision, normal, a failed ledger row, and a client of this binary refuses the store.
-            var revision = PgMigrator.Migrations[^2].TargetRevision; // revisions need not be consecutive (27 and 28 belong to other branches)
+            var revision = PgMigrator.Migrations[^2].TargetRevision; // the revision before the newest migration
             Assert.Equal(revision, await Count(admin, "SELECT schema_revision FROM runwick.store_metadata"));
             Assert.Equal(1, await Count(admin, $"SELECT count(*) FROM runwick.store_metadata WHERE migration_mode = 'normal'"));
             Assert.Equal(1, await Count(admin, $"SELECT count(*) FROM runwick.schema_migrations WHERE migration_id = '{last}' AND phase = 'validate' AND state = 'failed'"));

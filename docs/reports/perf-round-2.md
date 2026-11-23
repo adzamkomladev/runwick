@@ -3337,3 +3337,86 @@ Paired drains, 5,000 jobs on a store with 205,000 retained jobs, PostgreSQL 18, 
 - WAL per job fell from about 25.7 KB to about 23.2 KB (four of five pairs; 26.3 KB in pair 3).
 - The `jobs` indexes grew about 3.6 MB per 5,000-job run instead of 4.6 MB.
 - Load was 17 at the start of the pairs and 5 at the end, so read the numbers as a direction, not a final figure. Raw files: `artifacts/perf/round-two/pg-index`.
+
+## PostgreSQL grouped producer admission, redesigned (B1)
+
+Written 2026-11-23. Merged as opt-in (`PostgresOptions.GroupProducerAdmission`, default off) with migration `0029_dispatch_group` (built as 0028 and renumbered at merge, after the jobs index diet).
+
+### Short answer
+
+The first version lost 35% to 40% at 8 callers because it let only one (or two) transactions of grouped dispatches run at a time, while the version without grouping ran one transaction per caller side by side. The new version never reduces how many transactions run at once. It groups only callers that would have waited for a producer slot anyway, and every free slot still carries a transaction. With fewer callers than slots it behaves exactly like no grouping, so it cannot lose there by design. It can only help when there are more callers than slots, which is when callers used to queue.
+
+### Why the first version lost
+
+- **One group in flight serialized the callers (the main cause).** The bench gives the producer one slot per caller (`MaxConcurrentCalls = calls`), so without grouping 8 callers had 8 transactions in flight, and PostgreSQL already flushes their commits to disk together. With grouping, every plain dispatch, including the lone one, counted against a limit of one transaction in flight (two in the "g2" arm). 8 callers became one transaction of about 4.5 commands at a time: fewer commits in flight, not fewer per job.
+- **Waiters paid two round trips.** A caller that arrived during a send waited for that whole send to finish, then for its own group's send.
+- **The collection wait was not the cause.** There was no timer; the queue filled while the previous send was on the wire.
+- **The grouped SQL was not the main cause, but it still looped.** It wrote receipts with one `rw_receipt_v1` call per command. The new function writes them with one statement for the whole group.
+- Two smaller costs: every group ran on a new background task, and the caller's admission lease was given back when the caller stopped waiting, even though its group was still in flight.
+
+### What changed
+
+- **Grouping moved in front of local admission (core, `DispatchGrouper`).** Local admission is the gate that already limits a process to `MaxConcurrentCalls` producer calls, with at most 64 waiting for up to 1 second. The PostgreSQL store never saw the waiting callers, so grouping there could only take slots away. Now:
+  - A caller that finds a slot free sends at once, through the ordinary single path (`dispatch_v4`). Nobody waits to collect company.
+  - A caller that finds every slot busy waits for a slot exactly as before: same waiting limit, same wait time, same `LocalCapacityExceededException` on refusal.
+  - When a slot frees, the waiting caller that gets it takes up to 8 waiting commands (2 MiB, counting each payload plus 2 KiB) with it in one transaction. The callers it took stop waiting for a slot.
+  - The slot stays taken until the group's transaction ends, even if the caller that took it stops waiting. So at most one transaction per slot is in flight, as without grouping, and the admission lease no longer leaks while a group is in flight.
+- **A store offers grouping through an optional interface** (`IGroupedDispatchStore`). Only PostgreSQL offers it, and only with `PostgresOptions.GroupProducerAdmission = true` (default off).
+- **Set-based SQL** (migration `0029_dispatch_group`, schema revision 29, function `dispatch_group_v1`). The gates are checked once. One insert writes every receipt placeholder in command-ID order. One query checks the other retention class. Only a command whose receipt already existed (a replay or a conflict) goes through `rw_receipt_v1` on its own. Then come one insert each into jobs, payloads, generations and events, and one receipt finalization. The stored rows equal a single dispatch's. A test compares them column by column, receipt included.
+- **Failure handling.**
+  - A group the server refuses or rolls back (gates, a command that passed its deadline after the writes, a job ID collision, a lock timeout) is resent command by command under the original IDs.
+  - A connection failure before COMMIT leaves every command not applied.
+  - A lost COMMIT reply makes the outcome unknown for each command under its own ID. `ResolveAsync`, or resending the same prepared dispatch, returns the original receipt.
+- **Never grouped:** dispatches with a uniqueness key, concurrency or rate scopes; `DispatchManyAsync`; calls on your own transaction; the outbox, schedules and management dispatch.
+- **Bench flags:** `--pg-group` turns grouping on. `--producer-calls n` sets the producer slots independently of the caller count, which is needed to have more callers than slots. The result JSON gains `producerCalls` and `pgGroup` (groups, grouped commands, fallbacks, mean group size).
+
+### Why it is safe
+
+Every command keeps its own operation ID, fingerprint, deadline, receipt and reply. The function decides each command as `dispatch_v4` would, using one decision time for the group. A refused command keeps no receipt, as when a single dispatch rolls back.
+
+Cancellation:
+- A caller cancelled while waiting is removed from the queue, and nothing is sent for it.
+- A caller cancelled after a group took its command gets `DispatchCanceledAfterSendException` with its own ID. The transaction still settles its receipt.
+
+Concurrency is never above what it was without grouping: at most one transaction per producer slot.
+
+### Tests
+
+Nine tests in `GroupedAdmissionTests`. The client has one producer slot, held by a dispatch stopped at its commit by a fault barrier. They cover:
+- Waiting callers commit as one group, with single-dispatch rows and receipts, and each command replays alone to its own receipt.
+- A lone caller is sent at once and never waits or groups.
+- Mixed outcomes in one group each get their own reply: fresh, replay, command conflict, expired, unregistered queue, fresh. Refused commands keep no receipt.
+- A job ID collision rolls the group back and each command is sent alone.
+- A caller cancelled while waiting sends nothing.
+- A caller cancelled after its group was sent can resolve and resend its operation.
+- A lost group reply is outcome unknown for each member under its own ID, and each resends to its receipt.
+- A waiting caller refused by local admission sends nothing.
+- Keyed dispatches and calls on your own transaction take the ordinary path.
+
+Results: the first run passed 8 of 9. The mixed-outcomes test had put the same command ID in one group twice, which the function rightly refuses; the test was fixed. The rerun of `GroupedAdmissionTests` together with `MigrationTests` (which gained the three 0028 phase cases) passed 93 of 93. The full Core, Postgres and Contract suites have not been run yet.
+
+### Not done
+
+- Storage telemetry records one `Dispatch` operation per group.
+- `ManagementSession` dispatch shares the same admission gate but is never grouped.
+- Not measured with more than 8 producer slots, or on a quiet host.
+
+### Measured results (2026-11-23, Sonnet run on this branch)
+
+Producer throughput, 8 producer slots (connections), PostgreSQL 18, five pairs per caller count, order alternated, each pair started only when the 1-minute load was under 8 (it was 2 to 7.7). Median inserts per second, without grouping and with it:
+
+| Callers | Without | With | Ratio per pair | p99 latency, ms (without / with) | Jobs per group |
+|---:|---:|---:|---|---|---:|
+| 1 | 77 | 74 | 1.18, 1.05, 0.87, 1.01, 0.82 | 57 / 57 | no groups |
+| 4 | 228 | 238 | 0.87, 0.95, 1.04, 1.46, 0.69 | 86 / 80 | no groups |
+| 8 | 388 | 448 | 1.00, 0.83, 1.06, 1.07, 1.16 | 92 / 79 | no groups |
+| 16 | 409 | 622 | 1.42, 1.61, 1.60, (base run failed), 1.36 | 151 / 110 | 3.7 to 3.9 |
+| 32 | 453 | 1,022 | 2.39, 2.65, 2.17, 2.17, 1.53 | 247 / 111 | 4.9 to 5.1 |
+
+- As designed, nothing is grouped while there are no more callers than slots (1, 4 and 8 callers); those ratios are noise around 1.0.
+- With twice as many callers as slots, grouping finished about 1.5 times as many inserts per second; with four times as many, about 2.2 times. p99 latency fell from 151 to 110 ms and from 247 to 111 ms.
+- No group fell back to single dispatches.
+- In one 16-caller run without grouping, a caller was refused with "Local producer admission is full" (`LocalCapacityExceededException`); that run was dropped from the table. No run with grouping was refused.
+- Server time per job (traced 16-caller pair): about 10.2 ms in `dispatch_v4` without grouping, about 7.0 ms per job in `dispatch_group_v1` (12.0 ms per call, 2,922 calls for 5,000 jobs).
+- Tests on the branch: Core 464/464, Contract 502/502, Outbox 70/70, Redis 139/139, PostgreSQL 417/418 (an upgrade test that assumed consecutive migration numbers; with the migrations renumbered to 27, 28, 29 that assumption holds again), SQLite 55/56 (`While_another_process_holds_the_writer…`, passed 1 of 3 alone; timing-sensitive under load, not touched by this change).
+- Raw files: `artifacts/perf/round-two/b1-redesign`.

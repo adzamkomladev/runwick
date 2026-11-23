@@ -9,6 +9,9 @@ internal sealed class LocalAdmission(int concurrency, int maxWaiting, TimeSpan w
     /// <summary>Operations currently waiting for a slot (bounded by MaxWaitingOperations).</summary>
     public int Waiting => Volatile.Read(ref _waiting);
 
+    /// <summary>A lease when a slot is free now, otherwise null; never waits.</summary>
+    public IDisposable? TryEnterNow() => _slots.Wait(0, CancellationToken.None) ? new Lease(_slots) : null;
+
     /// <summary>Returns a lease, or null when the gate refused (full queue or wait elapsed).</summary>
     public async Task<IDisposable?> TryEnterAsync(CancellationToken ct)
     {
