@@ -616,7 +616,7 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
             var now = engine.Clock.Now;
             if (!detached && now >= budgetEnd)
             {
-                entry.Latch(LossCause.CompletionUnresolved);
+                engine.LatchSettlementLoss(entry, LossCause.CompletionUnresolved);
                 engine.Diagnose($"unconfirmed outcome: Finish {command.CommandId} of {entry} unresolved after {engine.Options.CompletionResolutionBudget}");
                 StartDetached(entry);
                 return SettlementResult.Unresolved;
@@ -675,12 +675,12 @@ internal sealed class CompletionCoordinator(WorkerEngine engine)
             case StoreStatus.CommandExpired:
                 // Definitively not applied (no receipt when checked after the deadline); never a new Finish ID.
                 Resolved(entry);
-                entry.Latch(LossCause.CompletionUnresolved);
+                engine.LatchSettlementLoss(entry, LossCause.CompletionUnresolved);
                 engine.Diagnose($"unknown durability: Finish {command.CommandId} of {entry} expired without a receipt; recovery applies");
                 return SettlementResult.Unresolved;
             case StoreStatus.InvalidRequest or StoreStatus.InvariantFault or StoreStatus.CommandConflict:
                 Resolved(entry);
-                entry.Latch(LossCause.InvariantFault);
+                engine.LatchSettlementLoss(entry, LossCause.InvariantFault);
                 engine.Diagnose($"Finish of {entry} rejected: {reply.Status} {reply.Error?.Code}");
                 return SettlementResult.Unresolved;
             default:

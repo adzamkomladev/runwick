@@ -1050,6 +1050,7 @@ public sealed class WorkerEngineTests
             await e.RunUntilAsync(() => e.Events.Any(x => x.Name == "retired"), Long, "completion budget");
             var entry = EntryOf(e, id);
             Assert.Equal(LossCause.CompletionUnresolved, entry.Loss);
+            Assert.Single(e.Events, x => x.Name == "lost:CompletionUnresolved"); // reported like any other loss (G5 outage finding)
             var calls = e.Store.Calls.Where(c => c.JobId == id).ToList();
             var finishes = calls.Where(c => c.Operation == Operations.Finish).ToList();
             Assert.All(finishes, f => Assert.Equal((finishes[0].CommandId, finishes[0].Body), (f.CommandId, f.Body)));

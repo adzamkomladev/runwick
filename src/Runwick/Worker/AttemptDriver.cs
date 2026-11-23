@@ -45,10 +45,24 @@ internal sealed partial class WorkerEngine
             _ = entry.CancelExecutionAsync();
             Lease.Unregister(entry);
             entry.Changed.Set();
-            Emit("lost:" + cause, entry);
-            entry.Span?.AddEvent(new ActivityEvent("runwick.authority_lost", tags: new ActivityTagsCollection { ["runwick.loss.reason"] = LossName(cause) }));
-            RunwickLog.AuthorityLost(Logger, entry.Lease.JobId, entry.AttemptId, LossName(cause), entry.PipelineLive);
+            ReportLoss(entry, cause);
         }
+    }
+
+    /// <summary>Latches a loss found while settling (the handler has already returned) and reports it like any other loss.</summary>
+    internal void LatchSettlementLoss(AttemptEntry entry, LossCause cause)
+    {
+        if (entry.Latch(cause))
+        {
+            ReportLoss(entry, cause);
+        }
+    }
+
+    void ReportLoss(AttemptEntry entry, LossCause cause)
+    {
+        Emit("lost:" + cause, entry);
+        entry.Span?.AddEvent(new ActivityEvent("runwick.authority_lost", tags: new ActivityTagsCollection { ["runwick.loss.reason"] = LossName(cause) }));
+        RunwickLog.AuthorityLost(Logger, entry.Lease.JobId, entry.AttemptId, LossName(cause), entry.PipelineLive);
     }
 
     /// <summary>A Renew reported a durable cancellation request (05 §11.3).</summary>

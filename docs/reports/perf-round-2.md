@@ -3834,7 +3834,7 @@ All 24 runs exited cleanly. Raw files are in `artifacts/perf/round-two/g5-leases
 
 #### Lease sweep: what each setting costs
 
-Each run kept long jobs (20 s each) running; 29 jobs finished per run in every arm, and no lease was lost.
+Each run kept long jobs (2 minutes each) running; 29 jobs finished per run in every arm, and no lease was lost.
 
 | Store | Lease / renew (s) | Renewals per job | Renewals per second | Store counters |
 |---|---|---|---|---|
@@ -3884,9 +3884,9 @@ What it shows:
 - **Fewer renewals rides out longer outages, but this run didn't wait long enough to see the end.** With a 120 s pause no job lost its lease or ran twice, but all 10 were still unfinished when the 240 s run ended. The finishes were still backed up behind the pause. A longer run window is needed to confirm they then finish once.
 - Every outage longer than 20 s left an "unconfirmed outcome: Finish" entry in diagnostics, as expected when a finish call is in flight while the store disappears.
 
-Not explained yet, and worth a look before trusting the Redis outage rows in detail:
+Follow-up checks:
 
-- Redis default 90 s: 9 jobs ran twice, but the worker reported no lost lease. On PostgreSQL the same case reported 7 lost leases. Either the Redis path loses the lease without counting it, or the harness counts it differently on Redis.
+- **Redis default 90 s: 9 jobs ran twice, but no lost lease was reported. Explained and fixed (2026-11-23).** The jobs behaved correctly; only the report was missing. On Redis a finish call to a paused server fails fast with "outcome unknown", so the worker keeps resending it and gives up after its 30 s completion budget (`CompletionUnresolved`, the "unconfirmed outcome: Finish" diagnostics). On PostgreSQL the call hangs instead, so the lease safety deadline fires first and is reported as `SafetyDeadline`. The give-up path marked the attempt lost without raising the `lost:` event or the `AuthorityLost` warning log. The `runwick.lease.authority_lost` metric did count it. Losses found while settling now go through the same report as every other loss, and the unresolved-finish test checks for the event.
 - Redis default 20 s: all 10 kept their lease and finished once, but only 6 are counted as finished after the store came back. The other 4 probably finished before the pause took effect, or ended in `outcome_unknown` (3 of those were seen).
 
 ## PostgreSQL receipt compaction (migration 0030)
