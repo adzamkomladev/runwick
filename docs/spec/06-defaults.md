@@ -307,7 +307,7 @@ Not in M2 (listed so no M2 component invents them): rate-policy bounds (1–100,
 | MaxInFlight | 4 (1 – 64) | slots (concurrent destination calls) | Relay | 14 §4.2, Changes 2026-11-20 |
 | Relay leases (claim-ahead cap) | 2 × MaxInFlight × slot size (slot size = DeliveryGroupSize with a grouping destination, else 1) | messages | Relay | 14 Changes 2026-11-20 |
 | DeliveryGroupSize | 4 (1 – 16; 1 before 2026-11-20) | messages per destination transaction (PostgreSQL destination) | Relay | 14 §4.2, Changes 2026-11-20 |
-| BatchDeliveredMarks | true (false before 2026-11-20) | queued delivered marks written in one statement (PostgreSQL source) | Relay | 14 Changes 2026-11-17, 2026-11-20 |
+| BatchDeliveredMarks | true (false before 2026-11-20) | queued delivered marks written in one statement (PostgreSQL and SQLite sources) | Relay | 14 Changes 2026-11-17, 2026-11-20, 2026-11-23 |
 | ClaimBatchMin / ClaimBatchWait | 1 (1 – MaxInFlight) / 5 ms (0 – 1 s) | free slots a claim waits for / longest wait | Relay | 14 Changes 2026-11-17 |
 | ReleaseSlotAfterReply | true (false before 2026-11-20) | slot freed when the destination answers | Relay | 14 Changes 2026-11-17, 2026-11-20 |
 | Source lease / renewal | 60 s / 15 s (lease ≥ 5 s, ≥ 3 × renewal) | s | Relay | 14 §4.2 |

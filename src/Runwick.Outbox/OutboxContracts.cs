@@ -84,7 +84,7 @@ public sealed class OutboxRelayOptions
     /// <summary>
     /// When true, delivered marks that queue behind one another on the source's single control connection are written in one
     /// statement and one commit, each still guarded by its own lease token (14 Changes 2026-11-17, D2). Honored by the
-    /// PostgreSQL source; other sources ignore it. True is the default since 2026-11-20 (Outbox D); false writes one statement per mark.
+    /// PostgreSQL and SQLite sources (SQLite since 2026-11-23). True is the default since 2026-11-20 (Outbox D); false writes one statement per mark.
     /// </summary>
     public bool BatchDeliveredMarks { get; set; } = true;
 

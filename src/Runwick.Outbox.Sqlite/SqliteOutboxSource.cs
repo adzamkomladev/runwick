@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Globalization;
+using System.Text;
 using Microsoft.Data.Sqlite;
 
 namespace Runwick.Outbox.Sqlite;
@@ -145,18 +147,183 @@ internal sealed class SqliteOutboxSource(string connectionString) : IOutboxSourc
             p.AddWithValue("$not_after", notAfter.ToUnixTimeMilliseconds());
         }, requireLive: true, ct);
 
-    public Task<bool> MarkDeliveredAsync(OutboxLease lease, OutboxDelivered delivered, CancellationToken ct) =>
-        GuardedAsync(lease, """
-            state = 'delivered', delivered_job_id = $job, delivered_disposition = $disposition, confirmed_profile = $profile,
-            delivered_at = $delivered_at, lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, last_error = NULL,
-            revision = revision + 1
-            """, p =>
+    const string MarkSet = """
+        state = 'delivered', delivered_job_id = $job, delivered_disposition = $disposition, confirmed_profile = $profile,
+        delivered_at = $delivered_at, lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, last_error = NULL,
+        revision = revision + 1
+        """;
+
+    static void MarkParameters(SqliteParameterCollection p, OutboxDelivered delivered)
+    {
+        p.AddWithValue("$job", Text(delivered.JobId));
+        p.AddWithValue("$disposition", delivered.Disposition);
+        p.AddWithValue("$profile", delivered.ConfirmedProfile);
+        p.AddWithValue("$delivered_at", delivered.DeliveredAt.ToUnixTimeMilliseconds());
+    }
+
+    /// <summary>
+    /// When true, delivered marks that queue up behind the control lane are applied together in one statement and one commit,
+    /// each row still guarded by its own lease token (as on the PostgreSQL source). A lone mark runs the single-row statement unchanged.
+    /// </summary>
+    internal bool BatchMarks { get; set; }
+
+    /// <summary>The most marks one statement settles (six parameters each, far under SQLite's limit); the rest wait for the next turn.</summary>
+    internal const int MaxMarkBatch = 64;
+
+    readonly ConcurrentQueue<PendingMark> _marks = new();
+
+    sealed class PendingMark(OutboxLease lease, OutboxDelivered delivered)
+    {
+        public OutboxLease Lease { get; } = lease;
+
+        public OutboxDelivered Delivered { get; } = delivered;
+
+        public TaskCompletionSource<bool> Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public volatile bool Abandoned;
+    }
+
+    /// <summary>Marks applied by a multi-row statement and the statements that carried them (tests and diagnostics).</summary>
+    internal long BatchedMarks, MarkBatches;
+
+    public async Task<bool> MarkDeliveredAsync(OutboxLease lease, OutboxDelivered delivered, CancellationToken ct)
+    {
+        if (!BatchMarks)
         {
-            p.AddWithValue("$job", Text(delivered.JobId));
-            p.AddWithValue("$disposition", delivered.Disposition);
-            p.AddWithValue("$profile", delivered.ConfirmedProfile);
-            p.AddWithValue("$delivered_at", delivered.DeliveredAt.ToUnixTimeMilliseconds());
-        }, requireLive: false, ct);
+            return await GuardedAsync(lease, MarkSet, p => MarkParameters(p, delivered), requireLive: false, ct).ConfigureAwait(false);
+        }
+
+        // Queue the mark, then take turns on the control lane: whoever holds it applies every mark queued so far, so marks that wait
+        // behind a slow one share its commit. A caller whose mark an earlier holder already applied finds it done and leaves.
+        var mine = new PendingMark(lease, delivered);
+        _marks.Enqueue(mine);
+        try
+        {
+            while (!mine.Done.Task.IsCompleted)
+            {
+                await _controlLane.WaitAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    await FlushMarksAsync(mine, ct).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _controlLane.Release();
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            mine.Abandoned = true; // still queued: the next holder of the lane skips it
+            throw;
+        }
+
+        return await mine.Done.Task.ConfigureAwait(false);
+    }
+
+    async Task FlushMarksAsync(PendingMark mine, CancellationToken ct)
+    {
+        if (mine.Done.Task.IsCompleted)
+        {
+            return;
+        }
+
+        var batch = new List<PendingMark>(MaxMarkBatch);
+        while (batch.Count < MaxMarkBatch && _marks.TryDequeue(out var next))
+        {
+            if (next.Abandoned)
+            {
+                next.Done.TrySetCanceled(CancellationToken.None); // its caller gave up before the mark was taken: nothing is written for it
+                continue;
+            }
+
+            batch.Add(next);
+        }
+
+        if (batch.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            if (batch.Count == 1)
+            {
+                var one = batch[0];
+                one.Done.TrySetResult(await InTransactionAsync((connection, tx) => GuardedUpdateAsync(connection, tx, one.Lease, MarkSet,
+                    p => MarkParameters(p, one.Delivered), requireLive: false, ct), ct).ConfigureAwait(false));
+                return;
+            }
+
+            var applied = await InTransactionAsync(async (connection, tx) =>
+            {
+                using var update = new SqliteCommand { Connection = connection, Transaction = tx };
+                var values = new StringBuilder();
+                for (var i = 0; i < batch.Count; i++)
+                {
+                    values.Append(i == 0 ? "" : ", ").Append(CultureInfo.InvariantCulture, $"($m{i}, $t{i}, $j{i}, $d{i}, $p{i}, $a{i})");
+                    update.Parameters.AddWithValue($"$m{i}", Text(batch[i].Lease.MessageId));
+                    update.Parameters.AddWithValue($"$t{i}", Text(batch[i].Lease.Token));
+                    update.Parameters.AddWithValue($"$j{i}", Text(batch[i].Delivered.JobId));
+                    update.Parameters.AddWithValue($"$d{i}", batch[i].Delivered.Disposition);
+                    update.Parameters.AddWithValue($"$p{i}", batch[i].Delivered.ConfirmedProfile);
+                    update.Parameters.AddWithValue($"$a{i}", batch[i].Delivered.DeliveredAt.ToUnixTimeMilliseconds());
+                }
+
+                update.CommandText = $"""
+                    WITH v(id, token, job, disposition, profile, at) AS (VALUES {values})
+                    UPDATE runwick_outbox_messages
+                    SET state = 'delivered', delivered_job_id = v.job, delivered_disposition = v.disposition, confirmed_profile = v.profile,
+                        delivered_at = v.at, lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, last_error = NULL,
+                        revision = revision + 1
+                    FROM v
+                    WHERE runwick_outbox_messages.message_id = v.id AND runwick_outbox_messages.state = 'leased'
+                      AND runwick_outbox_messages.lease_token = v.token
+                    RETURNING message_id
+                    """;
+                var ids = new HashSet<string>(StringComparer.Ordinal);
+                var r = await update.ExecuteReaderAsync(ct).ConfigureAwait(false);
+                await using var rScope = r.ConfigureAwait(false);
+                while (await r.ReadAsync(ct).ConfigureAwait(false))
+                {
+                    ids.Add(r.GetString(0));
+                }
+
+                return ids;
+            }, ct).ConfigureAwait(false);
+
+            Interlocked.Add(ref BatchedMarks, batch.Count);
+            Interlocked.Increment(ref MarkBatches);
+            foreach (var b in batch)
+            {
+                b.Done.TrySetResult(applied.Contains(Text(b.Lease.MessageId)));
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // This caller's own deadline ended the transaction before its commit, so nothing was written. The others were not
+            // cancelled, so they go back in the queue for the next turn (the token-guarded update is safe to repeat).
+            foreach (var b in batch)
+            {
+                if (ReferenceEquals(b, mine))
+                {
+                    b.Done.TrySetCanceled(ct);
+                }
+                else
+                {
+                    _marks.Enqueue(b);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // Outcome unknown for every mark in the batch, as for a single failed mark: the destination mapping makes a retry safe.
+            foreach (var b in batch)
+            {
+                b.Done.TrySetException(ex);
+            }
+        }
+    }
 
     public Task<bool> RetryLaterAsync(OutboxLease lease, TimeSpan delay, string error, CancellationToken ct) =>
         GuardedAsync(lease, """
@@ -219,28 +386,41 @@ internal sealed class SqliteOutboxSource(string connectionString) : IOutboxSourc
         await _controlLane.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var connection = await OpenAsync(ct).ConfigureAwait(false);
-            await using var connectionScope = connection.ConfigureAwait(false);
-            var tx = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
-            await using var txScope = tx.ConfigureAwait(false);
-            var now = (await NowAsync(connection, tx, ct).ConfigureAwait(false)).ToUnixTimeMilliseconds();
-            using var update = new SqliteCommand($"""
-                UPDATE runwick_outbox_messages SET {set}
-                WHERE message_id = $m AND state = 'leased' AND lease_token = $token
-                {(requireLive ? "AND lease_expires_at > $now" : "")}
-                """, connection, tx);
-            update.Parameters.AddWithValue("$m", Text(lease.MessageId));
-            update.Parameters.AddWithValue("$token", Text(lease.Token));
-            update.Parameters.AddWithValue("$now", now);
-            parameters(update.Parameters);
-            var changed = await update.ExecuteNonQueryAsync(ct).ConfigureAwait(false) == 1;
-            await tx.CommitAsync(ct).ConfigureAwait(false);
-            return changed;
+            return await InTransactionAsync((connection, tx) => GuardedUpdateAsync(connection, tx, lease, set, parameters, requireLive, ct), ct)
+                .ConfigureAwait(false);
         }
         finally
         {
             _controlLane.Release();
         }
+    }
+
+    static async Task<bool> GuardedUpdateAsync(SqliteConnection connection, SqliteTransaction tx, OutboxLease lease, string set,
+        Action<SqliteParameterCollection> parameters, bool requireLive, CancellationToken ct)
+    {
+        var now = (await NowAsync(connection, tx, ct).ConfigureAwait(false)).ToUnixTimeMilliseconds();
+        using var update = new SqliteCommand($"""
+            UPDATE runwick_outbox_messages SET {set}
+            WHERE message_id = $m AND state = 'leased' AND lease_token = $token
+            {(requireLive ? "AND lease_expires_at > $now" : "")}
+            """, connection, tx);
+        update.Parameters.AddWithValue("$m", Text(lease.MessageId));
+        update.Parameters.AddWithValue("$token", Text(lease.Token));
+        update.Parameters.AddWithValue("$now", now);
+        parameters(update.Parameters);
+        return await update.ExecuteNonQueryAsync(ct).ConfigureAwait(false) == 1;
+    }
+
+    /// <summary>One connection and one write transaction around <paramref name="work"/>; nothing is committed unless it returns.</summary>
+    async Task<T> InTransactionAsync<T>(Func<SqliteConnection, SqliteTransaction, Task<T>> work, CancellationToken ct)
+    {
+        var connection = await OpenAsync(ct).ConfigureAwait(false);
+        await using var connectionScope = connection.ConfigureAwait(false);
+        var tx = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+        await using var txScope = tx.ConfigureAwait(false);
+        var result = await work(connection, tx).ConfigureAwait(false);
+        await tx.CommitAsync(ct).ConfigureAwait(false);
+        return result;
     }
 
     async Task<SqliteConnection> OpenAsync(CancellationToken ct)
