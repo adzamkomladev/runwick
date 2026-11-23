@@ -3,6 +3,7 @@
   OUT_DIR/report.md   tables + Mermaid bar charts (GitHub renders both; the workflow appends it to the run summary)
   OUT_DIR/report.html the same, standalone, with SVG bar charts
   OUT_DIR/results.json every run, flattened
+  OUT_DIR/rows.json    medians, one row per library x test, tagged with the run
 Each cell is the median over rounds."""
 import glob, html, json, os, statistics as st, sys
 
@@ -54,6 +55,17 @@ for r in runs:
     if not r.get("ok") or g(r, "result.skipped"): continue
     cells.setdefault((r["workload"], r["test"], r["system"]), []).append(r)
 agg = {k: {m[0]: med([m[2](r) for r in v]) for m in METRICS} | {"n": len(v)} for k, v in cells.items()}
+# rows.json: one flat row per library x test with this run's medians, for the results dashboard (append each run's file).
+run_id = os.environ.get("GITHUB_RUN_ID", "local")
+COLNAME = {"thru": "jobsPerSec", "p50": "p50Ms", "p99": "p99Ms", "done": "donePct", "acpu": "appCpuPct", "amem": "appMemMB", "scpu": "storeCpuPct",
+           "smem": "storeMemMB", "cpj": "cpuMsPerJob", "bpj": "wireBytesPerJob", "wpj": "diskWriteBytesPerJob"}
+rows = []
+for (wl, t, s), m in sorted(agg.items()):
+    h = hosts.get(f"{s}--{wl}", {})
+    rows.append({"run": run_id, "date": min((x.get("when", "") for x in hosts.values()), default="")[:10], "commit": h.get("commit"),
+                 "workload": wl, "test": t, "system": s, "library": LABEL[s], "rounds": m["n"], "hostCpu": h.get("cpu"),
+                 **{COLNAME[k]: (round(v, 3) if isinstance(v, float) else v) for k, v in m.items() if k != "n"}})
+json.dump(rows, open(f"{dst}/rows.json", "w"), indent=0)
 failed = sorted({(r["system"], r["workload"], r["test"]) for r in runs if not r.get("ok")})
 skipped = sorted({(r["system"], r["test"]) for r in runs if g(r, "result.skipped")})
 
