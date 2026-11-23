@@ -786,9 +786,32 @@ All 40 runs finished (exit 0) and every run reconciled: all 4,000 jobs drained, 
 
 Reading it honestly: buffered finish was faster in 18 of 20 pairs, and the median gain is 17% to 34%. At four workers the slot is the limit, so the gain is largest and most consistent (never below 1.0). At sixteen workers the pairs are spread widely (0.69 to 2.06), so the gain there is likely real but the size is not pinned down. These are low absolute rates because the host was busy with the SP-029 qualification and other benchmarks, so only the paired ratios mean anything, and they are informational. No arm was run on Redis.
 
+### Sustained load at 100 jobs per second (2026-11-23)
+
+The drains above measure how fast a backlog empties. This set measures what a user feels at a steady rate: each run offers 100 jobs per second for 300 seconds (about 30,000 jobs), base against buffered finish, three rounds per store. All 18 runs finished with nothing lost (completed equals inserted in every run). Built from main at 2e9f2c88. The host load ranged from 6 to 41, and runs queued behind other benchmarks on the shared lock, so the numbers are informational. Raw files: `artifacts/perf/round-two/g1-sustained/`.
+
+Median of three rounds, range in brackets. Times are in milliseconds.
+
+| Store, arm | Completions/s | Pickup p50 | Pickup p99 | Latency p99 | Refusals |
+|---|---|---|---|---|---|
+| SQLite base | 88.2 (79.5–96.7) | 9,114 (71–9,806) | 17,804 (2,623–38,741) | 18,031 (2,874–39,102) | 2,356 (908–3,651) |
+| SQLite buffered | 95.5 (94.5–98.2) | 73 (58–92) | 909 (490–1,556) | 1,837 (1,285–2,125) | 1,321 (516–1,626) |
+| PostgreSQL base | 94.9 (91.9–95.0) | 3,859 (1,360–4,595) | 23,941 (17,334–24,268) | 24,045 (17,427–24,365) | 378 (0–471) |
+| PostgreSQL buffered | 99.8 (98.8–100) | 80 (55–143) | 3,571 (2,826–4,654) | 3,906 (3,156–4,865) | 33 (0–74) |
+| Redis base | 100 (99.6–100) | 24 (23–24) | 795 (301–1,292) | 991 (481–1,439) | 0 (0–124) |
+| Redis buffered | 99.9 (98.9–99.9) | 28 (20–28) | 1,111 (414–3,937) | 1,481 (664–4,218) | 15 (9–324) |
+
+What it shows:
+
+- **PostgreSQL: buffered finish is a clear win.** Without it the worker built a backlog in all three rounds (pickup p50 about 4 s); with it, it kept up in all three (p50 80 ms). Host load was similar for both arms.
+- **SQLite: a big win in this data, with a caveat.** Base fell behind in two of three rounds (pickup p50 about 9 to 10 s, 26k to 27k of 30k done in the window); buffered stayed healthy in all three, including one round at load 41. SQLite buffered meets the pickup p99 under 2 s target in all three rounds, but refusals remain (516 to 1,626), so the "no refusals at 100 jobs/s" target is still not met. The longest writer-queue waits in both arms were background cleanup (up to 9.7 s) and presence writes (about 4 s), not job writes; dispatch waits stayed at 0.4 to 0.6 s.
+- **Redis: no gain.** Redis keeps up either way. Buffered was slightly worse (latency p50 104 against 70 ms, and one round with a 4.2 s p99 at the quietest load), so it is not worth turning on for Redis at this rate.
+- **Why it helps.** The base arm already batches finishes (about 7 to 11 finishes per call, against 6 to 9 buffered), so the gain is not more batching. It comes from giving the worker slot back as soon as the handler returns.
+
 ### Open
 
-- Redis was not benchmarked for G1; its contract tests pass. The 16-worker pairs are too spread out to fix the size of the gain; a quiet host would help.
+- The 16-worker drain pairs are too spread out to fix the size of the gain; a quiet host would help.
+- SQLite background cleanup and presence writes wait seconds in the writer queue at 100 jobs/s; they are the next thing to look at for the SQLite tail.
 - A hard-kill test of a real worker process is not done.
 - Interaction with auto-concurrency: the scaler sees lower occupancy during the finish round trip. Not measured.
 - Whether to make this a per-queue setting instead of per worker. Today it applies to every pool of the worker.
