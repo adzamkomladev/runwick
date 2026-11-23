@@ -31,7 +31,7 @@ run_arm() {
   local flags=()
   local bin=$cand workers=16
   case "$arm" in comb) flags=(--combined-finish-claim) ;; buf) flags=(--buffered-finish) ;; both) flags=(--buffered-finish --combined-finish-claim) ;;
-    ca[0-9]*cif2) n=${arm#ca}; flags=(--buffered-finish --claim-ahead "${n%cif2}" --claims-in-flight 2) ;;
+    ca[0-9]*cif2) local ca_n=${arm#ca}; flags=(--buffered-finish --claim-ahead "${ca_n%cif2}" --claims-in-flight 2) ;;
     ca[0-9]*) flags=(--buffered-finish --claim-ahead "${arm#ca}") ;;
     cif[1-4]) flags=(--buffered-finish --claims-in-flight "${arm#cif}") ;; ucif[1-4]) flags=(--claims-in-flight "${arm#ucif}") ;;
     old) bin=$BASE_BIN ;; oldbuf) bin=$BASE_BIN; flags=(--buffered-finish) ;; midbuf) bin=$MID_BIN; flags=(--buffered-finish) ;; oldbuf32) bin=$BASE_BIN; flags=(--buffered-finish); workers=32 ;; esac
