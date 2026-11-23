@@ -105,7 +105,7 @@ The old key `job_payloads (application, job_id, profile id, profile version) →
 
 - no job: `job_payloads_job_fk (application, job_id) → jobs`, `ON DELETE CASCADE` as before;
 - profile differs: `job_payloads_profile_insert` and `job_payloads_profile_update`, statement-level triggers that join the new payload rows to their jobs by key once per statement (so a set insert of 1,000 payloads costs one join, not 1,000 calls);
-- job profile change: `jobs_profile_fixed`, a row trigger that only fires when an UPDATE names a profile column and its value really changes, and then refuses if the job has a payload. No released statement names those columns, so it never runs in normal work.
+- job profile change: `jobs_profile_fixed`, a non-deferrable constraint trigger. It fires only when an UPDATE names a profile column and its value really changes, and it refuses if a payload of that job is then on a different profile. Like the old key (`ON UPDATE NO ACTION`, not deferrable) the check runs at the end of the statement, so one statement that moves a payload and its job to a new profile together is accepted (the encoding tests do exactly that to plant an unsupported profile), while two separate statements are refused. No released statement names those columns, so it never runs in normal work.
 
 Both triggers raise `foreign_key_violation` (23503) with the old constraint name, so error handling that looked at the code or name sees the same thing. Schema validation now fails a store that lacks any of the three triggers. Payloads are never updated and a job's profile is never changed by Runwick, so this is a safety net either way.
 
@@ -113,7 +113,7 @@ Migration cost: on the 205,000-job store the whole migration took 1.9 s. Adding 
 
 ## Tests
 
-- New `PayloadProfileAgreementTests` (PostgreSQL project): the composite key and unique index are gone; matching payloads (single and set insert) are accepted; a different profile on insert (single, and one row of a set), a payload profile update, and a profile change on a job with a payload are each refused with 23503 and the old constraint name; a same-value update and a change on a job without a payload are accepted; an orphan payload is still refused. Passes.
+- New `PayloadProfileAgreementTests` (PostgreSQL project): the composite key and unique index are gone; matching payloads (single and set insert) are accepted; a different profile on insert (single, and one row of a set), a payload profile update, a profile change on a job with a payload, and a job-then-payload change in two statements are each refused with 23503 and the old constraint name; a same-value update, a change on a job without a payload, and one statement changing payload and job together (either order) are accepted; an orphan payload is still refused. Passes.
 - `MigrationTests`: manifest at revision 29, kill-and-resume after each 0029 phase (expand 26, validate 29, activate 29). With the new test class: 85 of 85 passed.
 - `RetentionTests` (PostgreSQL) and the new test: 15 of 15 passed. Contract `JobStatsContractTests` and retention contracts: 46 of 46 passed.
 - Smoke: a 200-job drain on a fresh database at revision 29 reconciled; the 2,000-job drain on the retained copy reconciled with no diagnostics.

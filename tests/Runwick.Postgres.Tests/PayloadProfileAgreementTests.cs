@@ -100,6 +100,20 @@ public sealed class PayloadProfileAgreementTests
             Assert.Null(await TryAsync(conn, InsertJob(Job2, 1),
                 $"UPDATE runwick.jobs SET serializer_profile_version = 2 WHERE job_id = '{Job2}'"));
 
+            // As with the old key (ON UPDATE NO ACTION), agreement is checked at the end of the statement: one statement that
+            // moves a payload and its job to a new profile together is accepted, in either order; two statements are not.
+            Assert.Null(await TryAsync(conn, InsertJob(Job1, 1), InsertPayload(Job1, 1), $"""
+                WITH p AS (UPDATE runwick.job_payloads SET serializer_profile_id = 'other' WHERE job_id = '{Job1}' RETURNING job_id)
+                UPDATE runwick.jobs SET serializer_profile_id = 'other' WHERE job_id = (SELECT job_id FROM p)
+                """));
+            Assert.Null(await TryAsync(conn, InsertJob(Job1, 1), InsertPayload(Job1, 1), $"""
+                WITH j AS (UPDATE runwick.jobs SET serializer_profile_version = 2 WHERE job_id = '{Job1}' RETURNING job_id)
+                UPDATE runwick.job_payloads SET serializer_profile_version = 2 WHERE job_id = (SELECT job_id FROM j)
+                """));
+            AssertProfileViolation(await TryAsync(conn, InsertJob(Job1, 1), InsertPayload(Job1, 1),
+                $"UPDATE runwick.jobs SET serializer_profile_version = 2 WHERE job_id = '{Job1}'",
+                $"UPDATE runwick.job_payloads SET serializer_profile_version = 2 WHERE job_id = '{Job1}'"));
+
             // A payload without a job is still refused (now by the primary-key foreign key).
             var orphan = await TryAsync(conn, InsertPayload(Job1, 1));
             Assert.NotNull(orphan);

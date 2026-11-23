@@ -8,8 +8,10 @@
 --     entry to it. The payload now references the job's primary key, and the profile agreement the composite key enforced
 --     is kept by two triggers, so the same changes are refused:
 --       - a payload insert or update whose profile differs from its job's (one keyed join per statement, set inserts too);
---       - a job update that changes the profile of a job that has a payload (fires only when an UPDATE names the profile
---         columns and a value really changes; no released statement names them).
+--       - a job profile change that leaves a payload of that job on another profile. Like the old key (ON UPDATE NO ACTION,
+--         not deferrable), this is checked at the end of the statement: a statement that changes the payload and its job
+--         together is accepted. It is a constraint trigger that fires only when an UPDATE names a profile column and a value
+--         really changes; no released statement names them.
 --     Both raise foreign_key_violation (23503) under the old constraint's name, as the foreign key did.
 -- (2) jobs_terminal_retention now covers only terminal jobs whose detail has expired: the rows the history purge reads.
 --     Terminal jobs whose detail is kept are already in jobs_detail_retention, so a finish writes one retention entry
@@ -49,16 +51,20 @@ CREATE TRIGGER job_payloads_profile_update AFTER UPDATE ON runwick.job_payloads
 CREATE FUNCTION runwick.rw_job_profile_fixed()
 RETURNS trigger LANGUAGE plpgsql AS $fn$
 BEGIN
-    IF EXISTS (SELECT 1 FROM runwick.job_payloads AS p WHERE p.application = OLD.application AND p.job_id = OLD.job_id) THEN
+    IF EXISTS (
+        SELECT 1 FROM runwick.job_payloads AS p
+        WHERE p.application = NEW.application AND p.job_id = NEW.job_id
+          AND (p.serializer_profile_id IS DISTINCT FROM NEW.serializer_profile_id
+               OR p.serializer_profile_version IS DISTINCT FROM NEW.serializer_profile_version)) THEN
         RAISE EXCEPTION 'serializer profile of a job with a payload cannot change'
             USING ERRCODE = 'foreign_key_violation', TABLE = 'job_payloads', CONSTRAINT = 'job_payloads_job_profile_fk';
     END IF;
-    RETURN NEW;
+    RETURN NULL;
 END
 $fn$;
 
-CREATE TRIGGER jobs_profile_fixed BEFORE UPDATE OF serializer_profile_id, serializer_profile_version ON runwick.jobs
-    FOR EACH ROW
+CREATE CONSTRAINT TRIGGER jobs_profile_fixed AFTER UPDATE OF serializer_profile_id, serializer_profile_version ON runwick.jobs
+    NOT DEFERRABLE FOR EACH ROW
     WHEN (OLD.serializer_profile_id IS DISTINCT FROM NEW.serializer_profile_id
           OR OLD.serializer_profile_version IS DISTINCT FROM NEW.serializer_profile_version)
     EXECUTE FUNCTION runwick.rw_job_profile_fixed();
