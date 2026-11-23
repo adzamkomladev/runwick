@@ -38,7 +38,7 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
             }
             else if (IsSqlite(connectionString))
             {
-                r.UseSqlite(connectionString);
+                r.UseSqlite(connectionString, SqliteFromEnvironment);
             }
             else
             {
@@ -58,6 +58,10 @@ internal sealed class TestClient(ServiceProvider provider, string application) :
 
     /// <summary>A SQLite store is named by its file (20 §12: the harness store kind follows the connection string).</summary>
     internal static bool IsSqlite(string connectionString) => connectionString.StartsWith("Data Source=", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>RUNWICK_SQLITE_GROUP_COMMIT=1 runs every SQLite test host with <see cref="SqliteOptions.GroupCommit"/> on (20 §5.1).</summary>
+    internal static void SqliteFromEnvironment(SqliteOptions options) =>
+        options.GroupCommit = Environment.GetEnvironmentVariable("RUNWICK_SQLITE_GROUP_COMMIT") == "1";
 
     public ServiceProvider Services => provider;
 

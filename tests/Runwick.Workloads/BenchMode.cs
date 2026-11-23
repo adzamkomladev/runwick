@@ -34,6 +34,7 @@ namespace Runwick.Workloads;
 /// [--payload 1024] [--job-ms 0] [--calls 1] [--store postgres|sqlite|redis] [--redis-topology standalone|sentinel|cluster] [--out file.json] [--trace] [--sqlite-count-statements]</c>.
 /// <c>--warmup-jobs</c> adds jobs on the same producer before timing an enqueue run.
 /// SQLite uses a fresh file. <c>--sqlite-keep</c> keeps it, and <c>--sqlite-seed path</c> copies a drained fixture before the run.
+/// <c>--sqlite-group-commit</c> turns on <c>SqliteOptions.GroupCommit</c>.
 /// <c>--sqlite-profile-statements</c> groups native writer time by statement prefix for diagnosis.
 /// <c>--sqlite-hold-read</c> pins a read snapshot during a traced drain and measures checkpoint progress after releasing it.
 /// <c>--store-viewers</c> enables the co-hosted management sampler and polls the cached Store snapshot every five seconds per viewer during steady mode.
@@ -148,6 +149,7 @@ internal static class BenchMode
 
         Action<RunwickBuilder> useStore;
         var keepSqlite = a.Has("sqlite-keep");
+        var sqliteGroupCommit = a.Has("sqlite-group-commit");
         using var sqliteDirectory = store == "sqlite"
             ? new SqliteBenchDirectory(a.OptStr("sqlite-dir") ?? Path.GetTempPath(), keepSqlite, a.OptStr("sqlite-reuse"))
             : null;
@@ -184,7 +186,7 @@ internal static class BenchMode
                 }
             }
 
-            useStore = r => r.UseSqlite(sqliteCs);
+            useStore = r => r.UseSqlite(sqliteCs, o => o.GroupCommit = sqliteGroupCommit);
             if (schedule && (await RunwickSqliteMigrations.ActivateCapabilityAsync(sqliteCs, "bench", "scheduler", "ops").ConfigureAwait(false)).Count == 0)
             {
                 Console.Error.WriteLine("--schedule needs a store where application 'bench' already exists (use --sqlite-seed)");
@@ -1131,6 +1133,7 @@ internal static class BenchMode
             {
                 ["profile"] = sqlite.AcknowledgementProfile,
                 ["engine"] = new JsonObject([.. sqlite.EngineFacts.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)kv.Value))]),
+                ["groupCommit"] = sqliteGroupCommit,
                 ["writeCommits"] = sqlite.Runner.Commits,
                 ["busyConflicts"] = sqlite.Runner.BusyConflicts,
                 ["writerConnectionsOpened"] = sqlite.Executor.WriterConnectionsOpened,

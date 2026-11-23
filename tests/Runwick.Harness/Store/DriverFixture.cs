@@ -107,7 +107,7 @@ internal sealed class DriverFixture : IAsyncDisposable
     /// <summary>Points a host's builder at this fixture's store, by kind (PostgreSQL, SQLite or Redis), for hosts that are not a <see cref="TestClient"/>.</summary>
     public RunwickBuilder UseStore(RunwickBuilder builder, string identity) => Kind switch
     {
-        StoreKind.Sqlite => builder.UseSqlite(ClientConnectionString(identity)),
+        StoreKind.Sqlite => builder.UseSqlite(ClientConnectionString(identity), TestClient.SqliteFromEnvironment),
         StoreKind.Redis => builder.UseRedis(RedisServer.ConfigurationOf(ClientConnectionString(identity))),
         _ => builder.UsePostgres(ClientConnectionString(identity)),
     };

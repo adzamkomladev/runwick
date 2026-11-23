@@ -102,7 +102,7 @@ internal sealed class WorkerHost : IAsyncDisposable
         {
             r.Application(application);
             _ = RedisServer.IsRedis(connectionString) ? r.UseRedis(RedisServer.ConfigurationOf(connectionString))
-                : TestClient.IsSqlite(connectionString) ? r.UseSqlite(connectionString) : r.UsePostgres(connectionString);
+                : TestClient.IsSqlite(connectionString) ? r.UseSqlite(connectionString, TestClient.SqliteFromEnvironment) : r.UsePostgres(connectionString);
             RegisterWork(r, queue, jobs);
             r.AddHandler<WorkJob, ScriptedWorkHandler>();
             r.AddWorker(w =>

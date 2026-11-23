@@ -42,6 +42,7 @@ Concurrent dispatch calls 8, waiting callers 64, longest wait for a slot 1 s, pr
 | PostgreSQL schema | `runwick` | only `runwick` |
 | SQLite `WriterBusyTimeout` | 2 s | 100 ms to 30 s |
 | SQLite `ReaderThreads` | 2 | 1 to 8 |
+| SQLite `GroupCommit` | off | on or off |
 | Redis `ProfileRecheckInterval` | 30 s | 5 s to 5 min |
 
 ## Retention (`w.Retention(...)` on the worker)

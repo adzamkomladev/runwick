@@ -70,6 +70,7 @@ The connection string must name a file with `Data Source=<path>`. Runwick opens 
 |---|---|---|---|
 | `WriterBusyTimeout` | 2 s | 100 ms to 30 s | How long a write waits for another process to release the file's write lock. |
 | `ReaderThreads` | 2 | 1 to 8 | Threads for read-only calls, each with its own connection. |
+| `GroupCommit` | off | on or off | Lets writes of the same kind that are already waiting share one commit (one disk sync), each still checked and answered on its own, and only after that commit. Helps when the disk sync is slow. |
 
 A value outside its range fails at startup with `invalid_policy`.
 
