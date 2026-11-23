@@ -19,6 +19,9 @@ internal sealed partial class SqliteStore(SqExecutor executor, SqRunner runner, 
 
     public string AcknowledgementProfile => AcknowledgementProfiles.SqliteWalFull;
 
+    /// <summary>Buffered finish is on by default here: measured faster under sustained load (06 Changes 2026-11-23).</summary>
+    public bool BuffersFinishByDefault => true;
+
     internal SqRunner Runner => runner;
 
     internal SqExecutor Executor => executor;

@@ -314,8 +314,9 @@ internal static class BenchMode
             }.ConnectionString;
             var counterCs = new NpgsqlConnectionStringBuilder(adminCs) { Database = database, ApplicationName = "bench:counters", Pooling = false }.ConnectionString;
             storeCounters = () => PostgresCountersAsync(counterCs, database);
-            // --pg-group: grouped producer admission (PF2-B1); it only groups callers beyond the producer slots (--producer-calls).
-            useStore = r => r.UsePostgres(storeCs, o => o.GroupProducerAdmission = a.Has("pg-group"));
+            // Grouped producer admission (PF2-B1) is on by default; --no-pg-group turns it off (--pg-group is kept as a no-op).
+            // It only groups callers beyond the producer slots (--producer-calls).
+            useStore = r => r.UsePostgres(storeCs, o => o.GroupProducerAdmission = !a.Has("no-pg-group"));
         }
 
         WorkerOptions? leaseOptions = null;
@@ -380,9 +381,15 @@ internal static class BenchMode
                 .Configure(o =>
                 {
                     o.RecordResourceUsage = !a.Has("no-usage"); // --no-usage: the attempt-usage overhead baseline
-                    if (a.Has("buffered-finish")) // G1: give the slot back at once and flush finishes in batches
+                    // G1 buffered finish: unset, the store decides (on for PostgreSQL and SQLite, off for Redis);
+                    // --buffered-finish forces it on, --no-buffered-finish forces it off.
+                    if (a.Has("buffered-finish"))
                     {
                         o.UseBufferedFinish();
+                    }
+                    else if (a.Has("no-buffered-finish"))
+                    {
+                        o.BufferedFinish = false;
                     }
 
                     if (a.Has("combined-finish-claim")) // 05 §12.7: the finish of a job and the claim of its replacement in one call

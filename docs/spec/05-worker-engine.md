@@ -4,6 +4,10 @@
 
 Numeric values are restated here where the engine behavior depends on them; [06-defaults.md](06-defaults.md) is the single table of defaults, derived formulas and startup inequalities. Where the two disagree, 06 is authoritative for the number and this file for the behavior.
 
+## Changes (2026-11-23, buffered finish on by default for PostgreSQL and SQLite)
+
+`BufferedFinish` is now `bool?` and unset by default (06 Changes 2026-11-23). Unset, the engine asks the store (`IRunwickStore.BuffersFinishByDefault`, read once when the completion coordinator is built): PostgreSQL and SQLite say yes, so §12.6 applies; Redis says no, so §12.1 to §12.5 apply alone. An explicit `true` or `false` overrides the store. No rule of §12.6 changes. On Redis §12.7 combined finish and claim is unaffected; where buffered finish is on it claims only into slots still held, as before.
+
 ## Changes (2026-11-22, delayed pickup on every creation path)
 
 No engine rule changes. The wake rule of the 2026-11-19 entries (a created job that is not yet due wakes its queue when it is then the earliest not-yet-due job of its lane in claim order (`eligible_at`, `job_id`); never on replay; jobs queued behind an earlier delayed job wake nothing) now holds for every path that creates jobs, not only direct `Dispatch/1` and `DispatchMany/1`:

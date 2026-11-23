@@ -34,6 +34,8 @@ internal sealed class TimingStore(IRunwickStore inner, Metrics metrics, bool det
 
     public string AcknowledgementProfile => inner.AcknowledgementProfile;
 
+    public bool BuffersFinishByDefault => inner.BuffersFinishByDefault;
+
     async Task<T> Timed<T>(string op, Func<Task<T>> call, Func<T, string> status)
     {
         var started = Stopwatch.GetTimestamp();

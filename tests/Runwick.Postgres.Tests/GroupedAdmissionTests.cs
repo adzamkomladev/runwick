@@ -73,6 +73,11 @@ public sealed class GroupedAdmissionTests
     static Task<T> Within<T>(Task<T> task) => task.WaitAsync(Wait);
 
     [Fact]
+    [Trait("Category", "Pure")]
+    [Trait("Item", "PF2-B1")]
+    public void Grouped_admission_is_on_by_default() => Assert.True(new PostgresOptions().GroupProducerAdmission);
+
+    [Fact]
     [Trait("Item", "PF2-B1")]
     public async Task Waiting_callers_commit_as_one_group_with_the_rows_and_receipts_of_single_dispatches()
     {

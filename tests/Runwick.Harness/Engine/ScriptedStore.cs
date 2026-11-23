@@ -39,6 +39,9 @@ internal class ScriptedStore(TimeProvider time) : IRunwickStore, IWakeNotificati
 {
     readonly Lock _lock = new();
     readonly Dictionary<Guid, object> _receipts = [];
+
+    /// <summary>The driver's buffered-finish default (off, like Redis); EngineFixture.Create sets it before the engine is built.</summary>
+    public bool BuffersFinishByDefault { get; set; }
     readonly Dictionary<Guid, int> _submissions = [];
     readonly List<Job> _jobs = [];
 

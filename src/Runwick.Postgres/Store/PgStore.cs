@@ -15,6 +15,9 @@ internal sealed partial class PgStore(PgDataSources sources, PgRunner runner, Ti
 
     public string AcknowledgementProfile => AcknowledgementProfiles.PostgresSynchronousCommit;
 
+    /// <summary>Buffered finish is on by default here: measured faster under sustained load (06 Changes 2026-11-23).</summary>
+    public bool BuffersFinishByDefault => true;
+
     internal PgRunner Runner => runner;
 
     internal PgDataSources Sources => sources;

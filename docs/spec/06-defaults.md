@@ -4,6 +4,12 @@
 
 Every numeric default used by milestone M2 is in this file. Behavior that uses each value is specified in [05-worker-engine.md](05-worker-engine.md) (cited as `05 §n`) and the storage/protocol specs. A value listed here is the default; a host may change configurable values only within the startup inequalities of §3. Values marked *profile constant* are not host-configurable (raising them requires a new serializer profile/format version).
 
+## Changes (2026-11-23, faster options on by default)
+
+- **`WorkerOptions.BufferedFinish`: false → unset (`bool?`, null), meaning the store decides.** PostgreSQL and SQLite turn buffered finish (05 §12.6) on; Redis leaves it off. `true` or `false` (or `UseBufferedFinish()`, which sets true) overrides the store. Reason: at a sustained 100 jobs/s it was a clear win on PostgreSQL and SQLite and slightly worse on Redis. The other defaults are those of the 2026-11-15 entry (`FinishFlushInterval` 25 ms, `FinishBufferMaxCount` 256, `FinishBufferMaxBytes` 4 MiB). V-22's bounds on those three options are checked unless `BufferedFinish` is explicitly false, since validation runs before the store is known. With buffering on, the completion ready-ID channel holds at least `FinishBufferMaxCount` IDs (§1 row updated). Set `BufferedFinish = false` for the earlier behaviour on PostgreSQL and SQLite.
+- **`PostgresOptions.GroupProducerAdmission`: false → true** (04 Changes 2026-11-23). It groups only callers that would wait for a producer slot anyway, so a caller that finds a slot free is sent alone as before. Measured jobs/s without and with grouping: 1 caller 77 / 74, 4 callers 228 / 238, 8 callers 388 / 448, 16 callers 409 / 622, 32 callers 453 / 1,022. Set it to false for the earlier behaviour.
+- Unchanged: `ClaimsInFlight` stays 1 (2 made SQLite slower); `UseFewerLeaseRenewals()` (slower crash recovery) and Redis every-second AOF (can lose the last second of confirmed writes) stay opt-in.
+
 ## Changes (2026-11-20, claims in flight)
 
 - **New option `WorkerOptions.ClaimsInFlight`** (05 §9.7): how many batched claims one pool may have in flight. Default **1**, the behaviour before the option, so §1.5 "Per-pool claim concurrency" keeps its value and now names the option. New rule **V-25**: 1 to 4. "Prefetch beyond tickets" stays 0: every claim still asks only for slots that are free.
@@ -207,7 +213,7 @@ Implementation choices (marked *[choice]* below): whole-millisecond durations (V
 | Blocked lane/queue cooldown | 250 → 2,000, doubling, jitter ±20 % | ms | Lane/queue cooldown, QueuePaused backoff (F-10) | CDB §2 | V-22 |
 | Notification probe spacing | ≥ 50 | ms per polling group; 1 probe in flight | Readiness | CDB §2 | V-22 |
 | Capability-set bound | 512 (*[choice]*) | deduplicated decoding tuples per probe / Reserve | Readiness, Reserve, presence | C-5 | V-17 |
-| Completion ready-ID channel capacity | = group maximum (16) | IDs | Completion coordinator, `FullMode.Wait` | CDB §6 | — |
+| Completion ready-ID channel capacity | = max(group maximum (16), `FinishBufferMaxCount` (256) while buffered finish is on, the default on PostgreSQL and SQLite) | IDs | Completion coordinator, `FullMode.Wait` | CDB §6 | — |
 
 ### 1.6 Pressure gates
 

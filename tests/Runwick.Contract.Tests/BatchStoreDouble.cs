@@ -35,6 +35,8 @@ internal sealed class BatchStoreDouble(IRunwickStore inner) : IRunwickStore, ILe
 
     public string AcknowledgementProfile => inner.AcknowledgementProfile;
 
+    public bool BuffersFinishByDefault => inner.BuffersFinishByDefault;
+
     public Task<StoreDescriptor> DescribeAsync(string application, CancellationToken ct) => inner.DescribeAsync(application, ct);
 
     public Task<StoreReply<ApplicationSeedResult>> RegisterApplicationAsync(StoreCommand<RegisterApplicationRequest> command, CancellationToken ct) =>

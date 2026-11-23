@@ -27,7 +27,7 @@ builder.Services.AddRunwick(runwick =>
 
 ## Pools
 
-A pool is a group of slots (tickets) that share a set of queues. A job needs a free ticket before the worker claims it, and the ticket comes back only when the job has finished *and* its result is stored. That is what keeps memory bounded when the store is slow or away.
+A pool is a group of slots (tickets) that share a set of queues. A job needs a free ticket before the worker claims it, and the ticket comes back when the job has finished. With PostgreSQL and SQLite, by default ([buffered finish](/docs/configuration)), the result then waits in a small bounded buffer for up to about 25 ms while the ticket starts the next job; when that buffer is full, the ticket comes back only once the result is stored. That is what keeps memory bounded when the store is slow or away. With Redis, or with `BufferedFinish = false`, the ticket always waits until the result is stored.
 
 Use more than one pool when some work must not starve other work. In the example above, a flood of reports can never take the slots that emails need.
 
@@ -152,6 +152,8 @@ Every worker runs a recovery loop, by default every 5 seconds (give or take 1 se
 
 - **The handler had started.** The attempt is closed as abandoned. The job retries if it has executions left, and otherwise fails. If someone asked to cancel it meanwhile, it ends as cancelled.
 - **The handler had not started yet.** The worker claimed the job but died before running it. This does not use up one of the job's executions. It is counted separately (5 times in a row by default, with short delays from 1 s to 30 s), so a job that crashes every worker before it starts still stops eventually.
+
+A worker that crashes with finished jobs still in its finish buffer (buffered finish, on by default with PostgreSQL and SQLite) has not stored their results yet, so those jobs run again too. A normal shutdown sends the buffer first.
 
 There is one small gap: the store records "this execution started" just before calling your handler. A crash in that instant still costs an execution.
 

@@ -697,6 +697,9 @@ internal interface IRunwickStore : IStoreHandshake, IJobDispatchStore, IJobReser
     Guid StoreId { get; }
 
     string AcknowledgementProfile { get; }
+
+    /// <summary>Whether workers buffer finishes (05 §12.6) when <c>WorkerOptions.BufferedFinish</c> is unset. Off unless the driver says so.</summary>
+    bool BuffersFinishByDefault => false;
 }
 
 // ---- 8.6 receipt resolution

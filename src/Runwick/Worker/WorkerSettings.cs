@@ -234,7 +234,7 @@ internal sealed class WorkerSettings
                     }
                 }
 
-                if (o.BufferedFinish)
+                if (o.BufferedFinish != false) // the store may turn it on, so check the bounds unless it is explicitly off
                 {
                     if (o.FinishFlushInterval < TimeSpan.FromMilliseconds(1) || o.FinishFlushInterval > TimeSpan.FromSeconds(1)
                         || o.FinishFlushInterval.Ticks % TimeSpan.TicksPerMillisecond != 0)
