@@ -469,8 +469,7 @@ public sealed class ReserveAndBeginTests
         // claim must still read only the jobs it claims, not every ready job once per statement.
         await using var f = await DriverFixture.StartAsync(Ns("rab12"));
         await using var w = Host(f, concurrency: 8);
-        // Autoanalyze would refresh the statistics after the 1,500 inserts (CI: then the claim reads every ready row once,
-        // 1,532 fetches), and the case is stale statistics; this database is the test's own.
+        // The case is stale statistics, so autoanalyze must not refresh them after the 1,500 inserts; this database is the test's own.
         await f.ExecAsync("ALTER TABLE runwick.jobs SET (autovacuum_enabled = off)");
         await f.ExecAsync("ANALYZE runwick.jobs");
         for (var batch = 0; batch < 15; batch++)
@@ -497,15 +496,22 @@ public sealed class ReserveAndBeginTests
             return Convert.ToInt64(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
         }
 
+        // The claim's arguments are read from the backlog before the baseline: with a visibility map that lags fresh statistics,
+        // an index-only scan for them fetches every job row (CI: 1,532 = 1,500 + the claim's own), which is not the claim's cost.
+        await Scalar("""
+            CREATE TEMP TABLE rab12_args ON COMMIT DROP AS
+            SELECT (SELECT min(priority) FROM runwick.jobs) AS priority,
+                   ARRAY(SELECT DISTINCT job_name::text FROM runwick.jobs) AS names, ARRAY(SELECT DISTINCT payload_version FROM runwick.jobs) AS versions,
+                   ARRAY(SELECT DISTINCT serializer_profile_id::text FROM runwick.jobs) AS profile_ids,
+                   ARRAY(SELECT DISTINCT serializer_profile_version FROM runwick.jobs) AS profile_versions
+            """);
         const string FetchedSql = "SELECT coalesce(max(idx_tup_fetch), 0) FROM pg_stat_xact_user_tables WHERE relname = 'jobs'";
         var before = await Scalar(FetchedSql);
         var applied = await Scalar("""
-            SELECT count(*) FROM runwick.reserve_and_begin_v3(@app, @cmd, 'ReserveAndBegin', runwick.ms_floor(clock_timestamp() + interval '30 seconds'), @fp,
+            SELECT count(*) FROM rab12_args AS a, runwick.reserve_and_begin_v3(@app, @cmd, 'ReserveAndBegin', runwick.ms_floor(clock_timestamp() + interval '30 seconds'), @fp,
                 'ownership', interval '60 seconds', NULL, ARRAY[(SELECT schema_revision FROM runwick.store_metadata)],
                 (SELECT protocol_epoch FROM runwick.store_metadata), '{"rw:harness": 1}'::jsonb, false, false, false,
-                'default', (SELECT min(priority) FROM runwick.jobs), NULL, NULL,
-                ARRAY(SELECT DISTINCT job_name::text FROM runwick.jobs), ARRAY(SELECT DISTINCT payload_version FROM runwick.jobs),
-                ARRAY(SELECT DISTINCT serializer_profile_id::text FROM runwick.jobs), ARRAY(SELECT DISTINCT serializer_profile_version FROM runwick.jobs),
+                'default', a.priority, NULL, NULL, a.names, a.versions, a.profile_ids, a.profile_versions,
                 interval '30 seconds', @worker, @tokens, interval '250 milliseconds', array_fill(0, ARRAY[8])) AS r
             WHERE r.status = 'Applied'
             """);
