@@ -168,3 +168,10 @@ Use .NET SDK 10.0.403 with `DOTNET_ROOT=/root/.dotnet` and its directory on `PAT
 - Merged to `main`: claims in flight (`WorkerOptions.ClaimsInFlight`, 1 to 4, default 1), Redis lean worker scripts and stored layout revision 2 (Redis layout upgrade: drain, stop, migrate, start), delayed wake on staging, outbox and management dispatch (PostgreSQL migration `0027_staged_delayed_wake`, schema revision 27), and PR #1 (dashboard and management API with reflection-based JSON off).
 - The Q6/Q7 combined SQLite harness is built on branch `q67-harness`; its full run is pending a quiet host.
 - From now on test runs are done by Sonnet agents; Opus sessions only write code, merge and edit docs.
+
+## 2026-11-24 update
+
+- On `main` (7b562cf): the lost-lease report fix (a finish that gives up after its budget is now reported like any other lost lease), faster defaults (buffered finish on for PostgreSQL and SQLite, off for Redis; PostgreSQL grouped producer admission on), and the Redis cleanup merges (`redis-next`, `redis-functions`; Functions off by default). The original session then merged Redis claim ahead as opt-in (f8e2c43) and is running final qualification; merges to `main` are on hold until it reports.
+- Measured and written up, waiting to be pushed after qualification: PostgreSQL combined finish and claim (no gain, left unmerged on branch `pg-finish-claim`, migration 0031); Redis Sentinel and Cluster alternating pairs (Sentinel median 0.80 of standalone on one host, from replication; Cluster within noise).
+- The 2-minute outage with fewer lease renewals, rerun with a 600 s window: all jobs finished, 9 of 10 ran twice, because a finish sent during the outage gives up after the 30 s completion budget. Possible follow-up, not started: tie that budget to the lease time left.
+- Still open: the PostgreSQL keyed-claim rerun with a 100,000-job backlog and the dashboard list timings for the four `jobs` list indexes (both after qualification, to keep the host quiet); Scheduler S needs the reference host.
