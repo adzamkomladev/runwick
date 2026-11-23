@@ -88,24 +88,24 @@ builder.Services.AddRunwick(runwick =>
 | Option | Default | Notes |
 |---|---|---|
 | `PostgresOptions.Schema` | `runwick` | Only `runwick` is supported in this release. Any other value is refused at startup. |
-| `PostgresOptions.GroupProducerAdmission` | `false` | Sends single `DispatchAsync` calls that are waiting for a free producer slot together, up to 8 per transaction. See below. |
+| `PostgresOptions.GroupProducerAdmission` | `true` | Sends single `DispatchAsync` calls that are waiting for a free producer slot together, up to 8 per transaction. See below. |
 
 An empty connection string fails at startup with `missing_store`.
 
 ### Grouped producer admission
 
-A process can have at most `ProducerOptions.MaxConcurrentCalls` dispatch calls (default 8) talking to PostgreSQL at once. Extra callers wait for a free slot, for up to `ProducerOptions.AdmissionWait`. With `GroupProducerAdmission` switched on, the waiting calls do not each wait for a slot of their own: when a slot frees, it takes up to 8 waiting calls (at most 2 MiB of payload in total) to PostgreSQL in one transaction.
+A process can have at most `ProducerOptions.MaxConcurrentCalls` dispatch calls (default 8) talking to PostgreSQL at once. Extra callers wait for a free slot, for up to `ProducerOptions.AdmissionWait`. With `GroupProducerAdmission` on (the default), the waiting calls do not each wait for a slot of their own: when a slot frees, it takes up to 8 waiting calls (at most 2 MiB of payload in total) to PostgreSQL in one transaction.
 
 - A call that finds a free slot is sent at once, exactly as without grouping. Nobody waits to collect company, so a single caller, or fewer callers than slots, sees no change.
 - Every call keeps its own operation ID, receipt, deadline and result. Re-sending the same prepared dispatch, or `ResolveAsync`, works the same as without grouping.
 - A call that waits too long is refused with `LocalCapacityExceededException` as before, and nothing is sent for it. A call cancelled while waiting sends nothing. A call cancelled after its group was sent throws `DispatchCanceledAfterSendException`; resolve its operation ID.
 - Only plain single dispatches are grouped. A dispatch with a uniqueness key, concurrency or rate scopes, `DispatchManyAsync`, and dispatches on your own transaction always go alone.
 
-```csharp
-runwick.UsePostgres(connectionString, o => o.GroupProducerAdmission = true);
-```
+It helps when many callers dispatch at once from one process, more than its producer slots. In our measurements (jobs per second, without and with grouping): 1 caller 77 and 74, 4 callers 228 and 238, 8 callers 388 and 448, 16 callers 409 and 622, 32 callers 453 and 1,022. To send every call alone, turn it off:
 
-It helps when many callers dispatch at once from one process, more than its producer slots. It is off by default while it is being measured.
+```csharp
+runwick.UsePostgres(connectionString, o => o.GroupProducerAdmission = false);
+```
 
 ### Connections
 

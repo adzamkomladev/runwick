@@ -530,16 +530,18 @@ public sealed class WorkerEngineTests
     [Fact]
     [Trait("Category", "Pure")]
     [Trait("Item", "PF2-G1")]
-    public void Buffered_finish_is_off_by_default_and_its_bounds_are_validated()
+    public void Buffered_finish_defaults_to_the_store_and_its_bounds_are_validated()
     {
-        Assert.False(new WorkerOptions().BufferedFinish);
+        Assert.Null(new WorkerOptions().BufferedFinish);
+        Assert.Empty(Validate(_ => { }));
         Assert.Empty(Validate(o => o.UseBufferedFinish()));
         Assert.Contains(Validate(o => o.UseBufferedFinish(TimeSpan.Zero)), x => x.Message.StartsWith("V-22", StringComparison.Ordinal));
         Assert.Contains(Validate(o => o.UseBufferedFinish(TimeSpan.FromSeconds(2))), x => x.Message.StartsWith("V-22", StringComparison.Ordinal));
         Assert.Contains(Validate(o => o.UseBufferedFinish(maxCount: 0)), x => x.Message.StartsWith("V-22", StringComparison.Ordinal));
         Assert.Contains(Validate(o => o.UseBufferedFinish(maxBytes: 1024)), x => x.Message.StartsWith("V-22", StringComparison.Ordinal));
-        // Outside the profile the three bounds are not looked at.
-        Assert.Empty(Validate(o => o.FinishBufferMaxCount = 0));
+        // Unset, the store may turn it on, so the three bounds are checked; explicitly off, they are not looked at.
+        Assert.Contains(Validate(o => o.FinishBufferMaxCount = 0), x => x.Message.StartsWith("V-22", StringComparison.Ordinal));
+        Assert.Empty(Validate(o => { o.BufferedFinish = false; o.FinishBufferMaxCount = 0; }));
     }
 
     [Fact]
@@ -547,9 +549,9 @@ public sealed class WorkerEngineTests
     [Trait("Item", "PF2-G1")]
     public async Task Buffered_finish_reuses_the_slot_before_the_finish_settles()
     {
-        async Task<int> StartedWhileFinishesAreHeld(Action<WorkerOptions>? options)
+        async Task<int> StartedWhileFinishesAreHeld(Action<WorkerOptions>? options, bool storeDefault = false)
         {
-            await using var e = EngineFixture.Create(concurrency: 1, options: options, finishMany: true);
+            await using var e = EngineFixture.Create(concurrency: 1, options: options, finishMany: true, buffersFinishByDefault: storeDefault);
             for (var i = 0; i < 6; i++)
             {
                 e.Add("j" + i);
@@ -563,6 +565,9 @@ public sealed class WorkerEngineTests
 
         Assert.Equal(1, await StartedWhileFinishesAreHeld(null));
         Assert.Equal(6, await StartedWhileFinishesAreHeld(o => o.UseBufferedFinish()));
+        // Unset, the store decides (PostgreSQL and SQLite on, Redis off); an explicit setting overrides it.
+        Assert.Equal(6, await StartedWhileFinishesAreHeld(null, storeDefault: true));
+        Assert.Equal(1, await StartedWhileFinishesAreHeld(o => o.BufferedFinish = false, storeDefault: true));
     }
 
     [Fact]

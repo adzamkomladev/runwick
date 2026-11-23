@@ -42,6 +42,21 @@ public sealed class BufferedFinishContractTests
 
     [Theory]
     [MemberData(nameof(Kinds))]
+    [Trait("Case", "G1-00")]
+    public async Task Unset_it_is_on_for_PostgreSQL_and_SQLite_and_off_for_Redis(StoreKind kind)
+    {
+        await using var f = await DriverFixture.StartAsync(Ns("g1d"), kind);
+        await using var w = Host(f, 4, options: null);
+        await DispatchAsync(w, 20);
+        await w.StartAsync();
+        await WorkerHost.WaitUntil(() => SucceededAsync(f).Result == 20, TimeSpan.FromSeconds(120), "all 20 jobs settled");
+        var on = kind != StoreKind.Redis;
+        Assert.Equal(on, w.Engine.Store.BuffersFinishByDefault);
+        Assert.Equal(on, w.Engine.Completion.BufferedHighWater >= 1);
+    }
+
+    [Theory]
+    [MemberData(nameof(Kinds))]
     [Trait("Case", "G1-01")]
     public async Task Every_job_settles_once_and_the_buffer_empties(StoreKind kind)
     {

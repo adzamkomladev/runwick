@@ -28,11 +28,13 @@ internal enum SettlementResult
 /// </summary>
 internal sealed class CompletionCoordinator(WorkerEngine engine)
 {
-    // Buffered finish (G1): more Finishes can be waiting than there are slots, so the channel is sized to the buffer bound.
+    // Buffered finish (G1): the option, or the store's default when it is unset.
+    readonly bool _buffered = engine.Options.BufferedFinish ?? engine.Store.BuffersFinishByDefault;
+
+    // More Finishes can be waiting than there are slots when buffered, so the channel is sized to the buffer bound.
     readonly Channel<AttemptEntry> _ready = Channel.CreateBounded<AttemptEntry>(
-        new BoundedChannelOptions(Math.Max(Math.Max(1, engine.Settings.GroupMax), engine.Options.BufferedFinish ? engine.Options.FinishBufferMaxCount : 0))
+        new BoundedChannelOptions(Math.Max(Math.Max(1, engine.Settings.GroupMax), (engine.Options.BufferedFinish ?? engine.Store.BuffersFinishByDefault) ? engine.Options.FinishBufferMaxCount : 0))
         { FullMode = BoundedChannelFullMode.Wait });
-    readonly bool _buffered = engine.Options.BufferedFinish;
     readonly bool _combined = engine.Options.CombinedFinishClaim;
     bool _combinedOff;
     readonly PriorityGate _collector = new(1);

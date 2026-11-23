@@ -475,7 +475,7 @@ public sealed class WorkerOptions
     }
 
     /// <summary>
-    /// Buffered finish (G1). Off by default. When on, an attempt that has finished gives its worker slot back at once and its
+    /// Buffered finish (G1). On by default with PostgreSQL and SQLite, off with Redis (see <see cref="BufferedFinish"/>). When on, an attempt that has finished gives its worker slot back at once and its
     /// Finish waits in a bounded buffer that is flushed every <see cref="FinishFlushInterval"/> (or as soon as a batch is full),
     /// so the next job starts without waiting for the finish round trip. The attempt keeps its lease, its renewals and its
     /// store-side permits until the store has accepted the Finish.
@@ -483,8 +483,9 @@ public sealed class WorkerOptions
     /// What it can lose: a worker that crashes (or is killed) while Finishes are still in memory leaves those jobs running
     /// until their leases expire, and then they run again. Handlers must be idempotent in this mode. A graceful shutdown flushes the
     /// buffer first. The buffer is bounded by <see cref="FinishBufferMaxCount"/>, <see cref="FinishBufferMaxBytes"/> and a one-second
-    /// age; when a bound is hit the slot stays held until the Finish settles, exactly as with the default.
+    /// age; when a bound is hit the slot stays held until the Finish settles, exactly as with buffering off.
     /// </para>
+    /// Calling this turns buffering on for any store and sets its interval and bounds.
     /// </summary>
     public WorkerOptions UseBufferedFinish(TimeSpan? flushInterval = null, int maxCount = 256, int maxBytes = 4 * 1024 * 1024)
     {
@@ -521,8 +522,12 @@ public sealed class WorkerOptions
     /// </summary>
     public int ClaimsInFlight { get; set; } = 1;
 
-    /// <summary>Buffered finish (G1) switch; see <see cref="UseBufferedFinish"/>. Default off.</summary>
-    public bool BufferedFinish { get; set; }
+    /// <summary>
+    /// Buffered finish (G1) switch; see <see cref="UseBufferedFinish"/>. <c>null</c> (the default) lets the store decide: on with
+    /// PostgreSQL and SQLite, where it was measured faster under sustained load, off with Redis, where it was not. <c>true</c> or
+    /// <c>false</c> overrides the store.
+    /// </summary>
+    public bool? BufferedFinish { get; set; }
 
     /// <summary>The longest a finished attempt's Finish waits for company before it is sent. 1 ms to 1 s; default 25 ms.</summary>
     public TimeSpan FinishFlushInterval { get; set; } = TimeSpan.FromMilliseconds(25);

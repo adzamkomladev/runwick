@@ -6,6 +6,10 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-23, grouped producer admission on by default)
+
+- `PostgresOptions.GroupProducerAdmission` now defaults to **true** (06 Changes 2026-11-23). The rules of the grouped producer admission entry below are unchanged; set it to false to send every call alone through `dispatch_v4`.
+
 ## Changes (2026-11-23, receipt compaction)
 
 - Migration `0030_receipt_by_key`, schema revision 30. Rows, receipt results, replies, replay and the receipt codec are unchanged; the manifest changes only its schema revision. On by default (a migration, not an option).

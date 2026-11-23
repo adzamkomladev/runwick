@@ -17,7 +17,7 @@ A handler can run again when:
 
 In each case Runwick runs the job again rather than risk losing it. So write handlers that are safe to repeat.
 
-With the opt-in [buffered finish](/docs/configuration) mode (`UseBufferedFinish()`), the first case gets wider. A worker starts its next job before the store has confirmed the previous one finished, so a crash can rerun jobs that already completed in the last few tens of milliseconds, up to the size of the buffer. A normal shutdown sends the buffer first.
+With [buffered finish](/docs/configuration), which is on by default with PostgreSQL and SQLite (off with Redis), the first case gets wider. A worker starts its next job before the store has confirmed the previous one finished, so a crash can rerun jobs that already completed in the last few tens of milliseconds, up to the size of the buffer. A normal shutdown sends the buffer first. Set `BufferedFinish = false` in the worker's `Configure` to close this gap, at some cost in speed.
 
 ### When a dispatch is confirmed
 
