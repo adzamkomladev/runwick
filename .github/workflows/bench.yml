@@ -11,21 +11,37 @@ on:
       scale:
         description: Divide job counts and seconds by this (1 = full run; 10 = quick smoke run)
         default: "1"
+      systems:
+        description: Only these libraries, comma-separated (e.g. wolverine-redis,river); empty = all 14
+        default: ""
 permissions:
   contents: read
 env:
   DOTNET_NOLOGO: "true"
   DOTNET_CLI_TELEMETRY_OPTOUT: "true"
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      systems: ${{ steps.pick.outputs.systems }}
+    steps:
+      - id: pick
+        env:
+          ALL: runwick-pg,runwick-sqlite,runwick-redis,wolverine-pg,wolverine-sqlite,wolverine-redis,bullmq-dotnet-pg,bullmq-dotnet-redis,river,pgboss,solidqueue,bullmq,horizon,celery
+          PICK: ${{ inputs.systems }}
+        run: |
+          python3 -c "import json,os; a=os.environ['ALL'].split(','); p=[x.strip() for x in os.environ['PICK'].split(',') if x.strip()]
+          bad=[x for x in p if x not in a]; assert not bad, f'unknown systems: {bad}'
+          print('systems=' + json.dumps(p or a))" >> "$GITHUB_OUTPUT"
   bench:
+    needs: plan
     name: ${{ matrix.system }} / ${{ matrix.workload }}
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
-        system: [runwick-pg, runwick-sqlite, runwick-redis, wolverine-pg, wolverine-sqlite, wolverine-redis, bullmq-dotnet-pg, bullmq-dotnet-redis,
-                 river, pgboss, solidqueue, bullmq, horizon, celery]
+        system: ${{ fromJSON(needs.plan.outputs.systems) }}
         workload: [normal, cpu]
     env:
       BC: eng/bench-compare

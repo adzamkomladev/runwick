@@ -2,7 +2,8 @@
 // Same modes and JSON fields as the other harnesses (../ci/README.md).
 //   dotnet bench-wolverine.dll --transport postgres|redis|sqlite [--redis 127.0.0.1:56392] [--conn <pg admin>] --mode enqueue|bulk|drain|steady
 //     [--n 20000] [--calls 1] [--workers 16] [--rate 100] [--seconds 30] [--max-seconds 1800] [--out f.json]
-// Producers send with IMessageBus.SendAsync. Consumers are one listener with MaximumParallelMessages = --workers.
+// Producers send with IMessageBus.SendAsync. Consumers: one listener with MaximumParallelMessages = --workers on PostgreSQL and SQLite;
+// on Redis, --workers stream consumers (ListenerCount), since one Redis stream listener handles one message at a time.
 // Redis publishing is SendInline: SendAsync returns once Redis holds the message (the default is an in-memory
 // buffer, which would time nothing); PostgreSQL and SQLite queues are always durable. DurabilityMode.Solo (one node: no leader election); otherwise Wolverine defaults. Fresh store per run: a new PostgreSQL
 // database, a FLUSHALLed Redis, a new SQLite file. Wolverine has no bulk-send API, so bulk reports skipped.
@@ -67,7 +68,7 @@ IHost Build(bool listen)
         {
             o.UseRedisTransport(redis).AutoProvision();
             o.PublishMessage<NoopMessage>().ToRedisStream("bench").SendInline();
-            if (listen) o.ListenToRedisStream("bench", "bench-group", StartFrom.Beginning).MaximumParallelMessages(workers); // a new group would skip the backlog
+            if (listen) o.ListenToRedisStream("bench", "bench-group", StartFrom.Beginning).ListenerCount(workers); // a new group would skip the backlog
         }
         else
         {

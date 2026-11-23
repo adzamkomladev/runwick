@@ -2,6 +2,7 @@
 
 Run it from **Actions → bench → Run workflow** (manual only). Inputs: `rounds` (default 3; the report shows the median)
 and `scale` (default 1; use 10 for a quick smoke run that divides job counts and durations by 10).
+`systems` (optional, comma-separated, e.g. `wolverine-redis,river`) runs only those libraries.
 
 ## What runs
 
@@ -11,7 +12,7 @@ the same time and never share a CPU (GitHub starts 20 at once on a free plan; th
 | Library | Store | Workers |
 |---|---|---|
 | Runwick PostgreSQL / SQLite / Redis | PostgreSQL 18 / local file / Redis 8.2 | one .NET process |
-| Wolverine PostgreSQL / SQLite / Redis | its own queue transport on each | one .NET process, one listener |
+| Wolverine PostgreSQL / SQLite / Redis | its own queue transport on each | one .NET process: one listener (16 or 64 parallel), or on Redis 16 or 64 stream consumers |
 | BullMQ .NET (official port) | PostgreSQL 18 / Redis 8.2 | one .NET process, one Worker |
 | River | PostgreSQL 18 | one Go process |
 | pg-boss | PostgreSQL 18 | one Node process (batch fetch) |
