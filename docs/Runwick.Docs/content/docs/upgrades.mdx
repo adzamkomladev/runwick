@@ -58,9 +58,7 @@ runwick migrate --provider postgres --connection-env RUNWICK_STORE
 
 It prints the store ID, the new revision and what it applied. Running it again applies nothing.
 
-On PostgreSQL, the step to schema revision 28 rebuilds one retention index and checks that every stored payload belongs to a stored job. Both read the whole jobs and payloads tables, so the migration takes longer on a large store: about 2 seconds for 205,000 stored jobs on our test machine. That is one more reason to migrate while the store is drained.
-
-The step to schema revision 30 drops one receipt index and leaves 30% of each new receipt-table page free, so updating a receipt writes less to the WAL. Nothing is rewritten and the lock is brief; the receipt tables use about 14% more space, and stored receipts replay as before.
+A migration that reads whole tables takes longer on a large store, which is one more reason to migrate while the store is drained.
 
 </Step>
 <Step title="Reopen">
@@ -110,11 +108,6 @@ Activate only after every process on the store runs a release that supports it.
 
 - While an application is drained, the scheduler creates no jobs and its position does not move. After reopening, each schedule's misfire policy decides what happens to the fires it missed: skipped, run once, or caught up.
 - If a new release brings a new schedule evaluator or new time-zone data, roll the release out to **every** scheduler host first, and only then change schedule definitions to use it. A host that does not know the new version skips that schedule and says so in its logs.
-
-## Defaults that changed
-
-- **Buffered finish is now on by default with PostgreSQL and SQLite.** Redis keeps it off. A worker starts its next job before the store has confirmed the previous finish, so a crashed worker can rerun jobs that finished in its last few tens of milliseconds. Set `o.BufferedFinish = false` inside the worker's `Configure` to turn it off. See [configuration](/docs/configuration).
-- **PostgreSQL grouped producer admission is now on by default.** Dispatch calls that are waiting for a free producer slot are sent together; a call that finds a slot free is sent alone, as before. Set `o.GroupProducerAdmission = false` in `UsePostgres` to turn it off. See [PostgreSQL](/docs/postgresql).
 
 ## Restoring from a backup
 

@@ -28,12 +28,16 @@ Defaults below are checked against the code by a test. Times are as written; the
 | Pool size | fixed 4 (`FixedConcurrency(n)`) or automatic (`AutoConcurrency(min, max)`) |
 | Most jobs one process holds at once | 16 |
 | Lane weights high : medium : low | 6 : 3 : 1, with aging after 60 s |
+| Buffered finish (start the next job before the previous finish is stored) | on for PostgreSQL and SQLite, off for Redis |
+| Claims in flight per pool | 1 (1 to 4) |
+| Claim ahead (jobs claimed beyond concurrency, waiting for a slot) | 0 (0 to 32) |
+| Fewer lease renewals (`UseFewerLeaseRenewals()`: 5 min lease, renewed every 90 s) | off |
 
 Keep the host's own shutdown timeout (30 s by default in .NET) above Runwick's 25 s.
 
 ## Producer (`ProducerOptions`)
 
-Concurrent dispatch calls 8, waiting callers 64, longest wait for a slot 1 s, prepared dispatch valid for 5 min.
+Concurrent dispatch calls 8, waiting callers 64, longest wait for a slot 1 s, prepared dispatch valid for 5 min. On PostgreSQL, calls that wait for a slot are sent together, up to 8 per transaction (`GroupProducerAdmission`, on).
 
 ## Stores
 
@@ -42,7 +46,10 @@ Concurrent dispatch calls 8, waiting callers 64, longest wait for a slot 1 s, pr
 | PostgreSQL schema | `runwick` | only `runwick` |
 | SQLite `WriterBusyTimeout` | 2 s | 100 ms to 30 s |
 | SQLite `ReaderThreads` | 2 | 1 to 8 |
+| PostgreSQL `GroupProducerAdmission` | on | on or off |
 | Redis `ProfileRecheckInterval` | 30 s | 5 s to 5 min |
+| Redis `GroupDispatches` | off | on or off |
+| Redis `UseFunctions` (function library instead of scripts) | off | on or off |
 
 ## Retention (`w.Retention(...)` on the worker)
 
