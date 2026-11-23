@@ -281,6 +281,196 @@ public sealed class GroupedDeliveryTests
         Assert.Equal(4, relay.Relay.Delivered);
     }
 
+    [Theory]
+    [MemberData(nameof(OutboxData.Sources), MemberType = typeof(OutboxData))]
+    [Trait("Category", "Fault")]
+    [Trait("Case", "OUTBOX-08")]
+    public async Task One_group_with_fresh_replayed_and_conflicting_messages_settles_each_message_on_its_own(SourceKind kind)
+    {
+        await using var o = await OutboxFixture.StartAsync("ogroup8", kind);
+        var stager = await o.OpenHost(identity: "stager", start: false);
+        var fresh1 = await o.StageAsync(stager, new PingJob("fresh1"));
+        var replayed = await o.StageAsync(stager, new PingJob("replayed"));
+        var conflicting = await o.StageAsync(stager, new PingJob("conflicting"));
+        var fresh2 = await o.StageAsync(stager, new PingJob("fresh2"));
+
+        // Before the relay runs, the destination already holds the exact delivery of one message (its reply was lost earlier) and a
+        // different delivery under another message's identity (a conflict the relay must not overwrite).
+        var replayPrepared = stager.Prepared.ImportPrepared(await o.EnvelopeAsync(replayed.MessageId));
+        Assert.Equal(StoreStatus.Applied, (await stager.Store.ReceiveOutboxAsync(
+            Transport.Command(replayPrepared, Transport.Identity(o.SourceStoreId, replayed.MessageId), replayed.AcceptUntil), CancellationToken.None)).Status);
+        var other = stager.Prepared.Prepare(new PingJob("other"));
+        Assert.Equal(StoreStatus.Applied, (await stager.Store.ReceiveOutboxAsync(
+            Transport.Command(other, Transport.Identity(o.SourceStoreId, conflicting.MessageId), conflicting.AcceptUntil), CancellationToken.None)).Status);
+
+        // One slot of four: the single claim of all four messages goes to the destination as one group.
+        await using var relay = await o.OpenHost(identity: "relay", relay: r =>
+        {
+            r.MaxInFlight = 1;
+            r.DeliveryGroupSize = 4;
+        });
+        await o.WaitStateAsync(conflicting.MessageId, "blocked", TimeSpan.FromSeconds(60));
+        foreach (var message in new[] { fresh1, replayed, fresh2 })
+        {
+            await o.WaitStateAsync(message.MessageId, "delivered", TimeSpan.FromSeconds(60));
+            Assert.Equal(message.ProposedJobId.Value, await o.DeliveredJobAsync(message.MessageId));
+            Assert.Equal(1, await o.MappingsFor(message.MessageId));
+        }
+
+        Assert.Equal(1, relay.Relay.GroupSends);
+        Assert.Equal(4, relay.Relay.GroupedCommands);
+        Assert.Equal(0, relay.Relay.GroupFallbacks);
+        Assert.Equal(3, relay.Relay.Delivered);
+        Assert.Equal(1, relay.Relay.Blocked);
+        Assert.Equal("delivery_conflict", await o.BlockedReasonAsync(conflicting.MessageId));
+        Assert.Equal(1, await o.MappingsFor(conflicting.MessageId));
+
+        // Two fresh jobs, the replayed one (created once, before the relay) and the conflicting identity's other job.
+        Assert.Equal(4, await o.JobsAsync());
+    }
+
+    [Theory]
+    [MemberData(nameof(OutboxData.Sources), MemberType = typeof(OutboxData))]
+    [Trait("Category", "Fault")]
+    [Trait("Case", "OUTBOX-09")]
+    public async Task A_stalled_relay_whose_group_answers_after_a_takeover_cannot_confirm_with_its_stale_tokens(SourceKind kind)
+    {
+        await using var o = await OutboxFixture.StartAsync("ogroup9", kind);
+        var stager = await o.OpenHost(identity: "stager", start: false);
+        var staged = new List<StagedOutboxMessage>();
+        for (var i = 0; i < 4; i++)
+        {
+            staged.Add(await o.StageAsync(stager, new PingJob("stall" + i)));
+        }
+
+        // Relay 1 sends one group that hangs, and its renewals silently stop reaching the source, so its leases expire while it
+        // still believes it owns them.
+        var hung = new HungGroupDestination(stager.Store);
+        FaultySource? stalledSource = null;
+        await using var stalled = await o.OpenHost(identity: "relay1", relay: r =>
+        {
+            r.MaxInFlight = 1;
+            r.DeliveryGroupSize = 4;
+        }, wrapSource: s => stalledSource = new FaultySource(s) { SkipRenewals = true }, wrapDestination: _ => hung);
+        await WaitAsync(() => hung.GroupCalls == 1, "relay 1's group to reach the destination");
+
+        // Relay 2 takes the expired leases over and delivers every message.
+        await using var takeover = await o.OpenHost(identity: "relay2");
+        foreach (var message in staged)
+        {
+            await o.WaitStateAsync(message.MessageId, "delivered", TimeSpan.FromSeconds(60));
+        }
+
+        // Relay 1's group now answers (the receipts or mappings replay relay 2's deliveries); every mark it tries carries a stale token.
+        hung.Release();
+        await hung.Applied;
+        await WaitAsync(() => Interlocked.Read(ref stalled.Relay.LeaseLosses) >= 4, "relay 1's stale marks to be refused");
+        Assert.Equal(0, stalled.Relay.Delivered);
+        Assert.Equal(4, takeover.Relay.Delivered);
+        foreach (var message in staged)
+        {
+            Assert.Equal("delivered", await o.StateAsync(message.MessageId));
+            Assert.Equal(message.ProposedJobId.Value, await o.DeliveredJobAsync(message.MessageId));
+            Assert.Equal(1, await o.MappingsFor(message.MessageId));
+        }
+
+        Assert.Equal(4, await o.JobsAsync());
+    }
+
+    [Theory]
+    [MemberData(nameof(OutboxData.Sources), MemberType = typeof(OutboxData))]
+    [Trait("Category", "Fault")]
+    [Trait("Case", "OUTBOX-10")]
+    public async Task A_group_that_applies_after_its_relay_crashed_is_reclaimed_and_confirmed_without_a_second_job(SourceKind kind)
+    {
+        await using var o = await OutboxFixture.StartAsync("ogroup10", kind);
+        var stager = await o.OpenHost(identity: "stager", start: false);
+        var staged = new List<StagedOutboxMessage>();
+        for (var i = 0; i < 4; i++)
+        {
+            staged.Add(await o.StageAsync(stager, new PingJob("crash" + i)));
+        }
+
+        var hung = new HungGroupDestination(stager.Store);
+        var crashed = await o.OpenHost(identity: "relay1", relay: r =>
+        {
+            r.MaxInFlight = 1;
+            r.DeliveryGroupSize = 4;
+        }, wrapDestination: _ => hung);
+        await WaitAsync(() => hung.GroupCalls == 1, "relay 1's group to reach the destination");
+
+        // The relay dies with its group in flight; the group commits afterwards and its reply goes nowhere.
+        await crashed.StopRelayAsync(TimeSpan.FromMilliseconds(200));
+        await crashed.DisposeAsync();
+        hung.Release();
+        Assert.Equal(StoreStatus.Applied, (await hung.Applied).Status);
+        Assert.Equal(4, await o.JobsAsync());
+        Assert.Equal(0, await o.SourceCountAsync("SELECT count(*) FROM {messages} WHERE state = 'delivered'"));
+
+        // A new relay reclaims the leases after they expire; the destination answers from the late group's receipts or mappings.
+        await using var second = await o.OpenHost(identity: "relay2");
+        foreach (var message in staged)
+        {
+            await o.WaitStateAsync(message.MessageId, "delivered", TimeSpan.FromSeconds(60));
+            Assert.Equal(message.ProposedJobId.Value, await o.DeliveredJobAsync(message.MessageId));
+            Assert.Equal(1, await o.MappingsFor(message.MessageId));
+        }
+
+        Assert.Equal(4, await o.JobsAsync());
+        Assert.Equal(4, second.Relay.Delivered);
+    }
+
+    static async Task WaitAsync(Func<bool> condition, string what)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, "timed out waiting for " + what);
+            await Task.Delay(10);
+        }
+    }
+
+    /// <summary>
+    /// Holds grouped calls until released, then applies them on a store that outlives the relay (ignoring the relay's cancellation,
+    /// as a database keeps running a statement whose client went away). Single sends pass straight through.
+    /// </summary>
+    sealed class HungGroupDestination(PgStore inner) : IOutboxDestinationStore, IOutboxGroupDestinationStore
+    {
+        readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        readonly TaskCompletionSource<StoreReply<OutboxGroupDelivery>> _applied = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        int _groupCalls;
+
+        public int GroupCalls => Volatile.Read(ref _groupCalls);
+
+        /// <summary>The first held group's reply, once it has applied.</summary>
+        public Task<StoreReply<OutboxGroupDelivery>> Applied => _applied.Task;
+
+        public void Release() => _release.TrySetResult();
+
+        public Task<StoreReply<OutboxDelivery>> ReceiveOutboxAsync(StoreCommand<ReceiveOutboxRequest> command, CancellationToken ct) =>
+            inner.ReceiveOutboxAsync(command, ct);
+
+        public Task<OutboxLookup> FindDeliveryAsync(string application, OutboxSourceIdentity source, byte[] deliveryFingerprint, CancellationToken ct) =>
+            inner.FindDeliveryAsync(application, source, deliveryFingerprint, ct);
+
+        public async Task<StoreReply<OutboxGroupDelivery>> ReceiveOutboxGroupAsync(IReadOnlyList<StoreCommand<ReceiveOutboxRequest>> commands, CancellationToken ct)
+        {
+            Interlocked.Increment(ref _groupCalls);
+            await _release.Task;
+            try
+            {
+                var reply = await inner.ReceiveOutboxGroupAsync(commands, CancellationToken.None);
+                _applied.TrySetResult(reply);
+                return reply;
+            }
+            catch (Exception ex)
+            {
+                _applied.TrySetException(ex);
+                throw;
+            }
+        }
+    }
+
     /// <summary>A real destination store whose group replies are lost after the group applied (the relay must send alone, not resend a group).</summary>
     sealed class LossyGroupDestination(PgStore inner) : IOutboxDestinationStore, IOutboxGroupDestinationStore
     {

@@ -512,7 +512,11 @@ internal sealed class FaultySource(IOutboxSource inner) : IOutboxSource, IAsyncD
         return leases;
     }
 
-    public Task<bool> RenewAsync(OutboxLease lease, TimeSpan leaseDuration, CancellationToken ct) => inner.RenewAsync(lease, leaseDuration, ct);
+    /// <summary>A stalled owner: renewals report success without reaching the source, so the lease quietly expires under it.</summary>
+    public bool SkipRenewals { get; set; }
+
+    public Task<bool> RenewAsync(OutboxLease lease, TimeSpan leaseDuration, CancellationToken ct) =>
+        SkipRenewals ? Task.FromResult(true) : inner.RenewAsync(lease, leaseDuration, ct);
 
     public Task<bool> RecordTransportAsync(OutboxLease lease, Guid commandId, DateTimeOffset notAfter, CancellationToken ct) =>
         inner.RecordTransportAsync(lease, commandId, notAfter, ct);

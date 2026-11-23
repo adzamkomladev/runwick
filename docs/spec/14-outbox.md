@@ -2,6 +2,11 @@
 
 **Sources:** [transactional-outbox.md](../architecture/transactional-outbox.md) (all sections, OUTBOX-01 … OUTBOX-07); [storage-command-protocol.md](../architecture/storage-command-protocol.md) "Outbox destination extension"; [driver-contract-suite.md](../architecture/driver-contract-suite.md) §4 (TX), OUT-01, OUT-02, CMD-01 … CMD-05, ISO-01; [performance-acceptance-plan.md](../architecture/performance-acceptance-plan.md) (P-09); 02 §7–§9; 03 §2.1, §4, §10; 04 §5, §6, §8; 06 §1.4, §1.7; 07 §4 (CMD), §8 (TX), §9 (ISO-01); 15 §10–§11.
 
+## Changes (2026-11-23, grouped delivery: mixed outcomes, stalled owners and crashes)
+
+- **No behaviour change.** Grouped destination delivery (Changes 2026-11-15, on by default with groups of four since 2026-11-20) already gives each message its own transport command, receipt and mapping and confirms each message at the source under its own lease token. This entry adds the cases that prove it for groups on both sources: OUTBOX-08 (mixed outcomes in one group), OUTBOX-09 (a stalled owner's group answers after a takeover) and OUTBOX-10 (a group applies after its relay crashed). Lost group replies were already covered: the relay sends the same commands alone, and the receipts replay them.
+- **Still a PostgreSQL destination feature.** SQLite destinations share commits through the producer group instead; a Redis destination sends each message alone. Grouping on Redis stays open.
+
 ## Changes (2026-11-23, batched marks on the SQLite source)
 
 - **Batched marks now also on the SQLite source.** `BatchDeliveredMarks` (default true) is honored by the SQLite source as well. Marks that queue behind the control lane are written by whoever holds the lane next, in one `UPDATE … FROM (VALUES …)` inside one write transaction and one commit (at most 64). The rules are those of the PostgreSQL source (Changes 2026-11-17): each row is still guarded by its own lease token and `state = 'leased'`, so a stale token reports `false` for that message only and its row does not move; a lone mark runs the original single-row statement; a caller whose deadline ends before its mark is taken writes nothing; a caller whose deadline ends while it holds the lane rolls the transaction back, so its own mark reports cancelled and the other marks wait for the next turn; any other failure leaves every mark of the transaction unknown, as for a single failed mark. No schema change. Lease renewals stay one statement per lease (they are periodic and far fewer than marks).
@@ -375,6 +380,18 @@ Project `tests/Runwick.Outbox.Tests`; traits `Category` (Contract | Fault), `Ite
 #### OUT-02 — Replay outside the retained history is an explicit limit
 - **Steps:** Horizon 2 s, relay starts after the cutoff; restage the same ID with a 7-day horizon; stage a new message ID.
 - **Assert:** blocked `horizon_passed_undelivered`, no job; the restage returns `Existing = true` with the original cutoff; the new ID is delivered (one job).
+
+#### OUTBOX-08 — Mixed outcomes in one group
+- **Steps:** Four messages, one slot, groups of four. Before the relay runs, one message's exact delivery is already at the destination (an earlier lost reply), and another message's identity already maps to a different job (a conflict). Both sources.
+- **Assert:** one group call of four, no fallback; the two fresh messages and the replayed one are delivered with their proposed job IDs; the conflicting one is blocked `delivery_conflict` and its mapping still names the other job; four jobs in total.
+
+#### OUTBOX-09 — A stalled owner's group answers after a takeover
+- **Steps:** Relay 1 sends one group of four that hangs at the destination; its renewals report success without reaching the source, so its leases expire. Relay 2 reclaims and delivers all four. Then relay 1's group is released and answers. Both sources.
+- **Assert:** every mark relay 1 tries is refused by its stale token (four lease losses, nothing delivered by relay 1); every row keeps relay 2's result; one job and one mapping per message.
+
+#### OUTBOX-10 — A group applies after its relay crashed
+- **Steps:** Relay 1's group of four hangs; relay 1 stops with a 200 ms deadline and is disposed; the group then commits with no one to hear the reply. A new relay starts. Both sources.
+- **Assert:** four jobs right after the late commit and nothing delivered at the source; the new relay reclaims after lease expiry and delivers each message with its proposed job ID; still four jobs, one mapping each.
 
 ### 9.3 `ReceiveOutbox/1`
 
