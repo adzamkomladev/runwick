@@ -340,7 +340,8 @@ public sealed class CapacityOutageTests
         // (c) RestartStore(Kill, 60 s) under steady producer load and a full worker: tickets, the completion channel,
         // pending outcomes and waiting producer operations stay within 16 / 16 / 16 / 64 throughout.
         await using var f = await DriverFixture.StartAsync(Ns("cap11c"));
-        await using var w = WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults, 16);
+        // The 16-entry bound is the unbuffered one: buffered finish (the PostgreSQL default) frees a slot while its finish waits.
+        await using var w = WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults, 16, options: o => o.BufferedFinish = false);
         w.Script.Default = (_, _, _) => Task.Delay(TimeSpan.FromMilliseconds(500), CancellationToken.None);
         var admission = w.Services.GetRequiredService<LocalAdmission>();
         await w.StartAsync();
