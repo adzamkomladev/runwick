@@ -14,7 +14,10 @@ public static class SqliteOutboxServiceCollectionExtensions
         OutboxDestination? destination = null, Action<OutboxRelayOptions>? relay = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(sourceConnectionString);
-        OutboxServices.Add(services, destination ?? new OutboxDestination(), relay, _ => new SqliteOutboxSource(sourceConnectionString));
+        OutboxServices.Add(services, destination ?? new OutboxDestination(), relay, sp => new SqliteOutboxSource(sourceConnectionString)
+        {
+            BatchMarks = sp.GetRequiredService<OutboxRelayOptions>().BatchDeliveredMarks,
+        });
         services.AddSingleton<ISqliteOutbox>(sp => new SqliteOutbox(sp.GetRequiredService<OutboxStager>()));
         return services;
     }
