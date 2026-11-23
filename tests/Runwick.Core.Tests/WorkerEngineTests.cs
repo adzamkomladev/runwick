@@ -592,7 +592,8 @@ public sealed class WorkerEngineTests
         }
 
         await e.StartAsync();
-        await e.RunUntilAsync(() => e.Store.Jobs.All(j => j.State == JobStates.Succeeded), Long, "all succeeded");
+        // The store flips the jobs inside the FinishMany call; the engine counts them only after the reply, so wait for that too.
+        await e.RunUntilAsync(() => e.Store.Jobs.All(j => j.State == JobStates.Succeeded) && e.Engine.Completion.Buffered == 0, Long, "all succeeded and unbuffered");
         Assert.True(e.Store.Count(Operations.FinishMany) >= 1);
         Assert.True(Interlocked.Read(ref e.Engine.Completion.BatchedItemsSettled) >= 4, $"{e.Engine.Completion.BatchedItemsSettled} items batched");
         Assert.Equal(0, e.Engine.Completion.Buffered);
