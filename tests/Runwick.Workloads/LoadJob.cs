@@ -35,8 +35,25 @@ public sealed record LoadBehaviour(TimeSpan Delay);
 
 internal sealed class LoadHandler(LoadBehaviour behaviour) : IJobHandler<LoadJob>
 {
-    public Task HandleAsync(LoadJob job, CancellationToken cancellationToken) =>
-        behaviour.Delay <= TimeSpan.Zero ? Task.CompletedTask : Task.Delay(behaviour.Delay, cancellationToken);
+    // Shared CPU-heavy job (eng/bench-compare/ci/README.md): BENCH_CPU_ITERS rounds of SHA-256 over 1 KiB; unset or 0 = no-op.
+    static readonly int CpuIters = int.TryParse(Environment.GetEnvironmentVariable("BENCH_CPU_ITERS"), out var n) ? n : 0;
+
+    public Task HandleAsync(LoadJob job, CancellationToken cancellationToken)
+    {
+        if (CpuIters > 0)
+        {
+            var b = new byte[1024];
+            b.AsSpan().Fill((byte)'x');
+            Span<byte> d = stackalloc byte[32];
+            for (var i = 0; i < CpuIters; i++)
+            {
+                System.Security.Cryptography.SHA256.HashData(b, d);
+                d.CopyTo(b);
+            }
+        }
+
+        return behaviour.Delay <= TimeSpan.Zero ? Task.CompletedTask : Task.Delay(behaviour.Delay, cancellationToken);
+    }
 }
 
 internal static class LoadRegistration

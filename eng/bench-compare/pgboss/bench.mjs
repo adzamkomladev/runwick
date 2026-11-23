@@ -6,6 +6,7 @@
 import { PgBoss } from 'pg-boss';
 import pg from 'pg';
 import { writeFileSync, readFileSync } from 'node:fs';
+import { cpuWork } from '../ci/cpu-work.mjs';
 
 const arg = (name, dflt) => {
   const i = process.argv.indexOf('--' + name);
@@ -74,6 +75,7 @@ if (mode === 'enqueue') {
   let resolveDone;
   const done = new Promise(r => { resolveDone = r; });
   await boss.work(queue, workOptions, async jobs => {
+    for (const _ of jobs) cpuWork();
     completed += jobs.length;
     if (completed >= n) resolveDone();
   });
@@ -94,6 +96,7 @@ if (mode === 'enqueue') {
   result.completionsPerSec = result.finished / result.drainSeconds;
 } else {
   await boss.work(queue, workOptions, async jobs => {
+    for (const _ of jobs) cpuWork();
     const now = Date.now();
     for (const j of jobs) latencies.push(now - new Date(j.createdOn).getTime());
     completed += jobs.length;
