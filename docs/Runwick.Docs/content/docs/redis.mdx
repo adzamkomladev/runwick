@@ -171,7 +171,7 @@ Calls that are stopped are never sent, so they have no effect. A call that was a
 
 **What this does not promise.** Redis copies writes to replicas after it replies. A failover can lose writes confirmed after Runwick's last check, which is at most a recheck interval plus the lease. The check proves the new primary has everything Runwick saw at its last check, not that nothing was lost. Runwick stops itself; it cannot stop other programs that write to a cut-off former primary. Receipts carry `redis.aof-always-sentinel-v1`.
 
-**What it costs.** Expect a Sentinel setup to be somewhat slower than a lone primary, mostly because Redis copies every write to its replicas. In our one-host drain test, attaching two replicas cost about 7%. Runwick's own Sentinel checks added no cost we could separate from noise on a shared machine.
+**What it costs.** Expect a Sentinel setup to be somewhat slower than a lone primary, mostly because Redis copies every write to its replicas. In our drain tests, with every node on one shared machine, a Sentinel setup with two replicas was 12 to 34% slower than a lone primary (median 20%, six paired runs), and two replicas alone cost about 7% in an earlier test. Runwick sends the same commands per job either way, and its own Sentinel checks added no cost we could separate from noise. We have not measured nodes on separate machines.
 
 ## Cluster: many nodes, one owner per application (opt-in)
 
@@ -200,7 +200,7 @@ Calls that are stopped are never sent. A call that was in flight when the slot m
 
 **What this does not promise.** Everything said under Sentinel applies: Redis copies writes to replicas after it replies, a failover can lose writes confirmed after Runwick's last check, and Runwick cannot stop other programs from writing to a cut-off former owner. In addition: the store record (`rw:store`) lives on one slot's owner, which must be reachable when a process starts; one application is never spread over several nodes. Receipts carry `redis.aof-always-cluster-v1`.
 
-**What it costs.** Because every key of one application sits on one node, Runwick's Cluster path sends about the same commands as standalone; finishes are split per slot, so a worker makes somewhat more round trips. In our one-host drain test a one-node Cluster was not slower than standalone. Replicas behind each primary cost what they cost under Sentinel.
+**What it costs.** Because every key of one application sits on one node, Runwick's Cluster path sends about the same commands as standalone; finishes are split per slot, so a worker makes somewhat more round trips. In our one-host drain tests a one-node Cluster was within noise of standalone (six paired runs, from 24% slower to 14% faster). Replicas behind each primary cost what they cost under Sentinel.
 
 ## What Runwick checks
 

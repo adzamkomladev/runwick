@@ -3826,6 +3826,24 @@ The host was shared with other sessions' benchmarks and builds. The load gate pa
 
 The 15% gap is not explained by Runwick's Sentinel or Cluster client code. Replication accounts for about 7%, and the rest is within the host noise. These three rounds can't settle whether the true cost is under the 5% budget. That needs alternating A/C and A/E pairs with more rounds on a quiet host.
 
+### Alternating pairs (2026-11-23)
+
+Same four setups, 20,000-job drains, the order of each pair alternated, host load under 8 before every run, build main at 2c46709. A is standalone, B standalone with two replicas, C Sentinel (B plus three sentinels), D a one-node Cluster.
+
+| Comparison | Pairs | Median | Range |
+|---|---|---|---|
+| C / A, Sentinel against standalone | 6 | 0.80 | 0.66 to 0.88 |
+| D / A, Cluster against standalone | 6 | 0.94 | 0.76 to 1.14 |
+| C / B, Sentinel against standalone with the same replicas | 4 | 1.27 | 1.04 to 1.76 |
+
+Commands per job on the primary were 17.8 to 18.4 in every setup, so Runwick sends the same work in each.
+
+- **Sentinel misses the 5% budget on this host.** It was slower than standalone in all six pairs, by a median of 20%.
+- **Runwick's Sentinel path is not the cause.** Sentinel was faster than the same replicas without sentinels in all four pairs. That cannot be a real Sentinel speed-up; it says B's four runs were unlucky and the replicas' cost is buried in host noise. Standalone alone ranged from 335 to 565 jobs/s.
+- **A one-node Cluster is within noise of standalone.** Three pairs favoured each side.
+
+So the cost of a Sentinel setup here comes from Redis replicating every write, with all nodes sharing one host. The 7% seen earlier for replicas alone and the 20% here bracket it. Separate machines were not measured. Results: `artifacts/perf/round-two/round3/redis-ha-pairs/`.
+
 ## Outbox D: grouped delivery under mixed outcomes, stalled owners and crashes
 
 **What this round was for.** The original Outbox D item asks for grouped destination delivery where every message keeps its own transport identity and receipt, where source confirmation stays guarded by each message's lease token, and where mixed outcomes, lost replies and reclaims are tested. Grouped delivery itself was already built (merged 2026-11-15) and has been on by default with groups of four since 2026-11-20. On a PostgreSQL destination, one relay slot sends up to `DeliveryGroupSize` plain messages in one call (`receive_outbox_group_v1`). Each message still gets its own command ID, deadline, receipt and delivery mapping. The relay then marks each message delivered under its own lease token. This round adds no code to the relay or the stores. It adds tests for the three failure shapes that were not yet tested for groups, run on both the PostgreSQL and SQLite sources.
