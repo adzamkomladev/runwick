@@ -73,6 +73,7 @@ internal sealed class RxAuthority : IAsyncDisposable
     DateTimeOffset? _verifiedAt;
     DateTimeOffset? _expiresAt;
     (string Primary, string RunId, string ReplId, long Offset)? _last;
+    int _invalidations;
 
     public RxAuthority(RxSentinelSeeds seeds, RedisAuthorityOptions options, TimeProvider time, ConfigurationOptions data, RedisPersistence persistence,
         TimeSpan? fullCheckEvery = null, int? clusterSlot = null)
@@ -133,6 +134,7 @@ internal sealed class RxAuthority : IAsyncDisposable
         lock (_lock)
         {
             _lastFull = DateTimeOffset.MinValue; // a lost connection may mean a restart: the next check is the full one
+            _invalidations++;
             if (_state == RxAuthorityState.Verified)
             {
                 _state = RxAuthorityState.Unresolved;
@@ -228,6 +230,7 @@ internal sealed class RxAuthority : IAsyncDisposable
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         Probe? probe = null; // the candidate's own connection, kept until the verification ends (the history check uses it)
+        var invalidations = Volatile.Read(ref _invalidations);
         try
         {
             if (Snapshot().State == RxAuthorityState.Blocked)
@@ -310,7 +313,7 @@ internal sealed class RxAuthority : IAsyncDisposable
             }
             catch (Exception ex) when (ex is RedisException or TimeoutException)
             {
-                SetUnresolved("primary_unreachable: " + ex.GetType().Name, closeNow: true, clean.Count());
+                SetUnresolved(Unreachable(ex), closeNow: true, clean.Count());
                 return Snapshot();
             }
 
@@ -341,7 +344,7 @@ internal sealed class RxAuthority : IAsyncDisposable
             }
             catch (Exception ex) when (ex is RedisException or TimeoutException or ObjectDisposedException)
             {
-                SetUnresolved("primary_unreachable: " + ex.GetType().Name, closeNow: true, clean.Count());
+                SetUnresolved(Unreachable(ex), closeNow: true, clean.Count());
                 return Snapshot();
             }
 
@@ -357,9 +360,16 @@ internal sealed class RxAuthority : IAsyncDisposable
             }
 
             var changed = current.Primary != primary;
-            _client?.Bind(ParseEndPoint(primary));
             lock (_lock)
             {
+                if (_invalidations != invalidations)
+                {
+                    // Evidence (a MOVED reply, a lost connection) arrived while this check ran: its view predates the evidence, so it opens
+                    // nothing. The verification Invalidate queued runs next and decides.
+                    return Snapshot();
+                }
+
+                _client?.Bind(ParseEndPoint(primary));
                 if (changed || _state != RxAuthorityState.Verified)
                 {
                     _epoch++;
@@ -388,6 +398,20 @@ internal sealed class RxAuthority : IAsyncDisposable
 
             _gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Why the candidate primary could not be checked. A refused login or a missing permission is named as such: unlike a timeout it will not
+    /// heal by itself, and the operator needs to know it is the credentials, not the network.
+    /// </summary>
+    internal static string Unreachable(Exception ex)
+    {
+        var text = ex.ToString();
+        return ex is RedisConnectionException { FailureType: ConnectionFailureType.AuthenticationFailure }
+            || text.Contains("WRONGPASS", StringComparison.Ordinal) || text.Contains("NOAUTH", StringComparison.Ordinal)
+            || text.Contains("AuthenticationFailure", StringComparison.Ordinal) ? "primary_authentication_failed"
+            : text.Contains("NOPERM", StringComparison.Ordinal) ? "primary_permission_denied"
+            : "primary_unreachable: " + ex.GetType().Name;
     }
 
     internal sealed record Vote(string? Primary, bool Troubled, IReadOnlyList<RxClusterNode>? Nodes = null);

@@ -124,7 +124,7 @@ runwick store reidentify --confirm --provider postgres --connection-env RUNWICK_
 | `store activate-capability --name` (`scheduler`, `rate_admission`) | Turns on a capability for an application. It cannot be undone |
 | `store reidentify --confirm` | Gives a restored copy a new identity. Offline only |
 
-`--provider` is `postgres` (default for `store` and `doctor`), `sqlite` or `redis`. `migrate` requires it. How these fit together is in [Upgrades](/docs/upgrades).
+`--provider` is `postgres` (default for `store` and `doctor`), `sqlite` or `redis`. `migrate` requires it. For Redis with Sentinel or Cluster, add `--redis-topology sentinel` (the string lists the Sentinels and `serviceName`) or `--redis-topology cluster` (the string lists the nodes); see [Redis](/docs/redis). How these fit together is in [Upgrades](/docs/upgrades).
 
 ## doctor
 

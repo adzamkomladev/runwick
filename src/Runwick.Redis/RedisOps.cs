@@ -16,13 +16,21 @@ namespace Runwick
         /// <c>intent_pending</c> (22 §9.2); nothing is changed for the applications listed after it.
         /// </summary>
         public static Task<IReadOnlyList<AdmissionChange>> SetAdmissionModeAsync(
-            string configuration, string? application, string mode, string actor, CancellationToken cancellationToken = default)
+            string configuration, string? application, string mode, string actor, CancellationToken cancellationToken = default) =>
+            SetAdmissionModeAsync(configuration, application, mode, actor, new RedisOptions(), cancellationToken);
+
+        /// <summary>
+        /// As above on the topology <paramref name="options"/> selects (22 §2.5, §2.6): with <see cref="RedisOptions.Sentinel"/> the string lists
+        /// the Sentinels and the primary they name is verified first; with <see cref="RedisOptions.Cluster"/> every primary is scanned.
+        /// </summary>
+        public static Task<IReadOnlyList<AdmissionChange>> SetAdmissionModeAsync(
+            string configuration, string? application, string mode, string actor, RedisOptions options, CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(actor);
-            return RedisMigrator.WithLockAsync<IReadOnlyList<AdmissionChange>>(configuration, async (db, server) =>
+            return RedisMigrator.WithLockAsync<IReadOnlyList<AdmissionChange>>(configuration, async (db, primaries) =>
             {
                 await RedisOps.RequireStoreAsync(db).ConfigureAwait(false);
-                var apps = await RedisOps.ApplicationsAsync(server, db, application, cancellationToken).ConfigureAwait(false);
+                var apps = await RedisOps.ApplicationsAsync(primaries, db, application, cancellationToken).ConfigureAwait(false);
                 if (application is not null && apps.Count == 0)
                 {
                     throw new RedisMigrationException("application_not_registered", $"Application {application} is not registered.");
@@ -63,7 +71,7 @@ namespace Runwick
                 }
 
                 return changes;
-            }, cancellationToken);
+            }, cancellationToken, RedisMigrator.Target.Of(options));
         }
 
         /// <summary>
@@ -73,7 +81,12 @@ namespace Runwick
         /// <c>ActivateCapabilities</c> audit row, with <paramref name="actor"/> as the subject and scheme <c>operator</c>; a repeat writes nothing.
         /// </summary>
         public static Task<IReadOnlyList<CapabilityChange>> ActivateCapabilityAsync(
-            string configuration, string? application, string capability, string actor, CancellationToken cancellationToken = default)
+            string configuration, string? application, string capability, string actor, CancellationToken cancellationToken = default) =>
+            ActivateCapabilityAsync(configuration, application, capability, actor, new RedisOptions(), cancellationToken);
+
+        /// <summary>As above on the topology <paramref name="options"/> selects (Sentinel or Cluster; see <see cref="SetAdmissionModeAsync(string, string?, string, string, RedisOptions, CancellationToken)"/>).</summary>
+        public static Task<IReadOnlyList<CapabilityChange>> ActivateCapabilityAsync(
+            string configuration, string? application, string capability, string actor, RedisOptions options, CancellationToken cancellationToken = default)
         {
             StoreAdminRules.CheckActor(actor);
             if (StoreAdminRules.CheckCapability(capability) is { } bad)
@@ -82,10 +95,10 @@ namespace Runwick
             }
 
             var version = StoreAdminRules.CapabilityVersion(capability);
-            return RedisMigrator.WithLockAsync<IReadOnlyList<CapabilityChange>>(configuration, async (db, server) =>
+            return RedisMigrator.WithLockAsync<IReadOnlyList<CapabilityChange>>(configuration, async (db, primaries) =>
             {
                 await RedisOps.RequireStoreAsync(db).ConfigureAwait(false);
-                var apps = await RedisOps.ApplicationsAsync(server, db, application, cancellationToken).ConfigureAwait(false);
+                var apps = await RedisOps.ApplicationsAsync(primaries, db, application, cancellationToken).ConfigureAwait(false);
                 if (application is not null && apps.Count == 0)
                 {
                     throw new RedisMigrationException("application_not_registered", $"Application {application} is not registered.");
@@ -110,7 +123,7 @@ namespace Runwick
                 }
 
                 return changes;
-            }, cancellationToken);
+            }, cancellationToken, RedisMigrator.Target.Of(options));
         }
 
         /// <summary>
@@ -119,13 +132,17 @@ namespace Runwick
         /// <c>workers:exp</c> score is at or before the server's clock.
         /// </summary>
         public static Task<StoreAdminStatus> GetStatusAsync(string configuration, CancellationToken cancellationToken = default) =>
-            RedisMigrator.WithLockAsync(configuration, async (db, server) =>
+            GetStatusAsync(configuration, new RedisOptions(), cancellationToken);
+
+        /// <summary>As above on the topology <paramref name="options"/> selects; in a cluster the counts cover every primary.</summary>
+        public static Task<StoreAdminStatus> GetStatusAsync(string configuration, RedisOptions options, CancellationToken cancellationToken = default) =>
+            RedisMigrator.WithLockAsync(configuration, async (db, primaries) =>
             {
                 var store = await RedisOps.RequireStoreAsync(db).ConfigureAwait(false);
                 var apps = new List<ApplicationAdmissionState>();
-                var now = new DateTimeOffset(await server.TimeAsync().ConfigureAwait(false), TimeSpan.Zero).ToUnixTimeMilliseconds();
+                var now = new DateTimeOffset(await primaries[0].TimeAsync().ConfigureAwait(false), TimeSpan.Zero).ToUnixTimeMilliseconds();
                 long leases = 0, presences = 0, expired = 0;
-                foreach (var (name, meta) in await RedisOps.ApplicationsAsync(server, db, null, cancellationToken).ConfigureAwait(false))
+                foreach (var (name, meta) in await RedisOps.ApplicationsAsync(primaries, db, null, cancellationToken).ConfigureAwait(false))
                 {
                     var prefix = ((string)meta!)[..^"meta".Length];
                     leases += await db.SortedSetLengthAsync(prefix + "leases").ConfigureAwait(false);
@@ -138,7 +155,7 @@ namespace Runwick
 
                 return new StoreAdminStatus(Guid.ParseExact(store["store"]!, "N"), long.Parse(store["layout"]!, CultureInfo.InvariantCulture),
                     RedisMigrator.CurrentLayout, store["mode"]!, apps, (int)leases, (int)presences, (int)expired, StoreAdminRules.QuiescenceNotice);
-            }, cancellationToken);
+            }, cancellationToken, RedisMigrator.Target.Of(options));
 
         /// <summary>
         /// Gives a restored or copied keyspace a new logical store identity (23 §7). Refused unless every application is in
@@ -146,10 +163,14 @@ namespace Runwick
         /// a failure part-way leaves the applications refusing with <c>store_identity_mismatch</c>; rerun to finish.
         /// </summary>
         public static Task<StoreIdentityChange> ReassignStoreIdAsync(string configuration, CancellationToken cancellationToken = default) =>
-            RedisMigrator.WithLockAsync(configuration, async (db, server) =>
+            ReassignStoreIdAsync(configuration, new RedisOptions(), cancellationToken);
+
+        /// <summary>As above on the topology <paramref name="options"/> selects; in a cluster every primary's applications are rewritten.</summary>
+        public static Task<StoreIdentityChange> ReassignStoreIdAsync(string configuration, RedisOptions options, CancellationToken cancellationToken = default) =>
+            RedisMigrator.WithLockAsync(configuration, async (db, primaries) =>
             {
                 var store = await RedisOps.RequireStoreAsync(db).ConfigureAwait(false);
-                var apps = await RedisOps.ApplicationsAsync(server, db, null, cancellationToken).ConfigureAwait(false);
+                var apps = await RedisOps.ApplicationsAsync(primaries, db, null, cancellationToken).ConfigureAwait(false);
                 var open = new List<string>();
                 foreach (var (name, meta) in apps)
                 {
@@ -177,7 +198,7 @@ namespace Runwick
 
                 await db.HashSetAsync(RedisMigrator.StoreKey, "store", RxClient.Hex(fresh)).ConfigureAwait(false);
                 return new StoreIdentityChange(old, fresh);
-            }, cancellationToken);
+            }, cancellationToken, RedisMigrator.Target.Of(options));
     }
 }
 
@@ -231,17 +252,24 @@ namespace Runwick.Redis
             return fields.ToDictionary(e => (string)e.Name!, e => (string?)e.Value, StringComparer.Ordinal);
         }
 
-        /// <summary>Every application's meta key (<c>SCAN MATCH rw:{*}:meta</c>), optionally one name; the name is decoded from the hex hash tag.</summary>
-        internal static async Task<List<(string Name, RedisKey Meta)>> ApplicationsAsync(IServer server, IDatabase db, string? only, CancellationToken ct)
+        /// <summary>
+        /// Every application's meta key (<c>SCAN MATCH rw:{*}:meta</c> on each primary: one, or every primary of a cluster), optionally one name;
+        /// the name is decoded from the hex hash tag.
+        /// </summary>
+        internal static async Task<List<(string Name, RedisKey Meta)>> ApplicationsAsync(IReadOnlyList<IServer> primaries, IDatabase db, string? only, CancellationToken ct)
         {
             var list = new List<(string, RedisKey)>();
-            await foreach (var key in server.KeysAsync(db.Database, "rw:{*}:meta", 1000).WithCancellation(ct).ConfigureAwait(false))
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var server in primaries)
             {
-                var text = (string)key!;
-                var name = Encoding.UTF8.GetString(Convert.FromHexString(text["rw:{".Length..text.IndexOf('}', StringComparison.Ordinal)]));
-                if (only is null || only == name)
+                await foreach (var key in server.KeysAsync(db.Database, "rw:{*}:meta", 1000).WithCancellation(ct).ConfigureAwait(false))
                 {
-                    list.Add((name, key));
+                    var text = (string)key!;
+                    var name = Encoding.UTF8.GetString(Convert.FromHexString(text["rw:{".Length..text.IndexOf('}', StringComparison.Ordinal)]));
+                    if ((only is null || only == name) && seen.Add(text))
+                    {
+                        list.Add((name, key));
+                    }
                 }
             }
 
