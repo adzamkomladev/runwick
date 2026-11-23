@@ -23,7 +23,7 @@ Main now includes all of the following. The full test suites passed on the merge
 - **B1 redesigned:** grouped producer admission is opt-in, with migration 0029. It gives 1.5 times the throughput at 16 callers and 2.2 times at 32.
 - **SQLite outbox:** delivered marks are batched, giving 1.6 to 3.3 times the delivery rate.
 
-Tried, not faster, and merged as cleanup on 2026-11-23: the Redis lean-script trims (branch `redis-next`) and the Redis Functions library (branch `redis-functions`).
+Tried, not faster, and merged as cleanup on 2026-11-23: the Redis lean-script trims (branch `redis-next`) and the Redis Functions library (branch `redis-functions`), the latter opt-in (`RedisOptions.UseFunctions`, off by default).
 
 Open:
 - **Redis Sentinel and Cluster overhead:** about 15% on one host, against a 5% budget. The cause has not been found yet.

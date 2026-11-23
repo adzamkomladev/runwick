@@ -22,11 +22,11 @@ public sealed class RedisFunctionsTests
 
     static string Library => RxScript.Library.Name;
 
-    static async Task<TestClient> ClientOnAsync(RedisNode node, string name, string? configuration = null)
+    static async Task<TestClient> ClientOnAsync(RedisNode node, string name, string? configuration = null, bool functions = true)
     {
-        await RunwickRedisMigrations.MigrateAsync(node.Configuration, Ct);
+        await RunwickRedisMigrations.MigrateAsync(node.Configuration, new RedisOptions { UseFunctions = functions }, Ct);
         return await TestClient.CreateAsync(RedisServer.Prefix + (configuration ?? node.Configuration), name + "_" + Guid.NewGuid().ToString("N")[..8],
-            new HarnessFaultInjector(), r => TestJobs.Register(r));
+            new HarnessFaultInjector(), r => TestJobs.Register(r), redis: o => o.UseFunctions = functions);
     }
 
     static RedisStore Store(TestClient c) => c.Services.GetRequiredService<RedisStore>();
@@ -59,7 +59,21 @@ public sealed class RedisFunctionsTests
         (await node.CliAsync("FUNCTION", "LIST", "LIBRARYNAME", Library)).Contains(Library, StringComparison.Ordinal);
 
     [Fact]
-    [Trait("Case", "REDIS-24")]
+    [Trait("Case", "REDIS-25")]
+    public async Task By_default_no_library_is_loaded_and_the_worker_commands_go_by_EVALSHA()
+    {
+        await using var node = await RedisNode.StartAsync();
+        await using var c = await ClientOnAsync(node, "rf00", functions: false);
+        await ClaimAndFinishAsync(c, "a");
+        Assert.Equal("off", Store(c).EngineFacts["functions"]);
+        Assert.Equal("", (await node.CliAsync("FUNCTION", "LIST")).Trim());
+        Assert.Equal(0, (await StatAsync(node, "fcall")).Calls);
+        Assert.Equal(0, (await StatAsync(node, "function|load")).Calls);
+        Assert.True((await StatAsync(node, "evalsha")).Calls >= 2);
+    }
+
+    [Fact]
+    [Trait("Case", "REDIS-25")]
     public async Task The_library_is_loaded_at_startup_and_the_worker_commands_go_by_FCALL()
     {
         await using var node = await RedisNode.StartAsync();
@@ -76,7 +90,7 @@ public sealed class RedisFunctionsTests
     }
 
     [Fact]
-    [Trait("Case", "REDIS-24")]
+    [Trait("Case", "REDIS-25")]
     public async Task After_FUNCTION_FLUSH_the_next_call_loads_the_library_again_and_is_answered()
     {
         await using var node = await RedisNode.StartAsync();
@@ -93,7 +107,7 @@ public sealed class RedisFunctionsTests
     }
 
     [Fact]
-    [Trait("Case", "REDIS-24")]
+    [Trait("Case", "REDIS-25")]
     public async Task A_user_refused_FUNCTION_and_FCALL_runs_the_same_commands_by_EVALSHA_and_Describe_says_so()
     {
         await using var node = await RedisNode.StartAsync();
@@ -115,7 +129,7 @@ public sealed class RedisFunctionsTests
     }
 
     [Fact]
-    [Trait("Case", "REDIS-24")]
+    [Trait("Case", "REDIS-25")]
     public async Task The_library_survives_a_kill_9_restart_from_the_AOF_and_a_new_replica_receives_it()
     {
         await using var node = await RedisNode.StartAsync(); // appendonly yes, appendfsync always, no RDB snapshots

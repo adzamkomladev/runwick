@@ -78,6 +78,13 @@ public sealed class RedisOptions
     /// </summary>
     public bool GroupDispatches { get; set; }
 
+    /// <summary>
+    /// Opt-in Redis Functions for the worker commands (default off, 22 §4.1). Claim, finish and renew are then loaded once per server as a
+    /// Functions library and called with <c>FCALL</c>; a server that refuses <c>FUNCTION</c> or <c>FCALL</c> gets <c>EVALSHA</c> instead.
+    /// Off by default because drains measured slower with it (0.83× on disk, 0.89× in memory); results are identical either way.
+    /// </summary>
+    public bool UseFunctions { get; set; }
+
     /// <summary>Most dispatches in one grouped call (2 – 16, default 8). Only used with <see cref="GroupDispatches"/>.</summary>
     public int MaxGroupItems { get; set; } = 8;
 
@@ -181,9 +188,10 @@ internal sealed class RedisStoreRegistration(StackExchange.Redis.ConfigurationOp
             sp.GetRequiredService<JobRegistry>().Application, sp.GetRequiredService<ProducerOptions>().MaxConcurrentCalls)
         {
             Cluster = options.Cluster is not null,
+            UseFunctions = options.UseFunctions,
             Authority = seeds is null || ((RedisAuthorityOptions?)options.Sentinel ?? options.Cluster) is not { } authority ? null
                 : new RxAuthority(seeds, authority, sp.GetRequiredService<TimeProvider>(), configuration!, options.Persistence, options.ProfileRecheckInterval,
-                    options.Cluster is null ? null : RxClient.SlotOf(sp.GetRequiredService<JobRegistry>().Application)),
+                    options.Cluster is null ? null : RxClient.SlotOf(sp.GetRequiredService<JobRegistry>().Application), options.UseFunctions),
         });
         services.AddSingleton(sp => new RxRunner(sp.GetRequiredService<RxClient>(), sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<IFaultInjector>()));
         services.AddSingleton(sp => new RedisStore(sp.GetRequiredService<RxRunner>(), options, sp.GetRequiredService<TimeProvider>()));

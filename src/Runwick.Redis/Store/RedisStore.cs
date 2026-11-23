@@ -216,7 +216,7 @@ internal sealed partial class RedisStore : IRunwickStore, IAsyncDisposable
                 // A server still loading its AOF answers LOADING to some checks: that is not a profile verdict, so wait it out (bounded).
                 for (var i = 0; ; i++)
                 {
-                    report = await RxProfile.CheckAsync(server, db, options.Persistence, user: runner.Client.User).ConfigureAwait(false);
+                    report = await RxProfile.CheckAsync(server, db, options.Persistence, user: runner.Client.User, functions: options.UseFunctions).ConfigureAwait(false);
                     if (report.Facts.GetValueOrDefault("loading") != "1" || i >= 150)
                     {
                         break;

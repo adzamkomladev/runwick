@@ -478,7 +478,7 @@ internal sealed class RxClient : IAsyncDisposable
             {
                 try
                 {
-                    if (script.Function is { } fn && FunctionsRefused is null)
+                    if (UseFunctions && script.Function is { } fn && FunctionsRefused is null)
                     {
                         var f = (RedisResult[])(await db.ExecuteAsync("FCALL", [fn, 1, meta, .. args.Select(a => (object)a)]).ConfigureAwait(false))!;
                         Traced?.Invoke(script, args, f);
@@ -489,7 +489,7 @@ internal sealed class RxClient : IAsyncDisposable
                     Traced?.Invoke(script, args, r);
                     return r;
                 }
-                catch (RedisServerException ex) when (script.Function is not null && FunctionsRefused is null && !reloaded
+                catch (RedisServerException ex) when (UseFunctions && script.Function is not null && FunctionsRefused is null && !reloaded
                     && ex.Message.StartsWith("ERR Function not found", StringComparison.Ordinal))
                 {
                     // Not run (a new or restarted server, FUNCTION FLUSH, a primary that never had it): load it where the key lives and resend once.
@@ -500,7 +500,7 @@ internal sealed class RxClient : IAsyncDisposable
                         FunctionsRefused = refused;
                     }
                 }
-                catch (RedisServerException ex) when (script.Function is not null && FunctionsRefused is null && FcallRefused(ex.Message))
+                catch (RedisServerException ex) when (UseFunctions && script.Function is not null && FunctionsRefused is null && FcallRefused(ex.Message))
                 {
                     // Not run: FCALL is not allowed here (ACL, a renamed command). The same scripts go by EVALSHA from now on.
                     FunctionsRefused = "FCALL refused: " + ex.Message;
@@ -557,6 +557,9 @@ internal sealed class RxClient : IAsyncDisposable
     /// the Functions library is in use. Reported as the <c>functions</c> engine fact by the next profile check.
     /// </summary>
     internal string? FunctionsRefused { get; set; }
+
+    /// <summary>RedisOptions.UseFunctions (opt-in, 22 §4.1): the lean worker scripts go by FCALL from the Functions library; off, always EVALSHA.</summary>
+    internal bool UseFunctions { get; init; }
 
     static bool FcallRefused(string message) =>
         message.StartsWith("ERR unknown command", StringComparison.Ordinal)

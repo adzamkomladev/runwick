@@ -42,7 +42,7 @@ internal static class RxProfile
     // user: the configured ACL user, if any; the connection must be that user. StackExchange.Redis falls back to `default` when the login is
     // refused and `default` is open, so a wrong password would otherwise go unnoticed.
     public static async Task<RxProfileReport> CheckAsync(IServer server, IDatabase db, RedisPersistence persistence = RedisPersistence.AofAlways, RxTopology topology = RxTopology.Standalone,
-        string? user = null)
+        string? user = null, bool functions = false)
     {
         var facts = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -166,15 +166,22 @@ internal static class RxProfile
             Fail("MODULE LIST=unverifiable");
         }
 
-        // Not a profile verdict: the worker scripts' Functions library is loaded here, at startup and on every newly verified primary
-        // (22 §4.1); a refusal only means those scripts go by EVALSHA.
-        try
+        // Not a profile verdict: with RedisOptions.UseFunctions the worker scripts' Functions library is loaded here, at startup and on every
+        // newly verified primary (22 §4.1); a refusal only means those scripts go by EVALSHA. Off (the default): no FUNCTION command is sent.
+        if (!functions)
         {
-            facts["functions"] = await RxClient.LoadLibraryAsync(server).ConfigureAwait(false) is { } refused ? "evalsha: " + refused : RxScript.Library.Name;
+            facts["functions"] = "off";
         }
-        catch (RedisServerException ex)
+        else
         {
-            facts["functions"] = "not loaded: " + ex.Message;
+            try
+            {
+                facts["functions"] = await RxClient.LoadLibraryAsync(server).ConfigureAwait(false) is { } refused ? "evalsha: " + refused : RxScript.Library.Name;
+            }
+            catch (RedisServerException ex)
+            {
+                facts["functions"] = "not loaded: " + ex.Message;
+            }
         }
 
         facts["profile_status"] = failure is null ? "verified" : "unavailable: " + failure;
