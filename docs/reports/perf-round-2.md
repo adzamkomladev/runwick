@@ -1832,7 +1832,7 @@ SQLite 55/55, Core 453/453, Contract 496/496 (Redis-backed rows used a fresh AOF
 - A steady run that also does crash/reopen, scheduler and outbox work under the same load, and samples checkpoint progress during the run. The harness for it is now built (next section); the run itself is still to do.
 - A quiet-host repeat to confirm whether the remaining 1.3% of refusals is host load or a real limit.
 
-### Harness for the combined run (built, not yet run)
+### Harness for the combined run
 
 `bench --store sqlite --mode steady` has new opt-in flags. Without them a run behaves exactly as before.
 
@@ -1845,6 +1845,48 @@ SQLite 55/55, Core 453/453, Contract 496/496 (Redis-backed rows used a fresh AOF
 With `--trace`, each part also reports `writerQueueMs` (how long each kind of store call waited for the single SQLite writer: count, p99, max) and `pickupMs` (due to handler start).
 
 A 40-second smoke check (50 offers/s, one crash, all flags on) wrote its JSON and reconciled: 992 accepted jobs, all succeeded, none missing, no job run twice. It is not a measurement.
+
+### Combined run result (2026-11-23)
+
+What ran: 18 minutes at 100 offers/s on the retained-history seed, with all of these at once:
+- cleanup at a 1-hour horizon in 5-row batches
+- two dashboard viewers
+- a schedule firing every second
+- an outbox staging 10 messages/s
+- two hard kills (SIGKILL) followed by reopening the store
+
+The run used harness commit 2780700 on an 8-core ext4 host. One-minute load was 8.2 at the start and still falling, and 3.2 at the end. Output is in `artifacts/perf/round-two/sqlite-q67-combined/`.
+
+Nothing was lost or run twice:
+- All four must-be-zero reconciliation counts are 0: accepted but missing, finish not confirmed, store job without a receipt, and receipt-less job not succeeded.
+- No job ran more than once, and no job's execution count in the store is above one.
+- All 10,800 outbox messages that were staged were delivered, with no staging errors.
+- After the final drain, no job was left unfinished.
+- The schedule finished 1,182 jobs.
+
+Throughput and latency, compared with the earlier 240-second run without crashes, cleanup, schedule or outbox:
+
+| | 240 s run | combined 18 min run |
+|---|---|---|
+| durable completions/s | 90.6 | 91.9 |
+| refused (`local_capacity_exceeded`) | 2,226 | 6,081 of 108,001 (5.6%) |
+| busy conflicts | 0 | 0 |
+| offer to pickup p99 | 5.6 s | 4.1 s (max 7.2 s) |
+| offer to finish p50 / p99 | | 0.32 s / 4.2 s |
+
+Refusals fell part by part, from 3,588 to 1,572 to 921, as the start-of-run load went away. The three parts completed 90.0, 95.6 and 82.9 jobs/s.
+
+Findings:
+- **Cleanup, schedule materialization and presence wait longest for the writer.**
+  - Writer-queue p99 was 5.6 to 7.4 s for cleanup batches, about 4.5 to 4.8 s for materializing schedule occurrences, and about 2.3 to 3.0 s for presence publishing.
+  - The calls on the job path (dispatch, reserve, begin, finish) stayed at or under about 0.75 s.
+  - So background work queues behind job traffic, not the other way round. This is the behaviour we want, but a 7 s wait means a cleanup batch can time out. A few `command_expired` cleanup failures (1 to 3 per class) did happen, and cleanup still made progress: 3,751 rows deleted over the run.
+- **The WAL stayed bounded.**
+  - The log peaked at about 1,000 frames (4.5 MB), which is the auto-checkpoint size, and SQLite never reported busy.
+  - In the second part, the counter of frames copied back stayed at 0 in every sample while the log sat at its ceiling. The log did not keep growing, so it was probably being reset between samples, but this run does not prove that.
+- **The crash check is weaker than it looks.**
+  - The reconciliation counts 0 accepted jobs that crossed a crash, so neither kill landed on a job the ledgers saw as started but not finished.
+  - "Nothing lost across a crash" is therefore shown for jobs queued at the kill, not for jobs mid-run. Making the kill land mid-handler (a longer handler or a kill timed on a started job) would close that.
 
 ## Redis: delayed jobs picked up seconds late (fixed)
 
