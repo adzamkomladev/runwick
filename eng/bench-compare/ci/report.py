@@ -9,9 +9,12 @@ import glob, html, json, os, statistics as st, sys
 
 src, dst = sys.argv[1], sys.argv[2]
 os.makedirs(dst, exist_ok=True)
-ORDER = ["runwick-pg", "runwick-sqlite", "runwick-redis", "river", "pgboss", "solidqueue", "bullmq", "horizon", "celery"]
+ORDER = ["runwick-pg", "runwick-sqlite", "runwick-redis", "wolverine-pg", "wolverine-sqlite", "wolverine-redis", "bullmq-dotnet-pg", "bullmq-dotnet-redis",
+         "river", "pgboss", "solidqueue", "bullmq", "horizon", "celery"]
 LABEL = {"runwick-pg": "Runwick PostgreSQL", "runwick-sqlite": "Runwick SQLite", "runwick-redis": "Runwick Redis", "river": "River (Go, PG)",
-         "pgboss": "pg-boss (Node, PG)", "solidqueue": "Solid Queue (Rails, PG)", "bullmq": "BullMQ (Node, Redis)",
+         "pgboss": "pg-boss (Node, PG)", "solidqueue": "Solid Queue (Rails, SQLite)",
+         "wolverine-pg": "Wolverine (.NET, PG)", "wolverine-sqlite": "Wolverine (.NET, SQLite)", "wolverine-redis": "Wolverine (.NET, Redis)",
+         "bullmq-dotnet-pg": "BullMQ .NET (PG)", "bullmq-dotnet-redis": "BullMQ .NET (Redis)", "bullmq": "BullMQ (Node, Redis)",
          "horizon": "Laravel Horizon (PHP, Redis)", "celery": "Celery (Python, Redis)"}
 runs = [json.load(open(f)) for f in glob.glob(f"{src}/**/*.json", recursive=True)
         if "--r" in os.path.basename(f) and not f.endswith(".raw.json")]
@@ -55,6 +58,7 @@ for r in runs:
     if not r.get("ok") or g(r, "result.skipped"): continue
     cells.setdefault((r["workload"], r["test"], r["system"]), []).append(r)
 agg = {k: {m[0]: med([m[2](r) for r in v]) for m in METRICS} | {"n": len(v)} for k, v in cells.items()}
+version = {r["system"]: r.get("version") or g(r, "result.system") for r in runs if r.get("ok")}
 # rows.json: one flat row per library x test with this run's medians, for the results dashboard (append each run's file).
 run_id = os.environ.get("GITHUB_RUN_ID", "local")
 COLNAME = {"thru": "jobsPerSec", "p50": "p50Ms", "p99": "p99Ms", "done": "donePct", "acpu": "appCpuPct", "amem": "appMemMB", "scpu": "storeCpuPct",
@@ -63,7 +67,7 @@ rows = []
 for (wl, t, s), m in sorted(agg.items()):
     h = hosts.get(f"{s}--{wl}", {})
     rows.append({"run": run_id, "date": min((x.get("when", "") for x in hosts.values()), default="")[:10], "commit": h.get("commit"),
-                 "workload": wl, "test": t, "system": s, "library": LABEL[s], "rounds": m["n"], "hostCpu": h.get("cpu"),
+                 "workload": wl, "test": t, "system": s, "library": LABEL[s], "version": version.get(s), "rounds": m["n"], "hostCpu": h.get("cpu"),
                  **{COLNAME[k]: (round(v, 3) if isinstance(v, float) else v) for k, v in m.items() if k != "n"}})
 json.dump(rows, open(f"{dst}/rows.json", "w"), indent=0)
 failed = sorted({(r["system"], r["workload"], r["test"]) for r in runs if not r.get("ok")})
@@ -92,7 +96,7 @@ def sections():
 
 
 md = ["# Queue library benchmark", "",
-      "Every library ran on its own fresh GitHub-hosted runner (ubuntu-24.04), against its own PostgreSQL 18 or Redis 8.2 (AOF, appendfsync always) container. "
+      "Every library ran on its own fresh GitHub-hosted runner (ubuntu-24.04), against its own PostgreSQL 18 or Redis 8.2 (AOF, appendfsync always) container, or a local SQLite file. "
       "**normal** = a 1 KiB no-op job; **cpu** = the same job doing 50,000 SHA-256 rounds over 1 KiB (≈0.1–0.5 s of one core, depending on the language). "
       "Cells are medians over rounds. *App* = every process the benchmark started (producers + workers + driver); *Store* = the database container. "
       "*CPU ms/job* = app + store CPU time per finished job. *Wire B/job* = bytes in and out of the store container per job. Runners can differ in CPU model: see Hosts.", ""]
@@ -106,12 +110,12 @@ for wl, t, rows in sections():
     md += [f"| {LABEL[s]} | " + " | ".join(fmt(r[c]) for c in cols) + " |" for s, r in rows] + [""]
 if skipped: md += ["**Not applicable:** " + ", ".join(f"{s} {t}" for s, t in skipped) + " (no bulk-enqueue API).", ""]
 if failed: md += ["**Failed runs** (see that job's artifact logs): " + ", ".join(f"{s}/{w}/{t}" for s, w, t in failed), ""]
-md += ["## Hosts", "", "| Run | CPU | Cores | RAM MB | Commit |", "|---|---|---:|---:|---|"]
-md += [f"| {k} | {h['cpu']} | {h['cores']} | {h['memMB']:,} | {h['commit']} |" for k, h in sorted(hosts.items())]
+md += ["## Versions and hosts", "", "| Run | Library version | CPU | Cores | RAM MB | Commit |", "|---|---|---|---:|---:|---|"]
+md += [f"| {k} | {version.get(k.rsplit('--', 1)[0], '–')} | {h['cpu']} | {h['cores']} | {h['memMB']:,} | {h['commit']} |" for k, h in sorted(hosts.items())]
 open(f"{dst}/report.md", "w").write("\n".join(md) + "\n")
 
 # ---- HTML: same tables, SVG bars for every metric that has data -------------------------------------------------------
-COLORS = {s: c for s, c in zip(ORDER, ["#2563eb", "#3b82f6", "#60a5fa", "#059669", "#10b981", "#dc2626", "#d97706", "#7c3aed", "#0891b2"])}
+COLORS = {s: c for s, c in zip(ORDER, ["#2563eb", "#3b82f6", "#60a5fa", "#9333ea", "#a855f7", "#c084fc", "#db2777", "#f472b6", "#059669", "#10b981", "#dc2626", "#d97706", "#7c3aed", "#0891b2"])}
 
 
 def bars(rows, key, title, higher):

@@ -23,8 +23,10 @@ TESTS = {
                "steady-100": ("steady", 0, 16, 100, 30), "steady-500": ("steady", 0, 16, 500, 30)},
     "cpu": {"drain-w16": ("drain", 400, 16, 0, 0), "steady-4": ("steady", 0, 16, 4, 60)},
 }
-STORE = {"runwick-pg": "bench-pg", "river": "bench-pg", "pgboss": "bench-pg", "solidqueue": "bench-pg",
-         "runwick-redis": "bench-redis", "bullmq": "bench-redis", "horizon": "bench-redis", "celery": "bench-redis", "runwick-sqlite": None}
+STORE = {"runwick-pg": "bench-pg", "river": "bench-pg", "pgboss": "bench-pg", "bullmq-dotnet-pg": "bench-pg", "wolverine-pg": "bench-pg",
+         "runwick-redis": "bench-redis", "bullmq": "bench-redis", "horizon": "bench-redis", "celery": "bench-redis",
+         "bullmq-dotnet-redis": "bench-redis", "wolverine-redis": "bench-redis",
+         "runwick-sqlite": None, "solidqueue": None, "wolverine-sqlite": None}
 MAX_SECONDS = 600
 
 
@@ -57,6 +59,14 @@ def cmd(system, test):
         return ["python3", f"{BC}/horizon/bench.py", "--redis", REDIS, "--mode", mode, "--n", str(n), "--workers", str(w)] + common, None
     if system == "celery":
         return [sys.executable, f"{BC}/celery/bench.py", "--redis", REDIS, "--mode", mode, "--n", str(n), "--workers", str(w)] + common, None
+    if system.startswith("bullmq-dotnet"):
+        backend = {"bullmq-dotnet-redis": "redis", "bullmq-dotnet-pg": "postgres"}[system]
+        return ["dotnet", f"{BC}/bullmq-dotnet/bin/Release/net10.0/bench-bullmq-dotnet.dll", "--backend", backend, "--redis", REDIS,
+                "--mode", mode, "--n", str(n), "--workers", str(w)] + common, None
+    if system.startswith("wolverine"):
+        transport = {"wolverine-pg": "postgres", "wolverine-redis": "redis", "wolverine-sqlite": "sqlite"}[system]
+        return ["dotnet", f"{BC}/wolverine/bin/Release/net10.0/bench-wolverine.dll", "--transport", transport, "--redis", REDIS,
+                "--mode", mode, "--n", str(n), "--workers", str(w)] + common, None
     if system == "solidqueue":
         return ["bin/rails", "runner", "../bench.rb", "--mode", mode, "--n", str(n), "--workers", str(w)] + common, f"{BC}/solidqueue/app"
     raise SystemExit("unknown system " + system)
@@ -163,10 +173,19 @@ def host():
             "runner": os.environ.get("RUNNER_NAME"), "when": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
 
 
+def lib_version(system, result):
+    """The library and version this run measured: the harness's own report, or for Runwick the commit under test."""
+    if system.startswith("runwick"):
+        d = subprocess.run(["git", "describe", "--tags", "--always"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+        return f"runwick {d}"
+    return (result or {}).get("system")
+
+
 def main():
     tag = f"{a.system}--{a.workload}"
     json.dump(host(), open(f"{a.out}/{tag}--host.json", "w"), indent=2)
-    env = dict(os.environ, BENCH_CPU_ITERS=str(CPU_ITERS if a.workload == "cpu" else 0), DOTNET_NOLOGO="1")
+    # .NET contenders run with server GC (throughput GC, one heap per core), the setting a production worker service would use.
+    env = dict(os.environ, BENCH_CPU_ITERS=str(CPU_ITERS if a.workload == "cpu" else 0), DOTNET_NOLOGO="1", DOTNET_gcServer="1")
     store = Container(STORE[a.system])
     tests = a.tests.split(",") if a.tests else list(TESTS[a.workload])
     failures = 0
@@ -190,7 +209,7 @@ def main():
             derived = {"jobs": jobs, "cpuMsPerJob": round(cpu * 1000 / jobs, 3) if jobs else None, "wireBytesPerJob": round(wire / jobs) if jobs and wire else None,
                        "storeWriteBytesPerJob": round(((res["store"] or {}).get("diskWriteBytes") or res["app"]["diskWriteBytes"]) / jobs) if jobs else None}
             json.dump({"system": a.system, "workload": a.workload, "test": test, "round": rnd, "ok": rc == 0 and result is not None,
-                       "result": result, "resources": res, "derived": derived}, open(f"{a.out}/{name}.json", "w"), indent=2)
+                       "version": lib_version(a.system, result), "result": result, "resources": res, "derived": derived}, open(f"{a.out}/{name}.json", "w"), indent=2)
     print(f"{failures} failed run(s)")
 
 

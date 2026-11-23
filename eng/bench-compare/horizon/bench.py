@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Laravel Horizon benchmark driver (PHP 8.3, laravel/framework 13.40.0, laravel/horizon 5.50.1, phpredis).
+"""Laravel Horizon benchmark driver (laravel/horizon pinned by setup.sh, phpredis; versions are read from the installed app).
   bench.py --redis 127.0.0.1:56391 --mode enqueue|bulk|drain|steady [--n 20000] [--calls 1] [--workers 16] [--rate 100] [--seconds 30] [--out f.json]
 Producers are `php artisan bench:produce` processes (one per concurrent caller). Consumers are real Horizon: `php artisan horizon`
 (master supervisor + one supervisor with --workers PHP worker processes, balance=simple). The Redis instance is FLUSHALLed: dedicated, throwaway only."""
@@ -50,7 +50,12 @@ def stop_horizon(h):
     try: h.wait(timeout=30)
     except subprocess.TimeoutExpired: os.killpg(h.pid, 9)
 
-res = {"system": "laravel-horizon 5.50.1 (framework 13.40.0, php 8.3, phpredis)", "mode": a.mode, "workers": a.workers, "redisAppendfsync": fsync, "phpProcessesPerWorker": 1}
+def versions():  # what is actually installed, not what setup.sh asked for
+    pk = json.load(open(os.path.join(APP, "vendor/composer/installed.json")))
+    pk = {p["name"]: p["version"].lstrip("v") for p in (pk["packages"] if isinstance(pk, dict) else pk)}
+    php = subprocess.run(["php", "-r", "echo PHP_VERSION;"], capture_output=True, text=True).stdout.strip()
+    return f"laravel-horizon {pk.get('laravel/horizon')} (framework {pk.get('laravel/framework')}, php {php}, phpredis)"
+res = {"system": versions(), "mode": a.mode, "workers": a.workers, "redisAppendfsync": fsync, "phpProcessesPerWorker": 1}
 if a.mode in ("enqueue", "bulk"):
     k = a.calls if a.mode == "enqueue" else 1
     out = producers(k, a.n // k, "single" if a.mode == "enqueue" else "bulk")

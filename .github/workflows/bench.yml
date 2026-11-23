@@ -1,5 +1,5 @@
 # Queue library comparison (eng/bench-compare/ci/README.md). Manual only: Actions -> bench -> Run workflow.
-# Every library x workload runs on its own fresh runner in parallel (18 jobs), each with its own PostgreSQL / Redis
+# Every library x workload runs on its own fresh runner in parallel (28 jobs), each with its own PostgreSQL / Redis
 # container, then one report job collects everything into the run summary and a downloadable HTML report.
 name: bench
 on:
@@ -24,29 +24,36 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        system: [runwick-pg, runwick-sqlite, runwick-redis, river, pgboss, solidqueue, bullmq, horizon, celery]
+        system: [runwick-pg, runwick-sqlite, runwick-redis, wolverine-pg, wolverine-sqlite, wolverine-redis, bullmq-dotnet-pg, bullmq-dotnet-redis,
+                 river, pgboss, solidqueue, bullmq, horizon, celery]
         workload: [normal, cpu]
     env:
       BC: eng/bench-compare
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # tags, so Runwick results carry `git describe`
       - name: Start PostgreSQL 18
-        if: contains(fromJSON('["runwick-pg","river","pgboss","solidqueue"]'), matrix.system)
+        if: contains(fromJSON('["runwick-pg","river","pgboss","wolverine-pg","bullmq-dotnet-pg"]'), matrix.system)
         run: |
           docker run -d --name bench-pg -p 127.0.0.1:55499:5432 -e POSTGRES_PASSWORD=pg postgres:18
           until docker exec bench-pg pg_isready -U postgres -q; do sleep 1; done
       - name: Start Redis 8.2 (Runwick profile - AOF always, no RDB, noeviction - for every Redis library)
-        if: contains(fromJSON('["runwick-redis","bullmq","horizon","celery"]'), matrix.system)
+        if: contains(fromJSON('["runwick-redis","bullmq","horizon","celery","wolverine-redis","bullmq-dotnet-redis"]'), matrix.system)
         run: |
           docker run -d --name bench-redis -p 127.0.0.1:56392:6379 redis:8.2-alpine redis-server --appendonly yes --appendfsync always --no-appendfsync-on-rewrite no --maxmemory-policy noeviction --aof-load-truncated no --save ""
           until docker exec bench-redis redis-cli ping | grep -q PONG; do sleep 1; done
 
-      - if: startsWith(matrix.system, 'runwick')
+      - if: startsWith(matrix.system, 'runwick') || startsWith(matrix.system, 'wolverine') || startsWith(matrix.system, 'bullmq-dotnet')
         uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
       - if: startsWith(matrix.system, 'runwick')
         run: dotnet build tests/Runwick.Workloads/Runwick.Workloads.csproj -c Release
+      - if: startsWith(matrix.system, 'wolverine')
+        run: dotnet build $BC/wolverine/bench-wolverine.csproj -c Release
+      - if: startsWith(matrix.system, 'bullmq-dotnet')
+        run: dotnet build $BC/bullmq-dotnet/bench-bullmq-dotnet.csproj -c Release
 
       - if: matrix.system == 'river'
         uses: actions/setup-go@v5
@@ -77,7 +84,7 @@ jobs:
         with:
           ruby-version: "3.4"
       - if: matrix.system == 'solidqueue'
-        run: sudo apt-get install -y -q libpq-dev && bash $BC/solidqueue/setup.sh
+        run: bash $BC/solidqueue/setup.sh
 
       - if: matrix.system == 'celery'
         uses: actions/setup-python@v5

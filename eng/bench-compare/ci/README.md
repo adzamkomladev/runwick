@@ -5,18 +5,25 @@ and `scale` (default 1; use 10 for a quick smoke run that divides job counts and
 
 ## What runs
 
-Each of the 18 combinations below gets its own fresh `ubuntu-24.04` runner, so they all run at the same time and
-never share a CPU. A last job collects everything.
+Each of the 28 combinations below (14 libraries x 2 workloads) gets its own fresh `ubuntu-24.04` runner, so they run at
+the same time and never share a CPU (GitHub starts 20 at once on a free plan; the rest follow). A last job collects everything.
 
 | Library | Store | Workers |
 |---|---|---|
 | Runwick PostgreSQL / SQLite / Redis | PostgreSQL 18 / local file / Redis 8.2 | one .NET process |
+| Wolverine PostgreSQL / SQLite / Redis | its own queue transport on each | one .NET process, one listener |
+| BullMQ .NET (official port) | PostgreSQL 18 / Redis 8.2 | one .NET process, one Worker |
 | River | PostgreSQL 18 | one Go process |
 | pg-boss | PostgreSQL 18 | one Node process (batch fetch) |
-| Solid Queue (Rails 8) | PostgreSQL 18 | `bin/jobs`: min(slots, cores) processes × threads |
+| Solid Queue (Rails 8) | local SQLite file (Rails 8's default) | `bin/jobs`: min(slots, cores) processes × threads |
 | BullMQ | Redis 8.2 | one Node process |
 | Laravel Horizon | Redis 8.2 | one PHP process per slot |
 | Celery | Redis 8.2 | prefork pool, one process per slot |
+
+Every .NET contender runs with server GC (`DOTNET_gcServer=1`), as a production worker service would.
+
+Wolverine sends to Redis with `SendInline()`, so an enqueue counts only once Redis holds the message (its default is an
+in-memory buffer); its PostgreSQL and SQLite queues are always durable. Wolverine and Celery have no bulk-enqueue call.
 
 Every Redis library runs against the same server settings: AOF with `appendfsync always`, no RDB snapshots,
 `noeviction` (Runwick's required profile). Everything else is each library's default.
@@ -40,7 +47,8 @@ every 0.5 s:
 - **Store**: the PostgreSQL or Redis container's cgroup: CPU, memory, disk bytes, and network bytes in and out
   (the bytes each library puts on the wire).
 
-From those it derives **CPU ms per job** (app + store) and **bytes per job**.
+From those it derives **CPU ms per job** (app + store) and **bytes per job**. Every result also records the exact
+library version that ran (for Runwick, `git describe` of the commit).
 
 ## Output
 
