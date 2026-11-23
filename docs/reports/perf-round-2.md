@@ -4046,6 +4046,27 @@ Follow-up checks:
 - **Redis default 90 s: 9 jobs ran twice, but no lost lease was reported. Explained and fixed (2026-11-23).** The jobs behaved correctly; only the report was missing. On Redis a finish call to a paused server fails fast with "outcome unknown", so the worker keeps resending it and gives up after its 30 s completion budget (`CompletionUnresolved`, the "unconfirmed outcome: Finish" diagnostics). On PostgreSQL the call hangs instead, so the lease safety deadline fires first and is reported as `SafetyDeadline`. The give-up path marked the attempt lost without raising the `lost:` event or the `AuthorityLost` warning log. The `runwick.lease.authority_lost` metric did count it. Losses found while settling now go through the same report as every other loss, and the unresolved-finish test checks for the event.
 - Redis default 20 s: all 10 kept their lease and finished once, but only 6 are counted as finished after the store came back. The other 4 probably finished before the pause took effect, or ended in `outcome_unknown` (3 of those were seen).
 
+## PostgreSQL combined finish and claim (not merged)
+
+**Result 2026-11-23: no gain, left unmerged on branch `pg-finish-claim`.** The branch adds migration `0031_finish_and_claim`: one database call that runs the existing finish step and then the existing claim step in a single transaction, the PostgreSQL version of the Redis option `WorkerOptions.UseCombinedFinishClaim()`.
+
+Tests: the PostgreSQL project passed (437 passed, 2 skipped; three outage tests failed only when pointed at an external server, and passed 3 of 3 times each on their own Docker server), and the Contract project passed 513 of 513, including the new PostgreSQL finish-and-claim contract cases.
+
+Six alternating pairs of 20,000-job drains (16 workers, 512-byte payloads, fresh database per run, host load 4 to 8 before each run):
+
+| Pair | Without (jobs/s) | With (jobs/s) | With ÷ without |
+|---|---|---|---|
+| 1 | 212.9 | 195.6 | 0.92 |
+| 2 | 181.4 | 259.7 | 1.43 |
+| 3 | 221.5 | 226.2 | 1.02 |
+| 4 | 258.5 | 207.9 | 0.80 |
+| 5 | 270.4 | 146.4 | 0.54 |
+| 6 | 155.3 | 231.0 | 1.49 |
+
+The median is 0.97: three pairs favour each side, and the runs without the option alone ranged from 155 to 270 jobs/s, so the noise is as large as any effect. The combined call carried only 330 to 640 of the 20,000 claims per run (about 2%), because the pool's own batch claim is almost always already in flight, the same reason the Redis version gained nothing. No run fell back, and no deadlock or serialization failure was seen.
+
+It is not merged: it would add a migration, and a possible deadlock when the claimed job has a uniqueness, concurrency or rate scope, for no measured gain. Results: `artifacts/perf/round-two/round3/pg-finish-claim/`.
+
 ## PostgreSQL receipt compaction (migration 0030)
 
 **Result 2026-11-23: merged as the default.** Paired drains, 5 rounds of 5,000 jobs, base main at fb6a493 against this change, private PostgreSQL 18 (no other writers), host load 7 to 12:
