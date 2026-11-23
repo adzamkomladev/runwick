@@ -42,6 +42,10 @@ namespace Runwick.Workloads;
 /// <c>--cleanup-batch-rows n</c>), <c>--schedule</c> adds a schedule firing every second, <c>--outbox-rate r</c> stages r outbox
 /// messages/s in a second SQLite file that the relay delivers, <c>--sample-seconds s</c> records completions, refusals and WAL
 /// checkpoint progress over time, and <c>--crash-cycles k</c> kills and reopens the process k times (<see cref="SteadyCrashRun"/>).
+/// G5 leases (docs/reports/fragments/g5-leases.md): <c>--fewer-lease-renewals</c> or <c>--lease-seconds n --renew-seconds m</c> set the
+/// lease profile and add a <c>lease</c> block (renewals per job and per second, store counters; <c>--lease-report</c> adds it for the
+/// default profile); <c>--outage-container name --outage-at s --outage-seconds d</c> docker-pauses the store during steady mode;
+/// <c>--lease-crash</c> kills a worker and times how long its jobs take to reach a second one (<see cref="LeaseCrashRun"/>).
 /// Trace adds per-job stage gaps, held-job and settlement-queue samples, and store call phases. Writes the same JSON shape as the River and pg-boss
 /// benches: <c>system</c>, <c>mode</c>, <c>completionsPerSec</c>, <c>latencyMs {p50, p95, p99, max}</c> (steady).
 /// </summary>
@@ -76,10 +80,15 @@ internal static class BenchMode
             return await SteadyCrashRun.RunAsync(a).ConfigureAwait(false);
         }
 
-        var mode = a.OptStr("mode") ?? "drain";
-        if (mode is not ("drain" or "steady" or "enqueue" or "bulk"))
+        if (a.Has("lease-crash"))
         {
-            Console.Error.WriteLine("--mode must be drain, steady, enqueue or bulk");
+            return await LeaseCrashRun.RunAsync(a).ConfigureAwait(false);
+        }
+
+        var mode = a.OptStr("mode") ?? "drain";
+        if (mode is not ("drain" or "steady" or "enqueue" or "bulk" or "work"))
+        {
+            Console.Error.WriteLine("--mode must be drain, steady, enqueue, bulk or work");
             return 2;
         }
 
@@ -124,6 +133,12 @@ internal static class BenchMode
             return 2;
         }
 
+        if (a.Has("outage-container") && (mode != "steady" || store == "sqlite"))
+        {
+            Console.Error.WriteLine("--outage-container needs --mode steady and --store postgres or redis");
+            return 2;
+        }
+
         var storeViewers = a.Int("store-viewers", 0);
         var storeWarmupSeconds = a.Int("store-warmup-seconds", 0);
         if (storeViewers < 0 || storeWarmupSeconds < 0 || ((storeViewers > 0 || storeWarmupSeconds > 0) && mode != "steady"))
@@ -139,7 +154,7 @@ internal static class BenchMode
         var outboxRate = a.Double("outbox-rate", 0);
         var sampleSeconds = a.Double("sample-seconds", 0);
         var crash = a.Has("crash");
-        if ((retentionHours is not null || schedule || outboxRate > 0 || sampleSeconds > 0 || crash || a.Has("ledger") || a.Has("drain-store-seconds"))
+        if ((retentionHours is not null || schedule || outboxRate > 0 || sampleSeconds > 0 || crash || a.Has("drain-store-seconds"))
             && (store != "sqlite" || mode != "steady"))
         {
             Console.Error.WriteLine("--retention-hours, --schedule, --outbox-rate, --sample-seconds, --crash-cycles and the segment flags need --store sqlite --mode steady");
@@ -147,6 +162,8 @@ internal static class BenchMode
         }
 
         Action<RunwickBuilder> useStore;
+        // G5 lease report: cumulative counters the store itself reports (Redis INFO, PostgreSQL pg_stat_database); null for SQLite.
+        Func<Task<JsonObject>>? storeCounters = null;
         var keepSqlite = a.Has("sqlite-keep");
         using var sqliteDirectory = store == "sqlite"
             ? new SqliteBenchDirectory(a.OptStr("sqlite-dir") ?? Path.GetTempPath(), keepSqlite, a.OptStr("sqlite-reuse"))
@@ -204,8 +221,10 @@ internal static class BenchMode
             // --redis-topology sentinel|cluster: the opt-in write-authority modes (22 §2.5, §2.6); --redis then lists the Sentinels and serviceName,
             // or the cluster's nodes. Every primary the connection reaches is flushed.
             var topology = a.OptStr("redis-topology") ?? "standalone";
-            using (var adminRedis = await StackExchange.Redis.ConnectionMultiplexer.ConnectAsync(redisCfg + ",allowAdmin=true").ConfigureAwait(false))
+            // --redis-reuse: keep what is there (the second worker of a --lease-crash run).
+            if (!a.Has("redis-reuse"))
             {
+                using var adminRedis = await StackExchange.Redis.ConnectionMultiplexer.ConnectAsync(redisCfg + ",allowAdmin=true").ConfigureAwait(false);
                 foreach (var server in adminRedis.GetServers().Where(s => s.IsConnected && !s.IsReplica))
                 {
                     await server.FlushAllDatabasesAsync().ConfigureAwait(false);
@@ -224,6 +243,7 @@ internal static class BenchMode
             var group = a.Has("redis-group");
             var groupItems = a.Int("group-items", 8);
             var groupSlots = a.Int("group-slots", 2);
+            storeCounters = () => RedisCountersAsync(redisCfg);
             useStore = r => r.UseRedis(redisCfg, o =>
             {
                 o.Persistence = persistence;
@@ -292,10 +312,15 @@ internal static class BenchMode
                 MaxPoolSize = Math.Max(100, workers + 16),
                 Options = a.Has("trace") ? "-c track_functions=all" : null, // --trace: per-function server time in pg_stat_user_functions
             }.ConnectionString;
+            var counterCs = new NpgsqlConnectionStringBuilder(adminCs) { Database = database, ApplicationName = "bench:counters", Pooling = false }.ConnectionString;
+            storeCounters = () => PostgresCountersAsync(counterCs, database);
             // --pg-group: grouped producer admission (PF2-B1); it only groups callers beyond the producer slots (--producer-calls).
             useStore = r => r.UsePostgres(storeCs, o => o.GroupProducerAdmission = a.Has("pg-group"));
         }
 
+        WorkerOptions? leaseOptions = null;
+        // --lease-report (implied by any lease flag or an outage): renewals, lost leases and store counters in the result.
+        var leaseReport = a.Has("lease-report") || a.Has("fewer-lease-renewals") || a.Has("lease-seconds") || a.Has("renew-seconds") || a.Has("outage-container");
         var sc = new ServiceCollection();
         sc.AddLogging(b => b.AddSimpleConsole(o => o.SingleLine = true).SetMinimumLevel(LogLevel.Warning));
         if (storeViewers > 0 || retentionHours is not null)
@@ -364,6 +389,25 @@ internal static class BenchMode
                     {
                         o.UseCombinedFinishClaim();
                     }
+
+                    // G5: --fewer-lease-renewals (the 5 min / 90 s profile), or --lease-seconds n and --renew-seconds m by hand.
+                    if (a.Has("fewer-lease-renewals"))
+                    {
+                        o.UseFewerLeaseRenewals();
+                    }
+
+                    if (a.OptStr("lease-seconds") is not null)
+                    {
+                        o.LeaseDuration = TimeSpan.FromSeconds(a.Double("lease-seconds", 60));
+                    }
+
+                    if (a.OptStr("renew-seconds") is not null)
+                    {
+                        o.RenewalInterval = TimeSpan.FromSeconds(a.Double("renew-seconds", 15));
+                        o.RenewalJitter = TimeSpan.FromTicks(Math.Min(o.RenewalJitter.Ticks, o.RenewalInterval.Ticks / 5)); // keep jitter below the interval
+                    }
+
+                    leaseOptions = o;
 
                     if (a.OptInt("claims-in-flight") is { } inFlight) // 05 §9.7: batched claims a pool may have outstanding at once
                     {
@@ -447,6 +491,9 @@ internal static class BenchMode
         }
 
         var sideFinished = new ConcurrentDictionary<string, long>(StringComparer.Ordinal);
+        // G5: lost leases by cause, and with --outage-container each load job's handler starts, finish and loss (wall-clock ms).
+        var lostByCause = new ConcurrentDictionary<string, long>(StringComparer.Ordinal);
+        var outageJobs = a.Has("outage-container") ? new ConcurrentDictionary<Guid, OutageJob>() : null;
         engine.Hooks.Event = (name, entry) =>
         {
             var now = clock.ElapsedTicks;
@@ -464,6 +511,32 @@ internal static class BenchMode
             {
                 Ledger(name == "handlerInvoked" ? 'i' : 'f', entry.Reserved.Position.JobId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             }
+            if (name.StartsWith("lost:", StringComparison.Ordinal))
+            {
+                lostByCause.AddOrUpdate(name[5..], 1, (_, c) => c + 1);
+            }
+
+            if (outageJobs is not null && entry is not null && (name is "handlerInvoked" or "finished" or "finishReplayed" || name.StartsWith("lost:", StringComparison.Ordinal)))
+            {
+                var job = outageJobs.GetOrAdd(entry.Reserved.Position.JobId, _ => new OutageJob());
+                var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                lock (job)
+                {
+                    if (name == "handlerInvoked")
+                    {
+                        job.Starts.Add(nowMs);
+                    }
+                    else if (name.StartsWith("lost:", StringComparison.Ordinal))
+                    {
+                        job.LostMs ??= nowMs;
+                    }
+                    else
+                    {
+                        job.FinishedMs ??= nowMs;
+                    }
+                }
+            }
+
             if (trace && name.StartsWith("pressure", StringComparison.Ordinal))
             {
                 stages.Count(name);
@@ -558,6 +631,9 @@ internal static class BenchMode
             }.ConnectionString)
             : null;
 
+        var leaseStartSeconds = clock.Elapsed.TotalSeconds;
+        var countersBefore = leaseReport && storeCounters is not null ? await storeCounters().ConfigureAwait(false) : null;
+        JsonObject? outageResult = null;
         if (mode == "enqueue")
         {
             // --n single-job Dispatch calls from --calls callers side by side; the worker is never started.
@@ -771,6 +847,21 @@ internal static class BenchMode
             result["drainSeconds"] = Math.Round(elapsed, 3);
             result["completionsPerSec"] = elapsed > 0 ? Math.Round(done / elapsed, 1) : 0;
         }
+        else if (mode == "work")
+        {
+            // --mode work (the second worker of a --lease-crash run): no dispatch; work what the store holds until --n load jobs
+            // have finished or --seconds have passed.
+            await hosted.StartAsync(CancellationToken.None).ConfigureAwait(false);
+            var until = clock.Elapsed + TimeSpan.FromSeconds(seconds);
+            while (Interlocked.Read(ref finished) < n && clock.Elapsed < until)
+            {
+                await Task.Delay(50).ConfigureAwait(false);
+            }
+
+            result["jobs"] = n;
+            result["finished"] = Interlocked.Read(ref finished);
+            result["seconds"] = Math.Round(clock.Elapsed.TotalSeconds - leaseStartSeconds, 1);
+        }
         else
         {
             await hosted.StartAsync(CancellationToken.None).ConfigureAwait(false);
@@ -808,6 +899,10 @@ internal static class BenchMode
             var samples = new JsonArray();
             using var sampling = new CancellationTokenSource();
             var sampler = sampleSeconds > 0 ? Task.Run(SampleAsync) : Task.CompletedTask;
+            // G5 --outage-container NAME --outage-at s --outage-seconds d: docker pause the store container for d seconds,
+            // s seconds into the offers, while jobs run.
+            long pausedAtMs = 0, resumedAtMs = 0;
+            var outage = a.OptStr("outage-container") is { } container ? Task.Run(() => OutageAsync(container)) : Task.CompletedTask;
             var next = clock.Elapsed;
             var pending = new List<Task>();
             var failures = new ConcurrentDictionary<string, long>(StringComparer.Ordinal);
@@ -819,6 +914,7 @@ internal static class BenchMode
             // A crashing segment keeps offering until it is killed, so the kill lands with jobs queued and (with --job-ms)
             // inside their handler; otherwise the queue drains while the segment writes its result and no job crosses a crash.
             _ = crash ? OfferAsync(() => true) : Task.CompletedTask;
+            await outage.ConfigureAwait(false);
             await outboxStager.ConfigureAwait(false);
             if (!crash) // a crashing segment dies with its dispatch calls still in flight
             {
@@ -902,6 +998,39 @@ internal static class BenchMode
 
             await sampling.CancelAsync().ConfigureAwait(false);
             await sampler.ConfigureAwait(false);
+            if (outageResult is not null)
+            {
+                // The jobs a handler was running when the store went away, and what became of them.
+                var running = outageJobs!.Values.Where(j => j.Starts.Count > 0 && j.Starts[0] < pausedAtMs && !(j.FinishedMs < pausedAtMs)).ToList();
+                outageResult["runningAtPause"] = running.Count;
+                outageResult["keptLeaseAndFinishedOnce"] = running.Count(j => j.LostMs is null && j.Starts.Count == 1 && j.FinishedMs is not null);
+                outageResult["lostLease"] = running.Count(j => j.LostMs is not null);
+                outageResult["ranTwice"] = running.Count(j => j.Starts.Count > 1);
+                outageResult["finishedAfterStoreBack"] = running.Count(j => j.FinishedMs >= resumedAtMs);
+                outageResult["notFinished"] = running.Count(j => j.FinishedMs is null);
+                outageResult["allJobsRunMoreThanOnce"] = outageJobs.Values.Count(j => j.Starts.Count > 1);
+                result["outage"] = outageResult;
+            }
+
+            async Task OutageAsync(string name)
+            {
+                var at = a.Double("outage-at", 30);
+                var pause = a.Double("outage-seconds", 30);
+                outageResult = new JsonObject { ["container"] = name, ["atSeconds"] = at, ["seconds"] = pause };
+                await Task.Delay(TimeSpan.FromSeconds(at)).ConfigureAwait(false);
+                pausedAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                try
+                {
+                    outageResult["pauseExit"] = await DockerAsync("pause", name).ConfigureAwait(false);
+                    await Task.Delay(TimeSpan.FromSeconds(pause)).ConfigureAwait(false);
+                }
+                finally
+                {
+                    outageResult["unpauseExit"] = await DockerAsync("unpause", name).ConfigureAwait(false);
+                    resumedAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    outageResult["pausedForMs"] = resumedAtMs - pausedAtMs;
+                }
+            }
 
             var elapsed = Ms(clock.ElapsedTicks - startTicks) / 1000;
             await viewers.ConfigureAwait(false);
@@ -1188,6 +1317,32 @@ internal static class BenchMode
             ["serverGC"] = System.Runtime.GCSettings.IsServerGC,
         };
         result["diagnostics"] = new JsonArray([.. engine.Health().Diagnostics.Select(x => (JsonNode?)x)]);
+        if (leaseReport)
+        {
+            // G5: what the lease settings cost on this store over the whole run (worker start to here).
+            var renews = Interlocked.Read(ref engine.Lease.RenewsSent);
+            var done = Interlocked.Read(ref finished);
+            var runSeconds = clock.Elapsed.TotalSeconds - leaseStartSeconds;
+            var countersAfter = countersBefore is not null ? await storeCounters!().ConfigureAwait(false) : null;
+            result["lease"] = new JsonObject
+            {
+                ["leaseSeconds"] = leaseOptions?.LeaseDuration.TotalSeconds,
+                ["renewSeconds"] = leaseOptions?.RenewalInterval.TotalSeconds,
+                ["renewJitterSeconds"] = leaseOptions?.RenewalJitter.TotalSeconds,
+                ["jobMs"] = a.Double("job-ms", 0),
+                ["runSeconds"] = Math.Round(runSeconds, 1),
+                ["jobsFinished"] = done,
+                ["completionsPerSec"] = Math.Round(done / runSeconds, 2),
+                ["renewsSent"] = renews,
+                ["renewManyCalls"] = Interlocked.Read(ref engine.Lease.RenewWavesSent),
+                ["renewsPerJob"] = done == 0 ? null : Math.Round((double)renews / done, 2),
+                ["renewsPerSec"] = Math.Round(renews / runSeconds, 2),
+                ["lostByCause"] = new JsonObject([.. lostByCause.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)kv.Value))]),
+                ["storeCounters"] = countersAfter is null ? null
+                    : new JsonObject([.. countersAfter.Select(kv => KeyValuePair.Create(kv.Key,
+                        (JsonNode?)Math.Round(kv.Value!.GetValue<double>() - (countersBefore![kv.Key]?.GetValue<double>() ?? 0), 3)))]),
+            };
+        }
 
         if (crash)
         {
@@ -1252,6 +1407,70 @@ internal static class BenchMode
 
     static double Ms(long stopwatchTicks) => stopwatchTicks * 1000.0 / Stopwatch.Frequency;
 
+    static async Task<int> DockerAsync(string verb, string container)
+    {
+        using var docker = Process.Start(new ProcessStartInfo("docker", [verb, container]) { UseShellExecute = false })!;
+        await docker.WaitForExitAsync().ConfigureAwait(false);
+        return docker.ExitCode;
+    }
+
+    /// <summary>Redis's own cumulative counters, summed over every primary: command calls and time, and server CPU seconds.</summary>
+    static async Task<JsonObject> RedisCountersAsync(string configuration)
+    {
+        using var redis = await StackExchange.Redis.ConnectionMultiplexer.ConnectAsync(configuration + ",allowAdmin=true").ConfigureAwait(false);
+        var totals = new SortedDictionary<string, double>(StringComparer.Ordinal);
+        void Add(string key, double value) => totals[key] = totals.GetValueOrDefault(key) + value;
+        foreach (var server in redis.GetServers().Where(s => s.IsConnected && !s.IsReplica))
+        {
+            foreach (var section in await server.InfoAsync("all").ConfigureAwait(false))
+            {
+                foreach (var (key, value) in section)
+                {
+                    if (key is "used_cpu_sys" or "used_cpu_user")
+                    {
+                        Add("cpuSeconds", double.Parse(value, System.Globalization.CultureInfo.InvariantCulture));
+                    }
+                    else if (key.StartsWith("cmdstat_", StringComparison.Ordinal))
+                    {
+                        // calls=12,usec=345,usec_per_call=...
+                        var fields = value.Split(',').Select(f => f.Split('=')).ToDictionary(f => f[0], f => f[1], StringComparer.Ordinal);
+                        var calls = double.Parse(fields["calls"], System.Globalization.CultureInfo.InvariantCulture);
+                        Add("commandCalls", calls);
+                        Add("commandUsec", double.Parse(fields["usec"], System.Globalization.CultureInfo.InvariantCulture));
+                        Add("calls:" + key[8..], calls);
+                    }
+                }
+            }
+        }
+
+        return new JsonObject([.. totals.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)kv.Value))]);
+    }
+
+    /// <summary>
+    /// PostgreSQL's own cumulative counters for the bench database: transactions, rows written, and (with --trace, which turns on
+    /// track_functions) calls and server time of each runwick function. PostgreSQL does not report its CPU.
+    /// </summary>
+    static async Task<JsonObject> PostgresCountersAsync(string connectionString, string database)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync().ConfigureAwait(false);
+        await using var cmd = new NpgsqlCommand("""
+            SELECT 'transactions', (xact_commit + xact_rollback)::float8 FROM pg_stat_database WHERE datname = @db
+            UNION ALL SELECT 'rowsWritten', (tup_inserted + tup_updated + tup_deleted)::float8 FROM pg_stat_database WHERE datname = @db
+            UNION ALL SELECT 'functionCalls:' || funcname, calls::float8 FROM pg_stat_user_functions WHERE schemaname = 'runwick'
+            UNION ALL SELECT 'functionMs:' || funcname, total_time FROM pg_stat_user_functions WHERE schemaname = 'runwick'
+            """, connection);
+        cmd.Parameters.AddWithValue("db", database);
+        var counters = new JsonObject();
+        await using var rows = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+        while (await rows.ReadAsync().ConfigureAwait(false))
+        {
+            counters[rows.GetString(0)] = rows.GetDouble(1);
+        }
+
+        return counters;
+    }
+
     internal static async Task<JsonObject> CountOutboxSourceAsync(string sourceCs)
     {
         using var source = new SqliteConnection(new SqliteConnectionStringBuilder(sourceCs) { Mode = SqliteOpenMode.ReadOnly }.ConnectionString);
@@ -1286,6 +1505,14 @@ internal static class BenchMode
             }
         }
     }
+}
+
+/// <summary>One load job's handler starts, first lost lease and confirmed finish (wall-clock ms), for the outage report.</summary>
+internal sealed class OutageJob
+{
+    public List<long> Starts { get; } = [];
+    public long? LostMs { get; set; }
+    public long? FinishedMs { get; set; }
 }
 
 internal static class SideQueues

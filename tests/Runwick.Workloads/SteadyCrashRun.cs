@@ -290,7 +290,7 @@ internal static class SteadyCrashRun
         };
     }
 
-    static JsonObject Percentiles(List<double> values)
+    internal static JsonObject Percentiles(List<double> values)
     {
         values.Sort();
         double At(double q) => values.Count == 0 ? 0 : values[Math.Clamp((int)Math.Ceiling(q * values.Count) - 1, 0, values.Count - 1)];
