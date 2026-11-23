@@ -752,7 +752,8 @@ internal sealed class PgRunner(PgDataSources sources, IFaultInjector faults, Tim
             RETURNING true;
 
             SELECT 1 FROM runwick.storage_commands
-            WHERE application = @application AND command_id = @command_id AND retention_class <> @class
+            WHERE application = @application AND command_id = @command_id
+              AND retention_class = CASE @class WHEN 'ownership' THEN 'durable' ELSE 'ownership' END
             LIMIT 1;
 
             SELECT clock_timestamp()

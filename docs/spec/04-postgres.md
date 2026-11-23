@@ -6,6 +6,13 @@ This file is the PostgreSQL implementation of [03-storage-protocol.md](03-storag
 
 Scope is M1 + M2. Records for rates, schedules, outbox, management audit, retention progress, worker subscriptions/pool snapshots and pool controls are **not in M2** and are not created by `0001_initial` (§3).
 
+## Changes (2026-11-23, receipt compaction)
+
+- Migration `0030_receipt_by_key`, schema revision 30. Rows, receipt results, replies, replay and the receipt codec are unchanged; the manifest changes only its schema revision. On by default (a migration, not an option).
+- `command_by_id (application, command_id)` is dropped. Every receipt read now names the retention class and is a primary-key lookup in one partition: the R3 cross-class probe names the other class (`retention_class = CASE @class WHEN 'ownership' THEN 'durable' ELSE 'ownership' END`), and reads by command ID alone (the schedule group's existing-receipt check in `rw_schedule_group_set_v1`, management's `CommandNotAfter`) name both classes (`retention_class IN ('ownership','durable')`). `rw_receipt_v1`, `rw_schedule_group_set_v1` and `dispatch_group_v1` are dropped and recreated with the same names, arguments and bodies except that predicate; the driver's own R3 statement changes the same way. Schema validation no longer expects an index that a later migration drops.
+- `storage_commands_ownership` and `storage_commands_durable` get `fillfactor = 70` (new pages only; nothing is rewritten). R4 replaces a small placeholder with the decided row (a Finish receipt is about 460 bytes, a ReserveAndBegin receipt about 2 kB); on a full page that update could not be HOT and wrote a new entry into every receipt index. With room kept on each page, 89% of durable and all ownership R4 updates were HOT in a 2,000-job drain (49% and 78% before). A partition added later must get the same fill factor.
+- Measured on a private PostgreSQL 18 server, 2,000-job drain, WAL of the records that touch receipt relations (pg_walinspect): 1,509 → 1,184 bytes per job (−22%); all WAL per job is about 11 kB, so about 3% of it. The receipt heaps take about 25% more space for the same rows; with the index gone, receipt tables plus indexes take about 8% more. Details: `docs/reports/fragments/pg-receipts.md`.
+
 ## Changes (2026-11-23, grouped producer admission)
 
 - Migration `0029_dispatch_group`, schema revision 29, adds the driver-only function `dispatch_group_v1`. It adds no protocol operation, table, index, event kind or receipt codec; the manifest changes only its schema revision. (Numbered after the delayed-wake migration 0027; renumber at merge if that lands later.)
@@ -311,7 +318,7 @@ The §6.1 batching rule ("statements whose inputs do not depend on prior results
 | P-12 | Transaction timeouts: `lock_timeout = min(2 s, remaining operation budget)`, `statement_timeout = remaining budget`, `idle_in_transaction_session_timeout = 10 s`, set with `set_config(…, true)` per transaction. |
 | P-13 | Deadlock (`40P01`), serialization (`40001`) and lock-timeout (`55P03`) rollbacks of driver-owned transactions are retried with the same command identity, at most 3 retries, control backoff (100 ms nominal, ×2, cap 1 s, equal jitter), within NotAfter and the caller's budget. |
 | P-14 | Database roles: a migration role owns the schema; the runtime role gets DML only, with `store_metadata`/`schema_migrations` read-only and `application_controls` SELECT + INSERT (seed) only (§9.3). |
-| P-15 | Indexes added beyond the sources: `jobs_queue_list`, `job_concurrency_requirements_scope`, `permits_job_attempt`, `permits_job_scope`, `command_by_id`, `events_retention`, `worker_capabilities_tuple`; `events_job_history` is partial (`job_id IS NOT NULL`). |
+| P-15 | Indexes added beyond the sources: `jobs_queue_list`, `job_concurrency_requirements_scope`, `permits_job_attempt`, `permits_job_scope`, `command_by_id` (dropped by 0030), `events_retention`, `worker_capabilities_tuple`; `events_job_history` is partial (`job_id IS NOT NULL`). |
 | P-16 | Readiness probe and expired-lease listing are single statements that take the store gate `FOR SHARE` in a CTE (one round trip each). |
 | P-17 | Receipt cleanup (SP-021, not M2) shape is fixed here so the G-1 harness `PruneReceipts` uses the production predicate (§7.16). |
 
@@ -999,7 +1006,8 @@ A row is created by `RegisterQueue/1` (seed-if-absent) and never deleted. `pause
 
 - Partitions: `storage_commands_ownership` (Reserve, Begin, Recover, ReleaseReservation; `retain_until ≥ not_after + 10 min`) and `storage_commands_durable` (everything else; `≥ not_after + 24 h`). `storage_commands_no_renew_ck` forbids Renew receipts (R1).
 - `status`/`result`/`decided_at` are null only for an uncommitted placeholder. The constraint triggers raise `RWR01` at COMMIT if a placeholder would commit (PGX-05). Callers must not run `SET CONSTRAINTS ALL IMMEDIATE` inside a transaction that stages Runwick work.
-- `command_by_id` supports the cross-class conflict probe and resolution by ID.
+- Every receipt read is a primary-key lookup: it names the retention class. The cross-class conflict probe (R3) names the other class; a read by command ID alone (the schedule group's existing-receipt check, management's `CommandNotAfter`, ResolveCommand without an operation) names both classes. Before 0030 the index `command_by_id (application, command_id)` served those reads.
+- Both partitions have `fillfactor = 70` (0030), so the R4 update usually fits on the placeholder's page and is HOT (no new index entries).
 
 ### 4.8 Queue events
 
@@ -1027,7 +1035,7 @@ Kinds written in M2: `dispatched` (per created job), `policy_drift` (per reused-
 | `permits_live_count` | `(application, scope_id, lease_expires_at)` | Live permit count |
 | `permits_attempt`, `permits_job_attempt`, `permits_job_scope` | see DDL | Exact-attempt renewal/release; FK checks |
 | `command_retention` | `(application, retain_until, command_id)` (partitioned) | Receipt cleanup |
-| `command_by_id` | `(application, command_id)` (partitioned) | Cross-class conflict probe |
+| `command_by_id` | Dropped by 0030; receipt reads name the retention class and use the primary key | — |
 | `events_job_history` | `(application, job_id, event_id) WHERE job_id IS NOT NULL` | Job history |
 | `events_retention` | `(application, occurred_at, event_id)` | Event retention |
 | `worker_instances_expiry` | `(application, expires_at, instance_id)` | Presence queries |
@@ -1171,12 +1179,12 @@ WHERE application = @application
   AND command_id = @command_id
 FOR UPDATE;
 
--- R3 cross-class conflict probe (when R1 inserted)
+-- R3 cross-class conflict probe (when R1 inserted); names the other class, a primary-key lookup (0030)
 SELECT 1
 FROM runwick.storage_commands
 WHERE application = @application
+  AND retention_class = CASE @retention_class WHEN 'ownership' THEN 'durable' ELSE 'ownership' END
   AND command_id = @command_id
-  AND retention_class <> @retention_class
 LIMIT 1;
 
 -- R4 finalize (exactly one row must be updated)
