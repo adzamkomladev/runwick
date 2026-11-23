@@ -1908,7 +1908,38 @@ Full run:
   - The ledgers show the delay comes in waves. Every few minutes, offers and completions both drop to a quarter or half of normal for 10 to 30 seconds. The backlog that builds up then drains slowly, because completions only rise to about 125/s during catch-up.
   - The job-path store calls are not the cause: in the last segment, dispatch waited 0.46 s p99 for the writer and reserve 0.21 s. Cleanup batches waited 4.8 s, schedule materialization 3.9 s and presence publishing 2.5 s.
   - The WAL stayed small and SQLite never reported busy.
-  - The cause of the stalls is not found yet. Candidates are a whole-process pause (garbage collection or the host), the dashboard reads, or catch-up limited by something other than the writer queue.
+  - The cause of the stalls is not found yet. Candidates are a whole-process pause (garbage collection or the host), the dashboard reads, or catch-up limited by something other than the writer queue. The next section follows this up.
+
+### Where the pickup tail comes from (2026-11-23)
+
+The trace answers most of it:
+- In the last segment, a job's handler starts within about 10 ms of the worker reserving it. The whole wait (median 5.3 s) is before the reserve, while the job sits in the store unclaimed.
+- A claim round trip takes about 20–40 ms and returns about 4.5 jobs, so the store is not slow to hand out work.
+- The limit is worker slots. Each job cycle takes about 127 ms: 77 ms in a 50 ms handler, then finishing and waiting for the next claim. 16 slots therefore top out near 125 jobs/s, only 25% above the 100 offered per second.
+- A backlog that builds up during a stall shrinks by only about 25 jobs/s, so a 10-second stall leaves around 40 seconds of late pickups.
+- The stalls are moments when commits on every write path (finish, claim and dispatch) take up to about 1 s together. That looks like disk flushes on this shared host, plus bursts of cleanup, schedule and presence writes.
+- A single pressure stop (an owner-control wait over 1 s) paused claiming once in the last segment. It pauses for only a few seconds, so it is not the main cause.
+
+To check this, the same run was repeated with 32 workers instead of 16, which roughly doubles the spare capacity. Load was 3.0 at the start and 12.7 at the end, because another session's benchmarks were running alongside. Output is in `artifacts/perf/round-two/sqlite-q67-w32/`.
+
+| | 16 workers | 32 workers |
+|---|---|---|
+| offer to pickup p50 / p99 / max | 0.42 s / 11.1 s / 70 s | 0.28 s / 4.3 s / 9.0 s |
+| pickup p99 per segment | 3.5 s, 4.4 s, 11.2 s | 5.0 s, 2.4 s, 4.7 s |
+| largest backlog (accepted minus completed) | | 376 jobs |
+| accepted jobs that crossed a crash | 25 | 53 |
+| refused (`local_capacity_exceeded`) | 2,475 | 7,416 |
+
+The 32-worker run met all the safety checks: nothing was lost, the 14 reruns are all explained by a crash, and nothing was left unfinished. The worst single commit was under 1 s.
+
+Conclusion:
+- Most of the 11 s tail came from the benchmark's own configuration: 16 slots with 50 ms jobs leave too little spare capacity to recover from short stalls.
+- It is not a crash-recovery or claiming fault.
+- The 2 to 5 s p99 that remains matches the first run (4.1 s). It comes from the stalls themselves, which also show up in the commit times on this host.
+- What is still not proven:
+  - The stall timing was not lined up with the pickup tail sample by sample.
+  - Refusals rose with 32 workers, and why is not explained; the host was busier and more jobs crossed crashes.
+- Advice for applications: on SQLite, size worker slots so that capacity is clearly above the arrival rate, not just equal to it. A queue near its ceiling turns every short disk stall into seconds of pickup delay.
 
 ## Redis: delayed jobs picked up seconds late (fixed)
 
