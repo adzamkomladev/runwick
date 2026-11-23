@@ -58,11 +58,29 @@ internal sealed class BatchStoreDouble(IRunwickStore inner) : IRunwickStore, ILe
     public Task<ReceiptResolution> ResolveOperationAsync(string application, Guid commandId, DateTimeOffset notAfterBound, CancellationToken ct) =>
         inner.ResolveOperationAsync(application, commandId, notAfterBound, ct);
 
-    public Task<StoreReply<ReservedJob>> TryReserveAsync(StoreCommand<ReserveRequest> command, CancellationToken ct) => inner.TryReserveAsync(command, ct);
+    public async Task<StoreReply<ReservedJob>> TryReserveAsync(StoreCommand<ReserveRequest> command, CancellationToken ct)
+    {
+        await FrozenAsync(ct).ConfigureAwait(false);
+        return await inner.TryReserveAsync(command, ct).ConfigureAwait(false);
+    }
 
     public Task<BeginReply> BeginExecutionAsync(StoreCommand<BeginRequest> command, CancellationToken ct) => inner.BeginExecutionAsync(command, ct);
 
-    public Task<StoreReply<RenewedLease>> RenewAsync(StoreCommand<RenewRequest> command, CancellationToken ct) => inner.RenewAsync(command, ct);
+    public async Task<StoreReply<RenewedLease>> RenewAsync(StoreCommand<RenewRequest> command, CancellationToken ct)
+    {
+        await FrozenAsync(ct).ConfigureAwait(false);
+        return await inner.RenewAsync(command, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>While true, claims and renewals never reach the store and never answer (a worker cut off from the store, or dead).</summary>
+    public volatile bool Frozen;
+
+    Task FrozenAsync(CancellationToken ct) => Frozen ? Task.Delay(Timeout.Infinite, ct) : Task.CompletedTask;
+
+    int _loseNextClaim;
+
+    /// <summary>The next ReserveAndBegin is applied by the store and its reply replaced by an unknown outcome.</summary>
+    public void LoseNextReserveAndBegin() => Interlocked.Exchange(ref _loseNextClaim, 1);
 
     /// <summary>While true, Finish and FinishMany never reach the store and never answer (a worker that dies with its finishes in memory).</summary>
     public volatile bool HoldFinishes;
@@ -91,13 +109,29 @@ internal sealed class BatchStoreDouble(IRunwickStore inner) : IRunwickStore, ILe
     public Task<IReadOnlyList<ExpiredLease>> ListExpiredLeasesAsync(string application, int limit, CancellationToken ct) =>
         inner.ListExpiredLeasesAsync(application, limit, ct);
 
-    public Task<StoreReply<RenewedLeases>> RenewManyAsync(StoreCommand<RenewManyRequest> command, CancellationToken ct) =>
-        ((ILeaseBatchStore)inner).RenewManyAsync(command, ct);
+    public async Task<StoreReply<RenewedLeases>> RenewManyAsync(StoreCommand<RenewManyRequest> command, CancellationToken ct)
+    {
+        await FrozenAsync(ct).ConfigureAwait(false);
+        return await ((ILeaseBatchStore)inner).RenewManyAsync(command, ct).ConfigureAwait(false);
+    }
 
-    public Task<StoreReply<ClaimedJobs>> ReserveAndBeginAsync(StoreCommand<ReserveAndBeginRequest> command, CancellationToken ct) =>
-        Refused.Contains(Operations.ReserveAndBegin)
-            ? Task.FromResult(StoreReply<ClaimedJobs>.NoEffect(StoreStatus.UnsupportedVersion, new StoreError("operation_unsupported"), DateTimeOffset.UtcNow))
-            : ((IReserveAndBeginStore)inner).ReserveAndBeginAsync(command, ct);
+    public async Task<StoreReply<ClaimedJobs>> ReserveAndBeginAsync(StoreCommand<ReserveAndBeginRequest> command, CancellationToken ct)
+    {
+        await FrozenAsync(ct).ConfigureAwait(false);
+        if (Refused.Contains(Operations.ReserveAndBegin))
+        {
+            return StoreReply<ClaimedJobs>.NoEffect(StoreStatus.UnsupportedVersion, new StoreError("operation_unsupported"), DateTimeOffset.UtcNow);
+        }
+
+        var reply = await ((IReserveAndBeginStore)inner).ReserveAndBeginAsync(command, ct).ConfigureAwait(false);
+        if (Interlocked.Exchange(ref _loseNextClaim, 0) == 1)
+        {
+            Interlocked.Increment(ref RepliesLost);
+            throw new StoreOutcomeUnknownException("commit_outcome_unknown", command.CommandId, Operations.ReserveAndBegin);
+        }
+
+        return reply;
+    }
 
     public async Task<StoreReply<FinishedMany>> FinishManyAsync(StoreCommand<FinishManyRequest> command, CancellationToken ct)
     {

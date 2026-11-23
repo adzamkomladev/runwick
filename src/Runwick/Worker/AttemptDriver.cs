@@ -118,6 +118,7 @@ internal sealed partial class WorkerEngine
         }
 
         Lease.Unregister(entry);
+        entry.ReleaseRun();
         if (entry.Retire())
         {
             Emit("retired", entry);
@@ -134,6 +135,9 @@ internal sealed partial class WorkerEngine
         Presence.Detail.Finished(entry);
         entry.Dispose();
     }
+
+    /// <summary>How often a job waiting for a run slot rechecks loss, cancellation and the drain cutoff (05 §9.8).</summary>
+    static readonly TimeSpan RunSlotPoll = TimeSpan.FromMilliseconds(250);
 
     async Task LifecycleAsync(AttemptEntry entry)
     {
@@ -198,6 +202,20 @@ internal sealed partial class WorkerEngine
             return;
         }
 
+        // Claim ahead (05 §9.8): a job claimed beyond the pool's target waits here for a run slot, its lease renewed as usual. It stops
+        // waiting without a slot once it is lost, cancelled or past the drain cutoff; each of those ends the admission loop below.
+        if (entry.Pool.Run is { } run)
+        {
+            while (!entry.IsLost && !entry.DurableCancellationObserved && !PastDrainCutoff)
+            {
+                if (await run.WaitAsync(RunSlotPoll, ControlStop).ConfigureAwait(false))
+                {
+                    entry.HoldRun();
+                    break;
+                }
+            }
+        }
+
         // §9.5 invocation admission.
         while (true)
         {
@@ -243,6 +261,7 @@ internal sealed partial class WorkerEngine
         }
 
         var observation = await ExecuteAsync(entry).ConfigureAwait(false);
+        entry.ReleaseRun();
         if (observation is null || entry.IsLost)
         {
             return;

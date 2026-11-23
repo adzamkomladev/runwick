@@ -19,6 +19,17 @@ No engine rule changes. The wake rule of the 2026-11-19 entries (a created job t
 
 On PostgreSQL the outbox and management paths hand their delayed creations to the post-commit wake pump (04 Changes 2026-11-11). On SQLite the outbox, management and schedule paths now send the in-process hint after commit for due jobs too; before, only direct dispatch did. Redis already published the hint from every script through its shared projection step; tests now cover each path. Still not woken by a store hint: retry back-off (a running worker's own finish wakes its pool, see the 2026-11-19 entry). Report: docs/reports/fragments/delayed-wake-paths.md.
 
+## Changes (2026-11-23, claim ahead)
+
+New **§9.8 Claim ahead (perf round two, Redis F)**, an option on `WorkerOptions`: `ClaimAhead`, 0 to 32, default 0 (V-26). At 0 the engine claims exactly as before and §4 "Prefetch 0" holds. The design and the reasons are in [redis-pool-claim-redesign.md](../plans/redis-pool-claim-redesign.md).
+
+- **What it does.** A fixed pool of target `n` may hold up to `n + ClaimAhead` tickets (§4). The extra tickets are claimed like any other (§9.6, §9.7), so one claim can carry up to `n + ClaimAhead` jobs (at most `ReserveAndBegin`'s 32). A claimed job that finds all `n` run slots busy waits in its entry, after Begin is settled and before invocation admission (§9.5), until a run slot frees. A handler that returns gives its run slot to the next waiting job at once, without a store round trip.
+- **What does not change.** At most `n` handlers run at once. Every claimed job is an entry from the moment its claim settles: its lease is registered, renewed and fenced exactly as for a running attempt (§11), so a waiting job that loses authority is never invoked, and a worker that dies leaves its waiting jobs to lease expiry and recovery, as for running ones (at-least-once, nothing new to lose). Receipts, replay of a lost claim reply (§9.2) and every store guarantee are unchanged; no store, script or stored data changes.
+- **What a user sees.** A waiting job is already begun in the store: it counts as running in management reads, its recorded start is the claim time, and it holds any store-side concurrency or rate permits while it waits. Up to `ClaimAhead` jobs per pool can therefore wait on one worker while another worker is idle.
+- **Stopping waiting.** A waiting job rechecks every 250 ms and stops waiting without a run slot once it has lost authority, a durable cancellation is observed, or the drain cutoff is reached (§16); invocation admission then ends it as §9.5 says (no invocation; `UserCancelled` or `Interrupted` Finish). Before the drain cutoff, a draining worker runs its waiting jobs as run slots free.
+- **Automatic pools** ignore the option: their target moves (11 §3.5), so they never claim beyond it.
+- **Run slot release.** When the handler's pipeline returns (§10), or at retirement for a job that never ran, exactly once.
+
 ## Changes (2026-11-20, claims in flight)
 
 New **§9.7 Claims in flight (perf round two)**, an option on `WorkerOptions`: `ClaimsInFlight`, 1 to 4, default 1 (V-25). At 1 the engine claims exactly as before. The measurements are in [claim-pipelining.md](../reports/fragments/claim-pipelining.md).
@@ -287,7 +298,7 @@ The registry is frozen for the process lifetime (capability changes require a ne
 | Release | Exactly once, when the holder reaches `Retired` (§5); a second release is a no-op on the idempotent ticket |
 | Target reduction | Stops refilling; cancels nothing; outstanding may exceed the new target until tickets retire |
 | Refill | Each retired ticket refills independently; a slow job never blocks refilling other tickets |
-| Prefetch | 0: there is never a reservation beyond held tickets |
+| Prefetch | 0: there is never a reservation beyond held tickets. With `ClaimAhead` (§9.8) a fixed pool holds up to target + `ClaimAhead` tickets; at most target handlers run at once |
 | Group bound | Σ pool maxima ≤ worker/store group maximum (16 default); validated at startup |
 | Fixed target | `FixedConcurrency(n)` sets target = pool maximum = n; default n = 4 |
 

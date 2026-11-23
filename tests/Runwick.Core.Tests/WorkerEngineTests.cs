@@ -277,6 +277,51 @@ public sealed class WorkerEngineTests
         Assert.Contains(Validate(o => o.ClaimsInFlight = 5), x => x.Message.StartsWith("V-25", StringComparison.Ordinal));
     }
 
+    [Fact]
+    [Trait("Category", "Pure")]
+    public void Claim_ahead_defaults_to_zero_and_is_validated()
+    {
+        Assert.Equal(0, new WorkerOptions().ClaimAhead);
+        Assert.Empty(Validate(o => o.ClaimAhead = 32));
+        Assert.Contains(Validate(o => o.ClaimAhead = -1), x => x.Message.StartsWith("V-26", StringComparison.Ordinal));
+        Assert.Contains(Validate(o => o.ClaimAhead = 33), x => x.Message.StartsWith("V-26", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    [Trait("Category", "Pure")]
+    public async Task Claim_ahead_holds_jobs_beyond_concurrency_but_runs_at_most_concurrency()
+    {
+        await using var e = EngineFixture.Create(concurrency: 4, batch: true, options: o => o.ClaimAhead = 4);
+        int running = 0, maxRunning = 0, maxHeld = 0;
+        e.Script.Default = async (_, _, _) =>
+        {
+            Max(ref maxRunning, Interlocked.Increment(ref running));
+            await Task.Delay(TimeSpan.FromMilliseconds(30), e.Time, CancellationToken.None);
+            Interlocked.Decrement(ref running);
+        };
+        var pool = e.Engine.Pools.Single();
+        pool.Gate.OutstandingChanged += n => Max(ref maxHeld, n);
+        var ids = Enumerable.Range(0, 40).Select(i => e.Add("a" + i)).ToList();
+
+        await e.StartAsync();
+        await e.RunUntilAsync(() => ids.All(id => e.Store.JobOf(id).State == JobStates.Succeeded), Long, "all succeeded");
+
+        Assert.Equal(4, maxRunning);
+        Assert.Equal(8, maxHeld);
+        Assert.All(ids, id => Assert.Equal(1, e.Store.JobOf(id).Executions));
+        await e.StopAsync();
+        Assert.Equal(0, pool.Gate.Outstanding);
+        Assert.Equal(4, pool.Run!.CurrentCount);
+
+        static void Max(ref int target, int value)
+        {
+            int seen;
+            while ((seen = Volatile.Read(ref target)) < value && Interlocked.CompareExchange(ref target, value, seen) != seen)
+            {
+            }
+        }
+    }
+
     [Theory]
     [Trait("Category", "Pure")]
     [InlineData(1)]

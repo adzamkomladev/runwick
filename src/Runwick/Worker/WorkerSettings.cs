@@ -258,6 +258,11 @@ internal sealed class WorkerSettings
                     Fail("V-25", nameof(o.ClaimsInFlight), "ClaimsInFlight must be 1 to 4.");
                 }
 
+                if (o.ClaimAhead is < 0 or > 32)
+                {
+                    Fail("V-26", nameof(o.ClaimAhead), "ClaimAhead must be 0 to 32.");
+                }
+
                 if (!(o.RecoveryScanJitter < o.RecoveryScanInterval))
                 {
                     Fail("V-13", nameof(o.RecoveryScanJitter), "0 < RecoveryScanMin ≤ RecoveryScanNominal ≤ RecoveryScanMax is required.");

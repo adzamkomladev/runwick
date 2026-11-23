@@ -261,6 +261,20 @@ internal sealed class AttemptEntry : IDisposable
 
     public bool Invoked => Volatile.Read(ref _invoked) == 1;
 
+    int _run;
+
+    /// <summary>Records that this attempt took one of its pool's run slots (claim ahead, 05 §9.8).</summary>
+    public void HoldRun() => Volatile.Write(ref _run, 1);
+
+    /// <summary>Gives the run slot back once: when the handler returns, or at retirement if it never ran.</summary>
+    public void ReleaseRun()
+    {
+        if (Interlocked.Exchange(ref _run, 0) == 1)
+        {
+            Pool.Run!.Release();
+        }
+    }
+
     /// <summary>Retires once: releases the ticket exactly once.</summary>
     public bool Retire()
     {
