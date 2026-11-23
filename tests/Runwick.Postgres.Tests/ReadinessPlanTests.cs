@@ -394,7 +394,7 @@ public sealed class ReadinessPlanTests
                 Assert.All(plan.JobsAccess, a =>
                 {
                     Assert.Contains(a.Node, new[] { "Index Scan", "Index Only Scan" });
-                    Assert.Contains(a.Index, name == "wake" ? ["jobs_ready", "jobs_pk", "jobs_profile_uq"] : new[] { "jobs_ready" });
+                    Assert.Contains(a.Index, name == "wake" ? ["jobs_ready", "jobs_pk"] : new[] { "jobs_ready" });
                 });
             }
 

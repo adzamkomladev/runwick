@@ -217,18 +217,25 @@ internal sealed partial class PgStore : IRetentionStore
     /// <summary>Detail expiry (17 §3.1): payload and error text go; identity, state, history and error codes stay.</summary>
     static async Task<Swept> ExpireDetailAsync(PgTx tx, string[] states, DateTimeOffset cutoff, (DateTimeOffset At, Guid Id)? cursor, CleanupLimits limits)
     {
+        // One ordered jobs_detail_retention range per state (its leading key), merged: a state array on the leading key gives no
+        // order, and the literal state list lets the partial index be proven. Payload size is a keyed lookup per kept row.
         using var c = tx.Sql($"""
             SELECT j.job_id, j.terminal_at,
-                   COALESCE(octet_length(p.payload_utf8), 0)
+                   COALESCE((SELECT octet_length(p.payload_utf8) FROM runwick.job_payloads AS p
+                             WHERE p.application = j.application AND p.job_id = j.job_id), 0)
                      + COALESCE((SELECT sum(octet_length(a.error::text)) FROM runwick.job_attempts AS a
                                  WHERE a.application = j.application AND a.job_id = j.job_id AND a.error IS NOT NULL), 0)
-            FROM runwick.jobs AS j
-            LEFT JOIN runwick.job_payloads AS p ON p.application = j.application AND p.job_id = j.job_id
-            WHERE j.application = @application AND j.state = ANY(@states) AND j.detail_expired_at IS NULL AND j.terminal_at < @cutoff
-              {(cursor is null ? "" : "AND (j.terminal_at, j.job_id) > (@cursor_at, @cursor_id)")}
+            FROM unnest(@states) AS s(state)
+            CROSS JOIN LATERAL (
+                SELECT x.application, x.job_id, x.terminal_at FROM runwick.jobs AS x
+                WHERE x.application = @application AND x.state = s.state AND x.state IN ('succeeded', 'failed', 'cancelled')
+                  AND x.detail_expired_at IS NULL AND x.terminal_at < @cutoff
+                  {(cursor is null ? "" : "AND (x.terminal_at, x.job_id) > (@cursor_at, @cursor_id)")}
+                ORDER BY x.terminal_at, x.job_id
+                LIMIT @rows
+                FOR NO KEY UPDATE SKIP LOCKED) AS j
             ORDER BY j.terminal_at, j.job_id
             LIMIT @rows
-            FOR NO KEY UPDATE OF j SKIP LOCKED
             """).Arr("states", states, NpgsqlDbType.Text).P("cutoff", cutoff).P("cursor_at", cursor?.At).P("cursor_id", cursor?.Id, NpgsqlDbType.Uuid)
             .P("rows", limits.Rows);
         var candidates = await tx.QueryAsync(c, r => (Id: r.GetGuid(0), At: PgTime.Read(r, 1), Bytes: r.GetInt64(2))).ConfigureAwait(false);

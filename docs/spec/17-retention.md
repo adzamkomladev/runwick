@@ -16,6 +16,7 @@ Not in SP-021: an explicit "delete this now" request, legal hold, per-queue poli
 
 ## Changes
 
+- (2026-11-23, 04 Changes jobs index diet) PostgreSQL: `jobs_terminal_retention` covers only detail-expired terminal jobs (the purge set). The detail-expiry read takes one ordered `jobs_detail_retention` range per state, merged, and repeats the literal terminal state list so the partial index applies; the payload size is a keyed lookup. Same rows, same order, same cursor; 300 ms → 5 ms per batch on a 205,000-job store with expiry caught up.
 - (2026-11-08, user decision, adzamkomla) Defaults accepted as written: the cleanup pace stays at the 06 values (tunable, with the "behind" indicator), and a purged job leaves no record (lookup is 404). Schema revision fixed at 16; SP-032's `ManagementDispatch/1` takes 17.
 
 - (2026-11-08) New document.
@@ -183,7 +184,7 @@ FOR UPDATE OF j SKIP LOCKED;
 DELETE FROM runwick.jobs WHERE application = @application AND job_id = ANY(@ids);   -- FK cascade
 ```
 
-- Index `jobs_terminal_retention` serves the scan. The binding check uses the new index `dispatch_keys_bound_job` (§5).
+- Index `jobs_terminal_retention` serves the scan. Since 0029 (04 Changes 2026-11-23) it holds only terminal jobs whose detail has expired, which is exactly what this scan reads. The binding check uses the new index `dispatch_keys_bound_job` (§5).
 - A window binding is only ever set while its job is new or active (04 §7.2 step 5, cases e/f), and an active binding is cleared at the terminal transition (04 §7.10 K′). So the set of live bindings of a terminal job can only shrink, and checking without locking `dispatch_keys` is safe.
 - Rows that fail a dependency check are stepped over by the cursor and found again on the next pass (§4.2).
 - A purged job has no tombstone [choice]. `GetJob` of its ID is 404, as for an ID that never existed; references that outlive it (schedule occurrences, outbox mappings, rate grants, receipts) keep the job ID as a logical reference. Receipt replay of its Dispatch returns the recorded reply, as before (03 §8.6).

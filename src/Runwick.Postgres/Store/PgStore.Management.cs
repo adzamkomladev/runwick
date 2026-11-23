@@ -162,7 +162,7 @@ internal sealed partial class PgStore : IManagementQueryStore
 
     /// <summary>
     /// Grouped in SQL: jobs created in range from <c>jobs_created_list</c> (or <c>jobs_queue_list</c>), jobs ended in range from
-    /// <c>jobs_terminal_retention</c> with exact <c>percentile_cont</c> durations per grouping set, live jobs from <c>jobs_ready</c> and
+    /// <c>jobs_detail_retention</c> (detail kept) and <c>jobs_terminal_retention</c> (detail expired, 0029) with exact <c>percentile_cont</c> durations per grouping set, live jobs from <c>jobs_ready</c> and
     /// <c>jobs_expired_lease</c>, and the error codes of attempts that finished in range from <c>job_attempts_errors</c>. One
     /// snapshot, under <see cref="StatsBudget"/>.
     /// </summary>
@@ -214,9 +214,12 @@ internal sealed partial class PgStore : IManagementQueryStore
                     SELECT j.queue, j.job_name, j.state, {Slice("j.terminal_at")} AS slice,
                            (extract(epoch FROM j.terminal_at - (SELECT coalesce(min(a.authorized_at), min(a.reserved_at)) FROM runwick.job_attempts AS a
                                 WHERE a.application = j.application AND a.job_id = j.job_id AND a.generation = j.generation)) * 1000)::float8 AS ms
-                    FROM runwick.jobs AS j
-                    WHERE j.application = @application AND j.state IN ('succeeded', 'failed', 'cancelled')
-                      AND j.terminal_at >= @from AND j.terminal_at < @to{filter}{worker})
+                    FROM (SELECT * FROM runwick.jobs WHERE application = @application AND detail_expired_at IS NULL
+                            AND state IN ('succeeded', 'failed', 'cancelled') AND terminal_at >= @from AND terminal_at < @to
+                          UNION ALL
+                          SELECT * FROM runwick.jobs WHERE application = @application AND detail_expired_at IS NOT NULL
+                            AND state IN ('succeeded', 'failed', 'cancelled') AND terminal_at >= @from AND terminal_at < @to) AS j
+                    WHERE true{filter}{worker})
                 SELECT GROUPING(queue, job_name, state, slice), queue, job_name, state, slice, count(*), count(ms),
                        percentile_cont(0.5) WITHIN GROUP (ORDER BY ms), percentile_cont(0.95) WITHIN GROUP (ORDER BY ms), max(ms)
                 FROM t

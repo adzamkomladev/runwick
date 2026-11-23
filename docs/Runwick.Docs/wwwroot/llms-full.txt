@@ -4469,6 +4469,8 @@ runwick migrate --provider postgres --connection-env RUNWICK_STORE
 
 It prints the store ID, the new revision and what it applied. Running it again applies nothing.
 
+On PostgreSQL, the step to schema revision 29 rebuilds one retention index and checks that every stored payload belongs to a stored job. Both read the whole jobs and payloads tables, so the migration takes longer on a large store: about 2 seconds for 205,000 stored jobs on our test machine. That is one more reason to migrate while the store is drained.
+
 </Step>
 <Step title="Reopen">
 

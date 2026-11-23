@@ -195,6 +195,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
         new("0024_schedule_groups_eight", LoadSql("0024_schedule_groups_eight.sql"), 24),
         new("0025_claim_keyed", LoadSql("0025_claim_keyed.sql"), 25),
         new("0026_schedule_group_set", LoadSql("0026_schedule_group_set.sql"), 26),
+        new("0029_jobs_index_diet", LoadSql("0029_jobs_index_diet.sql"), 29),
     ];
 
     /// <summary>The schema revision this binary writes to (03 §10.1): the last migration's target.</summary>
@@ -567,6 +568,7 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
     }
 
     static readonly string[] DeferredForeignKeys = ["jobs_current_generation_fk", "jobs_current_attempt_fk"];
+    static readonly string[] ProfileTriggers = ["job_payloads_profile_insert", "job_payloads_profile_update", "jobs_profile_fixed"];
     static readonly string[] ReceiptTriggers = ["storage_commands_ownership_decided", "storage_commands_durable_decided"];
 
     static async Task ValidateCatalogAsync(NpgsqlConnection conn, NpgsqlTransaction tx, IReadOnlyList<Migration> applied, bool hooks, CancellationToken ct)
@@ -603,6 +605,16 @@ internal sealed partial class PgMigrator(string connectionString, Func<string, N
               AND tgenabled = 'O' AND tgdeferrable AND tginitdeferred
             """, ct).ConfigureAwait(false);
         problems.AddRange(ReceiptTriggers.Where(x => !triggers.Contains(x)).Select(x => "missing trigger " + x));
+
+        // 0029: the payload profile agreement is enforced by triggers instead of a composite foreign key.
+        if (applied.Any(m => m.Id == "0029_jobs_index_diet"))
+        {
+            var profile = await ListAsync(conn, tx, """
+                SELECT tgname FROM pg_trigger
+                WHERE tgname IN ('job_payloads_profile_insert', 'job_payloads_profile_update', 'jobs_profile_fixed') AND tgenabled = 'O'
+                """, ct).ConfigureAwait(false);
+            problems.AddRange(ProfileTriggers.Where(x => !profile.Contains(x)).Select(x => "missing trigger " + x));
+        }
 
         // Function bodies (04 §8.3, PF-05): every function of these migrations, with this variant's body digest.
         var digests = (await ListAsync(conn, tx, FunctionDigestSql, ct).ConfigureAwait(false))
