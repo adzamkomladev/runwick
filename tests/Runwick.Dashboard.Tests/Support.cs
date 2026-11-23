@@ -265,7 +265,7 @@ internal sealed class Browser(HttpClient client, string? user)
 
     /// <summary>An Inertia control post with this browser's token and a command ID.</summary>
     public Task<HttpResponseMessage> PostAsync(string url, object body, Guid? commandId = null, Action<HttpRequestMessage>? configure = null) =>
-        SendAsync(HttpMethod.Post, url, inertia: true, body: body as string ?? JsonSerializer.Serialize(body, JsonSerializerOptions.Web), configure: request =>
+        SendAsync(HttpMethod.Post, url, inertia: true, body: body as string ?? JsonSerializer.Serialize(body, DashboardMount.Json), configure: request =>
         {
             if (commandId is { } id)
             {

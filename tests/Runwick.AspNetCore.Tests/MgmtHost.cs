@@ -117,6 +117,9 @@ internal sealed class MgmtHost : IAsyncDisposable
         await app.StartAsync();
         return new MgmtHost(app, grants, prefix);
     }
+    // The tests run with reflection-based JSON off, so the bodies they send need an explicit resolver.
+    static readonly System.Text.Json.JsonSerializerOptions ReflectionJson = new() { TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver() };
+
 
     public HttpRequestMessage Request(HttpMethod method, string path, string? user = null, object? body = null)
     {
@@ -128,7 +131,7 @@ internal sealed class MgmtHost : IAsyncDisposable
 
         if (body is not null)
         {
-            req.Content = new StringContent(body is string s ? s : System.Text.Json.JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+            req.Content = new StringContent(body is string s ? s : System.Text.Json.JsonSerializer.Serialize(body, ReflectionJson), Encoding.UTF8, "application/json");
         }
 
         return req;

@@ -66,6 +66,7 @@ internal static class SqParams
             a.Add(v switch
             {
                 DateTimeOffset t => JsonValue.Create(SqTime.Ms(t)),
+                string s => JsonValue.Create(s), // the generic Create needs reflection-based JSON
                 _ => JsonValue.Create(v),
             });
         }

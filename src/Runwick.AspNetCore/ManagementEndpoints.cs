@@ -68,6 +68,8 @@ public static class RunwickManagementEndpointRouteBuilderExtensions
     static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        // An explicit resolver: without one a request body read throws in a host that turns reflection-based JSON off.
+        TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver(),
     };
 
     /// <summary>
