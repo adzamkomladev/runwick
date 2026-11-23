@@ -123,13 +123,13 @@ namespace Runwick.Redis.Migrations
                 }
 
                 var db = mux.GetDatabase();
-                var primaries = target.Topology == RxTopology.Cluster ? PrimariesOf(mux) : [mux.GetServer(mux.GetEndPoints(configuredOnly: true).Single())];
+                var primaries = target.Topology == RxTopology.Cluster ? await PrimariesOfAsync(mux).ConfigureAwait(false) : [mux.GetServer(mux.GetEndPoints(configuredOnly: true).Single())];
                 var reports = new RxProfileReport[primaries.Length];
                 for (var i = 0; i < primaries.Length; i++) // a cluster is checked primary by primary
                 {
                     try
                     {
-                        reports[i] = await RxProfile.CheckAsync(primaries[i], db, target.Persistence, target.Topology).ConfigureAwait(false);
+                        reports[i] = await RxProfile.CheckAsync(primaries[i], db, target.Persistence, target.Topology, options.User).ConfigureAwait(false);
                     }
                     catch (Exception ex) when (ex is RedisException)
                     {
@@ -184,8 +184,21 @@ namespace Runwick.Redis.Migrations
             var (mux, primaries, _) = await ConnectAsync(configuration, target, "runwick:migration", ct).ConfigureAwait(false);
             await using (mux.ConfigureAwait(false))
             {
-                var db = mux.GetDatabase();
+                try
+                {
+                    return await LockedAsync(mux.GetDatabase(), primaries, body, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is RedisConnectionException or RedisTimeoutException)
+                {
+                    // A node lost after the checks (a paused or failed primary, the lock's owner): retryable, never a raw client exception.
+                    throw new RedisMigrationException("store_unavailable", "Lost the connection to Redis during the command.", ex);
+                }
+            }
+        }
 
+        static async Task<T> LockedAsync<T>(IDatabase db, IServer[] primaries, Func<IDatabase, IServer[], Task<T>> body, CancellationToken ct)
+        {
+            {
                 var token = Guid.NewGuid().ToString("N");
                 var until = DateTimeOffset.UtcNow + LockWait;
                 while (!await db.StringSetAsync(LockKey, token, TimeSpan.FromSeconds(60), When.NotExists).ConfigureAwait(false))
@@ -214,7 +227,7 @@ namespace Runwick.Redis.Migrations
         /// Every connected primary of a cluster. Refused when a node that owns slots (in the cluster's own view) is not among them: a check or a
         /// scan that skipped it would miss its applications.
         /// </summary>
-        static IServer[] PrimariesOf(IConnectionMultiplexer mux)
+        static async Task<IServer[]> PrimariesOfAsync(IConnectionMultiplexer mux)
         {
             var primaries = mux.GetServers().Where(n => !n.IsReplica && n.IsConnected).ToArray();
             if (primaries.Length == 0)
@@ -223,7 +236,17 @@ namespace Runwick.Redis.Migrations
             }
 
             var reached = primaries.Select(p => p.EndPoint.ToString()).ToHashSet(StringComparer.Ordinal);
-            var missing = (primaries[0].ClusterConfiguration?.Nodes ?? [])
+            ClusterConfiguration? view;
+            try
+            {
+                view = await primaries[0].ClusterNodesAsync().ConfigureAwait(false); // that node's own view, read now
+            }
+            catch (Exception ex) when (ex is RedisException)
+            {
+                throw new RedisMigrationException("store_unavailable", "Could not read the cluster's node list.", ex);
+            }
+
+            var missing = (view?.Nodes ?? [])
                 .Where(n => !n.IsReplica && n.Slots.Count > 0 && !reached.Contains(n.EndPoint?.ToString() ?? ""))
                 .Count();
             return missing == 0 ? primaries // the count only: the CLI prints this message and never names a server

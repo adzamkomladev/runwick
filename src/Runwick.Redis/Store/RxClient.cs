@@ -196,6 +196,9 @@ internal sealed class RxClient : IAsyncDisposable
 
     public string Application => _application;
 
+    /// <summary>The configured ACL user (null for the <c>default</c> user); the profile check confirms the connection is that user.</summary>
+    internal string? User => _options.User;
+
     /// <summary>Test seam (22 §12): writes the scripts fail after; production always sends 0.</summary>
     internal int FailAfter { get; set; }
 

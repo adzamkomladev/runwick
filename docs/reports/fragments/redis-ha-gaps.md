@@ -6,7 +6,7 @@ Written 2026-11-23. Branch `redis-ha-gaps`, from `main-merge`. No layout, script
 
 - The operator tools now work on Sentinel and Cluster setups. Status, admission, capability activation, re-identification and the migrator take the same `RedisOptions` a host takes. On a cluster they look at every primary. Through Sentinel they find the primary the same way a host does. The CLI has a matching `--redis-topology` flag.
 - A test now shows that a `MOVED` reply alone closes write authority. Writing it turned up a small race, which is fixed: a check that was already running when the `MOVED` reply arrived could reopen authority with its older view.
-- A wrong password, a missing ACL permission and a TLS mismatch each stop the process with a clear reason before anything is written. A rejected login now reads `primary_authentication_failed` and a missing permission `primary_permission_denied`. Before, both read as "unreachable".
+- A wrong password, a missing ACL permission and a TLS mismatch each stop the process with a clear reason before anything is written. The wrong-password test found a real problem. With a named user and a wrong password, StackExchange.Redis 3.4.20 quietly falls back to the `default` user when `default` has no password, so the process connected and wrote as `default`. This was confirmed with a small separate program: `ACL WHOAMI` returned `default`. The settings check now requires `ACL WHOAMI` to equal the configured user, for every topology including standalone. A wrong login is refused as `primary_authentication_failed` and a missing permission as `primary_permission_denied`. Before, these read as "unreachable", or were not caught at all.
 - Making every script declare all its keys is not small, so it was not built. The reasons are below and in spec 22 §2.6.
 - The overhead (Cluster and Sentinel against standalone, same drain) is **not measured yet**. The bench now accepts `--redis-topology`; the commands are at the end.
 
@@ -20,8 +20,10 @@ Written 2026-11-23. Branch `redis-ha-gaps`, from `main-merge`. No layout, script
    Scripts still go by key, so each change lands on the owner of that application's slot. Messages never name a server; a failure says "primary 2 of 3", because the CLI prints the message.
 2. **CLI** (`src/Runwick.Cli/CliCommands.cs`). `--redis-topology standalone|sentinel|cluster` works on `migrate`, `doctor` and every `store` command. The default is standalone, so existing commands are unchanged. Using the flag with a store other than Redis is a usage error. `doctor` now checks each primary.
 3. **Clearer reasons** (`RxAuthority.Unreachable`). Only the reason text changes. The behaviour is the same: nothing is sent and the next check decides.
-4. **A stale check opens nothing** (`RxAuthority`). Each piece of evidence (a `MOVED` reply, a lost connection) raises a counter. A check that started before the latest piece of evidence finishes without granting authority, and the check the evidence queued decides instead. This can only keep authority closed for longer, never open it.
-5. **Bench** (`tests/Runwick.Workloads/BenchMode.cs`). New `--redis-topology sentinel|cluster`. The bench flushes every primary it reaches, migrates with the matching options and starts the host in that mode.
+4. **The configured user is checked** (`RxProfile.CheckAsync`, all topologies). With `user=` set, `ACL WHOAMI` must return that user. This is stricter than before, which is the safe direction. The one cost: a configured user now needs permission for `ACL WHOAMI` (part of `+@all` and `+@connection`).
+5. **Lost nodes during an operator command** become `store_unavailable`, not a raw `RedisTimeoutException`. The first test run caught this when the paused primary owned the migration lock's slot.
+6. **A stale check opens nothing** (`RxAuthority`). Each piece of evidence (a `MOVED` reply, a lost connection) raises a counter. A check that started before the latest piece of evidence finishes without granting authority, and the check the evidence queued decides instead. This can only keep authority closed for longer, never open it.
+7. **Bench** (`tests/Runwick.Workloads/BenchMode.cs`). New `--redis-topology sentinel|cluster`. The bench flushes every primary it reaches, migrates with the matching options and starts the host in that mode.
 
 ## Declared keys: assessed, not built
 
@@ -49,7 +51,7 @@ New class `tests/Runwick.Redis.Tests/RedisHaGapsTests.cs` (REDIS-24), real conta
 | Sentinel discovery, password, TLS, failover | The migrator and status go through the Sentinels. A wrong data-node password is refused as `primary_authentication_failed` by the migrator and at startup, with the primary's key count unchanged. `ssl=true` against plain Sentinels is refused. After the primary is killed, status reaches the promoted node with the same store and application |
 | CLI (`CliRedisTests`) | `--redis-topology sentinel` without `serviceName` gives `topology_unsupported`. Cluster and Sentinel strings that nothing answers give `store_unavailable` (exit 4), and doctor reports the store as unavailable |
 
-Results: see the task's final message. The whole CLI Redis class passed, 21 of 21. It also caught a server address in a migration message, which is now fixed.
+Results on the final code: `RedisHaGapsTests` 4 of 4 (1 m 46 s), `CliRedisTests` 4 of 4; whole CLI project 21 of 21 on the first version. The first runs caught three defects, all fixed here: a server address in a migration message (the CLI prints it), a timeout leaking as a raw client exception, and the silent fall-back to the `default` user.
 
 ## Not done
 

@@ -279,7 +279,7 @@ internal sealed class RxAuthority : IAsyncDisposable
                 var now = _time.GetUtcNow();
                 if (probe is not null || now - _lastFull >= _fullEvery)
                 {
-                    var report = await RxProfile.CheckAsync(server, db, _persistence, _cluster ? RxTopology.Cluster : RxTopology.Sentinel).ConfigureAwait(false);
+                    var report = await RxProfile.CheckAsync(server, db, _persistence, _cluster ? RxTopology.Cluster : RxTopology.Sentinel, _data.User).ConfigureAwait(false);
                     OnReport?.Invoke(report);
                     if (!report.Verified)
                     {

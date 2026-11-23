@@ -61,7 +61,7 @@ Size `maxmemory` with room to spare. With `noeviction`, a full server refuses wr
 
 <Callout type="warning" title="Keep CONFIG GET readable">
 
-Runwick reads the settings with `CONFIG GET` and `MODULE LIST`. If an ACL blocks either, the value counts as unverifiable and the store refuses to run. Restrict `CONFIG SET` with ACLs if you need to, but leave `CONFIG GET` and `MODULE LIST` allowed for Runwick's user. Do not remove `CONFIG` with `rename-command`. Managed Redis services that hide `CONFIG` are not supported.
+Runwick reads the settings with `CONFIG GET` and `MODULE LIST`. If an ACL blocks either, the value counts as unverifiable and the store refuses to run. Restrict `CONFIG SET` with ACLs if you need to, but leave `CONFIG GET` and `MODULE LIST` allowed for Runwick's user. Do not remove `CONFIG` with `rename-command`. Managed Redis services that hide `CONFIG` are not supported. If you name a user (`user=` in the connection string), Runwick also checks with `ACL WHOAMI` that it is connected as that user and refuses with `primary_authentication_failed` otherwise: the Redis client otherwise falls back to the `default` user when the password is wrong and `default` is open. Leave `ACL WHOAMI` allowed too.
 
 </Callout>
 
