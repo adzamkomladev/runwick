@@ -1,0 +1,179 @@
+{
+  "system": "runwick-redis",
+  "store": "redis",
+  "mode": "steady",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "clocks": {
+    "offerWindowSeconds": 30.01,
+    "completedDuringOffers": 2999,
+    "secondsToClearAfterOffers": 0.03
+  },
+  "storeViewers": 0,
+  "storeWarmupSeconds": 0,
+  "storeSnapshotPolls": 0,
+  "storeSnapshotPollsWithDiagnostics": 0,
+  "offeredPerSec": 100,
+  "offered": 3001,
+  "seconds": 30,
+  "inserted": 3001,
+  "dispatchCalls": 16,
+  "failedDispatch": 0,
+  "failedDispatchByCode": {},
+  "completed": 3001,
+  "completedByEndOfOffers": 2999,
+  "completionsPerSec": 99.9,
+  "delayMs": 0,
+  "enqueueLatencyMs": {
+    "p50": 1.6,
+    "p95": 2.46,
+    "p99": 3.72
+  },
+  "latencyMs": {
+    "p50": 27.24,
+    "p95": 49.48,
+    "p99": 52.05,
+    "max": 190.74
+  },
+  "latencySamples": 3001,
+  "finishReplayed": 0,
+  "batchClaims": 763,
+  "reservesSent": 1366,
+  "claimsInFlightHighWater": 0,
+  "invocations": 3001,
+  "finishesSent": 3001,
+  "finishManyCalls": 673,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 131092480,
+  "trace": {
+    "phase:Admission:engineLane": {
+      "count": 1998,
+      "meanMs": 0.001,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0,
+      "p95Ms": 0.002,
+      "p99Ms": 0.005,
+      "maxMs": 0.452
+    },
+    "phase:Finish:engineLane": {
+      "count": 1773,
+      "meanMs": 0,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0,
+      "p95Ms": 0.001,
+      "p99Ms": 0.002,
+      "maxMs": 0.043
+    },
+    "stage:due-\u003EhandlerInvoked": {
+      "count": 3001,
+      "meanMs": 25.198,
+      "minMs": 2.033,
+      "p01Ms": 3.098,
+      "p50Ms": 25.007,
+      "p95Ms": 47.05,
+      "p99Ms": 49.002,
+      "maxMs": 85.849
+    },
+    "stage:handlerInvoked-\u003Efinished": {
+      "count": 3001,
+      "meanMs": 2.536,
+      "minMs": 1.026,
+      "p01Ms": 1.154,
+      "p50Ms": 2.21,
+      "p95Ms": 3.415,
+      "p99Ms": 5.047,
+      "maxMs": 62.199
+    },
+    "stage:reserved-\u003Efinished": {
+      "count": 3001,
+      "meanMs": 2.797,
+      "minMs": 1.121,
+      "p01Ms": 1.261,
+      "p50Ms": 2.367,
+      "p95Ms": 3.668,
+      "p99Ms": 5.27,
+      "maxMs": 91.687
+    },
+    "stage:reserved-\u003EhandlerInvoked": {
+      "count": 3001,
+      "meanMs": 0.261,
+      "minMs": 0.04,
+      "p01Ms": 0.058,
+      "p50Ms": 0.121,
+      "p95Ms": 0.377,
+      "p99Ms": 0.845,
+      "maxMs": 41.502
+    }
+  },
+  "traceCounters": {
+    "redis:cleanup:R": 14,
+    "redis:describe:NONE": 1,
+    "redis:describe:OK": 5,
+    "redis:dispatch:R": 3001,
+    "redis:expired:OK": 5,
+    "redis:finish:R": 1100,
+    "redis:finish_many:R": 673,
+    "redis:presence:R": 8,
+    "redis:probe:OK": 605,
+    "redis:register_application:R": 1,
+    "redis:register_queue:R": 1,
+    "redis:reserve_and_begin:R": 1366
+  },
+  "writerQueueMs": {},
+  "pickupMs": {
+    "p50": 25.007,
+    "p99": 49.002,
+    "max": 85.849
+  },
+  "gc": {
+    "pauseTotalMs": 64.9,
+    "pauseTimePercentage": 0.21,
+    "gen0": 46,
+    "gen1": 8,
+    "gen2": 6,
+    "allocatedMB": 409.2,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "redis",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "workerSlots": 16,
+    "producerSlots": 16,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 4
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 3001,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 0,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}

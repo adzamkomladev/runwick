@@ -1,0 +1,25 @@
+dotnet /home/runner/work/runwick/runwick/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll writefloor --store redis --callers 1 --n 2000 --redis 127.0.0.1:56392 --out /home/runner/work/runwick/runwick/results/writefloor-redis--normal--floor-c1--r5.raw.json
+{
+  "system": "writefloor-redis",
+  "mode": "writefloor",
+  "jobs": 2000,
+  "writesPerSec": 1839.1,
+  "meanMicrosPerWrite": 543.7,
+  "latencyMicros": {
+    "p50": 530.9,
+    "p95": 651.9,
+    "p99": 801
+  },
+  "settings": {
+    "store": "redis",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "n": 2000,
+    "appendfsync": "always",
+    "appendonly": "yes"
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795524582965
+@@PHASE timed-end 1795524584053

@@ -1,0 +1,18 @@
+{
+  "system": "wolverine 6.65.1 (redis)",
+  "mode": "bulk",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "bulk",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "seedCallers": 16,
+    "sendInline": true,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 4
+  },
+  "skipped": "Wolverine has no bulk-send API"
+}

@@ -1,0 +1,39 @@
+dotnet /home/runner/work/runwick/runwick/eng/bench-compare/bullmq-dotnet/bin/Release/net10.0/bench-bullmq-dotnet.dll --backend redis --redis 127.0.0.1:56392 --mode steady --n 0 --workers 16 --rate 100 --seconds 30 --out /home/runner/work/runwick/runwick/results/bullmq-dotnet-redis--normal--steady-100--r3.raw.json
+{
+  "system": "bullmq-dotnet 1.3.7 (redis)",
+  "mode": "steady",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "removeOnComplete": 1000,
+    "serverGC": true,
+    "cores": 4
+  },
+  "offeredPerSec": 100,
+  "inserted": 3001,
+  "completed": 3001,
+  "completionsPerSec": 100,
+  "latencyMs": {
+    "p50": 2,
+    "p95": 3,
+    "p99": 4,
+    "max": 48
+  },
+  "outcome": {
+    "waiting": 0,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 3001,
+    "failedEvents": 0
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795523920572
+@@PHASE timed-end 1795523950583

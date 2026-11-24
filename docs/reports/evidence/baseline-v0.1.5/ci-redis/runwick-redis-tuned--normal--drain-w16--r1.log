@@ -1,0 +1,128 @@
+dotnet /home/runner/work/runwick/runwick/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll bench --store redis --mode drain --n 20000 --workers 16 --redis 127.0.0.1:56392 --calls 1 --max-seconds 600 --buffered-finish --claim-ahead 16 --claims-in-flight 2 --out /home/runner/work/runwick/runwick/results/runwick-redis-tuned--normal--drain-w16--r1.raw.json
+{
+  "system": "runwick-redis",
+  "store": "redis",
+  "mode": "drain",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "insertSeconds": 3.923,
+  "insertCalls": 1,
+  "readyBeforeStart": {
+    "pending": 19997,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 19997,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  },
+  "progress": [
+    [
+      1,
+      2880
+    ],
+    [
+      2,
+      6272
+    ],
+    [
+      3,
+      9536
+    ],
+    [
+      4,
+      12832
+    ],
+    [
+      5,
+      16128
+    ],
+    [
+      6,
+      19360
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 6.224,
+    "firstClaimSeconds": 6.223,
+    "firstClaimJobsPerSec": 3214,
+    "workerStartJobsPerSec": 3213.4
+  },
+  "jobs": 20000,
+  "accepted": 20000,
+  "failedDispatch": 0,
+  "finished": 20000,
+  "drained": true,
+  "drainWriteCommits": null,
+  "startToFirstClaimMs": 51.5,
+  "drainSeconds": 6.223,
+  "completionsPerSec": 3214,
+  "finishReplayed": 0,
+  "batchClaims": 1816,
+  "reservesSent": 1818,
+  "claimsInFlightHighWater": 2,
+  "invocations": 20000,
+  "finishesSent": 20000,
+  "finishManyCalls": 625,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 279621632,
+  "gc": {
+    "pauseTotalMs": 307.7,
+    "pauseTimePercentage": 2.51,
+    "gen0": 119,
+    "gen1": 72,
+    "gen2": 6,
+    "allocatedMB": 2010.5,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "redis",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "producerSlots": 2,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": true,
+    "claimAhead": 16,
+    "claimsInFlight": 2,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 4
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 19997,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 0,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795522674033
+@@PHASE seed-end 1795522677957
+@@PHASE timed-start 1795522679662
+@@PHASE timed-end 1795522685938

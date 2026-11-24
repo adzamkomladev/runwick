@@ -1,0 +1,80 @@
+dotnet /home/runner/work/runwick/runwick/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll bench --store redis --mode enqueue --n 10000 --workers 16 --redis 127.0.0.1:56392 --calls 16 --out /home/runner/work/runwick/runwick/results/runwick-redis--normal--enqueue-c16--r2.raw.json
+{
+  "system": "runwick-redis",
+  "store": "redis",
+  "mode": "enqueue",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "jobs": 10000,
+  "warmupJobs": 0,
+  "calls": 16,
+  "insertsPerSec": 2176.3,
+  "insertLatencyMs": {
+    "p50": 7,
+    "p95": 8.99,
+    "p99": 10.39
+  },
+  "producerCalls": 16,
+  "finishReplayed": 0,
+  "batchClaims": 0,
+  "reservesSent": 0,
+  "claimsInFlightHighWater": 0,
+  "invocations": 0,
+  "finishesSent": 0,
+  "finishManyCalls": 0,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 109842432,
+  "gc": {
+    "pauseTotalMs": 71.7,
+    "pauseTimePercentage": 1.46,
+    "gen0": 56,
+    "gen1": 18,
+    "gen2": 2,
+    "allocatedMB": 539.8,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "redis",
+    "mode": "enqueue",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "workerSlots": 16,
+    "producerSlots": 16,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 4
+  },
+  "outcome": {
+    "pending": 9999,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 9999,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795523420882
+@@PHASE timed-end 1795523425477

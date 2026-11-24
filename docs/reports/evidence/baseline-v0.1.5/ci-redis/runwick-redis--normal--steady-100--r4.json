@@ -1,0 +1,205 @@
+{
+  "system": "runwick-redis",
+  "workload": "normal",
+  "test": "steady-100",
+  "round": 4,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "runwick v0.1.5-12-ga90e686",
+  "command": [
+    "dotnet",
+    "/home/runner/work/runwick/runwick/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll",
+    "bench",
+    "--store",
+    "redis",
+    "--mode",
+    "steady",
+    "--n",
+    "0",
+    "--workers",
+    "16",
+    "--redis",
+    "127.0.0.1:56392",
+    "--rate",
+    "100",
+    "--seconds",
+    "30",
+    "--calls",
+    "16",
+    "--out",
+    "/home/runner/work/runwick/runwick/results/runwick-redis--normal--steady-100--r4.raw.json"
+  ],
+  "result": {
+    "system": "runwick-redis",
+    "store": "redis",
+    "mode": "steady",
+    "workers": 16,
+    "payloadBytes": 1024,
+    "bulkChunk": 100,
+    "clocks": {
+      "offerWindowSeconds": 30.01,
+      "completedDuringOffers": 2997,
+      "secondsToClearAfterOffers": 0.01
+    },
+    "storeViewers": 0,
+    "storeWarmupSeconds": 0,
+    "storeSnapshotPolls": 0,
+    "storeSnapshotPollsWithDiagnostics": 0,
+    "offeredPerSec": 100,
+    "offered": 3001,
+    "seconds": 30,
+    "inserted": 3001,
+    "dispatchCalls": 16,
+    "failedDispatch": 0,
+    "failedDispatchByCode": {},
+    "completed": 3001,
+    "completedByEndOfOffers": 2997,
+    "completionsPerSec": 100,
+    "delayMs": 0,
+    "enqueueLatencyMs": {
+      "p50": 1.57,
+      "p95": 2.39,
+      "p99": 3.61
+    },
+    "latencyMs": {
+      "p50": 27.79,
+      "p95": 49.99,
+      "p99": 52.93,
+      "max": 189.93
+    },
+    "latencySamples": 3001,
+    "finishReplayed": 0,
+    "batchClaims": 705,
+    "reservesSent": 1307,
+    "claimsInFlightHighWater": 0,
+    "invocations": 3001,
+    "finishesSent": 3001,
+    "finishManyCalls": 694,
+    "combinedCalls": 0,
+    "combinedClaimed": 0,
+    "combinedFallbacks": 0,
+    "inlineDeclined": {
+      "busy": 0,
+      "closed": 0,
+      "staleHint": 0,
+      "laneShape": 0
+    },
+    "peakWorkingSetBytes": 129474560,
+    "gc": {
+      "pauseTotalMs": 58.3,
+      "pauseTimePercentage": 0.19,
+      "gen0": 42,
+      "gen1": 6,
+      "gen2": 4,
+      "allocatedMB": 390.9,
+      "serverGC": true
+    },
+    "diagnostics": [],
+    "settings": {
+      "store": "redis",
+      "mode": "steady",
+      "payloadBytes": 1024,
+      "callers": 16,
+      "workerSlots": 16,
+      "producerSlots": 16,
+      "bulkChunk": 100,
+      "pgGroup": false,
+      "bufferedFinish": false,
+      "claimAhead": null,
+      "claimsInFlight": null,
+      "usage": true,
+      "jobMs": 0,
+      "serverGC": true,
+      "cores": 4
+    },
+    "outcome": {
+      "pending": 0,
+      "reserved": 0,
+      "running": 0,
+      "retrying": 0,
+      "succeeded": 3001,
+      "failed": 0,
+      "cancelled": 0,
+      "now:pending": 0,
+      "now:scheduled": 0,
+      "now:reserved": 0,
+      "now:running": 0
+    }
+  },
+  "outcome": {
+    "accepted": 3001,
+    "succeeded": 3001,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 31.09,
+      "cpuSeconds": 9.43,
+      "cpuAvgPct": 30.3,
+      "cpuPeakPct": 106.9,
+      "memPeakMB": 112.1,
+      "memAvgMB": 103.1,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 0
+    },
+    "store": {
+      "cpuSeconds": 4.37,
+      "cpuAvgPct": 14.1,
+      "cpuPeakPct": 60.3,
+      "memPeakMB": 138.6,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 38563840,
+      "netRxBytes": 12136192,
+      "netTxBytes": 11954742
+    }
+  },
+  "derived": {
+    "jobs": 3001,
+    "cpuMsPerJob": 4.598,
+    "wireBytesPerJob": 8028,
+    "storeWriteBytesPerJob": 12850,
+    "timed": {
+      "seconds": 30.019,
+      "appCpuSeconds": 8.67,
+      "jobs": 3001,
+      "storeCpuSeconds": 3.908,
+      "storeDiskWriteBytes": 38506496,
+      "storeNetRxBytes": 12106737,
+      "storeNetTxBytes": 10654977,
+      "wireBytesPerJob": 7585,
+      "storeWriteBytesPerJob": 12831,
+      "cpuMsPerJob": 4.191,
+      "counters": {
+        "total_commands_processed": 129208.0,
+        "aof_current_size": 20248759.0,
+        "total_net_input_bytes": 11487983.0,
+        "total_net_output_bytes": 9814057.0
+      },
+      "redisCommandsPerJob": 43.055,
+      "aofBytesPerJob": 6747.337
+    }
+  },
+  "phases": {
+    "timed-start": {
+      "harnessMs": 1795524517214,
+      "counters": {
+        "total_commands_processed": 1523801.0,
+        "aof_current_size": 43408345.0,
+        "total_net_input_bytes": 225147867.0,
+        "total_net_output_bytes": 185456953.0
+      }
+    },
+    "timed-end": {
+      "harnessMs": 1795524547234,
+      "counters": {
+        "total_commands_processed": 1653009.0,
+        "aof_current_size": 63657104.0,
+        "total_net_input_bytes": 236635850.0,
+        "total_net_output_bytes": 195271010.0
+      }
+    }
+  }
+}

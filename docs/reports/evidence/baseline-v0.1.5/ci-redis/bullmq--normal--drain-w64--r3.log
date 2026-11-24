@@ -1,0 +1,56 @@
+node /home/runner/work/runwick/runwick/eng/bench-compare/bullmq/bench.mjs --redis 127.0.0.1:56392 --mode drain --n 20000 --concurrency 64 --max-seconds 600 --out /home/runner/work/runwick/runwick/results/bullmq--normal--drain-w64--r3.raw.json
+{
+  "system": "bullmq 6.7.2",
+  "mode": "drain",
+  "concurrency": 64,
+  "redisAppendfsync": "always",
+  "settings": {
+    "store": "redis",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 64,
+    "bulkChunk": 1000,
+    "redisAppendfsync": "always",
+    "removeOnComplete": 1000,
+    "cores": 4
+  },
+  "readyBeforeStart": {
+    "waiting": 20000,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 0
+  },
+  "progress": [
+    [
+      1,
+      6959
+    ],
+    [
+      2,
+      14415
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 2.707,
+    "workerStartJobsPerSec": 7389.3
+  },
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 2.707,
+  "completionsPerSec": 7389.3,
+  "outcome": {
+    "waiting": 0,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 20000
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795523994661
+@@PHASE seed-end 1795523996199
+@@PHASE timed-start 1795523996200
+@@PHASE timed-end 1795523998908

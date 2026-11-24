@@ -1,0 +1,117 @@
+{
+  "system": "runwick-redis",
+  "store": "redis",
+  "mode": "drain",
+  "workers": 64,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "insertSeconds": 3.741,
+  "insertCalls": 1,
+  "readyBeforeStart": {
+    "pending": 19997,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 19997,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  },
+  "progress": [
+    [
+      1,
+      3360
+    ],
+    [
+      2,
+      7488
+    ],
+    [
+      3,
+      11520
+    ],
+    [
+      4,
+      15488
+    ],
+    [
+      5,
+      19360
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 5.157,
+    "firstClaimSeconds": 5.156,
+    "firstClaimJobsPerSec": 3878.7,
+    "workerStartJobsPerSec": 3878.2
+  },
+  "jobs": 20000,
+  "accepted": 20000,
+  "failedDispatch": 0,
+  "finished": 20000,
+  "drained": true,
+  "drainWriteCommits": null,
+  "startToFirstClaimMs": 43,
+  "drainSeconds": 5.156,
+  "completionsPerSec": 3878.7,
+  "finishReplayed": 0,
+  "batchClaims": 631,
+  "reservesSent": 632,
+  "claimsInFlightHighWater": 2,
+  "invocations": 20000,
+  "finishesSent": 20000,
+  "finishManyCalls": 625,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 237273088,
+  "gc": {
+    "pauseTotalMs": 388.6,
+    "pauseTimePercentage": 3.51,
+    "gen0": 116,
+    "gen1": 69,
+    "gen2": 14,
+    "allocatedMB": 1981.5,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "redis",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 64,
+    "producerSlots": 2,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": true,
+    "claimAhead": 16,
+    "claimsInFlight": 2,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 4
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 19997,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 0,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}

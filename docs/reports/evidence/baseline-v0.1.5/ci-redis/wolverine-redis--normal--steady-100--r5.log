@@ -1,0 +1,37 @@
+dotnet /home/runner/work/runwick/runwick/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll --transport redis --redis 127.0.0.1:56392 --mode steady --n 0 --workers 16 --rate 100 --seconds 30 --out /home/runner/work/runwick/runwick/results/wolverine-redis--normal--steady-100--r5.raw.json
+{
+  "system": "wolverine 6.65.1 (redis)",
+  "mode": "steady",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "seedCallers": 16,
+    "sendInline": true,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 4
+  },
+  "offeredPerSec": 100,
+  "inserted": 3001,
+  "completed": 3001,
+  "completionsPerSec": 99.6,
+  "latencyMs": {
+    "p50": 297,
+    "p95": 761,
+    "p99": 829,
+    "max": 865
+  },
+  "outcome": {
+    "streamEntries": 3002,
+    "pending": 0,
+    "lag": 0
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795525119475
+@@PHASE timed-end 1795525149588

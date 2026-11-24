@@ -1,0 +1,62 @@
+dotnet /home/runner/work/runwick/runwick/eng/bench-compare/bullmq-dotnet/bin/Release/net10.0/bench-bullmq-dotnet.dll --backend redis --redis 127.0.0.1:56392 --mode drain --n 20000 --workers 64 --max-seconds 600 --out /home/runner/work/runwick/runwick/results/bullmq-dotnet-redis--normal--drain-w64--r5.raw.json
+{
+  "system": "bullmq-dotnet 1.3.7 (redis)",
+  "mode": "drain",
+  "workers": 64,
+  "settings": {
+    "store": "redis",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 64,
+    "bulkChunk": 1000,
+    "removeOnComplete": 1000,
+    "serverGC": true,
+    "cores": 4
+  },
+  "readyBeforeStart": {
+    "waiting": 20000,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 0,
+    "failedEvents": 0
+  },
+  "progress": [
+    [
+      1,
+      5168
+    ],
+    [
+      2,
+      12073
+    ],
+    [
+      3,
+      19840
+    ]
+  ],
+  "failed": 0,
+  "clocks": {
+    "workerStartSeconds": 3.022,
+    "workerStartJobsPerSec": 6617.3
+  },
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 3.022,
+  "completionsPerSec": 6617.3,
+  "outcome": {
+    "waiting": 0,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 20000,
+    "failedEvents": 0
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795525199813
+@@PHASE seed-end 1795525201798
+@@PHASE timed-start 1795525201814
+@@PHASE timed-end 1795525204836

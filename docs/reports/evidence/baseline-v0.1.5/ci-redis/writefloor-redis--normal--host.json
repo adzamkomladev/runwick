@@ -1,0 +1,10 @@
+{
+  "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+  "cores": 4,
+  "memMB": 15982,
+  "kernel": "7.0.0-1017-azure",
+  "commit": "a90e686",
+  "cpuIters": 50000,
+  "runner": "GitHub Actions 1000009043",
+  "when": "2026-11-24T12:49:42Z"
+}

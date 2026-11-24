@@ -1,0 +1,76 @@
+{
+  "system": "wolverine-redis",
+  "workload": "normal",
+  "test": "bulk",
+  "round": 1,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "skipped",
+  "version": "wolverine 6.65.1 (redis)",
+  "command": [
+    "dotnet",
+    "/home/runner/work/runwick/runwick/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll",
+    "--transport",
+    "redis",
+    "--redis",
+    "127.0.0.1:56392",
+    "--mode",
+    "bulk",
+    "--n",
+    "20000",
+    "--workers",
+    "16",
+    "--out",
+    "/home/runner/work/runwick/runwick/results/wolverine-redis--normal--bulk--r1.raw.json"
+  ],
+  "result": {
+    "system": "wolverine 6.65.1 (redis)",
+    "mode": "bulk",
+    "workers": 16,
+    "settings": {
+      "store": "redis",
+      "mode": "bulk",
+      "payloadBytes": 1024,
+      "callers": 1,
+      "workerSlots": 16,
+      "seedCallers": 16,
+      "sendInline": true,
+      "durabilityMode": "Solo",
+      "serverGC": true,
+      "cores": 4
+    },
+    "skipped": "Wolverine has no bulk-send API"
+  },
+  "outcome": null,
+  "resources": {
+    "app": {
+      "seconds": 0.19,
+      "cpuSeconds": 0.25,
+      "cpuAvgPct": 128.4,
+      "cpuPeakPct": 0,
+      "memPeakMB": 2.0,
+      "memAvgMB": 2.0,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 0
+    },
+    "store": {
+      "cpuSeconds": 0.0,
+      "cpuAvgPct": 1.7,
+      "cpuPeakPct": 1.7,
+      "memPeakMB": 59.6,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 4096,
+      "netRxBytes": 2607,
+      "netTxBytes": 3426
+    }
+  },
+  "derived": {
+    "jobs": 0,
+    "cpuMsPerJob": null,
+    "wireBytesPerJob": null,
+    "storeWriteBytesPerJob": null,
+    "timed": null
+  },
+  "phases": {}
+}

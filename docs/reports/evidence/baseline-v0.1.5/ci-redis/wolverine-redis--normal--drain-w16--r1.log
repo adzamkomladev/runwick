@@ -1,0 +1,63 @@
+dotnet /home/runner/work/runwick/runwick/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll --transport redis --redis 127.0.0.1:56392 --mode drain --n 20000 --workers 16 --max-seconds 600 --out /home/runner/work/runwick/runwick/results/wolverine-redis--normal--drain-w16--r1.raw.json
+{
+  "system": "wolverine 6.65.1 (redis)",
+  "mode": "drain",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "seedCallers": 16,
+    "sendInline": true,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 4
+  },
+  "readyBeforeStart": {
+    "streamEntries": 20000
+  },
+  "progress": [
+    [
+      1.7,
+      16
+    ],
+    [
+      2,
+      2091
+    ],
+    [
+      3,
+      9324
+    ],
+    [
+      4,
+      18056
+    ]
+  ],
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 4.216,
+  "completionsPerSec": 4743.8,
+  "startupSeconds": 1.73,
+  "completionsPerSecExcludingStartup": 8035.9,
+  "clocks": {
+    "workerStartSeconds": 4.216,
+    "workerStartJobsPerSec": 4743.8,
+    "firstClaimSeconds": 2.489,
+    "firstClaimJobsPerSec": 8035.9,
+    "handlerReturns": 20000
+  },
+  "outcome": {
+    "streamEntries": 20000,
+    "pending": 0,
+    "lag": 0
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795522775813
+@@PHASE seed-end 1795522778717
+@@PHASE timed-start 1795522778727
+@@PHASE timed-end 1795522782943

@@ -1,0 +1,52 @@
+{
+  "system": "wolverine 6.65.1 (redis)",
+  "mode": "drain",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "seedCallers": 16,
+    "sendInline": true,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 4
+  },
+  "readyBeforeStart": {
+    "streamEntries": 20000
+  },
+  "progress": [
+    [
+      1.2,
+      90
+    ],
+    [
+      2,
+      6716
+    ],
+    [
+      3,
+      13795
+    ]
+  ],
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 3.786,
+  "completionsPerSec": 5282.7,
+  "startupSeconds": 1.18,
+  "completionsPerSecExcludingStartup": 7665.8,
+  "clocks": {
+    "workerStartSeconds": 3.786,
+    "workerStartJobsPerSec": 5282.7,
+    "firstClaimSeconds": 2.609,
+    "firstClaimJobsPerSec": 7665.8,
+    "handlerReturns": 20000
+  },
+  "outcome": {
+    "streamEntries": 20000,
+    "pending": 0,
+    "lag": 0
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "system": "bullmq-dotnet 1.3.7 (redis)",
+  "mode": "drain",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "removeOnComplete": 1000,
+    "serverGC": true,
+    "cores": 4
+  },
+  "readyBeforeStart": {
+    "waiting": 20000,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 0,
+    "failedEvents": 0
+  },
+  "progress": [
+    [
+      1,
+      4597
+    ],
+    [
+      2,
+      9678
+    ],
+    [
+      3,
+      15285
+    ]
+  ],
+  "failed": 0,
+  "clocks": {
+    "workerStartSeconds": 3.843,
+    "workerStartJobsPerSec": 5204.1
+  },
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 3.843,
+  "completionsPerSec": 5204.1,
+  "outcome": {
+    "waiting": 0,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 20000,
+    "failedEvents": 0
+  }
+}

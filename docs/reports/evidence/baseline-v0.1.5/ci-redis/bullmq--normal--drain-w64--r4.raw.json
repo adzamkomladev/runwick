@@ -1,0 +1,49 @@
+{
+  "system": "bullmq 6.7.2",
+  "mode": "drain",
+  "concurrency": 64,
+  "redisAppendfsync": "always",
+  "settings": {
+    "store": "redis",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 64,
+    "bulkChunk": 1000,
+    "redisAppendfsync": "always",
+    "removeOnComplete": 1000,
+    "cores": 4
+  },
+  "readyBeforeStart": {
+    "waiting": 20000,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 0
+  },
+  "progress": [
+    [
+      1,
+      6888
+    ],
+    [
+      2,
+      14441
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 2.706,
+    "workerStartJobsPerSec": 7390.4
+  },
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 2.706,
+  "completionsPerSec": 7390.4,
+  "outcome": {
+    "waiting": 0,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 20000
+  }
+}

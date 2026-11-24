@@ -1,0 +1,174 @@
+{
+  "system": "bullmq",
+  "workload": "normal",
+  "test": "drain-w16",
+  "round": 1,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "bullmq 6.7.2",
+  "command": [
+    "node",
+    "/home/runner/work/runwick/runwick/eng/bench-compare/bullmq/bench.mjs",
+    "--redis",
+    "127.0.0.1:56392",
+    "--mode",
+    "drain",
+    "--n",
+    "20000",
+    "--concurrency",
+    "16",
+    "--max-seconds",
+    "600",
+    "--out",
+    "/home/runner/work/runwick/runwick/results/bullmq--normal--drain-w16--r1.raw.json"
+  ],
+  "result": {
+    "system": "bullmq 6.7.2",
+    "mode": "drain",
+    "concurrency": 16,
+    "redisAppendfsync": "always",
+    "settings": {
+      "store": "redis",
+      "mode": "drain",
+      "payloadBytes": 1024,
+      "callers": 1,
+      "workerSlots": 16,
+      "bulkChunk": 1000,
+      "redisAppendfsync": "always",
+      "removeOnComplete": 1000,
+      "cores": 4
+    },
+    "readyBeforeStart": {
+      "waiting": 20000,
+      "active": 0,
+      "delayed": 0,
+      "failed": 0,
+      "completedEvents": 0
+    },
+    "progress": [
+      [
+        1,
+        5099
+      ],
+      [
+        2,
+        10652
+      ],
+      [
+        3,
+        16269
+      ]
+    ],
+    "clocks": {
+      "workerStartSeconds": 3.645,
+      "workerStartJobsPerSec": 5487.4
+    },
+    "jobs": 20000,
+    "finished": 20000,
+    "drainSeconds": 3.645,
+    "completionsPerSec": 5487.4,
+    "outcome": {
+      "waiting": 0,
+      "active": 0,
+      "delayed": 0,
+      "failed": 0,
+      "completedEvents": 20000
+    }
+  },
+  "outcome": {
+    "accepted": 20000,
+    "succeeded": 20000,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 5.34,
+      "cpuSeconds": 2.88,
+      "cpuAvgPct": 53.9,
+      "cpuPeakPct": 89.1,
+      "memPeakMB": 243.4,
+      "memAvgMB": 192.0,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 0
+    },
+    "store": {
+      "cpuSeconds": 3.83,
+      "cpuAvgPct": 71.7,
+      "cpuPeakPct": 93.1,
+      "memPeakMB": 95.0,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 72155136,
+      "netRxBytes": 43247896,
+      "netTxBytes": 26699465
+    }
+  },
+  "derived": {
+    "jobs": 20000,
+    "cpuMsPerJob": 0.336,
+    "wireBytesPerJob": 3497,
+    "storeWriteBytesPerJob": 3608,
+    "timed": {
+      "seconds": 3.637,
+      "appCpuSeconds": 1.88,
+      "jobs": 20000,
+      "storeCpuSeconds": 2.783,
+      "storeDiskWriteBytes": 38096896,
+      "storeNetRxBytes": 14906737,
+      "storeNetTxBytes": 26386775,
+      "wireBytesPerJob": 2065,
+      "storeWriteBytesPerJob": 1905,
+      "cpuMsPerJob": 0.233,
+      "counters": {
+        "total_commands_processed": 558102.0,
+        "aof_current_size": -41332960.0,
+        "total_net_input_bytes": 13450109.0,
+        "total_net_output_bytes": 26076815.0
+      },
+      "redisCommandsPerJob": 27.905,
+      "aofBytesPerJob": -2066.648
+    },
+    "confirmedPerSec_workerStart": 5487.0,
+    "confirmedPerSec_firstClaim": 5487.0
+  },
+  "phases": {
+    "seed-start": {
+      "harnessMs": 1795522958185,
+      "counters": {
+        "total_commands_processed": 558145.0,
+        "aof_current_size": 36460947.0,
+        "total_net_input_bytes": 87699403.0,
+        "total_net_output_bytes": 811365.0
+      }
+    },
+    "seed-end": {
+      "harnessMs": 1795522959706,
+      "counters": {
+        "total_commands_processed": 738170.0,
+        "aof_current_size": 69008930.0,
+        "total_net_input_bytes": 115976447.0,
+        "total_net_output_bytes": 1061675.0
+      }
+    },
+    "timed-start": {
+      "harnessMs": 1795522959707,
+      "counters": {
+        "total_commands_processed": 738240.0,
+        "aof_current_size": 69011711.0,
+        "total_net_input_bytes": 115994388.0,
+        "total_net_output_bytes": 1082746.0
+      }
+    },
+    "timed-end": {
+      "harnessMs": 1795522963353,
+      "counters": {
+        "total_commands_processed": 1296342.0,
+        "aof_current_size": 27678751.0,
+        "total_net_input_bytes": 129444497.0,
+        "total_net_output_bytes": 27159561.0
+      }
+    }
+  }
+}

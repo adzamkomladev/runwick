@@ -1,0 +1,130 @@
+{
+  "system": "bullmq",
+  "workload": "normal",
+  "test": "bulk-100",
+  "round": 2,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "bullmq 6.7.2",
+  "command": [
+    "node",
+    "/home/runner/work/runwick/runwick/eng/bench-compare/bullmq/bench.mjs",
+    "--redis",
+    "127.0.0.1:56392",
+    "--mode",
+    "bulk",
+    "--n",
+    "20000",
+    "--concurrency",
+    "16",
+    "--batch",
+    "100",
+    "--out",
+    "/home/runner/work/runwick/runwick/results/bullmq--normal--bulk-100--r2.raw.json"
+  ],
+  "result": {
+    "system": "bullmq 6.7.2",
+    "mode": "bulk",
+    "concurrency": 16,
+    "redisAppendfsync": "always",
+    "settings": {
+      "store": "redis",
+      "mode": "bulk",
+      "payloadBytes": 1024,
+      "callers": 1,
+      "workerSlots": 16,
+      "bulkChunk": 100,
+      "redisAppendfsync": "always",
+      "removeOnComplete": 1000,
+      "cores": 4
+    },
+    "jobs": 20000,
+    "batch": 100,
+    "calls": 1,
+    "accepted": 20000,
+    "insertsPerSec": 12145.4,
+    "outcome": {
+      "waiting": 20000,
+      "active": 0,
+      "delayed": 0,
+      "failed": 0,
+      "completedEvents": 0
+    }
+  },
+  "outcome": {
+    "accepted": 20000,
+    "succeeded": 0,
+    "failed": 0,
+    "unfinished": 20000
+  },
+  "resources": {
+    "app": {
+      "seconds": 1.85,
+      "cpuSeconds": 1.01,
+      "cpuAvgPct": 54.8,
+      "cpuPeakPct": 81.3,
+      "memPeakMB": 150.7,
+      "memAvgMB": 102.2,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 0
+    },
+    "store": {
+      "cpuSeconds": 1.18,
+      "cpuAvgPct": 64.0,
+      "cpuPeakPct": 68.4,
+      "memPeakMB": 105.0,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 38916096,
+      "netRxBytes": 28339610,
+      "netTxBytes": 297943
+    }
+  },
+  "derived": {
+    "jobs": 20000,
+    "cpuMsPerJob": 0.11,
+    "wireBytesPerJob": 1432,
+    "storeWriteBytesPerJob": 1946,
+    "timed": {
+      "seconds": 1.648,
+      "appCpuSeconds": 0.78,
+      "jobs": 20000,
+      "storeCpuSeconds": 1.022,
+      "storeDiskWriteBytes": 35016704,
+      "storeNetRxBytes": 28337791,
+      "storeNetTxBytes": 282368,
+      "wireBytesPerJob": 1431,
+      "storeWriteBytesPerJob": 1751,
+      "cpuMsPerJob": 0.09,
+      "counters": {
+        "total_commands_processed": 180014.0,
+        "aof_current_size": -31832051.0,
+        "total_net_input_bytes": 28276644.0,
+        "total_net_output_bytes": 221829.0
+      },
+      "redisCommandsPerJob": 9.001,
+      "aofBytesPerJob": -1591.603
+    }
+  },
+  "phases": {
+    "timed-start": {
+      "harnessMs": 1795523034992,
+      "counters": {
+        "total_commands_processed": 378123.0,
+        "aof_current_size": 68267970.0,
+        "total_net_input_bytes": 59422514.0,
+        "total_net_output_bytes": 575503.0
+      }
+    },
+    "timed-end": {
+      "harnessMs": 1795523036640,
+      "counters": {
+        "total_commands_processed": 558137.0,
+        "aof_current_size": 36435919.0,
+        "total_net_input_bytes": 87699158.0,
+        "total_net_output_bytes": 797332.0
+      }
+    }
+  }
+}

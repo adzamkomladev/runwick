@@ -1,0 +1,34 @@
+node /home/runner/work/runwick/runwick/eng/bench-compare/bullmq/bench.mjs --redis 127.0.0.1:56392 --mode bulk --n 20000 --concurrency 16 --out /home/runner/work/runwick/runwick/results/bullmq--normal--bulk--r5.raw.json
+{
+  "system": "bullmq 6.7.2",
+  "mode": "bulk",
+  "concurrency": 16,
+  "redisAppendfsync": "always",
+  "settings": {
+    "store": "redis",
+    "mode": "bulk",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "redisAppendfsync": "always",
+    "removeOnComplete": 1000,
+    "cores": 4
+  },
+  "jobs": 20000,
+  "batch": 1000,
+  "calls": 1,
+  "accepted": 20000,
+  "insertsPerSec": 13149.9,
+  "outcome": {
+    "waiting": 20000,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 0
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795525270664
+@@PHASE timed-end 1795525272186

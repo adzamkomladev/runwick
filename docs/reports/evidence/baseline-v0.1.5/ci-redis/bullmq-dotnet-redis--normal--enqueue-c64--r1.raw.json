@@ -1,0 +1,33 @@
+{
+  "system": "bullmq-dotnet 1.3.7 (redis)",
+  "mode": "enqueue",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "enqueue",
+    "payloadBytes": 1024,
+    "callers": 64,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "removeOnComplete": 1000,
+    "serverGC": true,
+    "cores": 4
+  },
+  "jobs": 10000,
+  "calls": 64,
+  "insertsPerSec": 11917.2,
+  "accepted": 10000,
+  "insertLatencyMs": {
+    "p50": 4.68,
+    "p95": 6.74,
+    "p99": 8.65
+  },
+  "outcome": {
+    "waiting": 10000,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 0,
+    "failedEvents": 0
+  }
+}
