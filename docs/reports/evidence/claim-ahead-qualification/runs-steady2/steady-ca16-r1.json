@@ -1,0 +1,64 @@
+{
+  "system": "runwick-redis",
+  "store": "redis",
+  "mode": "steady",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "storeViewers": 0,
+  "storeWarmupSeconds": 0,
+  "storeSnapshotPolls": 0,
+  "storeSnapshotPollsWithDiagnostics": 0,
+  "offeredPerSec": 500,
+  "offered": 15001,
+  "seconds": 30,
+  "inserted": 8739,
+  "dispatchCalls": 4,
+  "failedDispatch": 6262,
+  "failedDispatchByCode": {
+    "local_capacity_exceeded": 6262
+  },
+  "completed": 8739,
+  "completedByEndOfOffers": 8664,
+  "completionsPerSec": 289.1,
+  "delayMs": 0,
+  "enqueueLatencyMs": {
+    "p50": 216.03,
+    "p95": 354.22,
+    "p99": 441
+  },
+  "latencyMs": {
+    "p50": 258.82,
+    "p95": 412.94,
+    "p99": 501.88,
+    "max": 587.08
+  },
+  "latencySamples": 8739,
+  "finishReplayed": 0,
+  "batchClaims": 2062,
+  "reservesSent": 2126,
+  "claimsInFlightHighWater": 2,
+  "invocations": 8739,
+  "finishesSent": 8739,
+  "finishManyCalls": 813,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 155693056,
+  "gc": {
+    "pauseTotalMs": 282.2,
+    "pauseTimePercentage": 0.91,
+    "gen0": 59,
+    "gen1": 29,
+    "gen2": 5,
+    "allocatedMB": 1086.6,
+    "serverGC": true
+  },
+  "diagnostics": []
+}

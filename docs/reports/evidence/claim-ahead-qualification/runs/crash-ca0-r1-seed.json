@@ -1,0 +1,46 @@
+{
+  "system": "runwick-redis",
+  "store": "redis",
+  "mode": "bulk",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "batchItems": 100,
+  "callLatencyMs": {
+    "p50": 31.4,
+    "p95": 144.3,
+    "p99": 369.98,
+    "max": 369.98
+  },
+  "jobs": 3000,
+  "calls": 1,
+  "failedDispatch": 0,
+  "insertsPerSec": 2034.6,
+  "finishReplayed": 0,
+  "batchClaims": 0,
+  "reservesSent": 0,
+  "claimsInFlightHighWater": 0,
+  "invocations": 0,
+  "finishesSent": 0,
+  "finishManyCalls": 0,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 108019712,
+  "gc": {
+    "pauseTotalMs": 41.5,
+    "pauseTimePercentage": 1.93,
+    "gen0": 10,
+    "gen1": 7,
+    "gen2": 1,
+    "allocatedMB": 120.6,
+    "serverGC": true
+  },
+  "diagnostics": []
+}

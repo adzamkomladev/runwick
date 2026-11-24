@@ -1,0 +1,44 @@
+{
+ "steady-ca0-r1": {
+  "done/s": 217.5,
+  "p50": 326.4,
+  "p99": 925.69,
+  "max": 1132.57,
+  "refused": null
+ },
+ "steady-ca16-r1": {
+  "done/s": 289.1,
+  "p50": 258.82,
+  "p99": 501.88,
+  "max": 587.08,
+  "refused": null
+ },
+ "steady-ca64-r1": {
+  "done/s": 211.6,
+  "p50": 331.88,
+  "p99": 1006.64,
+  "max": 1358.62,
+  "refused": null
+ },
+ "steady-ca64-r2": {
+  "done/s": 281.5,
+  "p50": 272.64,
+  "p99": 679.99,
+  "max": 892.62,
+  "refused": null
+ },
+ "steady-ca16-r2": {
+  "done/s": 263.2,
+  "p50": 273.62,
+  "p99": 638.73,
+  "max": 831.16,
+  "refused": null
+ },
+ "steady-ca0-r2": {
+  "done/s": 276.7,
+  "p50": 250.49,
+  "p99": 672.13,
+  "max": 878.28,
+  "refused": null
+ }
+}

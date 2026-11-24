@@ -1,0 +1,22 @@
+{
+ "crash-ca64-r1": {
+  "finished": 2984,
+  "A finished": 528,
+  "A running at kill": 32,
+  "waited for lease": 80,
+  "of which never started by A": 64,
+  "lease wait s": 66.4,
+  "kill to all done s": 80.1,
+  "store states": "{\"succeeded\":3000}"
+ },
+ "crash-ca64-r2": {
+  "finished": 3000,
+  "A finished": 597,
+  "A running at kill": 27,
+  "waited for lease": 91,
+  "of which never started by A": 64,
+  "lease wait s": 62.7,
+  "kill to all done s": 75.5,
+  "store states": "{\"succeeded\":3000}"
+ }
+}

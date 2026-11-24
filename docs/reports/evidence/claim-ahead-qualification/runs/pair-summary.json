@@ -1,0 +1,62 @@
+{
+ "pair-ca0-r1": {
+  "jobs": 7440,
+  "started": 7440,
+  "pickup p50": 155,
+  "p95": 318,
+  "p99": 547,
+  "max": 824,
+  "share A": 0.498,
+  "share B": 0.502
+ },
+ "pair-ca16-r1": {
+  "jobs": 5293,
+  "started": 5293,
+  "pickup p50": 252,
+  "p95": 695,
+  "p99": 823,
+  "max": 1349,
+  "share A": 0.548,
+  "share B": 0.452
+ },
+ "pair-ca64-r1": {
+  "jobs": 7992,
+  "started": 7992,
+  "pickup p50": 224,
+  "p95": 412,
+  "p99": 571,
+  "max": 1656,
+  "share A": 0.716,
+  "share B": 0.284
+ },
+ "pair-ca64-r2": {
+  "jobs": 6125,
+  "started": 6125,
+  "pickup p50": 255,
+  "p95": 545,
+  "p99": 803,
+  "max": 1216,
+  "share A": 0.614,
+  "share B": 0.386
+ },
+ "pair-ca16-r2": {
+  "jobs": 7127,
+  "started": 7127,
+  "pickup p50": 177,
+  "p95": 416,
+  "p99": 607,
+  "max": 737,
+  "share A": 0.571,
+  "share B": 0.429
+ },
+ "pair-ca0-r2": {
+  "jobs": 6591,
+  "started": 6591,
+  "pickup p50": 202,
+  "p95": 448,
+  "p99": 701,
+  "max": 755,
+  "share A": 0.53,
+  "share B": 0.47
+ }
+}

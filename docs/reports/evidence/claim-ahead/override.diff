@@ -1,0 +1,70 @@
+diff --git a/src/Runwick.Postgres/Store/PgStore.FinishMany.cs b/src/Runwick.Postgres/Store/PgStore.FinishMany.cs
+index 528de59..b0691f7 100644
+--- a/src/Runwick.Postgres/Store/PgStore.FinishMany.cs
++++ b/src/Runwick.Postgres/Store/PgStore.FinishMany.cs
+@@ -18,7 +18,7 @@ internal sealed partial class PgStore : IFinishManyStore
+     public Task<StoreReply<FinishedMany>> FinishManyAsync(StoreCommand<FinishManyRequest> command, CancellationToken ct)
+     {
+         var items = command.Body.Items;
+-        if (items.Count is 0 or > IFinishManyStore.MaxItems
++        if (items.Count == 0 || items.Count > IFinishManyStore.MaxItems
+             || items.Any(i => i.Application != command.Application || i.Body.RequestedRetryDelay < TimeSpan.Zero)
+             || items.Select(i => i.CommandId).Distinct().Count() != items.Count
+             || items.Select(i => i.Body.Lease.JobId).Distinct().Count() != items.Count)
+diff --git a/src/Runwick.Redis/Store/RedisStore.Ownership.cs b/src/Runwick.Redis/Store/RedisStore.Ownership.cs
+index adb812c..0fa112a 100644
+--- a/src/Runwick.Redis/Store/RedisStore.Ownership.cs
++++ b/src/Runwick.Redis/Store/RedisStore.Ownership.cs
+@@ -465,7 +465,7 @@ internal sealed partial class RedisStore : ILeaseBatchStore, IReserveAndBeginSto
+     public async Task<StoreReply<FinishedMany>> FinishManyAsync(StoreCommand<FinishManyRequest> command, CancellationToken ct)
+     {
+         var items = command.Body.Items;
+-        if (items.Count is 0 or > IFinishManyStore.MaxItems
++        if (items.Count == 0 || items.Count > IFinishManyStore.MaxItems
+             || items.Any(i => i.Application != command.Application || i.Body.RequestedRetryDelay < TimeSpan.Zero)
+             || items.Select(i => i.CommandId).Distinct().Count() != items.Count
+             || items.Select(i => i.Body.Lease.JobId).Distinct().Count() != items.Count)
+diff --git a/src/Runwick.Sqlite/Store/SqliteStore.Ownership.cs b/src/Runwick.Sqlite/Store/SqliteStore.Ownership.cs
+index 4163267..1c1bd38 100644
+--- a/src/Runwick.Sqlite/Store/SqliteStore.Ownership.cs
++++ b/src/Runwick.Sqlite/Store/SqliteStore.Ownership.cs
+@@ -971,7 +971,7 @@ internal sealed partial class SqliteStore : ILeaseBatchStore, IReserveAndBeginSt
+     public Task<StoreReply<FinishedMany>> FinishManyAsync(StoreCommand<FinishManyRequest> command, CancellationToken ct)
+     {
+         var items = command.Body.Items;
+-        if (items.Count is 0 or > IFinishManyStore.MaxItems
++        if (items.Count == 0 || items.Count > IFinishManyStore.MaxItems
+             || items.Any(i => i.Application != command.Application || i.Body.RequestedRetryDelay < TimeSpan.Zero)
+             || items.Select(i => i.CommandId).Distinct().Count() != items.Count
+             || items.Select(i => i.Body.Lease.JobId).Distinct().Count() != items.Count)
+diff --git a/src/Runwick/Protocol/StoreProtocol.cs b/src/Runwick/Protocol/StoreProtocol.cs
+index 6bc0caa..b351c67 100644
+--- a/src/Runwick/Protocol/StoreProtocol.cs
++++ b/src/Runwick/Protocol/StoreProtocol.cs
+@@ -439,7 +439,8 @@ internal sealed record FinishedMany(IReadOnlyList<StoreReply<FinishedAttempt>> O
+ internal interface IFinishManyStore
+ {
+     /// <summary>The most Finish commands one call may carry.</summary>
+-    const int MaxItems = 32;
++    // shortcut: experiment-only override (RUNWICK_EXPERIMENT_FINISH_BATCH), unset = 32; drop or make it a real option before merging.
++    static readonly int MaxItems = int.TryParse(Environment.GetEnvironmentVariable("RUNWICK_EXPERIMENT_FINISH_BATCH"), out var n) && n > 0 ? n : 32;
+ 
+     Task<StoreReply<FinishedMany>> FinishManyAsync(StoreCommand<FinishManyRequest> command, CancellationToken ct);
+ }
+diff --git a/src/Runwick/Worker/WorkerSettings.cs b/src/Runwick/Worker/WorkerSettings.cs
+index 329cf73..49f4870 100644
+--- a/src/Runwick/Worker/WorkerSettings.cs
++++ b/src/Runwick/Worker/WorkerSettings.cs
+@@ -258,9 +258,10 @@ internal sealed class WorkerSettings
+                     Fail("V-25", nameof(o.ClaimsInFlight), "ClaimsInFlight must be 1 to 4.");
+                 }
+ 
+-                if (o.ClaimAhead is < 0 or > 32)
++                // shortcut: experiment branch raises the 32 limit to 64 to measure larger claims; not for merging.
++                if (o.ClaimAhead is < 0 or > 64)
+                 {
+-                    Fail("V-26", nameof(o.ClaimAhead), "ClaimAhead must be 0 to 32.");
++                    Fail("V-26", nameof(o.ClaimAhead), "ClaimAhead must be 0 to 64.");
+                 }
+ 
+                 if (!(o.RecoveryScanJitter < o.RecoveryScanInterval))

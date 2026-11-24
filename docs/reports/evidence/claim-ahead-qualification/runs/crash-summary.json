@@ -1,0 +1,29 @@
+{
+ "crash-ca0-r1": {
+  "finished": 3000,
+  "A finished": 506,
+  "A running at kill": 19,
+  "waited for lease": 19,
+  "of which never started by A": 0,
+  "lease wait s": 66.6,
+  "kill to all done s": 69.0
+ },
+ "crash-ca16-r1": {
+  "finished": 3000,
+  "A finished": 608,
+  "A running at kill": 32,
+  "waited for lease": 48,
+  "of which never started by A": 16,
+  "lease wait s": 62.6,
+  "kill to all done s": 70.2
+ },
+ "crash-ca64-r1": {
+  "finished": 2985,
+  "A finished": 591,
+  "A running at kill": 32,
+  "waited for lease": 77,
+  "of which never started by A": 60,
+  "lease wait s": 63.9,
+  "kill to all done s": 77.6
+ }
+}

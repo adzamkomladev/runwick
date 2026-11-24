@@ -1,0 +1,149 @@
+{
+  "system": "runwick-redis",
+  "store": "redis",
+  "mode": "drain",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "insertSeconds": 7.442,
+  "insertCalls": 1,
+  "drainManagedAllocatedBytes": 1164814968,
+  "jobs": 20000,
+  "accepted": 20000,
+  "failedDispatch": 0,
+  "finished": 20000,
+  "drained": true,
+  "drainWriteCommits": null,
+  "startToFirstClaimMs": 142.9,
+  "drainSeconds": 16.859,
+  "completionsPerSec": 1186.3,
+  "finishReplayed": 0,
+  "batchClaims": 1738,
+  "reservesSent": 1739,
+  "claimsInFlightHighWater": 2,
+  "invocations": 20000,
+  "finishesSent": 20000,
+  "finishManyCalls": 498,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 159989760,
+  "trace": {
+    "phase:Admission:engineLane": {
+      "count": 1772,
+      "meanMs": 0.001,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0,
+      "p95Ms": 0.002,
+      "p99Ms": 0.006,
+      "maxMs": 0.732
+    },
+    "phase:Finish:engineLane": {
+      "count": 502,
+      "meanMs": 0.001,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0.001,
+      "p95Ms": 0.002,
+      "p99Ms": 0.003,
+      "maxMs": 0.008
+    },
+    "sample:heldJobs": {
+      "count": 1468,
+      "meanMs": 54.389,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 52,
+      "p95Ms": 93,
+      "p99Ms": 104,
+      "maxMs": 202
+    },
+    "sample:settlementQueue": {
+      "count": 1468,
+      "meanMs": 0.418,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0,
+      "p95Ms": 2,
+      "p99Ms": 11,
+      "maxMs": 28
+    },
+    "stage:due-\u003EhandlerInvoked": {
+      "count": 20000,
+      "meanMs": 12073.908,
+      "minMs": 7601.124,
+      "p01Ms": 7673.131,
+      "p50Ms": 12141.733,
+      "p95Ms": 16478.706,
+      "p99Ms": 16869.439,
+      "maxMs": 16988.637
+    },
+    "stage:handlerInvoked-\u003Efinished": {
+      "count": 20000,
+      "meanMs": 44.765,
+      "minMs": 11.798,
+      "p01Ms": 16.998,
+      "p50Ms": 40.524,
+      "p95Ms": 79.716,
+      "p99Ms": 118.473,
+      "maxMs": 432.747
+    },
+    "stage:reserved-\u003Efinished": {
+      "count": 20000,
+      "meanMs": 45.781,
+      "minMs": 12.665,
+      "p01Ms": 17.561,
+      "p50Ms": 41.466,
+      "p95Ms": 81.252,
+      "p99Ms": 119.592,
+      "maxMs": 433.318
+    },
+    "stage:reserved-\u003EhandlerInvoked": {
+      "count": 20000,
+      "meanMs": 1.016,
+      "minMs": 0.019,
+      "p01Ms": 0.115,
+      "p50Ms": 0.583,
+      "p95Ms": 2.352,
+      "p99Ms": 6.311,
+      "maxMs": 136.43
+    }
+  },
+  "traceCounters": {
+    "redis:cleanup:R": 14,
+    "redis:describe:NONE": 1,
+    "redis:describe:OK": 3,
+    "redis:dispatch:R": 200,
+    "redis:expired:OK": 3,
+    "redis:finish:R": 4,
+    "redis:finish_many:R": 498,
+    "redis:presence:R": 5,
+    "redis:probe:OK": 12,
+    "redis:register_application:R": 1,
+    "redis:register_queue:R": 1,
+    "redis:reserve_and_begin:R": 1739
+  },
+  "writerQueueMs": {},
+  "pickupMs": {
+    "p50": 12141.733,
+    "p99": 16869.439,
+    "max": 16988.637
+  },
+  "gc": {
+    "pauseTotalMs": 433,
+    "pauseTimePercentage": 1.71,
+    "gen0": 100,
+    "gen1": 85,
+    "gen2": 7,
+    "allocatedMB": 1873.4,
+    "serverGC": true
+  },
+  "diagnostics": []
+}
