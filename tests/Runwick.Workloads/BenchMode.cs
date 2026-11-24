@@ -658,9 +658,11 @@ internal static class BenchMode
             }
 
             var allocatedBefore = trace ? GC.GetTotalAllocatedBytes(precise: true) : 0;
+            Phase("timed-start");
             var watch = Stopwatch.StartNew();
             await EnqueueAsync(n, enqueueLatency).ConfigureAwait(false);
             watch.Stop();
+            Phase("timed-end");
             if (trace)
             {
                 result["enqueueManagedAllocatedBytes"] = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
@@ -704,6 +706,7 @@ internal static class BenchMode
         else if (mode == "bulk")
         {
             // --n jobs added with DispatchMany from --calls callers side by side; worker never started.
+            Phase("timed-start");
             var watch = Stopwatch.StartNew();
             var callMs = new System.Collections.Concurrent.ConcurrentBag<double>();
             var nextChunk = -1;
@@ -719,6 +722,8 @@ internal static class BenchMode
                     Interlocked.Add(ref failedDispatch, receipt.Items.Count(x => x.Receipt is null));
                 }
             }))).ConfigureAwait(false);
+            watch.Stop();
+            Phase("timed-end");
             var sorted = callMs.OrderBy(x => x).ToArray();
             double At(double q) => sorted.Length == 0 ? 0 : Math.Round(sorted[Math.Min(sorted.Length - 1, (int)Math.Ceiling(q * sorted.Length) - 1)], 2);
             result["batchItems"] = chunk;
@@ -731,6 +736,7 @@ internal static class BenchMode
         else if (mode == "drain")
         {
             // --calls n: n callers send DispatchMany chunks side by side (the producer admits n concurrent calls).
+            Phase("seed-start");
             var insertWatch = Stopwatch.StartNew();
             var nextChunk = -1;
             await Task.WhenAll(Enumerable.Range(0, calls).Select(_ => Task.Run(async () =>
@@ -808,8 +814,12 @@ internal static class BenchMode
             var statementsBeforeDrain = Interlocked.Read(ref sqliteStatements);
             sqliteStatementProfile?.Clear();
             var expected = check ? Interlocked.Read(ref acceptedItems) : n - failedDispatch;
+            Phase("seed-end");
+            // Count the backlog in the store before the worker exists, so a short seed fails the round instead of inflating the rate.
+            result["readyBeforeStart"] = await StoreJobCountsAsync(provider).ConfigureAwait(false);
             var startTicks = clock.ElapsedTicks;
             var allocatedBeforeDrain = trace ? GC.GetTotalAllocatedBytes(precise: true) : 0;
+            Phase("timed-start");
             await hosted.StartAsync(CancellationToken.None).ConfigureAwait(false);
             using var sampling = new CancellationTokenSource();
             var sampler = trace ? Task.Run(async () =>
@@ -823,10 +833,21 @@ internal static class BenchMode
                 }
             }) : Task.CompletedTask;
             var deadline = Stopwatch.StartNew();
+            var progress = new JsonArray();
+            var nextProgress = 1.0;
             while (Interlocked.Read(ref finished) < expected && deadline.Elapsed < TimeSpan.FromSeconds(a.Double("max-seconds", 1800)))
             {
                 await Task.Delay(5).ConfigureAwait(false);
+                if (deadline.Elapsed.TotalSeconds >= nextProgress)
+                {
+                    progress.Add(new JsonArray(Math.Round(deadline.Elapsed.TotalSeconds, 1), Interlocked.Read(ref finished)));
+                    nextProgress = Math.Floor(deadline.Elapsed.TotalSeconds) + 1;
+                }
             }
+
+            Phase("timed-end");
+            result["progress"] = progress; // [seconds since worker start, confirmed finishes], once a second: an incomplete round still gives time to 50/95/99%
+            result["clocks"] = new JsonObject { ["workerStartSeconds"] = Math.Round(deadline.Elapsed.TotalSeconds, 3) };
 
             if (check)
             {
@@ -858,6 +879,12 @@ internal static class BenchMode
             result["startToFirstClaimMs"] = first < 0 ? null : Math.Round(Ms(first - startTicks), 1);
             result["drainSeconds"] = Math.Round(elapsed, 3);
             result["completionsPerSec"] = elapsed > 0 ? Math.Round(done / elapsed, 1) : 0;
+            // Two clocks: first claim to last confirmed finish (the published figure), and worker start to the same moment.
+            var clocks = (JsonObject)result["clocks"]!;
+            var fromStart = clocks["workerStartSeconds"]!.GetValue<double>();
+            clocks["firstClaimSeconds"] = Math.Round(elapsed, 3);
+            clocks["firstClaimJobsPerSec"] = elapsed > 0 ? Math.Round(done / elapsed, 1) : 0;
+            clocks["workerStartJobsPerSec"] = fromStart > 0 ? Math.Round(done / fromStart, 1) : 0;
         }
         else if (mode == "work")
         {
@@ -925,6 +952,7 @@ internal static class BenchMode
             // --calls 1 (default): one Dispatch at a time on a fixed schedule, like the River and pg-boss steady modes
             // (a slow call delays the next arrival; the schedule catches up). --calls n: open loop, each arrival sent on
             // schedule with up to n calls in flight (beyond that the producer's local admission refuses it).
+            Phase("timed-start");
             await OfferAsync(() => clock.Elapsed < stopAt).ConfigureAwait(false);
             var completedByEndOfOffers = Interlocked.Read(ref finished);
             // A crashing segment keeps offering until it is killed, so the kill lands with jobs queued and (with --job-ms)
@@ -994,10 +1022,19 @@ internal static class BenchMode
             }
 
             var drainUntil = clock.Elapsed + TimeSpan.FromSeconds(crash ? 0 : 60);
+            var offersEndedTicks = clock.ElapsedTicks;
             while (Interlocked.Read(ref finished) < Interlocked.Read(ref dispatched) && clock.Elapsed < drainUntil)
             {
                 await Task.Delay(5).ConfigureAwait(false);
             }
+
+            Phase("timed-end");
+            result["clocks"] = new JsonObject
+            {
+                ["offerWindowSeconds"] = Math.Round(Ms(offersEndedTicks - startTicks) / 1000, 2),
+                ["completedDuringOffers"] = completedByEndOfOffers,
+                ["secondsToClearAfterOffers"] = Math.Round(Ms(clock.ElapsedTicks - offersEndedTicks) / 1000, 2),
+            };
 
             // --drain-store-seconds (last crash-run segment): jobs a killed segment held come back after their lease expires,
             // so wait until the store has no unfinished load or outbox job and the outbox source has nothing left to deliver.
@@ -1411,6 +1448,17 @@ internal static class BenchMode
                 }, CancellationToken.None);
         }
 
+        // The result contract (eng/bench-compare/ci/README.md): every effective setting by name, and the outcome counted in the store.
+        result["settings"] = new JsonObject
+        {
+            ["store"] = store, ["mode"] = mode, ["payloadBytes"] = payload, ["callers"] = calls, ["workerSlots"] = workers,
+            ["producerSlots"] = a.OptInt("producer-calls") ?? Math.Max(2, calls), ["bulkChunk"] = chunk,
+            ["pgGroup"] = store == "postgres" && !a.Has("no-pg-group"), ["bufferedFinish"] = a.Has("buffered-finish") && !a.Has("no-buffered-finish"),
+            ["claimAhead"] = a.OptInt("claim-ahead"), ["claimsInFlight"] = a.OptInt("claims-in-flight"), ["usage"] = !a.Has("no-usage"),
+            ["jobMs"] = a.Double("job-ms", 0), ["serverGC"] = System.Runtime.GCSettings.IsServerGC, ["cores"] = Environment.ProcessorCount,
+        };
+        result["outcome"] = await StoreJobCountsAsync(provider).ConfigureAwait(false);
+
         var json = result.ToJsonString(Json.Indented);
         Console.WriteLine(json);
         if (a.OptStr("out") is { } outFile)
@@ -1419,6 +1467,45 @@ internal static class BenchMode
         }
 
         return 0;
+    }
+
+    /// <summary>A phase marker on stderr (stdout is the result JSON); ci/run.py reads the store and process counters when it sees one.</summary>
+    static void Phase(string name) => Console.Error.WriteLine($"@@PHASE {name} {DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}");
+
+    /// <summary>
+    /// Load-queue jobs by state as the store itself reports them (management job stats, the same for all three stores). States count jobs created in the
+    /// last 12 hours; "now:" keys are live. Null when management is not available; an error object when the read fails.
+    /// </summary>
+    static async Task<JsonObject?> StoreJobCountsAsync(IServiceProvider provider)
+    {
+        if (provider.GetService<IManagementSession>() is not { } session)
+        {
+            return null;
+        }
+
+        try
+        {
+            var caller = new ManagementCaller(new ManagementActor("svc:bench-count", null, "host"), [new(ManagementPermissions.JobsRead)]);
+            var now = DateTimeOffset.UtcNow;
+            var stats = await RetryBudgetAsync(() => session.GetJobStatsAsync(caller,
+                new JobStatsQuery(now.AddHours(-12), now.AddMinutes(5), 1, Queue: LoadRegistration.Queue))).ConfigureAwait(false);
+            var counts = new JsonObject();
+            foreach (var (state, count) in stats.States)
+            {
+                counts[state] = count;
+            }
+
+            foreach (var (state, count) in stats.Now)
+            {
+                counts["now:" + state] = count;
+            }
+
+            return counts;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new JsonObject { ["error"] = ex.GetType().Name + ": " + ex.Message };
+        }
     }
 
     static double Ms(long stopwatchTicks) => stopwatchTicks * 1000.0 / Stopwatch.Frequency;

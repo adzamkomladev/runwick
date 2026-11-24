@@ -21,6 +21,9 @@ const seconds = Number(arg('seconds', 120));
 const concurrency = Number(arg('concurrency', 16));
 const batch = Number(arg('batch', 1));
 const burst = arg('burst', false) === true;
+const chunk = Number(arg('chunk', 1000)); // bulk: jobs per boss.insert call
+const phase = name => console.error(`@@PHASE ${name} ${Date.now()}`); // read by ci/run.py
+
 const payload = { pad: 'x'.repeat(Math.max(0, Number(arg('payload', 1024)) - 16)) };
 const out = arg('out', '');
 const maxSeconds = Number(arg('max-seconds', 1800));
@@ -41,6 +44,16 @@ const queue = 'noop';
 await boss.createQueue(queue);
 const result = { system: `pg-boss ${version}`, mode, concurrency, batchSize: batch, burstWhenBatchFull: burst, payloadBytes: JSON.stringify(payload).length };
 const workOptions = { localConcurrency: concurrency, batchSize: batch, pollingIntervalSeconds: 0.5, includeMetadata: true, burstWhenBatchFull: burst };
+result.settings = { store: 'postgres', mode, payloadBytes: result.payloadBytes, callers: Number(arg('calls', 1)), workerSlots: concurrency, fetchBatch: batch, burst,
+  bulkChunk: chunk, seedChunk: 5000, pollingIntervalSeconds: 0.5, poolMax: concurrency + 4, cores: (await import('node:os')).availableParallelism() };
+// Jobs by state as pg-boss's own table holds them, whatever the handler counter saw.
+const states = async () => {
+  const c2 = new pg.Client({ connectionString: url.toString() });
+  await c2.connect();
+  const r = await c2.query(`SELECT state::text AS s, count(*)::int AS c FROM pgboss.job WHERE name = $1 GROUP BY 1`, [queue]);
+  await c2.end();
+  return Object.fromEntries(r.rows.map(x => [x.s, x.c]));
+};
 const latencies = [];
 let completed = 0;
 
@@ -49,6 +62,7 @@ if (mode === 'enqueue') {
   const calls = Number(arg('calls', 1));
   const lat = [];
   let next = 0;
+  phase('timed-start');
   const t0 = performance.now();
   await Promise.all(Array.from({ length: calls }, async () => {
     while (next++ < n) {
@@ -57,21 +71,30 @@ if (mode === 'enqueue') {
       lat.push(performance.now() - t);
     }
   }));
+  phase('timed-end');
   lat.sort((a, b) => a - b);
   const p = q => lat[Math.max(0, Math.min(lat.length - 1, Math.floor(q * lat.length) - 1))];
   Object.assign(result, { jobs: n, calls, insertsPerSec: n / ((performance.now() - t0) / 1000), insertLatencyMs: { p50: p(0.5), p99: p(0.99) } });
 } else if (mode === 'bulk') {
   // --n jobs with boss.insert in chunks of 1000 from one caller; no worker.
+  phase('timed-start');
   const t0 = performance.now();
-  for (let i = 0; i < n; i += 1000) await boss.insert(queue, Array.from({ length: Math.min(1000, n - i) }, () => ({ data: payload })));
+  for (let i = 0; i < n; i += chunk) await boss.insert(queue, Array.from({ length: Math.min(chunk, n - i) }, () => ({ data: payload })));
+  phase('timed-end');
   Object.assign(result, { jobs: n, insertsPerSec: n / ((performance.now() - t0) / 1000) });
 } else if (mode === 'drain') {
+  phase('seed-start');
   const t0 = performance.now();
   for (let i = 0; i < n; i += 5000) {
     await boss.insert(queue, Array.from({ length: Math.min(5000, n - i) }, () => ({ data: payload })));
   }
   result.insertSeconds = (performance.now() - t0) / 1000;
+  phase('seed-end');
+  result.readyBeforeStart = await states();
+  phase('timed-start');
   const start = performance.now();
+  const progress = [];
+  const tick = setInterval(() => progress.push([Math.round((performance.now() - start) / 100) / 10, completed]), 1000);
   let resolveDone;
   const done = new Promise(r => { resolveDone = r; });
   await boss.work(queue, workOptions, async jobs => {
@@ -89,11 +112,15 @@ if (mode === 'enqueue') {
     await new Promise(r2 => setTimeout(r2, 20));
   }
   await pc.end();
+  clearInterval(tick);
+  phase('timed-end');
+  result.progress = progress; // handler returns once a second
   const left = (await (async () => { const c2 = new pg.Client({ connectionString: url.toString() }); await c2.connect(); const x = await c2.query(`SELECT count(*)::int AS open FROM pgboss.job WHERE name = $1 AND state <> 'completed'`, [queue]); await c2.end(); return x.rows[0].open; })());
   result.jobs = n;
   result.finished = n - left;
   result.drainSeconds = (performance.now() - start) / 1000;
   result.completionsPerSec = result.finished / result.drainSeconds;
+  result.clocks = { workerStartSeconds: result.drainSeconds, workerStartJobsPerSec: result.completionsPerSec, handlerReturns: completed };
 } else {
   await boss.work(queue, workOptions, async jobs => {
     for (const _ of jobs) cpuWork();
@@ -101,6 +128,7 @@ if (mode === 'enqueue') {
     for (const j of jobs) latencies.push(now - new Date(j.createdOn).getTime());
     completed += jobs.length;
   });
+  phase('timed-start');
   const start = performance.now();
   const stopAt = Date.now() + seconds * 1000;
   let inserted = 0;
@@ -115,6 +143,7 @@ if (mode === 'enqueue') {
   await Promise.all(pend);
   const deadline = Date.now() + 60_000;
   while (completed < inserted && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));
+  phase('timed-end');
   latencies.sort((a, b) => a - b);
   const pct = p => latencies.length ? latencies[Math.max(0, Math.min(latencies.length - 1, Math.floor(p * latencies.length) - 1))] : 0;
   result.offeredPerSec = rate;
@@ -124,6 +153,7 @@ if (mode === 'enqueue') {
   result.latencyMs = { p50: pct(0.5), p95: pct(0.95), p99: pct(0.99), max: pct(1) };
 }
 
+result.outcome = await states();
 await boss.stop({ graceful: true, timeout: 10_000 });
 const text = JSON.stringify(result, null, 2);
 console.log(text);

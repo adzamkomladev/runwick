@@ -12,6 +12,7 @@ using Runwick.Workloads;
 //   bench --mode drain|steady [--n 20000] [--rate 100] [--seconds 120] [--workers 16] [--conn admin-cs] [--out file.json]
 //         comparison-benchmark row next to River and pg-boss (eng/bench-compare/run.sh)
 //         G5 leases: --fewer-lease-renewals | --lease-seconds n --renew-seconds m, --outage-container c, --lease-crash
+//   writefloor --store postgres|redis|sqlite [--callers 1] [--n 2000] [--out file]   cheapest durable 1 KiB write, no Runwick code (Stage 1 cost budgets)
 //   perf [--out dir] [--n 100] [--cost-jobs 300] [--idle-s 60] [--p01-measure-min 3] [--skip-p01]   PF-01 run (eng/run-perf.sh)
 // SP-029: P-03 (payload pressure), P-07 (management under load), P-10 (soak); Sp029Workloads.cs, eng/run-sp029.sh.
 // Workloads: G-1 P-01, P-02, P-08a, P-08b, P-08c, G1-M1, G1-M2, G1-M3; G-2 P-04, P-05, P-06r, P-06s, P-09
@@ -38,5 +39,6 @@ return args[0] switch
     "floor" => await FloorMode.RunAsync(a),
     "perf" => await PerfMode.RunAsync(a),
     "bench" => await BenchMode.RunAsync(a),
+    "writefloor" => await WriteFloorMode.RunAsync(a),
     _ => 2,
 };

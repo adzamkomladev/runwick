@@ -14,6 +14,11 @@ on:
       systems:
         description: Only these libraries, comma-separated (e.g. wolverine-redis,river); empty = all 14
         default: ""
+      layout:
+        description: "per-library = one runner per library and workload (28 jobs); same-host = one runner per store, libraries one after another (Stage 1 baselines: normal workload, trace round, write floors)"
+        default: per-library
+        type: choice
+        options: [per-library, same-host]
 permissions:
   contents: read
 env:
@@ -35,6 +40,7 @@ jobs:
           print('systems=' + json.dumps(p or a))" >> "$GITHUB_OUTPUT"
   bench:
     needs: plan
+    if: inputs.layout != 'same-host'
     name: ${{ matrix.system }} / ${{ matrix.workload }}
     runs-on: ubuntu-24.04
     timeout-minutes: 150
@@ -117,8 +123,75 @@ jobs:
           name: bench-${{ matrix.system }}-${{ matrix.workload }}
           path: results
 
+  # Stage 1 baseline (docs/plans/queue-throughput-stage-1-plan.md): every library of one store on the SAME runner, one after another, order reversed on even
+  # rounds, the store container recreated before each (run.py --fresh-stores). Targets such as "90% of River" need both on one host.
+  samehost:
+    if: inputs.layout == 'same-host'
+    name: same host / ${{ matrix.store }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - store: postgres
+            systems: writefloor-pg,runwick-pg,river,pgboss,wolverine-pg,bullmq-dotnet-pg
+          - store: redis
+            systems: writefloor-redis,runwick-redis,runwick-redis-tuned,wolverine-redis,bullmq-dotnet-redis,bullmq
+          - store: sqlite
+            systems: writefloor-sqlite,runwick-sqlite,wolverine-sqlite,solidqueue
+    env:
+      BC: eng/bench-compare
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # tags: the manifest compares src with v0.1.5
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet build tests/Runwick.Workloads/Runwick.Workloads.csproj -c Release
+      - if: matrix.store != 'sqlite'
+        run: |
+          dotnet build $BC/wolverine/bench-wolverine.csproj -c Release
+          dotnet build $BC/bullmq-dotnet/bench-bullmq-dotnet.csproj -c Release
+      - if: matrix.store == 'sqlite'
+        run: dotnet build $BC/wolverine/bench-wolverine.csproj -c Release
+      - if: matrix.store == 'postgres'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: eng/bench-compare/river/go.mod
+          cache-dependency-path: eng/bench-compare/river/go.sum
+      - if: matrix.store == 'postgres'
+        run: cd $BC/river && go build -o bench-river .
+      - if: matrix.store != 'sqlite'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - if: matrix.store == 'postgres'
+        run: cd $BC/pgboss && npm ci --no-audit --no-fund
+      - if: matrix.store == 'redis'
+        run: cd $BC/bullmq && npm ci --no-audit --no-fund
+      - if: matrix.store == 'sqlite'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+      - if: matrix.store == 'sqlite'
+        run: bash $BC/solidqueue/setup.sh
+      - name: Benchmark
+        env:
+          PICK: ${{ inputs.systems }}
+        run: |
+          systems="${{ matrix.systems }}"
+          if [ -n "$PICK" ]; then systems=$(python3 -c "import os; p=[x.strip() for x in os.environ['PICK'].split(',')]; print(','.join(s for s in '$systems'.split(',') if s in p or s.startswith('writefloor-')))"); fi
+          python3 $BC/ci/run.py --systems "$systems" --workload normal --rounds ${{ inputs.rounds }} --scale ${{ inputs.scale }} --fresh-stores --trace-round --out results
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-samehost-${{ matrix.store }}
+          path: results
+
   report:
-    needs: bench
+    needs: [bench, samehost]
     if: always()
     runs-on: ubuntu-24.04
     steps:

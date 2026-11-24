@@ -32,6 +32,7 @@ var adminCs = Opt("conn", "Host=127.0.0.1;Port=55499;Username=postgres;Password=
 var redis = Opt("redis", "127.0.0.1:56392");
 var version = typeof(WolverineOptions).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0];
 var pad = new string('x', 1024 - 32);
+void Phase(string name) => Console.Error.WriteLine($"@@PHASE {name} {DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}"); // read by ci/run.py
 var sqliteFile = Path.Combine(Path.GetTempPath(), $"bench-wolverine-{Environment.ProcessId}.db");
 
 // Fresh store.
@@ -80,8 +81,42 @@ IHost Build(bool listen)
     return b.Build();
 }
 
+// What the store itself still holds for the benchmark queue after a run (handler returns are the harness's counter, this is the store's):
+// rows left in the queue table (PostgreSQL, SQLite) or pending + not yet delivered entries of the consumer group (Redis).
+async Task<Dictionary<string, long>> StoreQueue()
+{
+    var o = new Dictionary<string, long>();
+    if (transport == "redis")
+    {
+        using var mux = await StackExchange.Redis.ConnectionMultiplexer.ConnectAsync(redis + ",allowAdmin=true");
+        var db = mux.GetDatabase();
+        o["streamEntries"] = (long)await db.StreamLengthAsync("bench");
+        foreach (var g in await db.StreamGroupInfoAsync("bench")) { o["pending"] = g.PendingMessageCount; o["lag"] = g.Lag ?? -1; }
+    }
+    else if (transport == "postgres")
+    {
+        await using var c = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(adminCs) { Database = "bench_wolverine" }.ConnectionString);
+        await c.OpenAsync();
+        var tables = new List<string>();
+        await using (var r = await new NpgsqlCommand("SELECT table_name FROM information_schema.tables WHERE table_schema = 'wolverine_queues' AND table_name LIKE 'wolverine\\_queue\\_%'", c).ExecuteReaderAsync())
+            while (await r.ReadAsync()) tables.Add(r.GetString(0));
+        o["deadLetters"] = Convert.ToInt64(await new NpgsqlCommand("SELECT count(*) FROM wolverine.wolverine_dead_letters", c).ExecuteScalarAsync());
+        foreach (var t in tables) o[t] = Convert.ToInt64(await new NpgsqlCommand($"SELECT count(*) FROM wolverine_queues.\"{t}\"", c).ExecuteScalarAsync());
+    }
+    else
+    {
+        await using var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={sqliteFile};Mode=ReadOnly");
+        await c.OpenAsync();
+        var tables = new List<string>();
+        using (var cmd = c.CreateCommand()) { cmd.CommandText = "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'wolverine\\_queue\\_%' ESCAPE '\\'"; using var r = await cmd.ExecuteReaderAsync(); while (await r.ReadAsync()) tables.Add(r.GetString(0)); }
+        foreach (var t in tables) { using var cmd = c.CreateCommand(); cmd.CommandText = $"SELECT count(*) FROM \"{t}\""; o[t] = Convert.ToInt64(await cmd.ExecuteScalarAsync()); }
+    }
+    return o;
+}
 static double Pct(List<double> s, double p) => s.Count == 0 ? 0 : Math.Round(s[Math.Clamp((int)Math.Floor(p * s.Count) - 1, 0, s.Count - 1)], 2);
 var result = new Dictionary<string, object?> { ["system"] = $"wolverine {version} ({transport})", ["mode"] = mode, ["workers"] = workers };
+result["settings"] = new Dictionary<string, object?> { ["store"] = transport, ["mode"] = mode, ["payloadBytes"] = 1024, ["callers"] = calls, ["workerSlots"] = workers,
+    ["seedCallers"] = 16, ["sendInline"] = transport == "redis", ["durabilityMode"] = "Solo", ["serverGC"] = System.Runtime.GCSettings.IsServerGC, ["cores"] = Environment.ProcessorCount };
 
 async Task Send(IHost h, int count, int callers, ConcurrentBag<double>? lat)
 {
@@ -104,28 +139,39 @@ else if (mode == "enqueue")
 {
     using var h = Build(false); await h.StartAsync();
     await Send(h, 1, 1, null); // warm the sending path
-    var l = new ConcurrentBag<double>(); var sw = Stopwatch.StartNew();
-    await Send(h, n, calls, l);
+    var l = new ConcurrentBag<double>(); Phase("timed-start"); var sw = Stopwatch.StartNew();
+    await Send(h, n, calls, l); Phase("timed-end");
     var s = l.OrderBy(x => x).ToList();
     result["jobs"] = n; result["calls"] = calls; result["insertsPerSec"] = Math.Round(n / sw.Elapsed.TotalSeconds, 1);
     result["insertLatencyMs"] = new { p50 = Pct(s, .5), p95 = Pct(s, .95), p99 = Pct(s, .99) };
     await h.StopAsync();
+    result["outcome"] = await StoreQueue();
 }
 else if (mode == "drain")
 {
+    Phase("seed-start");
     using (var p = Build(false)) { await p.StartAsync(); await Send(p, n, 16, null); await p.StopAsync(); } // backlog, not timed
+    Phase("seed-end");
+    result["readyBeforeStart"] = await StoreQueue();
+    Phase("timed-start");
     var sw = Stopwatch.StartNew();
     using var h = Build(true); await h.StartAsync();
+    var progress = new List<double[]>(); var nextProgress = 1.0;
     double? first = null; // Wolverine compiles its handler code at start; time to the first job shows that cost on its own
     while (Interlocked.Read(ref NoopHandler.Done) < n && sw.Elapsed.TotalSeconds < maxSeconds)
     {
         if (first is null && Interlocked.Read(ref NoopHandler.Done) > 0) first = sw.Elapsed.TotalSeconds;
         await Task.Delay(5);
+        if (sw.Elapsed.TotalSeconds >= nextProgress) { progress.Add([Math.Round(sw.Elapsed.TotalSeconds, 1), Interlocked.Read(ref NoopHandler.Done)]); nextProgress = Math.Floor(sw.Elapsed.TotalSeconds) + 1; }
     }
-    var el = sw.Elapsed.TotalSeconds; var done = Interlocked.Read(ref NoopHandler.Done);
+    var el = sw.Elapsed.TotalSeconds; var done = Interlocked.Read(ref NoopHandler.Done); Phase("timed-end");
+    result["progress"] = progress; // handler returns once a second
     result["jobs"] = n; result["finished"] = done; result["drainSeconds"] = Math.Round(el, 3); result["completionsPerSec"] = Math.Round(done / el, 1);
     result["startupSeconds"] = Math.Round(first ?? el, 2); result["completionsPerSecExcludingStartup"] = Math.Round(done / Math.Max(1e-9, el - (first ?? 0)), 1);
+    result["clocks"] = new { workerStartSeconds = Math.Round(el, 3), workerStartJobsPerSec = Math.Round(done / el, 1), firstClaimSeconds = Math.Round(el - (first ?? 0), 3),
+        firstClaimJobsPerSec = Math.Round(done / Math.Max(1e-9, el - (first ?? 0)), 1), handlerReturns = done };
     await h.StopAsync();
+    result["outcome"] = await StoreQueue();
 }
 else
 {
@@ -134,6 +180,7 @@ else
     var dl0 = Stopwatch.StartNew(); while (Interlocked.Read(ref NoopHandler.Done) < 1 && dl0.Elapsed.TotalSeconds < 60) await Task.Delay(20);
     Interlocked.Exchange(ref NoopHandler.Done, 0); NoopHandler.Latencies.Clear();
     var bus = h.Services.GetRequiredService<IMessageBus>();
+    Phase("timed-start");
     var sw = Stopwatch.StartNew(); var inserted = 0; var inflight = 0; var pend = new List<Task>(); var next = 0.0;
     while (sw.Elapsed.TotalSeconds < seconds)
     {
@@ -149,11 +196,13 @@ else
     await Task.WhenAll(pend);
     var dl = Stopwatch.StartNew();
     while (Interlocked.Read(ref NoopHandler.Done) < inserted && dl.Elapsed.TotalSeconds < 60) await Task.Delay(20);
+    Phase("timed-end");
     var done = Interlocked.Read(ref NoopHandler.Done); var s = NoopHandler.Latencies.OrderBy(x => x).ToList();
     result["offeredPerSec"] = rate; result["inserted"] = inserted; result["completed"] = done;
     result["completionsPerSec"] = Math.Round(done / sw.Elapsed.TotalSeconds, 1);
     result["latencyMs"] = new { p50 = Pct(s, .5), p95 = Pct(s, .95), p99 = Pct(s, .99), max = Pct(s, 1) };
     await h.StopAsync();
+    result["outcome"] = await StoreQueue();
 }
 if (transport == "sqlite") foreach (var f in new[] { sqliteFile, sqliteFile + "-wal", sqliteFile + "-shm" }) File.Delete(f);
 

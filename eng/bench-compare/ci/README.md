@@ -38,6 +38,33 @@ Two workloads, same tests for each library:
   on the language. Tests: process a 400-job backlog with 16 slots, and 4 jobs/s arriving for 60 s.
   Node libraries run every job on one core, so they fall behind here; that is how they behave by default.
 
+## Same-host baselines (Stage 1)
+
+`layout: same-host` runs one job per store (PostgreSQL, Redis, SQLite) on one runner. Every library of that store runs one after
+another, the order reversed on even rounds, with the store container recreated before each (`run.py --systems ... --fresh-stores`,
+which pins the images and the Redis profile). Targets such as "90% of River" need both libraries on one host.
+Extra systems and tests in this mode:
+
+- `writefloor-pg|redis|sqlite`: the cheapest durable 1 KiB write the store accepts, no queue code (`floor-c1`, `floor-c16`), for the cost budgets.
+- `runwick-redis-tuned`: Runwick Redis with `--buffered-finish --claim-ahead 16 --claims-in-flight 2`, kept apart from the default arm.
+- `enqueue-c64`, and `bulk-100` (100 items per call for every library that takes a chunk size) beside `bulk` (each library's native chunk).
+- `--trace-round`: one extra `--trace` run per Runwick test, stored as `...--trace.json`, never in a median.
+
+### Result contract
+
+Every harness writes, beside its old fields, `settings` (effective settings by name), `outcome` (jobs by state **as the store holds them**,
+read after the run), and for drains `readyBeforeStart` (counted before the worker starts), `progress` (`[seconds, finished]` once a second, so an
+incomplete round still gives time to 50/95/99%) and `clocks` (`workerStartSeconds` and `firstClaimSeconds`, with a rate for each). It prints
+`@@PHASE seed-start|seed-end|timed-start|timed-end <unix ms>` lines on stderr. `run.py` reads the process tree, the store container and the
+store's own counters (PostgreSQL WAL bytes from the insert LSN; records, full-page images and transactions from the statistics views, which
+flush within about a second; Redis commands, AOF size and network bytes) at each marker, so `derived.timed` holds CPU, wire, WAL and AOF per job for
+the timed phase only. The older whole-run figures stay beside it.
+
+A round is **complete** when the store agrees with the harness: every offered job accepted (add tests), or every accepted job succeeded or failed
+with none left (drain, steady). Incomplete rounds are published, listed under "Incomplete rounds", and never counted in a median. Each run writes
+`manifest-<first system>-<workload>.json`: Runwick commit and whether `src/` is identical to `v0.1.5`, library versions, store image digests and the
+durability settings the store reports about itself, CPU quota and the data directory's filesystem.
+
 ## What is measured
 
 The library's own harness (`../<library>/bench.*`) reports throughput and latency. `run.py` wraps every run and samples,

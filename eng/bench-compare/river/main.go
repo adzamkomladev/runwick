@@ -14,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -64,6 +65,7 @@ func main() {
 	cooldown := flag.Int("cooldown-ms", 100, "River FetchCooldown (default 100 ms)")
 	calls := flag.Int("calls", 1, "enqueue: concurrent single-job inserters; steady: max inserts in flight (open loop)")
 	maxSeconds := flag.Int("max-seconds", 1800, "drain: give up after this many seconds")
+	batch := flag.Int("batch", 1000, "bulk: jobs per InsertMany call")
 	flag.Parse()
 	ctx := context.Background()
 
@@ -98,12 +100,15 @@ func main() {
 	defer cancel()
 	payload := NoopArgs{Pad: pad1(*pad)}
 	result := map[string]any{"system": "river v0.50.0", "mode": *mode, "workers": *workers, "payloadBytes": *pad, "fetchCooldownMs": *cooldown}
+	result["settings"] = map[string]any{"store": "postgres", "mode": *mode, "payloadBytes": *pad, "callers": *calls, "workerSlots": *workers,
+		"bulkChunk": *batch, "seedChunk": 5000, "seedCall": "InsertManyFast", "fetchCooldownMs": *cooldown, "poolMaxConns": *workers + 4, "cores": runtime.NumCPU()}
 
 	switch *mode {
 	case "enqueue":
 		// -n single-job Insert calls from -calls goroutines; no worker started. Measures adding, not running.
 		var next atomic.Int64
 		lat := make([][]float64, *calls)
+		phase("timed-start")
 		start := time.Now()
 		done := make(chan struct{})
 		for c := 0; c < *calls; c++ {
@@ -121,6 +126,7 @@ func main() {
 			<-done
 		}
 		elapsed := time.Since(start).Seconds()
+		phase("timed-end")
 		all := []float64{}
 		for _, l := range lat {
 			all = append(all, l...)
@@ -136,27 +142,35 @@ func main() {
 		for i := 0; i < *n; i++ {
 			params = append(params, river.InsertManyParams{Args: payload})
 		}
+		phase("timed-start")
 		start := time.Now()
-		for i := 0; i < len(params); i += 1000 {
-			_, err = client.InsertMany(ctx, params[i:min(i+1000, len(params))])
+		for i := 0; i < len(params); i += *batch {
+			_, err = client.InsertMany(ctx, params[i:min(i+*batch, len(params))])
 			must(err)
 		}
 		result["jobs"] = *n
 		result["insertsPerSec"] = float64(*n) / time.Since(start).Seconds()
+		phase("timed-end")
 	case "drain":
 		params := make([]river.InsertManyParams, 0, *n)
 		for i := 0; i < *n; i++ {
 			params = append(params, river.InsertManyParams{Args: payload})
 		}
+		phase("seed-start")
 		insertStart := time.Now()
 		for i := 0; i < len(params); i += 5000 {
 			_, err = client.InsertManyFast(ctx, params[i:min(i+5000, len(params))])
 			must(err)
 		}
 		result["insertSeconds"] = time.Since(insertStart).Seconds()
+		phase("seed-end")
+		result["readyBeforeStart"] = jobStates(ctx, pool)
+		phase("timed-start")
 		start := time.Now()
 		must(client.Start(ctx))
 		done, failed := 0, 0
+		progress := [][2]float64{}
+		nextProgress := 1.0
 		limit := time.After(time.Duration(*maxSeconds) * time.Second)
 	drain:
 		for done+failed < *n {
@@ -167,17 +181,25 @@ func main() {
 				} else {
 					failed++
 				}
+				if t := time.Since(start).Seconds(); t >= nextProgress {
+					progress = append(progress, [2]float64{float64(int(t*10)) / 10, float64(done + failed)})
+					nextProgress = float64(int(t)) + 1
+				}
 			case <-limit:
 				break drain
 			}
 		}
 		elapsed := time.Since(start).Seconds()
+		phase("timed-end")
+		result["progress"] = progress
+		result["clocks"] = map[string]any{"workerStartSeconds": elapsed, "workerStartJobsPerSec": float64(done) / elapsed}
 		result["jobs"] = *n
 		result["failed"] = failed
 		result["drainSeconds"] = elapsed
 		result["completionsPerSec"] = float64(done) / elapsed
 	case "steady":
 		must(client.Start(ctx))
+		phase("timed-start")
 		latencies := []float64{}
 		stop := time.Now().Add(time.Duration(*seconds) * time.Second)
 		var inserted atomic.Int64
@@ -219,6 +241,7 @@ func main() {
 			}
 		}
 		elapsed := time.Since(start).Seconds()
+		phase("timed-end")
 		sort.Float64s(latencies)
 		result["offeredPerSec"] = *rate
 		result["inserted"] = inserted.Load()
@@ -230,11 +253,36 @@ func main() {
 	stopCtx, c2 := context.WithTimeout(ctx, 10*time.Second)
 	defer c2()
 	_ = client.Stop(stopCtx)
+	result["outcome"] = jobStates(ctx, pool)
 	b, _ := json.MarshalIndent(result, "", "  ")
 	fmt.Println(string(b))
 	if *out != "" {
 		must(os.WriteFile(*out, b, 0o644))
 	}
+}
+
+// phase prints a marker on stderr (stdout is the result JSON); ci/run.py reads the store and process counters at each one.
+func phase(name string) {
+	fmt.Fprintf(os.Stderr, "@@PHASE %s %d\n", name, time.Now().UnixMilli())
+}
+
+// jobStates counts River's jobs by state in the store, whatever the harness saw (completed, discarded, available, running, retryable ...).
+func jobStates(ctx context.Context, pool *pgxpool.Pool) map[string]int64 {
+	out := map[string]int64{}
+	rows, err := pool.Query(ctx, "SELECT state::text, count(*) FROM river_job GROUP BY 1")
+	if err != nil {
+		out["error"] = -1
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var s string
+		var c int64
+		if rows.Scan(&s, &c) == nil {
+			out[s] = c
+		}
+	}
+	return out
 }
 
 func pad1(n int) string {

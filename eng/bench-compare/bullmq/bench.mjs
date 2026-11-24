@@ -23,6 +23,11 @@ const fsync = (await admin.config('GET', 'appendfsync'))[1];
 const jobOpts = { removeOnComplete: { count: 1000 }, removeOnFail: { count: 1000 } };
 const queue = new Queue('noop', { connection: new Redis(conn), defaultJobOptions: jobOpts });
 const result = { system: `bullmq ${version}`, mode, concurrency: conc, redisAppendfsync: fsync };
+const phase = name => console.error(`@@PHASE ${name} ${Date.now()}`); // read by ci/run.py
+result.settings = { store: 'redis', mode, payloadBytes: 1024, callers: calls, workerSlots: conc, bulkChunk: batch, redisAppendfsync: fsync, removeOnComplete: 1000,
+  cores: (await import('node:os')).availableParallelism() };
+// Waiting/active/failed as Redis holds them; completed jobs are trimmed by removeOnComplete, so the completed figure is the worker's 'completed' events.
+const states = async () => ({ ...(await queue.getJobCounts('waiting', 'active', 'delayed', 'failed')), completedEvents: completed });
 const pct = (a, p) => a.length ? +a[Math.max(0, Math.min(a.length - 1, Math.floor(p * a.length) - 1))].toFixed(2) : 0;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let completed = 0; const lat = [];
@@ -53,35 +58,39 @@ const seedBulk = async () => {
 
 if (mode === 'enqueue') {
   await enqueue(warmupJobs);
-  const l = [], t0 = performance.now();
+  const l = []; phase('timed-start'); const t0 = performance.now();
   await enqueue(n, l, warmupJobs);
-  const elapsed = (performance.now() - t0) / 1000;
+  const elapsed = (performance.now() - t0) / 1000; phase('timed-end');
   l.sort((a, b) => a - b);
   const accepted = await queue.getWaitingCount() - warmupJobs;
   Object.assign(result, { jobs: n, calls, warmupJobs, insertsPerSec: +(n / elapsed).toFixed(1),
     accepted, insertLatencyMs: { p50: pct(l, .5), p95: pct(l, .95), p99: pct(l, .99) } });
 } else if (mode === 'bulk') {
-  const t0 = performance.now();
+  phase('timed-start'); const t0 = performance.now();
   await seedBulk();
-  const elapsed = (performance.now() - t0) / 1000;
+  const elapsed = (performance.now() - t0) / 1000; phase('timed-end');
   const accepted = await queue.getWaitingCount();
   Object.assign(result, { jobs: n, batch, calls, accepted, insertsPerSec: +(n / elapsed).toFixed(1) });
 } else if (mode === 'drain') {
-  await seedBulk();
-  const t0 = performance.now(); const w = startWorker();
+  phase('seed-start'); await seedBulk(); phase('seed-end');
+  result.readyBeforeStart = await states();
+  phase('timed-start'); const t0 = performance.now(); const w = startWorker();
+  const progress = []; const tick = setInterval(() => progress.push([Math.round((performance.now() - t0) / 100) / 10, completed]), 1000);
   while (completed < n && (performance.now() - t0) / 1000 < maxSeconds) await sleep(5);
-  const el = (performance.now() - t0) / 1000; await w.close();
+  const el = (performance.now() - t0) / 1000; clearInterval(tick); phase('timed-end'); await w.close();
+  result.progress = progress; result.clocks = { workerStartSeconds: +el.toFixed(3), workerStartJobsPerSec: +(completed / el).toFixed(1) };
   Object.assign(result, { jobs: n, finished: completed, drainSeconds: +el.toFixed(3), completionsPerSec: +(completed / el).toFixed(1) });
 } else {
   const w = startWorker(); await sleep(500);
-  const t0 = performance.now(); const stop = Date.now() + seconds * 1000; let inserted = 0, next = Date.now(), inflight = 0; const pend = [];
+  phase('timed-start'); const t0 = performance.now(); const stop = Date.now() + seconds * 1000; let inserted = 0, next = Date.now(), inflight = 0; const pend = [];
   while (Date.now() < stop) {
     if (inflight < 16) { inflight++; pend.push(queue.add('noop', { pad, t: Date.now() }).then(() => { inserted++; }).finally(() => inflight--)); }
     next += 1000 / rate; const wait = next - Date.now(); if (wait > 0) await sleep(wait);
   }
   await Promise.all(pend); const dl = Date.now() + 60000; while (completed < inserted && Date.now() < dl) await sleep(20);
-  lat.sort((a, b) => a - b); await w.close();
+  phase('timed-end'); lat.sort((a, b) => a - b); await w.close();
   Object.assign(result, { offeredPerSec: rate, inserted, completed, completionsPerSec: +(completed / ((performance.now() - t0) / 1000)).toFixed(1),
     latencyMs: { p50: pct(lat, .5), p95: pct(lat, .95), p99: pct(lat, .99), max: pct(lat, 1) } });
 }
+result.outcome = await states();
 const text = JSON.stringify(result, null, 2); console.log(text); if (out) writeFileSync(out, text); process.exit(0);
