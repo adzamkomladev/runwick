@@ -31,7 +31,10 @@ internal sealed class PoolCoordinator
     {
         _engine = engine;
         Settings = settings;
-        Gate = new LocalCapacityGate(settings.Target);
+        // Claim ahead (05 §9.8) is for fixed pools only: an automatic pool's target moves, so it never claims beyond it.
+        var ahead = settings.Auto is null ? engine.Options.ClaimAhead : 0;
+        Gate = new LocalCapacityGate(settings.Target, ahead);
+        Run = ahead > 0 ? new SemaphoreSlim(settings.Target) : null;
         Selector = new LaneSelector(settings);
         Gate.Released += () => Wake.Set();
         Scaler = settings.Auto is { } auto ? new Scaling.PoolScaler(auto.Min, auto.Max) : null;
@@ -51,6 +54,9 @@ internal sealed class PoolCoordinator
     public PoolSettings Settings { get; }
 
     public LocalCapacityGate Gate { get; }
+
+    /// <summary>With claim ahead (05 §9.8): the run slots an attempt takes before its handler is invoked; null without it.</summary>
+    public SemaphoreSlim? Run { get; }
 
     public LaneSelector Selector { get; }
 
@@ -148,7 +154,7 @@ internal sealed class PoolCoordinator
     {
         var inFlight = ClaimsInFlight;
         var limit = _engine.Options.ClaimsInFlight;
-        return inFlight == 0 || (inFlight < limit && Gate.Target - Gate.Outstanding >= Math.Max(1, Gate.Target / limit));
+        return inFlight == 0 || (inFlight < limit && Gate.Target + Gate.Ahead - Gate.Outstanding >= Math.Max(1, Gate.Target / limit));
     }
 
     /// <summary>One opportunity with a ticket in hand: the probe view, the lane choice and the claim. Idle: the pool then waits (until the due time when known).</summary>

@@ -39,15 +39,19 @@ internal sealed class EngineClock(TimeProvider time)
 
 /// <summary>
 /// One pool's local capacity (05 §4): a locked counter of outstanding idempotent tickets and a target. A ticket is
-/// acquired before a Reserve is created and released exactly once when its holder retires.
+/// acquired before a Reserve is created and released exactly once when its holder retires. <paramref name="ahead"/> extra tickets
+/// may be held beyond the target by jobs claimed ahead of a free run slot (05 §9.8); 0 unless <c>ClaimAhead</c> is set.
 /// </summary>
-internal sealed class LocalCapacityGate(int target)
+internal sealed class LocalCapacityGate(int target, int ahead = 0)
 {
     readonly Lock _lock = new();
     int _outstanding;
     bool _open = true;
 
     public int Target { get; private set; } = target;
+
+    /// <summary>Tickets allowed beyond <see cref="Target"/> for claim ahead (05 §9.8).</summary>
+    public int Ahead => ahead;
 
     public int Outstanding
     {
@@ -85,7 +89,7 @@ internal sealed class LocalCapacityGate(int target)
         int outstanding;
         lock (_lock)
         {
-            if (!_open || _outstanding >= Target)
+            if (!_open || _outstanding >= Target + ahead)
             {
                 return null;
             }

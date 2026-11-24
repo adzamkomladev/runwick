@@ -366,10 +366,13 @@ internal static class Analysis
 
         foreach (var w in workers)
         {
+            // Buffered finish is on by default for PostgreSQL: a finished attempt keeps its entry until its Finish settles,
+            // so the bound is the running tickets plus the finish buffer.
             var entries = w?["maxima"]?["entries"]?.GetValue<long>() ?? 0;
-            if (entries > spec.Concurrency)
+            var bound = spec.Concurrency + new WorkerOptions().FinishBufferMaxCount;
+            if (entries > bound)
             {
-                violations.Add($"worker held {entries} attempt entries > {spec.Concurrency} tickets");
+                violations.Add($"worker held {entries} attempt entries > {spec.Concurrency} tickets + {bound - spec.Concurrency} buffered finishes");
             }
         }
 

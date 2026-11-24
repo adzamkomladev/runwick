@@ -122,6 +122,7 @@ public sealed partial class DefaultsMatchCodeTests
         Check(failures, f, "Default pool mode", WorkerSettings.DefaultPoolTarget);
         Check(failures, f, "Worker/store group maximum", WorkerSettings.GroupMaximum);
         Check(failures, f, "Per-pool claim concurrency", o.ClaimsInFlight);
+        Check(failures, f, "Prefetch beyond tickets", o.ClaimAhead);
         var weights = new PoolBuilder("p").Weights;
         Check(failures, f, "Lane weights high : medium : low", weights.High, weights.Medium, weights.Low);
         Check(failures, f, "AgingEvery", WorkerSettings.AgingEvery);

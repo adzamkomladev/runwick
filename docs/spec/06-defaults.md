@@ -4,6 +4,10 @@
 
 Every numeric default used by milestone M2 is in this file. Behavior that uses each value is specified in [05-worker-engine.md](05-worker-engine.md) (cited as `05 §n`) and the storage/protocol specs. A value listed here is the default; a host may change configurable values only within the startup inequalities of §3. Values marked *profile constant* are not host-configurable (raising them requires a new serializer profile/format version).
 
+## Changes (2026-11-23, claim ahead)
+
+- **New option `WorkerOptions.ClaimAhead`** (05 §9.8): how many jobs a fixed pool may claim beyond its concurrency. Default **0**, so §1.5 "Prefetch beyond tickets" keeps its value and now names the option. New rule **V-26**: 0 to 32. Handlers running at once still never exceed the pool's concurrency.
+
 ## Changes (2026-11-23, faster options on by default)
 
 - **`WorkerOptions.BufferedFinish`: false → unset (`bool?`, null), meaning the store decides.** PostgreSQL and SQLite turn buffered finish (05 §12.6) on; Redis leaves it off. `true` or `false` (or `UseBufferedFinish()`, which sets true) overrides the store. Reason: at a sustained 100 jobs/s it was a clear win on PostgreSQL and SQLite and slightly worse on Redis. The other defaults are those of the 2026-11-15 entry (`FinishFlushInterval` 25 ms, `FinishBufferMaxCount` 256, `FinishBufferMaxBytes` 4 MiB). V-22's bounds on those three options are checked unless `BufferedFinish` is explicitly false, since validation runs before the store is known. With buffering on, the completion ready-ID channel holds at least `FinishBufferMaxCount` IDs (§1 row updated). Set `BufferedFinish = false` for the earlier behaviour on PostgreSQL and SQLite.
@@ -200,7 +204,7 @@ Implementation choices (marked *[choice]* below): whole-millisecond durations (V
 | AutoConcurrency | `(min, max)`, initial target min (1 when min = 0) | tickets | Automatic pool (11) | CDB §1, §4 | V-15 |
 | Worker/store group maximum | 16 | outstanding attempts | Σ pool maxima bound | CDB §1 | V-15 |
 | Per-pool claim concurrency | 1 (`ClaimsInFlight`, 1 to 4) | claims in flight (incl. resolution); above 1 only batched single-lane claims overlap (05 §9.7) | Pool coordinator | CDB §1, 05 Changes 2026-11-20 | V-25 |
-| Prefetch beyond tickets | 0 | reservations | Pool coordinator | CDB §1 | — |
+| Prefetch beyond tickets | 0 (`ClaimAhead`, 0 to 32) | claimed jobs per fixed pool beyond its target, waiting for a run slot (05 §9.8) | Pool coordinator | CDB §1, 05 Changes 2026-11-23 | V-26 |
 | Queue weight | 1 default; allowed 1–1,000 | — | Queue-level SWRR | CDB §2 | V-15 |
 | Lane weights high : medium : low | 6 : 3 : 1 | — | Lane-level SWRR | CDB §2, CC §2 | V-20 |
 | Priority mode | weighted with aging | — | Lane selection | CDB §2 | — |
@@ -451,5 +455,6 @@ Startup rejects any violation with an error naming the setting(s) and the inequa
 | V-23 | `LeaseDuration` within the store's supported lease bounds (checked against the store compatibility manifest) | 60 s |
 | V-24 | The binary knows every capability the application requires (SP-013 builds know `rate_admission`; earlier binaries refuse a rate-enabled application) | pass |
 | V-25 | `1 ≤ ClaimsInFlight ≤ 4` (05 §9.7) | 1 |
+| V-26 | `0 ≤ ClaimAhead ≤ 32` (05 §9.8) | 0 |
 
 Worked failures (TIME-01): `LeaseDuration = 30 s` → V-04 (31 ≮ 20) and V-06 (StopMargin = −5 s); `ControlRequestTimeout = 10 s` → V-05 (15 ≱ 23) although V-04 holds (41 < 50); `ShutdownDrain = 20 s` → V-10 (30 > 25); `MinimumInvocationMargin = 12 s` → V-05; `LeaseWatchdogInterval = 2 s` → V-07. A host may scale leases and intervals together (e.g. lease 120 s, safety 20 s, renewal [24 s, 36 s]: 36 + 10 + 1 + 2 = 49 < 100; StopMargin = 100 − 36 − 5 − 2 = 57 s; ResumeMargin = 62 s). Static inequalities do not prove group-wide capacity, thread-pool health or store clock stability; runtime margin checks always override them.

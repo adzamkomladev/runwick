@@ -2,6 +2,8 @@
 # Combined finish-and-claim pairs: one Runwick bench build run with and without the option (arms base, comb; buf = buffered finish, both = both), and BullMQ, alternating order, a fresh Redis 8.2 per run, each round under the shared bench lock.
 # usage: pairs-combined.sh <workload> <rounds> <bench-bin-dir> [arms...]    workloads: drain steady500 delayed100 steady100
 # Arms cif1 to cif4 run the candidate with buffered finish and that many claims in flight per pool (05 §9.7); ucif1 to ucif4 the same without buffered finish.
+# Arms caN (ca8, ca16, ca32) run the candidate with buffered finish and claim ahead N (05 §9.8: N jobs claimed beyond the 16 slots, still 16 handlers);
+# caNcif2 the same with 2 claims in flight.
 # Arms old and oldbuf run a second build given by BASE_BIN (without and with buffered finish), for base-against-change pairs; midbuf runs a
 # third build given by MID_BIN with buffered finish (two changes stacked on one base, measured in the same rounds).
 # APPENDFSYNC=everysec runs every Redis with appendfsync everysec and the Runwick arms with --redis-everysec (G4); default always.
@@ -29,6 +31,8 @@ run_arm() {
   local flags=()
   local bin=$cand workers=16
   case "$arm" in comb) flags=(--combined-finish-claim) ;; buf) flags=(--buffered-finish) ;; both) flags=(--buffered-finish --combined-finish-claim) ;;
+    ca[0-9]*cif2) local ca_n=${arm#ca}; flags=(--buffered-finish --claim-ahead "${ca_n%cif2}" --claims-in-flight 2) ;;
+    ca[0-9]*) flags=(--buffered-finish --claim-ahead "${arm#ca}") ;;
     cif[1-4]) flags=(--buffered-finish --claims-in-flight "${arm#cif}") ;; ucif[1-4]) flags=(--claims-in-flight "${arm#ucif}") ;;
     old) bin=$BASE_BIN ;; oldbuf) bin=$BASE_BIN; flags=(--buffered-finish) ;; midbuf) bin=$MID_BIN; flags=(--buffered-finish) ;; oldbuf32) bin=$BASE_BIN; flags=(--buffered-finish); workers=32 ;; esac
   [[ "${APPENDFSYNC:-always}" == everysec ]] && flags+=(--redis-everysec)

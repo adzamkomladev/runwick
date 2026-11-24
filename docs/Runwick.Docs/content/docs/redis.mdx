@@ -127,7 +127,7 @@ The configuration string is a StackExchange.Redis string. Runwick uses only the 
 
 ### Grouped dispatch (opt-in)
 
-With `GroupDispatches` on, a dispatch that finds a free send slot goes out alone, at once, exactly as before. A dispatch that arrives while every slot is busy waits for the next free slot and goes out with the others that are waiting, in one Redis call. A caller never waits for company that is not already there, and nothing waits on a timer.
+With `GroupDispatches` on, a dispatch that finds a free send slot goes out alone, at once. A dispatch that arrives while every slot is busy waits for the next free slot and goes out with the others that are waiting, in one Redis call. A caller never waits for company that is not already there, and nothing waits on a timer.
 
 Every dispatch in a group still has its own command ID, receipt and event. Resending one later, alone or in another group, returns its original job. If the reply to a group is lost, each caller gets the usual "outcome unknown" for its own dispatch and resolves it as before. Dispatches with uniqueness keys, concurrency scopes or rate scopes always go alone. Delayed dispatches can be grouped. Cancelling a call that is still waiting leaves nothing behind. Cancelling after the group was sent cannot undo it, and the caller gets the real result.
 

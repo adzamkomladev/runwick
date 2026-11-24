@@ -420,6 +420,11 @@ internal static class BenchMode
                     {
                         o.ClaimsInFlight = inFlight;
                     }
+
+                    if (a.OptInt("claim-ahead") is { } ahead) // 05 §9.8: jobs a pool may claim beyond its concurrency
+                    {
+                        o.ClaimAhead = ahead;
+                    }
                 });
             });
         });

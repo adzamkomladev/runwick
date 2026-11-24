@@ -98,7 +98,7 @@ A process can have at most `ProducerOptions.MaxConcurrentCalls` dispatch calls (
 
 - A call that finds a free slot is sent at once, exactly as without grouping. Nobody waits to collect company, so a single caller, or fewer callers than slots, sees no change.
 - Every call keeps its own operation ID, receipt, deadline and result. Re-sending the same prepared dispatch, or `ResolveAsync`, works the same as without grouping.
-- A call that waits too long is refused with `LocalCapacityExceededException` as before, and nothing is sent for it. A call cancelled while waiting sends nothing. A call cancelled after its group was sent throws `DispatchCanceledAfterSendException`; resolve its operation ID.
+- A call that waits too long is refused with `LocalCapacityExceededException`, and nothing is sent for it. A call cancelled while waiting sends nothing. A call cancelled after its group was sent throws `DispatchCanceledAfterSendException`; resolve its operation ID.
 - Only plain single dispatches are grouped. A dispatch with a uniqueness key, concurrency or rate scopes, `DispatchManyAsync`, and dispatches on your own transaction always go alone.
 
 It helps when many callers dispatch at once from one process, more than its producer slots. In our measurements (jobs per second, without and with grouping): 1 caller 77 and 74, 4 callers 228 and 238, 8 callers 388 and 448, 16 callers 409 and 622, 32 callers 453 and 1,022. To send every call alone, turn it off:

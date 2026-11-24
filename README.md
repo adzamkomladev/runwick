@@ -119,7 +119,7 @@ The exact rules are in [docs/spec](docs/spec). The guide is the short version.
 
 ## Status
 
-**0.1.0 is the first public release.** The API and storage formats can still change before 1.0. The qualification work for 1.0 is not finished yet:
+**The current release is 0.1.5.** The API and storage formats can still change before 1.0. The qualification work for 1.0 is not finished yet:
 - the Windows and macOS checks;
 - the benchmark on a dedicated reference machine;
 - the 24-hour soak test.

@@ -4190,3 +4190,152 @@ Expected: WAL per job about 3% lower (the receipt share above), receipt-table gr
 - The stored results are now the largest part: about 310 bytes per Finish and about 2 kB per batched claim, written in full in the WAL of the decision update. A compact result (field codes, no repeated job ID, no nulls, no lease and policy echo that the claim reply can rebuild) would roughly halve the heap WAL, about another 400 bytes per job by the Redis precedent. That needs receipt codec version 2, readers for both versions, and replay tests across the switch; it is a decision, not a free change.
 - The placeholder insert plus decision update is the receipt protocol (R1 to R4) itself; folding them would change how concurrent sends of the same command wait for each other, so it is not touched.
 - SQLite has the same `command_by_id` index; not changed here.
+
+## Redis: claim ahead of free slots (perf round two, Redis F)
+
+Written 2026-11-23. Design: [redis-pool-claim-redesign.md](../plans/redis-pool-claim-redesign.md).
+
+### Short answer
+
+There is a new opt-in setting, `WorkerOptions.ClaimAhead`, from 0 to 32, default 0. It lets a fixed pool claim that many jobs beyond its concurrency. The extra jobs wait in memory for a free handler slot. While they wait, their leases are renewed and fenced like those of running jobs. Handlers running at once never exceed the pool's concurrency.
+
+The point is to carry more jobs in each Redis call and each fsync. On a disk log that is where Runwick loses most of its ground to BullMQ. Nothing stored, no script and no guarantee changes, and there is no migration.
+
+**Result: merged as opt-in.** In paired drains on a disk log, claim ahead 32 drained 1.63× as fast as buffered finish alone and reached **0.94× BullMQ**; claim ahead 16 with 2 claims in flight reached **1.04×**. That meets the 90% target on a disk log for the first time, although the ranges are wide on a loaded host. On a memory log it narrows the gap (0.45× to 0.63×) but BullMQ stays about 1.6× ahead. It also removed the multi-second pickup tail at a steady 500 jobs/s and halved the delayed pickup p99. It stays off by default: it was measured only together with buffered finish, which is now off by default on Redis, and it changes what a waiting job looks like (see below).
+
+### What it does
+
+- **Claims.** The pool's ticket gate allows its target plus `ClaimAhead` tickets. The batched claim already asks for every free ticket, up to 32 jobs per call, so claims get bigger without any other change.
+- **Waiting for a slot.** A claimed job waits for one of the pool's run slots before invocation admission (spec 05 §9.5). The run slot goes back when the handler returns, so the next waiting job starts without a round trip.
+- **When a waiting job never runs.** It stops waiting and is not invoked once it has lost its lease, once a cancellation is observed, or once the drain cutoff has passed. In the last two cases it is finished as `UserCancelled` or `Interrupted`.
+- **Visible differences** (why it is off by default):
+  - A waiting job shows as running.
+  - Its recorded start is the claim time.
+  - It holds store-side concurrency and rate permits while it waits.
+  - One busy worker can hold jobs that an idle worker could have run.
+- **Automatic pools** ignore the setting.
+
+### Tests
+
+- **Core (fake store):**
+  - `Claim_ahead_defaults_to_zero_and_is_validated` checks the default and rule V-26.
+  - `Claim_ahead_holds_jobs_beyond_concurrency_but_runs_at_most_concurrency` uses 4 slots and claim ahead 4. It checks that 8 jobs are held but at most 4 handlers run at once, that every job runs once, and that every slot comes back.
+  - `DefaultsMatchCodeTests` checks the 06 row "Prefetch beyond tickets".
+- **Contract (real stores), `ClaimAheadContractTests`:**
+  - **CA-01** (every store): claims beyond concurrency, never more handlers than concurrency, each job runs once, history invariants hold.
+  - **CA-02** (SQLite and Redis): a claim's reply is lost after the store applied it. The resend replays it, each job runs once, one attempt per job.
+  - **CA-03** (SQLite and Redis), the crash and fencing case:
+    - A worker with 2 slots and claim ahead 4 holds 2 running and 4 waiting jobs.
+    - It is then cut off from the store. Its claims, renewals and finishes never answer.
+    - A second worker recovers all 6 jobs after their leases expire and runs them.
+    - The first worker then reconnects. Its handlers return, but its 4 waiting jobs never start even though run slots are free. Every job ends succeeded with two attempts, and the history invariants hold.
+- **Runs (2026-11-23, Sonnet runner):** Core 466 of 466; the claim-ahead, buffered-finish and finish-and-claim contract classes 28 of 28; full Contract 516 of 518 (one Redis timeout case passed on all three reruns; `CapabilityActivationContractTests.Operator_activation_raises_the_capability_once_and_is_seen_by_the_store` on PostgreSQL failed every time, in code this change does not touch, not yet checked on main); Redis suite 129 of 129 without `RedisCrashTests`, whose crash cases pass alone except `Kill_9 DispatchMany60`, which hangs on the commit before this change too.
+
+### Benchmark
+
+`eng/bench-compare/redis-group/pairs-combined.sh` has new arms:
+
+- `caN`: buffered finish plus claim ahead N (for example `ca16`, `ca32`).
+- `caNcif2`: the same with 2 claims in flight.
+
+Paired against `buf` (main's best setting, same binary with the option off) and BullMQ:
+
+```
+cd eng/bench-compare/redis-group
+dotnet build ../../../tests/Runwick.Workloads -c Release
+FSYNC=disk  RESULT_TAG=-claimahead       ./pairs-combined.sh drain 5 ../../../tests/Runwick.Workloads/bin/Release/net10.0 buf ca16 ca32 ca16cif2 bullmq
+FSYNC=tmpfs RESULT_TAG=-claimahead-mem   ./pairs-combined.sh drain 5 ../../../tests/Runwick.Workloads/bin/Release/net10.0 buf ca16 ca32 bullmq
+./pairs-combined.sh steady500  3 ../../../tests/Runwick.Workloads/bin/Release/net10.0 buf ca16 bullmq
+./pairs-combined.sh delayed100 3 ../../../tests/Runwick.Workloads/bin/Release/net10.0 buf ca16 bullmq
+python3 summarize_drain.py results/drain-claimahead; python3 summarize_drain.py results/drain-claimahead-mem
+python3 summarize_steady.py results/steady500; python3 summarize_steady.py results/delayed100
+```
+
+The bench JSON's `batchClaims` and `reservesSent` show the jobs per claim. With claim ahead it should rise from about 8 toward 16–32.
+
+### Results (2026-11-23)
+
+Drain of 20,000 jobs, 16 workers, fresh Redis per run, arms rotated each round under the bench lock. Host load 6 to 40, round 5 of the disk set the worst, so read the medians and ratios, not single rounds. Jobs per claim is jobs divided by claim calls.
+
+**Disk log (`appendfsync always`), 5 rounds**
+
+| Arm | jobs/s, median (range) | ÷ BullMQ | Jobs per claim | Redis CPU per job |
+|---|---|---|---|---|
+| buf (buffered finish) | 670 (433–705) | 0.58 | 8.3 | 0.80 ms |
+| ca16 | 851 (759–990) | 0.73 | 16.6 | 0.69 ms |
+| ca32 | 1,094 (978–1,444) | 0.94 | 24.4 | 0.61 ms |
+| ca16 + 2 claims in flight | 1,209 (656–1,319) | 1.04 | 11.3 | |
+| BullMQ | 1,162 (606–1,472) | 1.00 | | 0.49 ms |
+
+**Memory log, 5 rounds**
+
+| Arm | jobs/s, median (range) | ÷ BullMQ |
+|---|---|---|
+| buf | 1,006 (783–1,160) | 0.45 |
+| ca16 | 1,248 (1,167–1,546) | 0.56 |
+| ca32 | 1,400 (1,246–1,616) | 0.63 |
+| BullMQ | 2,233 (1,784–2,531) | 1.00 |
+
+AOF bytes per job stay about 5,000 for every Runwick arm (BullMQ 2,815): claim ahead sends fewer, larger calls but stores the same.
+
+**Steady 500 jobs/s, 3 rounds (medians)**
+
+| Arm | Completed/s | Enqueue p99 | Pickup p95 | Pickup p99 | Offer to finish p99 |
+|---|---|---|---|---|---|
+| buf | 352 | 677 ms | 10,401 ms | 10,509 ms | 10,588 ms |
+| ca16 | 411 | 658 ms | 473 ms | 703 ms | 1,053 ms |
+| BullMQ | 388 | – | – | – | 618 ms |
+
+**Delayed jobs, 100 per second, 3 rounds (medians)**
+
+| Arm | Enqueue p99 | Pickup p95 | Pickup p99 |
+|---|---|---|---|
+| buf | 412 ms | 239 ms | 595 ms |
+| ca16 | 172 ms | 136 ms | 246 ms |
+| BullMQ | 178 ms | 266 ms | 408 ms |
+
+What it shows: carrying more jobs per Redis call is the lever the design note predicted, and it does better than its model (0.94× measured against 0.75–0.85× predicted on disk). The memory-log gap is decision work per job, not calls, so claim ahead cannot close it. Raw results: `eng/bench-compare/redis-group/results/{drain-claimahead,drain-claimahead-mem,steady500,delayed100}` in the agent worktree, not committed.
+
+Not done: claim ahead without buffered finish (the Redis default now) was not measured, so it is not proposed as a default yet. `summarize_steady.py` only knows the arm names off/on/bullmq.
+
+## Final qualification for v0.1.5 (2026-11-23)
+
+Run on the release candidate (main at 7b562cf), on the shared host (8 cores, 24 GB, load 9 to 17 throughout), so every timing below is informational. Core and Contract were run again on 9273485, which adds Redis claim ahead. v0.1.5 was released from de189dc (only docs, version and lock files on top). Raw files: `artifacts/qual-v0.1.5/`.
+
+### Test suites
+
+| Suite | Result |
+|---|---|
+| Core | 464 passed (466 on 9273485) |
+| SQLite | 56 of 57; the one failure passed 3 of 3 alone (load) |
+| PostgreSQL | 425 passed, 2 skipped, 5 failed: see below |
+| Redis | 134 passed, plus 13 of 13 crash cases run one by one; `Kill_9 DispatchMany60` hangs, also on older commits, and was not run |
+| Contract | 514 passed (520 of 521 on 9273485; the one failure passed 3 of 3 alone) |
+| Outbox | 78 passed, 2 skipped; one grouped-delivery case timed out once and passed on rerun |
+| ASP.NET Core, CLI, Dashboard | 20, 21 and 57 passed |
+
+The PostgreSQL failures:
+
+- Two outage tests need a server the test itself can restart; both passed with Testcontainers.
+- One event-cursor test failed once under load and passed 3 of 3 alone.
+- Two failed every time, and both were the tests' own limits, not the product: `CapacityShareTests` (CAP-01) counted 20 attempt entries against a limit of 16, and `ScalerCaseTests` counted more than 4 entries during an outage. Buffered finish, now on by default with PostgreSQL, hands a slot back as soon as the handler returns and keeps the attempt's entry until its finish is stored, so for those few milliseconds a worker holds more entries than slots. Handlers running at once never went over the limit. Both tests now turn buffered finish off, as CAP-11c already did, because what they check is the unbuffered bound. No library code changed.
+
+### SP-029, short profile, every case except the soak
+
+Every case completed with no run failures and no lost jobs. The harness flagged "worker held N attempt entries > 16 tickets" in every case except P-09; that check had the same outdated limit and is fixed in 9273485 (the limit is now slots plus the finish buffer).
+
+| Case | Result |
+|---|---|
+| P-01 (100 offers/s) | First run 81.4 finishes/s with the backlog growing; rerun on 9273485: 99.4/s, backlog shrinking about 1/s, no violations, due-to-start p99 6.3 s against the 2 s target |
+| P-01t (instrumentation cost) | 94.1 → 93.6/s (0.5%), allocations per job +8.9% |
+| P-02 | sustainable rate 100/s |
+| P-03 | a payload 1 byte over 1 MiB refused with `payload_too_large`, nothing stored; 64 KiB 15.7/s, 1 MiB 0.97/s |
+| P-04 | shares 0 points apart over 2,000 admissions (the full profile asks for 10,000) |
+| P-05 | 3 replicas 2.7 times as fast as 1 |
+| P-06 | schedule lag p99 10.6 s against 13 s; catch-up 300 of 300; no lease losses |
+| P-07 | 20 dashboard viewers, 720 polls, no errors; list p95 41 ms; worker throughput −6.4% |
+| P-08 | readiness back 7 s after the store returned; admission paused during the outage |
+| P-09 | 99.6 deliveries/s, ready-to-confirm p99 1.1 s, no violations |
+| P-10 (soak) | not run, as agreed |
+
+What stays open: P-01's due-to-start p99 under 2 s at 100 offers/s is not met on this host (6.3 s on the rerun), P-04 needs the full profile's 10,000 admissions, and the reference-host run and 24-hour soak are still owed.

@@ -441,8 +441,9 @@ public sealed class ScalerOutageTests
         // so demand is unknown and the target holds; handlers released during the outage leave Finishes pending, and the
         // pool never admits past its maximum or starts a scale-up feedback loop. After the outage the backlog drains.
         await using var f = await DriverFixture.StartAsync(Ns("scl04"));
+        // The 4-entry bound is the unbuffered one: buffered finish (the PostgreSQL default) frees a slot while its finish waits.
         await using var w = WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults, concurrency: 0,
-            pool: p => p.AutoConcurrency(2, 4));
+            pool: p => p.AutoConcurrency(2, 4), options: o => o.BufferedFinish = false);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         w.Script.Default = (_, _, _) => release.Task;
         await w.DispatchManyAsyncFor(Enumerable.Range(0, 12).Select(i => "out" + i));

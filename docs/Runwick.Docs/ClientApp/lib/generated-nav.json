@@ -1404,11 +1404,6 @@
           "depth": 2
         },
         {
-          "id": "defaults-that-changed",
-          "text": "Defaults that changed",
-          "depth": 2
-        },
-        {
           "id": "restoring-from-a-backup",
           "text": "Restoring from a backup",
           "depth": 2

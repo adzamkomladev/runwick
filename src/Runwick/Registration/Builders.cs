@@ -523,6 +523,16 @@ public sealed class WorkerOptions
     public int ClaimsInFlight { get; set; } = 1;
 
     /// <summary>
+    /// Claim ahead (05 §9.8). How many jobs a fixed pool may claim beyond its concurrency, 0 to 32, default 0. With claim ahead the pool
+    /// keeps up to this many claimed jobs waiting beside its busy slots, so a slot that frees up starts its next job at once instead of
+    /// after a claim round trip, and each claim carries more jobs. The number of handlers running at once never exceeds the pool's
+    /// concurrency. A waiting job is already claimed and begun: its lease is renewed while it waits, and it holds any store-side
+    /// concurrency or rate permits; its recorded start is the claim time. A worker that crashes leaves its waiting jobs to lease expiry,
+    /// as for running ones. Automatic pools ignore it.
+    /// </summary>
+    public int ClaimAhead { get; set; }
+
+    /// <summary>
     /// Buffered finish (G1) switch; see <see cref="UseBufferedFinish"/>. <c>null</c> (the default) lets the store decide: on with
     /// PostgreSQL and SQLite, where it was measured faster under sustained load, off with Redis, where it was not. <c>true</c> or
     /// <c>false</c> overrides the store.
