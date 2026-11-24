@@ -120,8 +120,10 @@ public sealed class CapacityShareTests
     {
         await using var f = await DriverFixture.StartAsync(Ns("cap01grp"));
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // The 16-entry bound is the unbuffered one: buffered finish (the PostgreSQL default) frees a slot while its finish waits.
         await using var w = WorkerHost.Create(f.ClientConnectionString("worker"), f.Application, f.Faults, concurrency: 8,
-            configure: r => r.Queue("other"), worker: b => b.Pool("side", p => p.Queues("other").FixedConcurrency(8)));
+            configure: r => r.Queue("other"), worker: b => b.Pool("side", p => p.Queues("other").FixedConcurrency(8)),
+            options: o => o.BufferedFinish = false);
         w.Script.Default = (job, _, _) => job.Id.StartsWith("quick", StringComparison.Ordinal) ? Task.CompletedTask : release.Task;
         var main = w.Engine.Pools.Single(p => p.Settings.Name == "main");
         var side = w.Engine.Pools.Single(p => p.Settings.Name == "side");

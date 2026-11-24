@@ -4258,3 +4258,45 @@ AOF bytes per job stay about 5,000 for every Runwick arm (BullMQ 2,815): claim a
 What it shows: carrying more jobs per Redis call is the lever the design note predicted, and it does better than its model (0.94× measured against 0.75–0.85× predicted on disk). The memory-log gap is decision work per job, not calls, so claim ahead cannot close it. Raw results: `eng/bench-compare/redis-group/results/{drain-claimahead,drain-claimahead-mem,steady500,delayed100}` in the agent worktree, not committed.
 
 Not done: claim ahead without buffered finish (the Redis default now) was not measured, so it is not proposed as a default yet. `summarize_steady.py` only knows the arm names off/on/bullmq.
+
+## Final qualification for v0.1.5 (2026-11-23)
+
+Run on the release candidate (main at 7b562cf), on the shared host (8 cores, 24 GB, load 9 to 17 throughout), so every timing below is informational. Core and Contract were run again on 9273485, which adds Redis claim ahead. v0.1.5 was released from de189dc (only docs, version and lock files on top). Raw files: `artifacts/qual-v0.1.5/`.
+
+### Test suites
+
+| Suite | Result |
+|---|---|
+| Core | 464 passed (466 on 9273485) |
+| SQLite | 56 of 57; the one failure passed 3 of 3 alone (load) |
+| PostgreSQL | 425 passed, 2 skipped, 5 failed: see below |
+| Redis | 134 passed, plus 13 of 13 crash cases run one by one; `Kill_9 DispatchMany60` hangs, also on older commits, and was not run |
+| Contract | 514 passed (520 of 521 on 9273485; the one failure passed 3 of 3 alone) |
+| Outbox | 78 passed, 2 skipped; one grouped-delivery case timed out once and passed on rerun |
+| ASP.NET Core, CLI, Dashboard | 20, 21 and 57 passed |
+
+The PostgreSQL failures:
+
+- Two outage tests need a server the test itself can restart; both passed with Testcontainers.
+- One event-cursor test failed once under load and passed 3 of 3 alone.
+- Two failed every time, and both were the tests' own limits, not the product: `CapacityShareTests` (CAP-01) counted 20 attempt entries against a limit of 16, and `ScalerCaseTests` counted more than 4 entries during an outage. Buffered finish, now on by default with PostgreSQL, hands a slot back as soon as the handler returns and keeps the attempt's entry until its finish is stored, so for those few milliseconds a worker holds more entries than slots. Handlers running at once never went over the limit. Both tests now turn buffered finish off, as CAP-11c already did, because what they check is the unbuffered bound. No library code changed.
+
+### SP-029, short profile, every case except the soak
+
+Every case completed with no run failures and no lost jobs. The harness flagged "worker held N attempt entries > 16 tickets" in every case except P-09; that check had the same outdated limit and is fixed in 9273485 (the limit is now slots plus the finish buffer).
+
+| Case | Result |
+|---|---|
+| P-01 (100 offers/s) | First run 81.4 finishes/s with the backlog growing; rerun on 9273485: 99.4/s, backlog shrinking about 1/s, no violations, due-to-start p99 6.3 s against the 2 s target |
+| P-01t (instrumentation cost) | 94.1 → 93.6/s (0.5%), allocations per job +8.9% |
+| P-02 | sustainable rate 100/s |
+| P-03 | a payload 1 byte over 1 MiB refused with `payload_too_large`, nothing stored; 64 KiB 15.7/s, 1 MiB 0.97/s |
+| P-04 | shares 0 points apart over 2,000 admissions (the full profile asks for 10,000) |
+| P-05 | 3 replicas 2.7 times as fast as 1 |
+| P-06 | schedule lag p99 10.6 s against 13 s; catch-up 300 of 300; no lease losses |
+| P-07 | 20 dashboard viewers, 720 polls, no errors; list p95 41 ms; worker throughput −6.4% |
+| P-08 | readiness back 7 s after the store returned; admission paused during the outage |
+| P-09 | 99.6 deliveries/s, ready-to-confirm p99 1.1 s, no violations |
+| P-10 (soak) | not run, as agreed |
+
+What stays open: P-01's due-to-start p99 under 2 s at 100 offers/s is not met on this host (6.3 s on the rerun), P-04 needs the full profile's 10,000 admissions, and the reference-host run and 24-hour soak are still owed.
