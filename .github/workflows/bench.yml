@@ -14,6 +14,9 @@ on:
       systems:
         description: Only these libraries, comma-separated (e.g. wolverine-redis,river); empty = all 14
         default: ""
+      stores:
+        description: "same-host layout only: which stores to run, comma-separated (postgres,redis,sqlite); empty = all three"
+        default: ""
       layout:
         description: "per-library = one runner per library and workload (28 jobs); same-host = one runner per store, libraries one after another (Stage 1 baselines: normal workload, trace round, write floors)"
         default: per-library
@@ -29,7 +32,19 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       systems: ${{ steps.pick.outputs.systems }}
+      hostmatrix: ${{ steps.hosts.outputs.matrix }}
     steps:
+      - id: hosts  # same-host layout: one job per chosen store, so an unchosen store costs no runner minutes
+        env:
+          STORES: ${{ inputs.stores }}
+        run: |
+          python3 -c "import json,os
+          all=[{'store':'postgres','systems':'writefloor-pg,runwick-pg,river,pgboss,wolverine-pg,bullmq-dotnet-pg'},
+               {'store':'redis','systems':'writefloor-redis,runwick-redis,runwick-redis-tuned,wolverine-redis,bullmq-dotnet-redis,bullmq'},
+               {'store':'sqlite','systems':'writefloor-sqlite,runwick-sqlite,wolverine-sqlite,solidqueue'}]
+          p=[x.strip() for x in os.environ['STORES'].split(',') if x.strip()]
+          bad=[x for x in p if x not in [h['store'] for h in all]]; assert not bad, f'unknown stores: {bad}'
+          print('matrix=' + json.dumps({'include': [h for h in all if not p or h['store'] in p]}))" >> "$GITHUB_OUTPUT"
       - id: pick
         env:
           ALL: runwick-pg,runwick-sqlite,runwick-redis,wolverine-pg,wolverine-sqlite,wolverine-redis,bullmq-dotnet-pg,bullmq-dotnet-redis,river,pgboss,solidqueue,bullmq,horizon,celery
@@ -126,20 +141,14 @@ jobs:
   # Stage 1 baseline (docs/plans/queue-throughput-stage-1-plan.md): every library of one store on the SAME runner, one after another, order reversed on even
   # rounds, the store container recreated before each (run.py --fresh-stores). Targets such as "90% of River" need both on one host.
   samehost:
+    needs: plan
     if: inputs.layout == 'same-host'
     name: same host / ${{ matrix.store }}
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - store: postgres
-            systems: writefloor-pg,runwick-pg,river,pgboss,wolverine-pg,bullmq-dotnet-pg
-          - store: redis
-            systems: writefloor-redis,runwick-redis,runwick-redis-tuned,wolverine-redis,bullmq-dotnet-redis,bullmq
-          - store: sqlite
-            systems: writefloor-sqlite,runwick-sqlite,wolverine-sqlite,solidqueue
+      matrix: ${{ fromJSON(needs.plan.outputs.hostmatrix) }}
     env:
       BC: eng/bench-compare
     steps:
