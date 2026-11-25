@@ -10,7 +10,7 @@ namespace Runwick.Workloads;
 /// SQLite) or XADD (Redis) per call, acknowledged only after the store's own durability point, from <c>--callers</c> concurrent callers. The floor a producer
 /// cost budget is measured against (docs/plans/queue-throughput-stage-1-plan.md). The stores are the harness's: PostgreSQL 18 (full durability),
 /// Redis with AOF appendfsync always, SQLite with WAL + synchronous=FULL (Runwick's mandatory profile).
-/// Usage: <c>writefloor --store postgres|redis|sqlite [--callers 1] [--n 2000] [--conn admin-cs] [--redis host:port] [--out file.json]</c>.
+/// Usage: <c>writefloor --store postgres|redis|sqlite [--callers 1] [--n 2000] [--sync FULL|NORMAL (SQLite)] [--conn admin-cs] [--redis host:port] [--out file.json]</c>.
 /// </summary>
 internal static class WriteFloorMode
 {
@@ -19,6 +19,13 @@ internal static class WriteFloorMode
         var store = a.OptStr("store") ?? "postgres";
         var callers = a.Int("callers", 1);
         var n = a.Int("n", 2000);
+        var sync = (a.OptStr("sync") ?? "FULL").ToUpperInvariant();
+        if (sync is not ("FULL" or "NORMAL"))
+        {
+            Console.Error.WriteLine("--sync must be FULL or NORMAL");
+            return 2;
+        }
+
         var payload = new byte[1024];
         Array.Fill(payload, (byte)'x');
         var latencies = new double[n];
@@ -93,7 +100,7 @@ internal static class WriteFloorMode
                     var c = new SqliteConnection(cs);
                     c.Open();
                     using var pragma = c.CreateCommand();
-                    pragma.CommandText = "PRAGMA synchronous=FULL; PRAGMA busy_timeout=60000";
+                    pragma.CommandText = $"PRAGMA synchronous={sync}; PRAGMA busy_timeout=60000";
                     pragma.ExecuteNonQuery();
                     connections.Add(c);
                 }
@@ -106,7 +113,7 @@ internal static class WriteFloorMode
                     settings["journal_mode"] = (string?)q.ExecuteScalar();
                 }
 
-                settings["synchronous"] = "FULL";
+                settings["synchronous"] = sync;
                 write = () =>
                 {
                     connections.TryTake(out var c);

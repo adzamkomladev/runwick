@@ -2,7 +2,7 @@
 
 24 November 2026 · implements [Stage 1 of the throughput plan](queue-throughput-engineering-plan.md#stage-1--establish-the-benchmark) · checked against main `6317ff8`
 
-> **Status, 25 November 2026.** Tooling done (commit `130f87c` and after). Baselines measured for all three stores: [Redis](../reports/queue-baseline-v0.1.5-redis.md) (GitHub runner), [PostgreSQL](../reports/queue-baseline-v0.1.5-postgresql.md) and [SQLite](../reports/queue-baseline-v0.1.5-sqlite.md) (one local machine, alone). Each store's libraries ran on one host, which is what the targets need; the three hosts differ, so do not compare across stores. Open: the 1 to 3 job store-count shortfall on Runwick Redis, Wolverine's SQLite durability setting, a second host, and seven matched pairs before any public claim.
+> **Status, 25 November 2026.** Tooling done (commit `130f87c` and after). Baselines measured for all three stores: [Redis](../reports/queue-baseline-v0.1.5-redis.md) (GitHub runner), [PostgreSQL](../reports/queue-baseline-v0.1.5-postgresql.md) and [SQLite](../reports/queue-baseline-v0.1.5-sqlite.md) (one local machine, alone). Each store's libraries ran on one host, which is what the targets need; the three hosts differ, so do not compare across stores. Open: the 1 to 3 job store-count shortfall on Runwick Redis, (closed 25 Nov: Wolverine's and Solid Queue's SQLite connections run `synchronous=NORMAL`, Runwick `FULL`; single-caller SQLite targets are not at equal durability), a second host, and seven matched pairs before any public claim.
 
 ## What Stage 1 has to deliver
 
