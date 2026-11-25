@@ -140,6 +140,20 @@ tx.Commit();
 
 A `SQLITE_BUSY` error from your transaction reaches you unchanged; retrying the whole transaction is up to you. See [Transactions](/docs/transactions) for the full rules.
 
+## What to expect for speed
+
+Measured on one 8-core machine with a local disk, jobs of 1 KiB that do nothing, median of five runs, with the required `WAL` and `synchronous=FULL`. On that machine a single durable write took about 2 ms, which sets much of the pace. A faster disk changes these numbers a lot; measure on yours.
+
+| What | Jobs per second |
+|---|---:|
+| Dispatch one job at a time, one caller | about 160 |
+| Dispatch one job at a time, 16 or 64 callers | about 500 to 535 |
+| `DispatchMany`, 100 jobs per call | about 2,150 |
+| Work through a backlog, 16 slots | about 300 |
+| Work through a backlog, 64 slots | about 450 |
+
+Because only one write happens at a time (see above), more callers help a little and more slots help most when the handlers themselves take time. At 100 jobs per second arriving steadily the worker kept up. At 500 per second it finished about 150 per second and refused many dispatches once its writes backed up, so plan for lower rates on this store.
+
 ## What SQLite does not promise
 
 - No multi-host support and no high availability.

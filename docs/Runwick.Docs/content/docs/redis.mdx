@@ -241,6 +241,20 @@ When a job that is due now becomes whole in the store, the write also publishes 
 
 For jobs that are delayed or waiting to retry, no message is sent when they fall due. Instead, each readiness check tells the worker when the next such job is due, and an idle worker sleeps until then (never less than 50 ms) rather than on its usual back-off. A delayed or retrying job that becomes the earliest waiting job of its queue and priority does publish the queue's name when it is written, so a worker that has been idle for a while learns about it at once instead of after its back-off (up to 12 seconds). Later delayed jobs behind it publish nothing.
 
+## What to expect for speed
+
+Measured on a 4-core GitHub-hosted runner with Redis 8.2 set as this page requires (`appendonly yes`, `appendfsync always`), jobs of 1 KiB that do nothing, default settings, median of five runs. Your jobs, hardware and disk will differ; the disk's cost to flush a write matters most, so measure on yours.
+
+| What | Jobs per second |
+|---|---:|
+| Dispatch one job at a time, one caller | about 650 |
+| Dispatch one job at a time, 16 or 64 callers | about 2,100 |
+| `DispatchMany`, 100 jobs per call | about 5,000 |
+| Work through a backlog, 16 slots | about 1,900 |
+| Work through a backlog, 64 slots | about 3,100 |
+
+Short jobs go faster with the opt-in worker settings `BufferedFinish`, `ClaimAhead = 16` and `ClaimsInFlight = 2` (see [Configuration](/docs/configuration)): about 3,100 at 16 slots and 3,850 at 64. They trade some safety margin for speed (after a crash, jobs whose finish was not stored yet can run again), which that page explains. Every dispatch and finish is stored with its history and indexes before it returns, so the work per job is more than a bare write. At 100 and 500 jobs per second arriving steadily the worker kept up.
+
 ## What Redis does not promise
 
 - No high availability by default. With the Sentinel or Cluster option, a failover is followed and checked, but a promoted replica may have lost jobs confirmed after Runwick's last check. A cluster spreads applications over its nodes; it does not spread one application.

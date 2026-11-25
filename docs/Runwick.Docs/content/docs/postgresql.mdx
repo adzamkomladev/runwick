@@ -160,6 +160,21 @@ public sealed class SignupService(NpgsqlDataSource db, IPostgresJobDispatcher jo
 
 The other direction works too: a handler can mark its job as succeeded inside your transaction. [Transactions](/docs/transactions) covers both, with their rules and limits.
 
+## What to expect for speed
+
+Measured on one 8-core machine with PostgreSQL 18 in Docker at its default settings (`fsync` and `synchronous_commit` on), jobs of 1 KiB that do nothing, median of five runs. On that machine one commit took about 2.7 ms, and every dispatch and finish waits for a commit, so it set much of the pace. Faster storage or a managed service with quicker commits will change these numbers a lot; measure on yours.
+
+| What | Jobs per second |
+|---|---:|
+| Dispatch one job at a time, one caller | about 75 |
+| Dispatch one job at a time, 16 callers | about 500 |
+| Dispatch one job at a time, 64 callers | about 670 |
+| `DispatchMany`, 100 jobs per call | about 1,100 |
+| Work through a backlog, 16 slots | about 380 |
+| Work through a backlog, 64 slots | about 715 |
+
+More callers and more slots help because commits overlap. At 100 jobs per second arriving steadily the worker kept up; at 500 per second it finished about 300 per second and the wait grew.
+
 ## What PostgreSQL does not promise
 
 - No high availability. A failover or a restored backup is a break in history: receipts, uniqueness windows and fences from before it are not guaranteed to carry over.

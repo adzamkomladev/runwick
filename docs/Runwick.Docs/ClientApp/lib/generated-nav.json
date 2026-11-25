@@ -754,6 +754,11 @@
           "depth": 2
         },
         {
+          "id": "what-to-expect-for-speed",
+          "text": "What to expect for speed",
+          "depth": 2
+        },
+        {
           "id": "what-postgresql-does-not-promise",
           "text": "What PostgreSQL does not promise",
           "depth": 2
@@ -816,6 +821,11 @@
         {
           "id": "your-transaction-the-same-file",
           "text": "Your transaction, the same file",
+          "depth": 2
+        },
+        {
+          "id": "what-to-expect-for-speed",
+          "text": "What to expect for speed",
           "depth": 2
         },
         {
@@ -901,6 +911,11 @@
         {
           "id": "wake-ups-and-polling",
           "text": "Wake-ups and polling",
+          "depth": 2
+        },
+        {
+          "id": "what-to-expect-for-speed",
+          "text": "What to expect for speed",
           "depth": 2
         },
         {

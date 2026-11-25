@@ -69,7 +69,7 @@ for r in runs:
     # Artifacts from before the result contract have no "complete" flag: an ok run counts as complete there.
     r.setdefault("complete", bool(r.get("ok")))
     every.setdefault((r["workload"], r["test"], r["system"]), []).append(r)
-    if r.get("ok") and r["complete"]: cells.setdefault((r["workload"], r["test"], r["system"]), []).append(r)
+    if r.get("ok") and (r["complete"] or os.environ.get("BENCH_INCLUDE_INCOMPLETE")): cells.setdefault((r["workload"], r["test"], r["system"]), []).append(r)
 agg = {k: {m[0]: med([m[2](r) for r in v]) for m in METRICS} | {"n": len(v)} for k, v in cells.items()}
 for k, v in cells.items():
     xs = [x for x in (METRICS[0][2](r) for r in v) if x is not None]

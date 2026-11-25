@@ -2490,6 +2490,21 @@ public sealed class SignupService(NpgsqlDataSource db, IPostgresJobDispatcher jo
 
 The other direction works too: a handler can mark its job as succeeded inside your transaction. [Transactions](/docs/transactions) covers both, with their rules and limits.
 
+## What to expect for speed
+
+Measured on one 8-core machine with PostgreSQL 18 in Docker at its default settings (`fsync` and `synchronous_commit` on), jobs of 1 KiB that do nothing, median of five runs. On that machine one commit took about 2.7 ms, and every dispatch and finish waits for a commit, so it set much of the pace. Faster storage or a managed service with quicker commits will change these numbers a lot; measure on yours.
+
+| What | Jobs per second |
+|---|---:|
+| Dispatch one job at a time, one caller | about 75 |
+| Dispatch one job at a time, 16 callers | about 500 |
+| Dispatch one job at a time, 64 callers | about 670 |
+| `DispatchMany`, 100 jobs per call | about 1,100 |
+| Work through a backlog, 16 slots | about 380 |
+| Work through a backlog, 64 slots | about 715 |
+
+More callers and more slots help because commits overlap. At 100 jobs per second arriving steadily the worker kept up; at 500 per second it finished about 300 per second and the wait grew.
+
 ## What PostgreSQL does not promise
 
 - No high availability. A failover or a restored backup is a break in history: receipts, uniqueness windows and fences from before it are not guaranteed to carry over.
@@ -2652,6 +2667,20 @@ tx.Commit();
 ```
 
 A `SQLITE_BUSY` error from your transaction reaches you unchanged; retrying the whole transaction is up to you. See [Transactions](/docs/transactions) for the full rules.
+
+## What to expect for speed
+
+Measured on one 8-core machine with a local disk, jobs of 1 KiB that do nothing, median of five runs, with the required `WAL` and `synchronous=FULL`. On that machine a single durable write took about 2 ms, which sets much of the pace. A faster disk changes these numbers a lot; measure on yours.
+
+| What | Jobs per second |
+|---|---:|
+| Dispatch one job at a time, one caller | about 160 |
+| Dispatch one job at a time, 16 or 64 callers | about 500 to 535 |
+| `DispatchMany`, 100 jobs per call | about 2,150 |
+| Work through a backlog, 16 slots | about 300 |
+| Work through a backlog, 64 slots | about 450 |
+
+Because only one write happens at a time (see above), more callers help a little and more slots help most when the handlers themselves take time. At 100 jobs per second arriving steadily the worker kept up. At 500 per second it finished about 150 per second and refused many dispatches once its writes backed up, so plan for lower rates on this store.
 
 ## What SQLite does not promise
 
@@ -2913,6 +2942,20 @@ Redis cannot join your business database's transaction. There is no `StageAsync`
 When a job that is due now becomes whole in the store, the write also publishes the queue's name on a Redis channel (`rw:{...}:wake`). Workers subscribe to it, so an idle worker usually starts a new job within milliseconds instead of waiting for its next poll. This is a hint only: a worker that loses its subscription goes back to polling every two seconds at most, and Redis does not keep a message nobody was listening for, so polling stays the way correctness is guaranteed.
 
 For jobs that are delayed or waiting to retry, no message is sent when they fall due. Instead, each readiness check tells the worker when the next such job is due, and an idle worker sleeps until then (never less than 50 ms) rather than on its usual back-off. A delayed or retrying job that becomes the earliest waiting job of its queue and priority does publish the queue's name when it is written, so a worker that has been idle for a while learns about it at once instead of after its back-off (up to 12 seconds). Later delayed jobs behind it publish nothing.
+
+## What to expect for speed
+
+Measured on a 4-core GitHub-hosted runner with Redis 8.2 set as this page requires (`appendonly yes`, `appendfsync always`), jobs of 1 KiB that do nothing, default settings, median of five runs. Your jobs, hardware and disk will differ; the disk's cost to flush a write matters most, so measure on yours.
+
+| What | Jobs per second |
+|---|---:|
+| Dispatch one job at a time, one caller | about 650 |
+| Dispatch one job at a time, 16 or 64 callers | about 2,100 |
+| `DispatchMany`, 100 jobs per call | about 5,000 |
+| Work through a backlog, 16 slots | about 1,900 |
+| Work through a backlog, 64 slots | about 3,100 |
+
+Short jobs go faster with the opt-in worker settings `BufferedFinish`, `ClaimAhead = 16` and `ClaimsInFlight = 2` (see [Configuration](/docs/configuration)): about 3,100 at 16 slots and 3,850 at 64. They trade some safety margin for speed (after a crash, jobs whose finish was not stored yet can run again), which that page explains. Every dispatch and finish is stored with its history and indexes before it returns, so the work per job is more than a bare write. At 100 and 500 jobs per second arriving steadily the worker kept up.
 
 ## What Redis does not promise
 
