@@ -1,0 +1,103 @@
+dotnet /root/work/Spindle/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll --transport redis --redis 127.0.0.1:56392 --mode drain --n 20000 --workers 16 --max-seconds 600 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/redis/wolverine-redis--normal--drain-w16--r2.raw.json
+{
+  "system": "wolverine 6.65.1 (redis)",
+  "mode": "drain",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "seedCallers": 16,
+    "sendInline": true,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 8
+  },
+  "readyBeforeStart": {
+    "streamEntries": 20000
+  },
+  "progress": [
+    [
+      1.1,
+      0
+    ],
+    [
+      3.2,
+      9
+    ],
+    [
+      4,
+      1292
+    ],
+    [
+      5,
+      2371
+    ],
+    [
+      6,
+      3721
+    ],
+    [
+      7,
+      5150
+    ],
+    [
+      8,
+      7204
+    ],
+    [
+      9,
+      8636
+    ],
+    [
+      10,
+      9999
+    ],
+    [
+      11,
+      11806
+    ],
+    [
+      12,
+      13863
+    ],
+    [
+      13,
+      15464
+    ],
+    [
+      14,
+      17735
+    ],
+    [
+      15,
+      19415
+    ]
+  ],
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 15.287,
+  "completionsPerSec": 1308.3,
+  "startupSeconds": 3.22,
+  "completionsPerSecExcludingStartup": 1657.2,
+  "clocks": {
+    "workerStartSeconds": 15.287,
+    "workerStartJobsPerSec": 1308.3,
+    "firstClaimSeconds": 12.069,
+    "firstClaimJobsPerSec": 1657.2,
+    "handlerReturns": 20000
+  },
+  "outcome": {
+    "streamEntries": 20000,
+    "pending": 0,
+    "lag": 0
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795516489942
+@@PHASE seed-end 1795516506127
+@@PHASE timed-start 1795516506254
+@@PHASE timed-end 1795516521541

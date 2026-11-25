@@ -1,0 +1,33 @@
+dotnet /root/work/Spindle/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll --transport redis --redis 127.0.0.1:56392 --mode enqueue --n 2000 --workers 16 --calls 1 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/redis/wolverine-redis--normal--enqueue-c1--r2.raw.json
+{
+  "system": "wolverine 6.65.1 (redis)",
+  "mode": "enqueue",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "enqueue",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "seedCallers": 16,
+    "sendInline": true,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 8
+  },
+  "jobs": 2000,
+  "calls": 1,
+  "insertsPerSec": 230.1,
+  "insertLatencyMs": {
+    "p50": 3.68,
+    "p95": 7.72,
+    "p99": 13.54
+  },
+  "outcome": {
+    "streamEntries": 2001
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795516460588
+@@PHASE timed-end 1795516469271

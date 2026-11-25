@@ -1,0 +1,25 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll writefloor --store redis --callers 1 --n 2000 --redis 127.0.0.1:56392 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/redis/writefloor-redis--normal--floor-c1--r3.raw.json
+{
+  "system": "writefloor-redis",
+  "mode": "writefloor",
+  "jobs": 2000,
+  "writesPerSec": 239.6,
+  "meanMicrosPerWrite": 4173.1,
+  "latencyMicros": {
+    "p50": 3163.2,
+    "p95": 8456.5,
+    "p99": 19590.9
+  },
+  "settings": {
+    "store": "redis",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "n": 2000,
+    "appendfsync": "always",
+    "appendonly": "yes"
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795517049871
+@@PHASE timed-end 1795517058218

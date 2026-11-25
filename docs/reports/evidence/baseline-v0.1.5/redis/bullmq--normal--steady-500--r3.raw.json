@@ -1,0 +1,34 @@
+{
+  "system": "bullmq 6.7.2",
+  "mode": "steady",
+  "concurrency": 16,
+  "redisAppendfsync": "always",
+  "settings": {
+    "store": "redis",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "redisAppendfsync": "always",
+    "removeOnComplete": 1000,
+    "cores": 8
+  },
+  "offeredPerSec": 500,
+  "inserted": 13736,
+  "completed": 13736,
+  "completionsPerSec": 457.3,
+  "latencyMs": {
+    "p50": 63,
+    "p95": 185,
+    "p99": 379,
+    "max": 513
+  },
+  "outcome": {
+    "waiting": 0,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 13736
+  }
+}

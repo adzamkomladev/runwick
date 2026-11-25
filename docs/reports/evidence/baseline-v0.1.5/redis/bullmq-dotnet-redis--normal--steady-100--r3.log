@@ -1,0 +1,39 @@
+dotnet /root/work/Spindle/eng/bench-compare/bullmq-dotnet/bin/Release/net10.0/bench-bullmq-dotnet.dll --backend redis --redis 127.0.0.1:56392 --mode steady --n 0 --workers 16 --rate 100 --seconds 30 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/redis/bullmq-dotnet-redis--normal--steady-100--r3.raw.json
+{
+  "system": "bullmq-dotnet 1.3.7 (redis)",
+  "mode": "steady",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "removeOnComplete": 1000,
+    "serverGC": true,
+    "cores": 8
+  },
+  "offeredPerSec": 100,
+  "inserted": 2986,
+  "completed": 2986,
+  "completionsPerSec": 99.5,
+  "latencyMs": {
+    "p50": 20,
+    "p95": 130,
+    "p99": 233,
+    "max": 305
+  },
+  "outcome": {
+    "waiting": 0,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 2986,
+    "failedEvents": 0
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795517787262
+@@PHASE timed-end 1795517817275

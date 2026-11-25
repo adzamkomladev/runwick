@@ -1,0 +1,191 @@
+{
+  "system": "wolverine-redis",
+  "workload": "normal",
+  "test": "drain-w64",
+  "round": 5,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "wolverine 6.65.1 (redis)",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll",
+    "--transport",
+    "redis",
+    "--redis",
+    "127.0.0.1:56392",
+    "--mode",
+    "drain",
+    "--n",
+    "20000",
+    "--workers",
+    "64",
+    "--max-seconds",
+    "600",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/redis/wolverine-redis--normal--drain-w64--r5.raw.json"
+  ],
+  "result": {
+    "system": "wolverine 6.65.1 (redis)",
+    "mode": "drain",
+    "workers": 64,
+    "settings": {
+      "store": "redis",
+      "mode": "drain",
+      "payloadBytes": 1024,
+      "callers": 1,
+      "workerSlots": 64,
+      "seedCallers": 16,
+      "sendInline": true,
+      "durabilityMode": "Solo",
+      "serverGC": true,
+      "cores": 8
+    },
+    "readyBeforeStart": {
+      "streamEntries": 20000
+    },
+    "progress": [
+      [
+        3.4,
+        1914
+      ],
+      [
+        4,
+        2710
+      ],
+      [
+        5,
+        6351
+      ],
+      [
+        6,
+        9970
+      ],
+      [
+        7,
+        13662
+      ],
+      [
+        8,
+        14818
+      ],
+      [
+        9,
+        19643
+      ]
+    ],
+    "jobs": 20000,
+    "finished": 20000,
+    "drainSeconds": 9.175,
+    "completionsPerSec": 2179.7,
+    "startupSeconds": 3.43,
+    "completionsPerSecExcludingStartup": 3481.1,
+    "clocks": {
+      "workerStartSeconds": 9.175,
+      "workerStartJobsPerSec": 2179.7,
+      "firstClaimSeconds": 5.745,
+      "firstClaimJobsPerSec": 3481.1,
+      "handlerReturns": 20000
+    },
+    "outcome": {
+      "streamEntries": 20000,
+      "pending": 0,
+      "lag": 0
+    }
+  },
+  "outcome": {
+    "accepted": 20000,
+    "succeeded": 20000,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 33.53,
+      "cpuSeconds": 28.28,
+      "cpuAvgPct": 84.4,
+      "cpuPeakPct": 280.0,
+      "memPeakMB": 294.5,
+      "memAvgMB": 169.1,
+      "diskReadBytes": 4096,
+      "diskWriteBytes": 0
+    },
+    "store": {
+      "cpuSeconds": 6.26,
+      "cpuAvgPct": 18.7,
+      "cpuPeakPct": 53.9,
+      "memPeakMB": 90.4,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 55255040,
+      "netRxBytes": 37091106,
+      "netTxBytes": 35895627
+    }
+  },
+  "derived": {
+    "jobs": 20000,
+    "cpuMsPerJob": 1.727,
+    "wireBytesPerJob": 3649,
+    "storeWriteBytesPerJob": 2763,
+    "timed": {
+      "seconds": 9.182,
+      "appCpuSeconds": 15.29,
+      "jobs": 20000,
+      "storeCpuSeconds": 2.172,
+      "storeDiskWriteBytes": 9486336,
+      "storeNetRxBytes": 1814163,
+      "storeNetTxBytes": 35157072,
+      "wireBytesPerJob": 1849,
+      "storeWriteBytesPerJob": 474,
+      "cpuMsPerJob": 0.873,
+      "counters": {
+        "total_commands_processed": 22291.0,
+        "aof_current_size": 5992968.0,
+        "total_net_input_bytes": 1599278.0,
+        "total_net_output_bytes": 35060859.0
+      },
+      "redisCommandsPerJob": 1.115,
+      "aofBytesPerJob": 299.648
+    },
+    "confirmedPerSec_workerStart": 2179.8,
+    "confirmedPerSec_firstClaim": 3481.3
+  },
+  "phases": {
+    "seed-start": {
+      "harnessMs": 1795519806024,
+      "counters": {
+        "total_commands_processed": 64608.0,
+        "aof_current_size": 17602496.0,
+        "total_net_input_bytes": 75034241.0,
+        "total_net_output_bytes": 36070802.0
+      }
+    },
+    "seed-end": {
+      "harnessMs": 1795519825940,
+      "counters": {
+        "total_commands_processed": 84674.0,
+        "aof_current_size": 52863232.0,
+        "total_net_input_bytes": 110000234.0,
+        "total_net_output_bytes": 36521472.0
+      }
+    },
+    "timed-start": {
+      "harnessMs": 1795519825977,
+      "counters": {
+        "total_commands_processed": 84679.0,
+        "aof_current_size": 52863232.0,
+        "total_net_input_bytes": 110000339.0,
+        "total_net_output_bytes": 36528029.0
+      }
+    },
+    "timed-end": {
+      "harnessMs": 1795519835153,
+      "counters": {
+        "total_commands_processed": 106970.0,
+        "aof_current_size": 58856200.0,
+        "total_net_input_bytes": 111599617.0,
+        "total_net_output_bytes": 71588888.0
+      }
+    }
+  }
+}

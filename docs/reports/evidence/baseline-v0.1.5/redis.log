@@ -1,0 +1,338 @@
+11:13:32 writefloor-redis--normal--floor-c1--r1
+11:13:41 writefloor-redis--normal--floor-c16--r1
+11:13:45 runwick-redis--normal--enqueue-c1--r1
+11:13:58 runwick-redis--normal--enqueue-c16--r1
+  INCOMPLETE: store holds 9999 of 10000 offered
+11:14:15 runwick-redis--normal--enqueue-c64--r1
+  INCOMPLETE: store holds 9999 of 10000 offered
+11:14:28 runwick-redis--normal--bulk--r1
+  INCOMPLETE: store holds 19997 of 20000 offered
+11:14:41 runwick-redis--normal--bulk-100--r1
+  INCOMPLETE: store holds 19997 of 20000 offered
+11:14:51 runwick-redis--normal--drain-w16--r1
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+11:15:52 runwick-redis--normal--drain-w64--r1
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+11:16:27 runwick-redis--normal--steady-100--r1
+11:16:59 runwick-redis--normal--steady-500--r1
+  INCOMPLETE: succeeded 8159 failed 0 unfinished 0 of 8160
+11:17:49 runwick-redis-tuned--normal--enqueue-c1--r1
+11:18:17 runwick-redis-tuned--normal--enqueue-c16--r1
+  INCOMPLETE: store holds 9999 of 10000 offered
+11:18:39 runwick-redis-tuned--normal--enqueue-c64--r1
+  INCOMPLETE: store holds 9999 of 10000 offered
+11:19:02 runwick-redis-tuned--normal--bulk--r1
+  INCOMPLETE: store holds 19997 of 20000 offered
+11:19:16 runwick-redis-tuned--normal--bulk-100--r1
+  INCOMPLETE: store holds 19997 of 20000 offered
+11:19:28 runwick-redis-tuned--normal--drain-w16--r1
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+11:19:59 runwick-redis-tuned--normal--drain-w64--r1
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+11:20:39 runwick-redis-tuned--normal--steady-100--r1
+11:21:12 runwick-redis-tuned--normal--steady-500--r1
+  INCOMPLETE: succeeded 12350 failed 0 unfinished 0 of 12352
+11:21:48 wolverine-redis--normal--enqueue-c1--r1
+11:22:07 wolverine-redis--normal--enqueue-c16--r1
+11:22:22 wolverine-redis--normal--enqueue-c64--r1
+11:22:33 wolverine-redis--normal--bulk--r1
+11:22:33 wolverine-redis--normal--bulk-100--r1
+11:22:34 wolverine-redis--normal--drain-w16--r1
+11:23:03 wolverine-redis--normal--drain-w64--r1
+11:23:29 wolverine-redis--normal--steady-100--r1
+11:24:09 wolverine-redis--normal--steady-500--r1
+11:24:46 bullmq-dotnet-redis--normal--enqueue-c1--r1
+11:24:53 bullmq-dotnet-redis--normal--enqueue-c16--r1
+11:24:59 bullmq-dotnet-redis--normal--enqueue-c64--r1
+11:25:02 bullmq-dotnet-redis--normal--bulk--r1
+11:25:14 bullmq-dotnet-redis--normal--bulk-100--r1
+11:25:20 bullmq-dotnet-redis--normal--drain-w16--r1
+11:25:46 bullmq-dotnet-redis--normal--drain-w64--r1
+11:25:58 bullmq-dotnet-redis--normal--steady-100--r1
+11:26:29 bullmq-dotnet-redis--normal--steady-500--r1
+11:27:01 bullmq--normal--enqueue-c1--r1
+11:27:11 bullmq--normal--enqueue-c16--r1
+11:27:19 bullmq--normal--enqueue-c64--r1
+11:27:21 bullmq--normal--bulk--r1
+11:27:26 bullmq--normal--bulk-100--r1
+11:27:31 bullmq--normal--drain-w16--r1
+11:27:48 bullmq--normal--drain-w64--r1
+11:27:59 bullmq--normal--steady-100--r1
+11:28:30 bullmq--normal--steady-500--r1
+11:29:03 bullmq--normal--enqueue-c1--r2
+11:29:14 bullmq--normal--enqueue-c16--r2
+11:29:22 bullmq--normal--enqueue-c64--r2
+11:29:25 bullmq--normal--bulk--r2
+11:29:30 bullmq--normal--bulk-100--r2
+11:29:39 bullmq--normal--drain-w16--r2
+11:30:11 bullmq--normal--drain-w64--r2
+11:30:39 bullmq--normal--steady-100--r2
+11:31:11 bullmq--normal--steady-500--r2
+11:31:45 bullmq-dotnet-redis--normal--enqueue-c1--r2
+11:31:58 bullmq-dotnet-redis--normal--enqueue-c16--r2
+11:32:09 bullmq-dotnet-redis--normal--enqueue-c64--r2
+11:32:14 bullmq-dotnet-redis--normal--bulk--r2
+11:32:21 bullmq-dotnet-redis--normal--bulk-100--r2
+11:32:34 bullmq-dotnet-redis--normal--drain-w16--r2
+11:32:59 bullmq-dotnet-redis--normal--drain-w64--r2
+11:33:14 bullmq-dotnet-redis--normal--steady-100--r2
+11:33:45 bullmq-dotnet-redis--normal--steady-500--r2
+11:34:18 wolverine-redis--normal--enqueue-c1--r2
+11:34:29 wolverine-redis--normal--enqueue-c16--r2
+11:34:38 wolverine-redis--normal--enqueue-c64--r2
+11:34:48 wolverine-redis--normal--bulk--r2
+11:34:48 wolverine-redis--normal--bulk-100--r2
+11:34:49 wolverine-redis--normal--drain-w16--r2
+11:35:26 wolverine-redis--normal--drain-w64--r2
+11:35:56 wolverine-redis--normal--steady-100--r2
+11:36:36 wolverine-redis--normal--steady-500--r2
+11:37:17 runwick-redis-tuned--normal--enqueue-c1--r2
+11:37:30 runwick-redis-tuned--normal--enqueue-c16--r2
+  INCOMPLETE: store holds 9999 of 10000 offered
+11:37:43 runwick-redis-tuned--normal--enqueue-c64--r2
+  INCOMPLETE: store holds 9999 of 10000 offered
+11:37:55 runwick-redis-tuned--normal--bulk--r2
+  INCOMPLETE: store holds 19997 of 20000 offered
+11:38:05 runwick-redis-tuned--normal--bulk-100--r2
+  INCOMPLETE: store holds 19997 of 20000 offered
+11:38:16 runwick-redis-tuned--normal--drain-w16--r2
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+11:38:44 runwick-redis-tuned--normal--drain-w64--r2
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+11:39:10 runwick-redis-tuned--normal--steady-100--r2
+11:39:42 runwick-redis-tuned--normal--steady-500--r2
+  INCOMPLETE: succeeded 12700 failed 0 unfinished 0 of 12702
+11:40:17 runwick-redis--normal--enqueue-c1--r2
+11:40:32 runwick-redis--normal--enqueue-c16--r2
+  INCOMPLETE: store holds 9999 of 10000 offered
+11:40:47 runwick-redis--normal--enqueue-c64--r2
+  INCOMPLETE: store holds 9999 of 10000 offered
+11:41:01 runwick-redis--normal--bulk--r2
+  INCOMPLETE: store holds 19997 of 20000 offered
+11:41:11 runwick-redis--normal--bulk-100--r2
+  INCOMPLETE: store holds 19997 of 20000 offered
+11:41:22 runwick-redis--normal--drain-w16--r2
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+11:42:14 runwick-redis--normal--drain-w64--r2
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+11:42:43 runwick-redis--normal--steady-100--r2
+11:43:15 runwick-redis--normal--steady-500--r2
+  INCOMPLETE: succeeded 14864 failed 0 unfinished 0 of 14866
+11:43:56 writefloor-redis--normal--floor-c1--r2
+11:44:04 writefloor-redis--normal--floor-c16--r2
+11:44:09 writefloor-redis--normal--floor-c1--r3
+11:44:18 writefloor-redis--normal--floor-c16--r3
+11:44:22 runwick-redis--normal--enqueue-c1--r3
+11:44:36 runwick-redis--normal--enqueue-c16--r3
+  INCOMPLETE: store holds 9999 of 10000 offered
+11:44:50 runwick-redis--normal--enqueue-c64--r3
+  INCOMPLETE: store holds 9999 of 10000 offered
+11:45:06 runwick-redis--normal--bulk--r3
+  INCOMPLETE: store holds 19997 of 20000 offered
+11:45:19 runwick-redis--normal--bulk-100--r3
+  INCOMPLETE: store holds 19997 of 20000 offered
+11:45:31 runwick-redis--normal--drain-w16--r3
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+11:46:32 runwick-redis--normal--drain-w64--r3
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+11:47:01 runwick-redis--normal--steady-100--r3
+11:47:35 runwick-redis--normal--steady-500--r3
+  INCOMPLETE: succeeded 14255 failed 0 unfinished 0 of 14257
+11:48:18 runwick-redis-tuned--normal--enqueue-c1--r3
+11:48:32 runwick-redis-tuned--normal--enqueue-c16--r3
+  INCOMPLETE: store holds 9999 of 10000 offered
+11:48:47 runwick-redis-tuned--normal--enqueue-c64--r3
+  INCOMPLETE: store holds 9999 of 10000 offered
+11:49:03 runwick-redis-tuned--normal--bulk--r3
+  INCOMPLETE: store holds 19997 of 20000 offered
+11:49:13 runwick-redis-tuned--normal--bulk-100--r3
+  INCOMPLETE: store holds 19997 of 20000 offered
+11:49:24 runwick-redis-tuned--normal--drain-w16--r3
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+11:49:58 runwick-redis-tuned--normal--drain-w64--r3
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+11:50:39 runwick-redis-tuned--normal--steady-100--r3
+11:51:12 runwick-redis-tuned--normal--steady-500--r3
+  INCOMPLETE: succeeded 12144 failed 0 unfinished 0 of 12146
+11:51:47 wolverine-redis--normal--enqueue-c1--r3
+11:52:07 wolverine-redis--normal--enqueue-c16--r3
+11:52:20 wolverine-redis--normal--enqueue-c64--r3
+11:52:31 wolverine-redis--normal--bulk--r3
+11:52:32 wolverine-redis--normal--bulk-100--r3
+11:52:33 wolverine-redis--normal--drain-w16--r3
+11:53:16 wolverine-redis--normal--drain-w64--r3
+11:53:52 wolverine-redis--normal--steady-100--r3
+11:54:30 wolverine-redis--normal--steady-500--r3
+11:55:08 bullmq-dotnet-redis--normal--enqueue-c1--r3
+11:55:20 bullmq-dotnet-redis--normal--enqueue-c16--r3
+11:55:27 bullmq-dotnet-redis--normal--enqueue-c64--r3
+11:55:31 bullmq-dotnet-redis--normal--bulk--r3
+11:55:37 bullmq-dotnet-redis--normal--bulk-100--r3
+11:55:43 bullmq-dotnet-redis--normal--drain-w16--r3
+11:56:12 bullmq-dotnet-redis--normal--drain-w64--r3
+11:56:26 bullmq-dotnet-redis--normal--steady-100--r3
+11:56:57 bullmq-dotnet-redis--normal--steady-500--r3
+11:57:30 bullmq--normal--enqueue-c1--r3
+11:57:39 bullmq--normal--enqueue-c16--r3
+11:57:45 bullmq--normal--enqueue-c64--r3
+11:57:48 bullmq--normal--bulk--r3
+11:57:52 bullmq--normal--bulk-100--r3
+11:57:57 bullmq--normal--drain-w16--r3
+11:58:16 bullmq--normal--drain-w64--r3
+11:58:27 bullmq--normal--steady-100--r3
+11:58:57 bullmq--normal--steady-500--r3
+11:59:30 bullmq--normal--enqueue-c1--r4
+11:59:37 bullmq--normal--enqueue-c16--r4
+11:59:44 bullmq--normal--enqueue-c64--r4
+11:59:46 bullmq--normal--bulk--r4
+11:59:51 bullmq--normal--bulk-100--r4
+11:59:56 bullmq--normal--drain-w16--r4
+12:00:38 bullmq--normal--drain-w64--r4
+12:00:51 bullmq--normal--steady-100--r4
+12:01:22 bullmq--normal--steady-500--r4
+12:01:55 bullmq-dotnet-redis--normal--enqueue-c1--r4
+12:02:05 bullmq-dotnet-redis--normal--enqueue-c16--r4
+12:02:13 bullmq-dotnet-redis--normal--enqueue-c64--r4
+12:02:20 bullmq-dotnet-redis--normal--bulk--r4
+12:02:27 bullmq-dotnet-redis--normal--bulk-100--r4
+12:02:33 bullmq-dotnet-redis--normal--drain-w16--r4
+12:02:54 bullmq-dotnet-redis--normal--drain-w64--r4
+12:03:10 bullmq-dotnet-redis--normal--steady-100--r4
+12:03:42 bullmq-dotnet-redis--normal--steady-500--r4
+12:04:14 wolverine-redis--normal--enqueue-c1--r4
+12:04:30 wolverine-redis--normal--enqueue-c16--r4
+12:04:38 wolverine-redis--normal--enqueue-c64--r4
+12:04:46 wolverine-redis--normal--bulk--r4
+12:04:47 wolverine-redis--normal--bulk-100--r4
+12:04:47 wolverine-redis--normal--drain-w16--r4
+12:05:23 wolverine-redis--normal--drain-w64--r4
+12:05:52 wolverine-redis--normal--steady-100--r4
+12:06:32 wolverine-redis--normal--steady-500--r4
+12:07:12 runwick-redis-tuned--normal--enqueue-c1--r4
+12:07:25 runwick-redis-tuned--normal--enqueue-c16--r4
+  INCOMPLETE: store holds 9999 of 10000 offered
+12:07:39 runwick-redis-tuned--normal--enqueue-c64--r4
+  INCOMPLETE: store holds 9999 of 10000 offered
+12:07:51 runwick-redis-tuned--normal--bulk--r4
+  INCOMPLETE: store holds 19997 of 20000 offered
+12:08:02 runwick-redis-tuned--normal--bulk-100--r4
+  INCOMPLETE: store holds 19997 of 20000 offered
+12:08:13 runwick-redis-tuned--normal--drain-w16--r4
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+12:08:39 runwick-redis-tuned--normal--drain-w64--r4
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+12:09:02 runwick-redis-tuned--normal--steady-100--r4
+12:09:35 runwick-redis-tuned--normal--steady-500--r4
+  INCOMPLETE: succeeded 14014 failed 0 unfinished 0 of 14016
+12:10:11 runwick-redis--normal--enqueue-c1--r4
+12:10:25 runwick-redis--normal--enqueue-c16--r4
+  INCOMPLETE: store holds 9999 of 10000 offered
+12:10:37 runwick-redis--normal--enqueue-c64--r4
+  INCOMPLETE: store holds 9999 of 10000 offered
+12:10:48 runwick-redis--normal--bulk--r4
+  INCOMPLETE: store holds 19997 of 20000 offered
+12:10:58 runwick-redis--normal--bulk-100--r4
+  INCOMPLETE: store holds 19997 of 20000 offered
+12:11:10 runwick-redis--normal--drain-w16--r4
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+12:11:53 runwick-redis--normal--drain-w64--r4
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+12:12:28 runwick-redis--normal--steady-100--r4
+12:13:00 runwick-redis--normal--steady-500--r4
+  INCOMPLETE: succeeded 13010 failed 0 unfinished 0 of 13012
+12:13:44 writefloor-redis--normal--floor-c1--r4
+12:13:51 writefloor-redis--normal--floor-c16--r4
+12:13:54 writefloor-redis--normal--floor-c1--r5
+12:14:02 writefloor-redis--normal--floor-c16--r5
+12:14:06 runwick-redis--normal--enqueue-c1--r5
+12:14:19 runwick-redis--normal--enqueue-c1--trace
+12:14:32 runwick-redis--normal--enqueue-c16--r5
+  INCOMPLETE: store holds 9999 of 10000 offered
+12:14:48 runwick-redis--normal--enqueue-c16--trace
+  INCOMPLETE: store holds 9999 of 10000 offered
+12:15:04 runwick-redis--normal--enqueue-c64--r5
+  INCOMPLETE: store holds 9999 of 10000 offered
+12:15:24 runwick-redis--normal--enqueue-c64--trace
+  INCOMPLETE: store holds 9999 of 10000 offered
+12:15:41 runwick-redis--normal--bulk--r5
+  INCOMPLETE: store holds 19997 of 20000 offered
+12:15:53 runwick-redis--normal--bulk--trace
+  INCOMPLETE: store holds 19997 of 20000 offered
+12:16:06 runwick-redis--normal--bulk-100--r5
+  INCOMPLETE: store holds 19997 of 20000 offered
+12:16:17 runwick-redis--normal--bulk-100--trace
+  INCOMPLETE: store holds 19997 of 20000 offered
+12:16:28 runwick-redis--normal--drain-w16--r5
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+12:17:29 runwick-redis--normal--drain-w16--trace
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+12:18:45 runwick-redis--normal--drain-w64--r5
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+12:19:22 runwick-redis--normal--drain-w64--trace
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+12:19:54 runwick-redis--normal--steady-100--r5
+12:20:27 runwick-redis--normal--steady-100--trace
+12:21:00 runwick-redis--normal--steady-500--r5
+  INCOMPLETE: succeeded 13859 failed 0 unfinished 0 of 13861
+12:21:43 runwick-redis--normal--steady-500--trace
+  INCOMPLETE: succeeded 13223 failed 0 unfinished 0 of 13225
+12:22:30 runwick-redis-tuned--normal--enqueue-c1--r5
+12:22:44 runwick-redis-tuned--normal--enqueue-c1--trace
+12:22:55 runwick-redis-tuned--normal--enqueue-c16--r5
+  INCOMPLETE: store holds 9999 of 10000 offered
+12:23:10 runwick-redis-tuned--normal--enqueue-c16--trace
+  INCOMPLETE: store holds 9999 of 10000 offered
+12:23:25 runwick-redis-tuned--normal--enqueue-c64--r5
+  INCOMPLETE: store holds 9999 of 10000 offered
+12:23:38 runwick-redis-tuned--normal--enqueue-c64--trace
+  INCOMPLETE: store holds 9999 of 10000 offered
+12:23:51 runwick-redis-tuned--normal--bulk--r5
+  INCOMPLETE: store holds 19997 of 20000 offered
+12:24:02 runwick-redis-tuned--normal--bulk--trace
+  INCOMPLETE: store holds 19997 of 20000 offered
+12:24:13 runwick-redis-tuned--normal--bulk-100--r5
+  INCOMPLETE: store holds 19997 of 20000 offered
+12:24:23 runwick-redis-tuned--normal--bulk-100--trace
+  INCOMPLETE: store holds 19997 of 20000 offered
+12:24:33 runwick-redis-tuned--normal--drain-w16--r5
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+12:25:05 runwick-redis-tuned--normal--drain-w16--trace
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+12:25:42 runwick-redis-tuned--normal--drain-w64--r5
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+12:26:10 runwick-redis-tuned--normal--drain-w64--trace
+  INCOMPLETE: succeeded 19997 failed 0 unfinished 0 of 20000
+12:26:39 runwick-redis-tuned--normal--steady-100--r5
+12:27:11 runwick-redis-tuned--normal--steady-100--trace
+12:27:44 runwick-redis-tuned--normal--steady-500--r5
+  INCOMPLETE: succeeded 13333 failed 0 unfinished 0 of 13335
+12:28:17 runwick-redis-tuned--normal--steady-500--trace
+  INCOMPLETE: succeeded 13578 failed 0 unfinished 0 of 13580
+12:28:53 wolverine-redis--normal--enqueue-c1--r5
+12:29:12 wolverine-redis--normal--enqueue-c16--r5
+12:29:24 wolverine-redis--normal--enqueue-c64--r5
+12:29:33 wolverine-redis--normal--bulk--r5
+12:29:34 wolverine-redis--normal--bulk-100--r5
+12:29:34 wolverine-redis--normal--drain-w16--r5
+12:30:05 wolverine-redis--normal--drain-w64--r5
+12:30:39 wolverine-redis--normal--steady-100--r5
+12:31:15 wolverine-redis--normal--steady-500--r5
+12:31:52 bullmq-dotnet-redis--normal--enqueue-c1--r5
+12:32:03 bullmq-dotnet-redis--normal--enqueue-c16--r5
+12:32:12 bullmq-dotnet-redis--normal--enqueue-c64--r5
+12:32:15 bullmq-dotnet-redis--normal--bulk--r5
+12:32:20 bullmq-dotnet-redis--normal--bulk-100--r5
+12:32:26 bullmq-dotnet-redis--normal--drain-w16--r5
+12:32:45 bullmq-dotnet-redis--normal--drain-w64--r5
+12:32:55 bullmq-dotnet-redis--normal--steady-100--r5
+12:33:27 bullmq-dotnet-redis--normal--steady-500--r5
+12:33:59 bullmq--normal--enqueue-c1--r5
+12:34:10 bullmq--normal--enqueue-c16--r5
+12:34:15 bullmq--normal--enqueue-c64--r5
+12:34:18 bullmq--normal--bulk--r5
+12:34:22 bullmq--normal--bulk-100--r5
+12:34:27 bullmq--normal--drain-w16--r5
+12:34:47 bullmq--normal--drain-w64--r5
+12:34:59 bullmq--normal--steady-100--r5
+12:35:29 bullmq--normal--steady-500--r5
+0 failed run(s), 84 incomplete

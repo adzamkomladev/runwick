@@ -1,0 +1,39 @@
+node /root/work/Spindle/eng/bench-compare/bullmq/bench.mjs --redis 127.0.0.1:56392 --mode enqueue --n 2000 --concurrency 16 --calls 1 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/redis/bullmq--normal--enqueue-c1--r5.raw.json
+{
+  "system": "bullmq 6.7.2",
+  "mode": "enqueue",
+  "concurrency": 16,
+  "redisAppendfsync": "always",
+  "settings": {
+    "store": "redis",
+    "mode": "enqueue",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "redisAppendfsync": "always",
+    "removeOnComplete": 1000,
+    "cores": 8
+  },
+  "jobs": 2000,
+  "calls": 1,
+  "warmupJobs": 0,
+  "insertsPerSec": 211.6,
+  "accepted": 2000,
+  "insertLatencyMs": {
+    "p50": 3.51,
+    "p95": 8.31,
+    "p99": 22.02
+  },
+  "outcome": {
+    "waiting": 2000,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 0
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795520040788
+@@PHASE timed-end 1795520050244

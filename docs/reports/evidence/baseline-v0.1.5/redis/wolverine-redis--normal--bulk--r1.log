@@ -1,0 +1,21 @@
+dotnet /root/work/Spindle/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll --transport redis --redis 127.0.0.1:56392 --mode bulk --n 20000 --workers 16 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/redis/wolverine-redis--normal--bulk--r1.raw.json
+{
+  "system": "wolverine 6.65.1 (redis)",
+  "mode": "bulk",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "bulk",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "seedCallers": 16,
+    "sendInline": true,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 8
+  },
+  "skipped": "Wolverine has no bulk-send API"
+}
+
+--- stderr ---

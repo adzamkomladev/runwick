@@ -1,0 +1,186 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll bench --store redis --mode steady --n 0 --workers 16 --redis 127.0.0.1:56392 --rate 500 --seconds 30 --calls 16 --trace --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/redis/runwick-redis--normal--steady-500--trace.raw.json
+{
+  "system": "runwick-redis",
+  "store": "redis",
+  "mode": "steady",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "clocks": {
+    "offerWindowSeconds": 30.19,
+    "completedDuringOffers": 7679,
+    "secondsToClearAfterOffers": 10.63
+  },
+  "storeViewers": 0,
+  "storeWarmupSeconds": 0,
+  "storeSnapshotPolls": 0,
+  "storeSnapshotPollsWithDiagnostics": 0,
+  "offeredPerSec": 500,
+  "offered": 15001,
+  "seconds": 30,
+  "inserted": 13225,
+  "dispatchCalls": 16,
+  "failedDispatch": 1776,
+  "failedDispatchByCode": {
+    "local_capacity_exceeded": 1776
+  },
+  "completed": 13225,
+  "completedByEndOfOffers": 7679,
+  "completionsPerSec": 324,
+  "delayMs": 0,
+  "enqueueLatencyMs": {
+    "p50": 45.01,
+    "p95": 280.91,
+    "p99": 509.83
+  },
+  "latencyMs": {
+    "p50": 10852.52,
+    "p95": 14251.95,
+    "p99": 14531.92,
+    "max": 14586.57
+  },
+  "latencySamples": 13225,
+  "finishReplayed": 0,
+  "batchClaims": 1905,
+  "reservesSent": 1906,
+  "claimsInFlightHighWater": 0,
+  "invocations": 13225,
+  "finishesSent": 13225,
+  "finishManyCalls": 1483,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 166846464,
+  "trace": {
+    "phase:Admission:engineLane": {
+      "count": 1960,
+      "meanMs": 0.003,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0.001,
+      "p95Ms": 0.002,
+      "p99Ms": 0.005,
+      "maxMs": 1.272
+    },
+    "phase:Finish:engineLane": {
+      "count": 4220,
+      "meanMs": 0.001,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0,
+      "p95Ms": 0.001,
+      "p99Ms": 0.003,
+      "maxMs": 0.685
+    },
+    "stage:due-\u003EhandlerInvoked": {
+      "count": 13225,
+      "meanMs": 8516.291,
+      "minMs": 219.937,
+      "p01Ms": 331.61,
+      "p50Ms": 10676.837,
+      "p95Ms": 14159.387,
+      "p99Ms": 14401.121,
+      "maxMs": 14510.3
+    },
+    "stage:handlerInvoked-\u003Efinished": {
+      "count": 13225,
+      "meanMs": 21.035,
+      "minMs": 2.494,
+      "p01Ms": 5.024,
+      "p50Ms": 13.411,
+      "p95Ms": 48.977,
+      "p99Ms": 144.701,
+      "maxMs": 566.462
+    },
+    "stage:reserved-\u003Efinished": {
+      "count": 13225,
+      "meanMs": 21.914,
+      "minMs": 2.751,
+      "p01Ms": 5.409,
+      "p50Ms": 14.267,
+      "p95Ms": 50.767,
+      "p99Ms": 153.335,
+      "maxMs": 566.768
+    },
+    "stage:reserved-\u003EhandlerInvoked": {
+      "count": 13225,
+      "meanMs": 0.879,
+      "minMs": 0.037,
+      "p01Ms": 0.11,
+      "p50Ms": 0.496,
+      "p95Ms": 2.279,
+      "p99Ms": 6.187,
+      "maxMs": 74.217
+    }
+  },
+  "traceCounters": {
+    "redis:cleanup:R": 14,
+    "redis:describe:NONE": 1,
+    "redis:describe:OK": 6,
+    "redis:dispatch:R": 13225,
+    "redis:expired:OK": 8,
+    "redis:finish:R": 2737,
+    "redis:finish_many:R": 1483,
+    "redis:presence:R": 9,
+    "redis:probe:OK": 23,
+    "redis:register_application:R": 1,
+    "redis:register_queue:R": 1,
+    "redis:reserve_and_begin:R": 1906
+  },
+  "writerQueueMs": {},
+  "pickupMs": {
+    "p50": 10676.837,
+    "p99": 14401.121,
+    "max": 14510.3
+  },
+  "gc": {
+    "pauseTotalMs": 444.8,
+    "pauseTimePercentage": 1.05,
+    "gen0": 95,
+    "gen1": 32,
+    "gen2": 7,
+    "allocatedMB": 1497.8,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "redis",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "workerSlots": 16,
+    "producerSlots": 16,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 13223,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 0,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795519304886
+@@PHASE timed-end 1795519345704

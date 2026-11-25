@@ -1,0 +1,39 @@
+node /root/work/Spindle/eng/bench-compare/bullmq/bench.mjs --redis 127.0.0.1:56392 --mode steady --n 0 --concurrency 16 --rate 100 --seconds 30 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/redis/bullmq--normal--steady-100--r1.raw.json
+{
+  "system": "bullmq 6.7.2",
+  "mode": "steady",
+  "concurrency": 16,
+  "redisAppendfsync": "always",
+  "settings": {
+    "store": "redis",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "redisAppendfsync": "always",
+    "removeOnComplete": 1000,
+    "cores": 8
+  },
+  "offeredPerSec": 100,
+  "inserted": 2986,
+  "completed": 2986,
+  "completionsPerSec": 99.5,
+  "latencyMs": {
+    "p50": 20,
+    "p95": 204,
+    "p99": 313,
+    "max": 478
+  },
+  "outcome": {
+    "waiting": 0,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 2986
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795516080203
+@@PHASE timed-end 1795516110207

@@ -1,0 +1,29 @@
+{
+  "system": "bullmq 6.7.2",
+  "mode": "bulk",
+  "concurrency": 16,
+  "redisAppendfsync": "always",
+  "settings": {
+    "store": "redis",
+    "mode": "bulk",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "redisAppendfsync": "always",
+    "removeOnComplete": 1000,
+    "cores": 8
+  },
+  "jobs": 20000,
+  "batch": 1000,
+  "calls": 1,
+  "accepted": 20000,
+  "insertsPerSec": 5200.1,
+  "outcome": {
+    "waiting": 20000,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 0
+  }
+}

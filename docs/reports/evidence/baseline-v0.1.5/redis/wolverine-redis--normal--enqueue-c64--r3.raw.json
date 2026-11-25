@@ -1,0 +1,28 @@
+{
+  "system": "wolverine 6.65.1 (redis)",
+  "mode": "enqueue",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "enqueue",
+    "payloadBytes": 1024,
+    "callers": 64,
+    "workerSlots": 16,
+    "seedCallers": 16,
+    "sendInline": true,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 8
+  },
+  "jobs": 10000,
+  "calls": 64,
+  "insertsPerSec": 1541.7,
+  "insertLatencyMs": {
+    "p50": 28.72,
+    "p95": 99.78,
+    "p99": 226.53
+  },
+  "outcome": {
+    "streamEntries": 10001
+  }
+}

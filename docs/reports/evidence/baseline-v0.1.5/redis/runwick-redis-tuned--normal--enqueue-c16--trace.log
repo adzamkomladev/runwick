@@ -1,0 +1,90 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll bench --store redis --mode enqueue --n 10000 --workers 16 --redis 127.0.0.1:56392 --calls 16 --trace --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/redis/runwick-redis-tuned--normal--enqueue-c16--trace.raw.json
+{
+  "system": "runwick-redis",
+  "store": "redis",
+  "mode": "enqueue",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "enqueueManagedAllocatedBytes": 565043040,
+  "jobs": 10000,
+  "warmupJobs": 0,
+  "calls": 16,
+  "insertsPerSec": 845.1,
+  "insertLatencyMs": {
+    "p50": 14.79,
+    "p95": 36.29,
+    "p99": 81.59
+  },
+  "producerCalls": 16,
+  "finishReplayed": 0,
+  "batchClaims": 0,
+  "reservesSent": 0,
+  "claimsInFlightHighWater": 0,
+  "invocations": 0,
+  "finishesSent": 0,
+  "finishManyCalls": 0,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 132124672,
+  "trace": {},
+  "traceCounters": {
+    "redis:describe:NONE": 1,
+    "redis:describe:OK": 1,
+    "redis:dispatch:R": 10000,
+    "redis:register_application:R": 1,
+    "redis:register_queue:R": 1
+  },
+  "writerQueueMs": {},
+  "gc": {
+    "pauseTotalMs": 148.5,
+    "pauseTimePercentage": 1.17,
+    "gen0": 52,
+    "gen1": 5,
+    "gen2": 3,
+    "allocatedMB": 542.6,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "redis",
+    "mode": "enqueue",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "workerSlots": 16,
+    "producerSlots": 16,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 9999,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 9999,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795519391857
+@@PHASE timed-end 1795519403692

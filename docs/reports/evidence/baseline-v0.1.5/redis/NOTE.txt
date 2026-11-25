@@ -1,0 +1,1 @@
+First Redis baseline, run locally on the slow-disk machine (floor about 266 writes/s) while it was in partial use. Superseded by ci-redis/ (GitHub runner, no cell above 15% spread). Kept for reference only; not a baseline.

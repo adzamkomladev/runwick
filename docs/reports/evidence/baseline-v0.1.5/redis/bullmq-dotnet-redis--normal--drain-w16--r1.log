@@ -1,0 +1,114 @@
+dotnet /root/work/Spindle/eng/bench-compare/bullmq-dotnet/bin/Release/net10.0/bench-bullmq-dotnet.dll --backend redis --redis 127.0.0.1:56392 --mode drain --n 20000 --workers 16 --max-seconds 600 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/redis/bullmq-dotnet-redis--normal--drain-w16--r1.raw.json
+{
+  "system": "bullmq-dotnet 1.3.7 (redis)",
+  "mode": "drain",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "removeOnComplete": 1000,
+    "serverGC": true,
+    "cores": 8
+  },
+  "readyBeforeStart": {
+    "waiting": 20000,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 0,
+    "failedEvents": 0
+  },
+  "progress": [
+    [
+      1,
+      662
+    ],
+    [
+      2,
+      1628
+    ],
+    [
+      3,
+      2847
+    ],
+    [
+      4,
+      4005
+    ],
+    [
+      5,
+      5098
+    ],
+    [
+      6,
+      6269
+    ],
+    [
+      7,
+      7155
+    ],
+    [
+      8,
+      8116
+    ],
+    [
+      9,
+      9086
+    ],
+    [
+      10,
+      10250
+    ],
+    [
+      11,
+      11620
+    ],
+    [
+      12,
+      13036
+    ],
+    [
+      13,
+      14050
+    ],
+    [
+      14,
+      15319
+    ],
+    [
+      15,
+      16805
+    ],
+    [
+      16,
+      18457
+    ]
+  ],
+  "failed": 0,
+  "clocks": {
+    "workerStartSeconds": 16.858,
+    "workerStartJobsPerSec": 1186.4
+  },
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 16.858,
+  "completionsPerSec": 1186.4,
+  "outcome": {
+    "waiting": 0,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 20000,
+    "failedEvents": 0
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795515920778
+@@PHASE seed-end 1795515929477
+@@PHASE timed-start 1795515929533
+@@PHASE timed-end 1795515946391

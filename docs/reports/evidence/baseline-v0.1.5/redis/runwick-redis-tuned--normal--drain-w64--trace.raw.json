@@ -1,0 +1,254 @@
+{
+  "system": "runwick-redis",
+  "store": "redis",
+  "mode": "drain",
+  "workers": 64,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "insertSeconds": 7.365,
+  "insertCalls": 1,
+  "readyBeforeStart": {
+    "pending": 19997,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 19997,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  },
+  "progress": [
+    [
+      1,
+      450
+    ],
+    [
+      2,
+      1018
+    ],
+    [
+      3,
+      2775
+    ],
+    [
+      4,
+      4217
+    ],
+    [
+      5,
+      5975
+    ],
+    [
+      6,
+      8119
+    ],
+    [
+      7,
+      10007
+    ],
+    [
+      8,
+      11840
+    ],
+    [
+      9,
+      13458
+    ],
+    [
+      10,
+      14707
+    ],
+    [
+      11,
+      16707
+    ],
+    [
+      12,
+      17593
+    ],
+    [
+      13,
+      18937
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 13.458,
+    "firstClaimSeconds": 13.465,
+    "firstClaimJobsPerSec": 1485.3,
+    "workerStartJobsPerSec": 1486.1
+  },
+  "drainManagedAllocatedBytes": 1128127784,
+  "jobs": 20000,
+  "accepted": 20000,
+  "failedDispatch": 0,
+  "finished": 20000,
+  "drained": true,
+  "drainWriteCommits": null,
+  "startToFirstClaimMs": 110.7,
+  "drainSeconds": 13.465,
+  "completionsPerSec": 1485.3,
+  "finishReplayed": 0,
+  "batchClaims": 634,
+  "reservesSent": 636,
+  "claimsInFlightHighWater": 2,
+  "invocations": 20000,
+  "finishesSent": 20000,
+  "finishManyCalls": 637,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 247627776,
+  "trace": {
+    "phase:Admission:engineLane": {
+      "count": 664,
+      "meanMs": 0.005,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0,
+      "p95Ms": 0.003,
+      "p99Ms": 0.008,
+      "maxMs": 2.244
+    },
+    "phase:Finish:engineLane": {
+      "count": 638,
+      "meanMs": 0.001,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0.001,
+      "p95Ms": 0.002,
+      "p99Ms": 0.008,
+      "maxMs": 0.067
+    },
+    "sample:heldJobs": {
+      "count": 1073,
+      "meanMs": 84.751,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 96,
+      "p95Ms": 126,
+      "p99Ms": 137,
+      "maxMs": 304
+    },
+    "sample:settlementQueue": {
+      "count": 1073,
+      "meanMs": 2.107,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0,
+      "p95Ms": 16,
+      "p99Ms": 32,
+      "maxMs": 176
+    },
+    "stage:due-\u003EhandlerInvoked": {
+      "count": 20000,
+      "meanMs": 13164.928,
+      "minMs": 10120.172,
+      "p01Ms": 10164.788,
+      "p50Ms": 12756.78,
+      "p95Ms": 15938.705,
+      "p99Ms": 16081.018,
+      "maxMs": 16115.522
+    },
+    "stage:handlerInvoked-\u003Efinished": {
+      "count": 20000,
+      "meanMs": 54.699,
+      "minMs": 12.161,
+      "p01Ms": 17.736,
+      "p50Ms": 40.923,
+      "p95Ms": 132.246,
+      "p99Ms": 273.718,
+      "maxMs": 371.531
+    },
+    "stage:reserved-\u003Efinished": {
+      "count": 20000,
+      "meanMs": 56.708,
+      "minMs": 12.87,
+      "p01Ms": 18.663,
+      "p50Ms": 42.131,
+      "p95Ms": 145.056,
+      "p99Ms": 279.413,
+      "maxMs": 387.726
+    },
+    "stage:reserved-\u003EhandlerInvoked": {
+      "count": 20000,
+      "meanMs": 2.01,
+      "minMs": 0.014,
+      "p01Ms": 0.157,
+      "p50Ms": 0.786,
+      "p95Ms": 4.221,
+      "p99Ms": 11.796,
+      "maxMs": 268.607
+    }
+  },
+  "traceCounters": {
+    "redis:cleanup:R": 14,
+    "redis:describe:NONE": 1,
+    "redis:describe:OK": 3,
+    "redis:dispatch:R": 200,
+    "redis:expired:OK": 2,
+    "redis:finish:R": 1,
+    "redis:finish_many:R": 637,
+    "redis:mread:OK": 12,
+    "redis:presence:R": 4,
+    "redis:probe:OK": 9,
+    "redis:register_application:R": 1,
+    "redis:register_queue:R": 1,
+    "redis:reserve_and_begin:R": 636,
+    "redis:stats_index:R": 1
+  },
+  "writerQueueMs": {},
+  "pickupMs": {
+    "p50": 12756.78,
+    "p99": 16081.018,
+    "max": 16115.522
+  },
+  "gc": {
+    "pauseTotalMs": 768.8,
+    "pauseTimePercentage": 3.1,
+    "gen0": 117,
+    "gen1": 76,
+    "gen2": 13,
+    "allocatedMB": 1983.2,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "redis",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 64,
+    "producerSlots": 2,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": true,
+    "claimAhead": 16,
+    "claimsInFlight": 2,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 19997,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 0,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}

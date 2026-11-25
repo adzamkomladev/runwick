@@ -1,0 +1,145 @@
+{
+  "system": "bullmq 6.7.2",
+  "mode": "drain",
+  "concurrency": 16,
+  "redisAppendfsync": "always",
+  "settings": {
+    "store": "redis",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "redisAppendfsync": "always",
+    "removeOnComplete": 1000,
+    "cores": 8
+  },
+  "readyBeforeStart": {
+    "waiting": 20000,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 0
+  },
+  "progress": [
+    [
+      1,
+      519
+    ],
+    [
+      2,
+      1197
+    ],
+    [
+      3,
+      2577
+    ],
+    [
+      4.1,
+      3416
+    ],
+    [
+      5.1,
+      4368
+    ],
+    [
+      6.1,
+      5085
+    ],
+    [
+      7.1,
+      5779
+    ],
+    [
+      8.1,
+      6631
+    ],
+    [
+      9.1,
+      7642
+    ],
+    [
+      10.1,
+      8766
+    ],
+    [
+      11.1,
+      9734
+    ],
+    [
+      12.1,
+      10678
+    ],
+    [
+      13.1,
+      11499
+    ],
+    [
+      14.1,
+      12618
+    ],
+    [
+      15.1,
+      13833
+    ],
+    [
+      16.1,
+      14601
+    ],
+    [
+      17.1,
+      15130
+    ],
+    [
+      18.3,
+      15324
+    ],
+    [
+      19.3,
+      15759
+    ],
+    [
+      20.3,
+      16377
+    ],
+    [
+      21.3,
+      16694
+    ],
+    [
+      22.3,
+      17291
+    ],
+    [
+      23.3,
+      17844
+    ],
+    [
+      24.3,
+      18214
+    ],
+    [
+      25.3,
+      18765
+    ],
+    [
+      26.3,
+      19743
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 26.698,
+    "workerStartJobsPerSec": 749.1
+  },
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 26.698,
+  "completionsPerSec": 749.1,
+  "outcome": {
+    "waiting": 0,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 20000
+  }
+}

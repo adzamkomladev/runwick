@@ -1,0 +1,137 @@
+{
+  "system": "wolverine-redis",
+  "workload": "normal",
+  "test": "steady-100",
+  "round": 2,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "wolverine 6.65.1 (redis)",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll",
+    "--transport",
+    "redis",
+    "--redis",
+    "127.0.0.1:56392",
+    "--mode",
+    "steady",
+    "--n",
+    "0",
+    "--workers",
+    "16",
+    "--rate",
+    "100",
+    "--seconds",
+    "30",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/redis/wolverine-redis--normal--steady-100--r2.raw.json"
+  ],
+  "result": {
+    "system": "wolverine 6.65.1 (redis)",
+    "mode": "steady",
+    "workers": 16,
+    "settings": {
+      "store": "redis",
+      "mode": "steady",
+      "payloadBytes": 1024,
+      "callers": 1,
+      "workerSlots": 16,
+      "seedCallers": 16,
+      "sendInline": true,
+      "durabilityMode": "Solo",
+      "serverGC": true,
+      "cores": 8
+    },
+    "offeredPerSec": 100,
+    "inserted": 2950,
+    "completed": 2950,
+    "completionsPerSec": 97.9,
+    "latencyMs": {
+      "p50": 72,
+      "p95": 515,
+      "p99": 777,
+      "max": 1332
+    },
+    "outcome": {
+      "streamEntries": 2951,
+      "pending": 0,
+      "lag": 0
+    }
+  },
+  "outcome": {
+    "accepted": 2950,
+    "succeeded": 2950,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 40.35,
+      "cpuSeconds": 21.46,
+      "cpuAvgPct": 53.2,
+      "cpuPeakPct": 152.9,
+      "memPeakMB": 251.7,
+      "memAvgMB": 227.5,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 0
+    },
+    "store": {
+      "cpuSeconds": 6.46,
+      "cpuAvgPct": 16.0,
+      "cpuPeakPct": 44.9,
+      "memPeakMB": 90.2,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 26284032,
+      "netRxBytes": 6117607,
+      "netTxBytes": 5766117
+    }
+  },
+  "derived": {
+    "jobs": 2950,
+    "cpuMsPerJob": 9.464,
+    "wireBytesPerJob": 4028,
+    "storeWriteBytesPerJob": 8910,
+    "timed": {
+      "seconds": 30.107,
+      "appCpuSeconds": 15.8,
+      "jobs": 2950,
+      "storeCpuSeconds": 6.209,
+      "storeDiskWriteBytes": 26259456,
+      "storeNetRxBytes": 6081213,
+      "storeNetTxBytes": 5750578,
+      "wireBytesPerJob": 4011,
+      "storeWriteBytesPerJob": 8902,
+      "cpuMsPerJob": 7.461,
+      "counters": {
+        "total_commands_processed": 7456.0,
+        "aof_current_size": 6200759.0,
+        "total_net_input_bytes": 5568770.0,
+        "total_net_output_bytes": 5293263.0
+      },
+      "redisCommandsPerJob": 2.527,
+      "aofBytesPerJob": 2101.952
+    }
+  },
+  "phases": {
+    "timed-start": {
+      "harnessMs": 1795516561456,
+      "counters": {
+        "total_commands_processed": 107187.0,
+        "aof_current_size": 58675934.0,
+        "total_net_input_bytes": 111640348.0,
+        "total_net_output_bytes": 71604057.0
+      }
+    },
+    "timed-end": {
+      "harnessMs": 1795516591565,
+      "counters": {
+        "total_commands_processed": 114643.0,
+        "aof_current_size": 64876693.0,
+        "total_net_input_bytes": 117209118.0,
+        "total_net_output_bytes": 76897320.0
+      }
+    }
+  }
+}

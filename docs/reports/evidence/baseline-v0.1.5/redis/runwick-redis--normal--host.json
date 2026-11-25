@@ -1,0 +1,10 @@
+{
+  "cpu": "AMD EPYC Processor (with IBPB)",
+  "cores": 8,
+  "memMB": 24031,
+  "kernel": "6.8.0-149-generic",
+  "commit": "130f87c",
+  "cpuIters": 50000,
+  "runner": null,
+  "when": "2026-11-24T11:14:06Z"
+}

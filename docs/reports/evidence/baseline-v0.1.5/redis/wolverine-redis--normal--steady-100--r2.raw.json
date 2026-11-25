@@ -1,0 +1,32 @@
+{
+  "system": "wolverine 6.65.1 (redis)",
+  "mode": "steady",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "seedCallers": 16,
+    "sendInline": true,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 8
+  },
+  "offeredPerSec": 100,
+  "inserted": 2950,
+  "completed": 2950,
+  "completionsPerSec": 97.9,
+  "latencyMs": {
+    "p50": 72,
+    "p95": 515,
+    "p99": 777,
+    "max": 1332
+  },
+  "outcome": {
+    "streamEntries": 2951,
+    "pending": 0,
+    "lag": 0
+  }
+}

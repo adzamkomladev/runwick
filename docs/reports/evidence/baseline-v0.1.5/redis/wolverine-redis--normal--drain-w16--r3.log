@@ -1,0 +1,123 @@
+dotnet /root/work/Spindle/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll --transport redis --redis 127.0.0.1:56392 --mode drain --n 20000 --workers 16 --max-seconds 600 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/redis/wolverine-redis--normal--drain-w16--r3.raw.json
+{
+  "system": "wolverine 6.65.1 (redis)",
+  "mode": "drain",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "seedCallers": 16,
+    "sendInline": true,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 8
+  },
+  "readyBeforeStart": {
+    "streamEntries": 20000
+  },
+  "progress": [
+    [
+      1,
+      0
+    ],
+    [
+      2.4,
+      0
+    ],
+    [
+      3,
+      0
+    ],
+    [
+      4,
+      337
+    ],
+    [
+      5,
+      1208
+    ],
+    [
+      6,
+      2645
+    ],
+    [
+      7,
+      5042
+    ],
+    [
+      8,
+      6378
+    ],
+    [
+      9,
+      7706
+    ],
+    [
+      10,
+      9126
+    ],
+    [
+      11,
+      9608
+    ],
+    [
+      12,
+      11020
+    ],
+    [
+      13,
+      12261
+    ],
+    [
+      14,
+      13902
+    ],
+    [
+      15,
+      15864
+    ],
+    [
+      16,
+      17146
+    ],
+    [
+      17,
+      17913
+    ],
+    [
+      18,
+      18980
+    ],
+    [
+      19,
+      19473
+    ]
+  ],
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 19.585,
+  "completionsPerSec": 1021.2,
+  "startupSeconds": 3.41,
+  "completionsPerSecExcludingStartup": 1236.6,
+  "clocks": {
+    "workerStartSeconds": 19.585,
+    "workerStartJobsPerSec": 1021.2,
+    "firstClaimSeconds": 16.173,
+    "firstClaimJobsPerSec": 1236.6,
+    "handlerReturns": 20000
+  },
+  "outcome": {
+    "streamEntries": 20000,
+    "pending": 0,
+    "lag": 0
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795517553697
+@@PHASE seed-end 1795517572612
+@@PHASE timed-start 1795517572649
+@@PHASE timed-end 1795517592234

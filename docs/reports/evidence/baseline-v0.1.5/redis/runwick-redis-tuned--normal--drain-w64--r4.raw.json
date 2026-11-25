@@ -1,0 +1,129 @@
+{
+  "system": "runwick-redis",
+  "store": "redis",
+  "mode": "drain",
+  "workers": 64,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "insertSeconds": 6.803,
+  "insertCalls": 1,
+  "readyBeforeStart": {
+    "pending": 19997,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 19997,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  },
+  "progress": [
+    [
+      1,
+      1760
+    ],
+    [
+      2,
+      4112
+    ],
+    [
+      3,
+      6416
+    ],
+    [
+      4,
+      8880
+    ],
+    [
+      5,
+      11305
+    ],
+    [
+      6,
+      13353
+    ],
+    [
+      7,
+      15753
+    ],
+    [
+      8,
+      18078
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 8.795,
+    "firstClaimSeconds": 8.794,
+    "firstClaimJobsPerSec": 2274.4,
+    "workerStartJobsPerSec": 2274
+  },
+  "jobs": 20000,
+  "accepted": 20000,
+  "failedDispatch": 0,
+  "finished": 20000,
+  "drained": true,
+  "drainWriteCommits": null,
+  "startToFirstClaimMs": 102.7,
+  "drainSeconds": 8.794,
+  "completionsPerSec": 2274.4,
+  "finishReplayed": 0,
+  "batchClaims": 628,
+  "reservesSent": 630,
+  "claimsInFlightHighWater": 2,
+  "invocations": 20000,
+  "finishesSent": 20000,
+  "finishManyCalls": 628,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 262074368,
+  "gc": {
+    "pauseTotalMs": 625.6,
+    "pauseTimePercentage": 3.27,
+    "gen0": 111,
+    "gen1": 69,
+    "gen2": 14,
+    "allocatedMB": 1957.1,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "redis",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 64,
+    "producerSlots": 2,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": true,
+    "claimAhead": 16,
+    "claimsInFlight": 2,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 19997,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 0,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}

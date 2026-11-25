@@ -12,7 +12,7 @@ import argparse, atexit, glob, json, os, platform, re, resource, signal, subproc
 
 HERE = os.path.dirname(os.path.abspath(__file__)); BC = os.path.dirname(HERE); ROOT = os.path.abspath(os.path.join(BC, "..", ".."))
 ap = argparse.ArgumentParser()
-ap.add_argument("--system", default=""); ap.add_argument("--systems", default="", help="comma list, run one after another on this host"); ap.add_argument("--fresh-stores", action="store_true", help="recreate bench-pg / bench-redis before each library (pinned images and settings)"); ap.add_argument("--store-cpus", default="", help="docker --cpus for the store containers"); ap.add_argument("--trace-round", action="store_true", help="one extra --trace run of each Runwick test, kept out of the timing rounds"); ap.add_argument("--workload", choices=["normal", "cpu"], required=True)
+ap.add_argument("--system", default=""); ap.add_argument("--systems", default="", help="comma list, run one after another on this host"); ap.add_argument("--fresh-stores", action="store_true", help="recreate bench-pg / bench-redis before each library (pinned images and settings)"); ap.add_argument("--store-cpus", default="", help="docker --cpus for the store containers"); ap.add_argument("--store-tmpfs", action="store_true", help="keep the store container's data on tmpfs (a second, fast storage class); SQLite libraries use TMPDIR, set it to a tmpfs path"); ap.add_argument("--trace-round", action="store_true", help="one extra --trace run of each Runwick test, kept out of the timing rounds"); ap.add_argument("--workload", choices=["normal", "cpu"], required=True)
 ap.add_argument("--out", required=True); ap.add_argument("--rounds", type=int, default=3); ap.add_argument("--scale", type=int, default=1, help="divide job counts and seconds (smoke tests)")
 ap.add_argument("--first-round", type=int, default=1, help="number the rounds from here (re-run one round of some cells without touching the others)"); ap.add_argument("--tests", default="", help="comma list; default all for the workload")
 a = ap.parse_args()
@@ -336,6 +336,7 @@ def gitq(*c):
 def reset_store(kind):
     """Recreate a store container exactly as the workflow does (pinned image tag, the Runwick Redis profile), so each library starts on a fresh server."""
     sh(["docker", "rm", "-f", kind]); cpus = ["--cpus", a.store_cpus] if a.store_cpus else []
+    cpus += ["--tmpfs", "/var/lib/postgresql" if kind == "bench-pg" else "/data"] if a.store_tmpfs else []
     if kind == "bench-pg":
         sh(["docker", "run", "-d", "--name", kind, *cpus, "-p", "127.0.0.1:55499:5432", "-e", "POSTGRES_PASSWORD=pg", "postgres:18"])
         while subprocess.run(["docker", "exec", kind, "pg_isready", "-U", "postgres", "-q"], capture_output=True).returncode: time.sleep(1)
@@ -363,7 +364,7 @@ def store_manifest(kind):
 def manifest(libs):
     quota = read("/sys/fs/cgroup/cpu.max").strip()
     mount = sh(["findmnt", "-no", "SOURCE,FSTYPE", "-T", a.out])
-    return {"host": host(), "systems": SYSTEMS, "workload": a.workload, "rounds": a.rounds, "scale": a.scale, "freshStores": a.fresh_stores,
+    return {"host": host(), "systems": SYSTEMS, "workload": a.workload, "rounds": a.rounds, "scale": a.scale, "freshStores": a.fresh_stores, "storeTmpfs": a.store_tmpfs, "tmpdir": os.environ.get("TMPDIR"),
             "runwick": {"describe": gitq("describe", "--tags", "--always").stdout.strip(), "commit": gitq("rev-parse", "HEAD").stdout.strip(),
                         "srcDirty": bool(gitq("status", "--porcelain", "--", "src").stdout.strip()),
                         "srcIdenticalToV0_1_5": gitq("diff", "--quiet", "v0.1.5", "HEAD", "--", "src").returncode == 0},
