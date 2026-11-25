@@ -1,0 +1,83 @@
+{
+  "system": "writefloor-sqlite",
+  "workload": "normal",
+  "test": "floor-c1",
+  "round": 1,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "writefloor-sqlite",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll",
+    "writefloor",
+    "--store",
+    "sqlite",
+    "--callers",
+    "1",
+    "--n",
+    "2000",
+    "--redis",
+    "127.0.0.1:56392",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-sqlite/writefloor-sqlite--normal--floor-c1--r1.raw.json"
+  ],
+  "result": {
+    "system": "writefloor-sqlite",
+    "mode": "writefloor",
+    "jobs": 2000,
+    "writesPerSec": 12932.8,
+    "meanMicrosPerWrite": 77.3,
+    "latencyMicros": {
+      "p50": 22.6,
+      "p95": 69.2,
+      "p99": 178.8
+    },
+    "settings": {
+      "store": "sqlite",
+      "payloadBytes": 1024,
+      "callers": 1,
+      "n": 2000,
+      "journal_mode": "wal",
+      "synchronous": "FULL"
+    }
+  },
+  "outcome": null,
+  "resources": {
+    "app": {
+      "seconds": 1.06,
+      "cpuSeconds": 0.81,
+      "cpuAvgPct": 76.1,
+      "cpuPeakPct": 64.1,
+      "memPeakMB": 25.5,
+      "memAvgMB": 13.0,
+      "diskReadBytes": 6565888,
+      "diskWriteBytes": 0
+    },
+    "store": null
+  },
+  "derived": {
+    "jobs": 2000,
+    "cpuMsPerJob": 0.405,
+    "wireBytesPerJob": null,
+    "storeWriteBytesPerJob": 0,
+    "timed": {
+      "seconds": 0.149,
+      "appCpuSeconds": -0.57,
+      "jobs": 2000,
+      "cpuMsPerJob": -0.285,
+      "counters": {}
+    }
+  },
+  "phases": {
+    "timed-start": {
+      "harnessMs": 1795612630332,
+      "counters": {}
+    },
+    "timed-end": {
+      "harnessMs": 1795612630488,
+      "counters": {}
+    }
+  }
+}

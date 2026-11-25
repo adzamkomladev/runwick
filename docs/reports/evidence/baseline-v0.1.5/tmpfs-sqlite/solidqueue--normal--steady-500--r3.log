@@ -1,0 +1,48 @@
+bin/rails runner ../bench.rb --mode steady --n 0 --workers 16 --rate 500 --seconds 30 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-sqlite/solidqueue--normal--steady-500--r3.raw.json
+{
+  "system": "solid_queue 1.2.1 (sqlite 3.54.1, rails 8.0.5.2, ruby 3.2.3)",
+  "mode": "steady",
+  "workers": 16,
+  "processes": 8,
+  "threadsPerProcess": 2,
+  "settings": {
+    "store": "sqlite",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "processes": 8,
+    "threadsPerProcess": 2,
+    "pragmas": {
+      "journal_mode": "wal",
+      "synchronous": 1,
+      "wal_autocheckpoint": 1000,
+      "busy_timeout": 0
+    },
+    "sqliteVersion": "3.54.1",
+    "cores": 8
+  },
+  "offeredPerSec": 500.0,
+  "inserted": 550,
+  "completed": 550,
+  "completionsPerSec": 18.3,
+  "latencyMs": {
+    "p50": 71.01,
+    "p95": 218.02,
+    "p99": 341.98,
+    "max": 465.01
+  },
+  "outcome": {
+    "finished": 550,
+    "unfinished": 0,
+    "ready": 0,
+    "claimed": 0,
+    "failed": 0,
+    "scheduled": 0
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795618333588
+@@PHASE timed-end 1795618363639

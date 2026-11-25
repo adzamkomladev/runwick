@@ -1,0 +1,202 @@
+{
+  "system": "river",
+  "workload": "normal",
+  "test": "drain-w16",
+  "round": 1,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "river v0.50.0",
+  "command": [
+    "/root/work/Spindle/eng/bench-compare/river/bench-river",
+    "-mode",
+    "drain",
+    "-n",
+    "20000",
+    "-workers",
+    "16",
+    "-cooldown-ms",
+    "1",
+    "-max-seconds",
+    "600",
+    "-out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-postgres/river--normal--drain-w16--r1.raw.json"
+  ],
+  "result": {
+    "clocks": {
+      "workerStartJobsPerSec": 1791.4863116113006,
+      "workerStartSeconds": 11.163914494
+    },
+    "completionsPerSec": 1791.4863116113006,
+    "drainSeconds": 11.163914494,
+    "failed": 0,
+    "fetchCooldownMs": 1,
+    "insertSeconds": 0.491843711,
+    "jobs": 20000,
+    "mode": "drain",
+    "outcome": {
+      "completed": 20000
+    },
+    "payloadBytes": 1024,
+    "progress": [
+      [
+        1.2,
+        1941
+      ],
+      [
+        2,
+        3855
+      ],
+      [
+        3,
+        5732
+      ],
+      [
+        4.2,
+        7163
+      ],
+      [
+        5,
+        8386
+      ],
+      [
+        6,
+        9805
+      ],
+      [
+        7,
+        11457
+      ],
+      [
+        8,
+        13371
+      ],
+      [
+        9,
+        15599
+      ],
+      [
+        10,
+        17631
+      ],
+      [
+        11.1,
+        19908
+      ]
+    ],
+    "readyBeforeStart": {
+      "available": 20000
+    },
+    "settings": {
+      "bulkChunk": 1000,
+      "callers": 1,
+      "cores": 8,
+      "fetchCooldownMs": 1,
+      "mode": "drain",
+      "payloadBytes": 1024,
+      "poolMaxConns": 20,
+      "seedCall": "InsertManyFast",
+      "seedChunk": 5000,
+      "store": "postgres",
+      "workerSlots": 16
+    },
+    "system": "river v0.50.0",
+    "workers": 16
+  },
+  "outcome": {
+    "accepted": 20000,
+    "succeeded": 20000,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 11.92,
+      "cpuSeconds": 9.28,
+      "cpuAvgPct": 77.9,
+      "cpuPeakPct": 162.8,
+      "memPeakMB": 25.5,
+      "memAvgMB": 18.1,
+      "diskReadBytes": 49152,
+      "diskWriteBytes": 0
+    },
+    "store": {
+      "cpuSeconds": 8.14,
+      "cpuAvgPct": 68.3,
+      "cpuPeakPct": 107.7,
+      "memPeakMB": 367.6,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 0,
+      "netRxBytes": 25522600,
+      "netTxBytes": 50041680
+    }
+  },
+  "derived": {
+    "jobs": 20000,
+    "cpuMsPerJob": 0.871,
+    "wireBytesPerJob": 3778,
+    "storeWriteBytesPerJob": 0,
+    "timed": {
+      "seconds": 11.145,
+      "appCpuSeconds": 8.87,
+      "jobs": 20000,
+      "storeCpuSeconds": 7.496,
+      "storeDiskWriteBytes": 0,
+      "storeNetRxBytes": 2784240,
+      "storeNetTxBytes": 49953982,
+      "wireBytesPerJob": 2637,
+      "storeWriteBytesPerJob": 0,
+      "cpuMsPerJob": 0.818,
+      "counters": {
+        "walBytes": 79424760.0,
+        "walRecords": 395741.0,
+        "walFpi": 32.0,
+        "transactions": 2187.0
+      },
+      "walBytesPerJob": 3971.238,
+      "walFpiPerJob": 0.002,
+      "transactionsPerJob": 0.109
+    },
+    "confirmedPerSec_workerStart": 1791.5,
+    "confirmedPerSec_firstClaim": 1791.5
+  },
+  "phases": {
+    "seed-start": {
+      "harnessMs": 1795632552611,
+      "counters": {
+        "walBytes": 166190368.0,
+        "walRecords": 505722.0,
+        "walFpi": 6698.0,
+        "transactions": 974.0
+      }
+    },
+    "seed-end": {
+      "harnessMs": 1795632553103,
+      "counters": {
+        "walBytes": 200269088.0,
+        "walRecords": 505722.0,
+        "walFpi": 6698.0,
+        "transactions": 974.0
+      }
+    },
+    "timed-start": {
+      "harnessMs": 1795632553115,
+      "counters": {
+        "walBytes": 200300736.0,
+        "walRecords": 505722.0,
+        "walFpi": 6698.0,
+        "transactions": 976.0
+      }
+    },
+    "timed-end": {
+      "harnessMs": 1795632564278,
+      "counters": {
+        "walBytes": 279725496.0,
+        "walRecords": 901463.0,
+        "walFpi": 6730.0,
+        "transactions": 3163.0
+      }
+    }
+  }
+}

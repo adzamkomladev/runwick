@@ -1,0 +1,104 @@
+{
+  "system": "wolverine-sqlite",
+  "workload": "normal",
+  "test": "steady-100",
+  "round": 3,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "wolverine 6.65.1 (sqlite)",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll",
+    "--transport",
+    "sqlite",
+    "--redis",
+    "127.0.0.1:56392",
+    "--mode",
+    "steady",
+    "--n",
+    "0",
+    "--workers",
+    "16",
+    "--rate",
+    "100",
+    "--seconds",
+    "30",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-sqlite/wolverine-sqlite--normal--steady-100--r3.raw.json"
+  ],
+  "result": {
+    "system": "wolverine 6.65.1 (sqlite)",
+    "mode": "steady",
+    "workers": 16,
+    "settings": {
+      "store": "sqlite",
+      "mode": "steady",
+      "payloadBytes": 1024,
+      "callers": 1,
+      "workerSlots": 16,
+      "seedCallers": 16,
+      "sendInline": false,
+      "durabilityMode": "Solo",
+      "serverGC": true,
+      "cores": 8
+    },
+    "offeredPerSec": 100,
+    "inserted": 2858,
+    "completed": 2858,
+    "completionsPerSec": 85.2,
+    "latencyMs": {
+      "p50": 2812,
+      "p95": 4953,
+      "p99": 5100,
+      "max": 5280
+    },
+    "outcome": {
+      "wolverine_queue_bench": 0,
+      "wolverine_queue_bench_scheduled": 0
+    }
+  },
+  "outcome": {
+    "accepted": 2858,
+    "succeeded": 2858,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 43.32,
+      "cpuSeconds": 23.7,
+      "cpuAvgPct": 54.7,
+      "cpuPeakPct": 184.4,
+      "memPeakMB": 298.1,
+      "memAvgMB": 230.8,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 4096
+    },
+    "store": null
+  },
+  "derived": {
+    "jobs": 2858,
+    "cpuMsPerJob": 8.293,
+    "wireBytesPerJob": null,
+    "storeWriteBytesPerJob": 1,
+    "timed": {
+      "seconds": 33.546,
+      "appCpuSeconds": 17.68,
+      "jobs": 2858,
+      "cpuMsPerJob": 6.186,
+      "counters": {}
+    }
+  },
+  "phases": {
+    "timed-start": {
+      "harnessMs": 1795616940553,
+      "counters": {}
+    },
+    "timed-end": {
+      "harnessMs": 1795616974101,
+      "counters": {}
+    }
+  }
+}

@@ -1,0 +1,30 @@
+/root/work/Spindle/eng/bench-compare/river/bench-river -mode bulk -n 20000 -workers 16 -batch 100 -out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-postgres/river--normal--bulk-100--r2.raw.json
+{
+  "fetchCooldownMs": 100,
+  "insertsPerSec": 6840.288630643847,
+  "jobs": 20000,
+  "mode": "bulk",
+  "outcome": {
+    "available": 20000
+  },
+  "payloadBytes": 1024,
+  "settings": {
+    "bulkChunk": 100,
+    "callers": 1,
+    "cores": 8,
+    "fetchCooldownMs": 100,
+    "mode": "bulk",
+    "payloadBytes": 1024,
+    "poolMaxConns": 20,
+    "seedCall": "InsertManyFast",
+    "seedChunk": 5000,
+    "store": "postgres",
+    "workerSlots": 16
+  },
+  "system": "river v0.50.0",
+  "workers": 16
+}
+
+--- stderr ---
+@@PHASE timed-start 1795635047223
+@@PHASE timed-end 1795635050147

@@ -1,0 +1,323 @@
+{
+  "system": "runwick-sqlite",
+  "store": "sqlite",
+  "mode": "drain",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "insertSeconds": 7.742,
+  "insertCalls": 8,
+  "readyBeforeStart": {
+    "pending": 20000,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0
+  },
+  "progress": [
+    [
+      1,
+      239
+    ],
+    [
+      2,
+      697
+    ],
+    [
+      3,
+      866
+    ],
+    [
+      4,
+      1127
+    ],
+    [
+      5,
+      1413
+    ],
+    [
+      6,
+      1825
+    ],
+    [
+      7,
+      2130
+    ],
+    [
+      8.1,
+      2461
+    ],
+    [
+      9,
+      2847
+    ],
+    [
+      10,
+      3121
+    ],
+    [
+      11,
+      3538
+    ],
+    [
+      12,
+      4011
+    ],
+    [
+      13,
+      4416
+    ],
+    [
+      14,
+      4789
+    ],
+    [
+      15,
+      5295
+    ],
+    [
+      16,
+      5708
+    ],
+    [
+      17,
+      6155
+    ],
+    [
+      18,
+      6519
+    ],
+    [
+      19,
+      6989
+    ],
+    [
+      20,
+      7476
+    ],
+    [
+      21,
+      7916
+    ],
+    [
+      22,
+      8330
+    ],
+    [
+      23,
+      8617
+    ],
+    [
+      24,
+      9064
+    ],
+    [
+      25.1,
+      9433
+    ],
+    [
+      26,
+      9854
+    ],
+    [
+      27,
+      10129
+    ],
+    [
+      28,
+      10457
+    ],
+    [
+      29,
+      10906
+    ],
+    [
+      30,
+      11209
+    ],
+    [
+      31,
+      11623
+    ],
+    [
+      32,
+      12074
+    ],
+    [
+      33,
+      12491
+    ],
+    [
+      34,
+      12972
+    ],
+    [
+      35,
+      13298
+    ],
+    [
+      36,
+      13658
+    ],
+    [
+      37.1,
+      13786
+    ],
+    [
+      38.2,
+      13953
+    ],
+    [
+      39,
+      14137
+    ],
+    [
+      40,
+      14603
+    ],
+    [
+      41,
+      14808
+    ],
+    [
+      42,
+      15248
+    ],
+    [
+      43,
+      15543
+    ],
+    [
+      44,
+      15837
+    ],
+    [
+      45,
+      16211
+    ],
+    [
+      46,
+      16498
+    ],
+    [
+      47,
+      16882
+    ],
+    [
+      48,
+      17186
+    ],
+    [
+      49,
+      17546
+    ],
+    [
+      50,
+      17936
+    ],
+    [
+      51,
+      18197
+    ],
+    [
+      52,
+      18649
+    ],
+    [
+      53,
+      19121
+    ],
+    [
+      54,
+      19457
+    ],
+    [
+      55,
+      19825
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 55.749,
+    "firstClaimSeconds": 55.75,
+    "firstClaimJobsPerSec": 358.7,
+    "workerStartJobsPerSec": 358.8
+  },
+  "jobs": 20000,
+  "accepted": 20000,
+  "failedDispatch": 0,
+  "finished": 20000,
+  "drained": true,
+  "drainWriteCommits": 3606,
+  "startToFirstClaimMs": 101.7,
+  "drainSeconds": 55.75,
+  "completionsPerSec": 358.7,
+  "finishReplayed": 0,
+  "batchClaims": 2382,
+  "reservesSent": 2383,
+  "claimsInFlightHighWater": 0,
+  "invocations": 20000,
+  "finishesSent": 20000,
+  "finishManyCalls": 1118,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "sqlite": {
+    "profile": "sqlite.wal-synchronous-full",
+    "engine": {
+      "sqlite_version": "3.53.3",
+      "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+      "journal_mode": "wal",
+      "synchronous": "full",
+      "topology": "local"
+    },
+    "writeCommits": 3808,
+    "busyConflicts": 0,
+    "writerConnectionsOpened": 1,
+    "writerStatements": null
+  },
+  "peakWorkingSetBytes": 162783232,
+  "gc": {
+    "pauseTotalMs": 5717.2,
+    "pauseTimePercentage": 8.9,
+    "gen0": 165,
+    "gen1": 53,
+    "gen2": 10,
+    "allocatedMB": 3583.5,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "sqlite",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 8,
+    "workerSlots": 16,
+    "producerSlots": 8,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 20000,
+    "failed": 0,
+    "cancelled": 0
+  }
+}

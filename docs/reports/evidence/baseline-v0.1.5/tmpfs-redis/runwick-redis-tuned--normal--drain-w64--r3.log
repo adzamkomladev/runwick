@@ -1,0 +1,140 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll bench --store redis --mode drain --n 20000 --workers 64 --redis 127.0.0.1:56392 --calls 1 --max-seconds 600 --buffered-finish --claim-ahead 16 --claims-in-flight 2 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-redis/runwick-redis-tuned--normal--drain-w64--r3.raw.json
+{
+  "system": "runwick-redis",
+  "store": "redis",
+  "mode": "drain",
+  "workers": 64,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "insertSeconds": 8.659,
+  "insertCalls": 1,
+  "readyBeforeStart": {
+    "pending": 20000,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 20000,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  },
+  "progress": [
+    [
+      1,
+      1520
+    ],
+    [
+      2,
+      3428
+    ],
+    [
+      3,
+      5691
+    ],
+    [
+      4,
+      7070
+    ],
+    [
+      5,
+      8381
+    ],
+    [
+      6,
+      10410
+    ],
+    [
+      7,
+      13181
+    ],
+    [
+      8,
+      15608
+    ],
+    [
+      9,
+      18099
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 9.642,
+    "firstClaimSeconds": 9.638,
+    "firstClaimJobsPerSec": 2075,
+    "workerStartJobsPerSec": 2074.3
+  },
+  "jobs": 20000,
+  "accepted": 20000,
+  "failedDispatch": 0,
+  "finished": 20000,
+  "drained": true,
+  "drainWriteCommits": null,
+  "startToFirstClaimMs": 103.3,
+  "drainSeconds": 9.638,
+  "completionsPerSec": 2075,
+  "finishReplayed": 0,
+  "batchClaims": 644,
+  "reservesSent": 646,
+  "claimsInFlightHighWater": 2,
+  "invocations": 20000,
+  "finishesSent": 20000,
+  "finishManyCalls": 639,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 271429632,
+  "gc": {
+    "pauseTotalMs": 1492.4,
+    "pauseTimePercentage": 6.31,
+    "gen0": 104,
+    "gen1": 67,
+    "gen2": 12,
+    "allocatedMB": 1965.3,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "redis",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 64,
+    "producerSlots": 2,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": true,
+    "claimAhead": 16,
+    "claimsInFlight": 2,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 20000,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 0,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795631643476
+@@PHASE seed-end 1795631652136
+@@PHASE timed-start 1795631655344
+@@PHASE timed-end 1795631665091

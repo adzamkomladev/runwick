@@ -1,0 +1,34 @@
+{
+  "system": "bullmq-dotnet 1.3.7 (redis)",
+  "mode": "steady",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "removeOnComplete": 1000,
+    "serverGC": true,
+    "cores": 8
+  },
+  "offeredPerSec": 500,
+  "inserted": 13488,
+  "completed": 13488,
+  "completionsPerSec": 448.9,
+  "latencyMs": {
+    "p50": 13,
+    "p95": 90,
+    "p99": 216,
+    "max": 358
+  },
+  "outcome": {
+    "waiting": 0,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 13488,
+    "failedEvents": 0
+  }
+}

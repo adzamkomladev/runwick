@@ -1,0 +1,96 @@
+node /root/work/Spindle/eng/bench-compare/bullmq/bench.mjs --redis 127.0.0.1:56392 --mode drain --n 20000 --concurrency 16 --max-seconds 600 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-redis/bullmq--normal--drain-w16--r2.raw.json
+{
+  "system": "bullmq 6.7.2",
+  "mode": "drain",
+  "concurrency": 16,
+  "redisAppendfsync": "always",
+  "settings": {
+    "store": "redis",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "redisAppendfsync": "always",
+    "removeOnComplete": 1000,
+    "cores": 8
+  },
+  "readyBeforeStart": {
+    "waiting": 20000,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 0
+  },
+  "progress": [
+    [
+      1,
+      1669
+    ],
+    [
+      2,
+      3462
+    ],
+    [
+      3,
+      5228
+    ],
+    [
+      4,
+      6508
+    ],
+    [
+      5,
+      7560
+    ],
+    [
+      6,
+      7910
+    ],
+    [
+      7.1,
+      9726
+    ],
+    [
+      8.1,
+      10699
+    ],
+    [
+      9.1,
+      12642
+    ],
+    [
+      10.1,
+      14576
+    ],
+    [
+      11.1,
+      16420
+    ],
+    [
+      12.1,
+      17911
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 12.994,
+    "workerStartJobsPerSec": 1539.2
+  },
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 12.994,
+  "completionsPerSec": 1539.2,
+  "outcome": {
+    "waiting": 0,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 20000
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795630555906
+@@PHASE seed-end 1795630558719
+@@PHASE timed-start 1795630558721
+@@PHASE timed-end 1795630571716

@@ -1,0 +1,229 @@
+{
+  "system": "wolverine-sqlite",
+  "workload": "normal",
+  "test": "drain-w16",
+  "round": 3,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "wolverine 6.65.1 (sqlite)",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll",
+    "--transport",
+    "sqlite",
+    "--redis",
+    "127.0.0.1:56392",
+    "--mode",
+    "drain",
+    "--n",
+    "20000",
+    "--workers",
+    "16",
+    "--max-seconds",
+    "600",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-sqlite/wolverine-sqlite--normal--drain-w16--r3.raw.json"
+  ],
+  "result": {
+    "system": "wolverine 6.65.1 (sqlite)",
+    "mode": "drain",
+    "workers": 16,
+    "settings": {
+      "store": "sqlite",
+      "mode": "drain",
+      "payloadBytes": 1024,
+      "callers": 1,
+      "workerSlots": 16,
+      "seedCallers": 16,
+      "sendInline": false,
+      "durabilityMode": "Solo",
+      "serverGC": true,
+      "cores": 8
+    },
+    "readyBeforeStart": {
+      "wolverine_queue_bench": 20000,
+      "wolverine_queue_bench_scheduled": 0
+    },
+    "progress": [
+      [
+        1.3,
+        0
+      ],
+      [
+        2.3,
+        0
+      ],
+      [
+        4,
+        4
+      ],
+      [
+        4,
+        16
+      ],
+      [
+        5,
+        3840
+      ],
+      [
+        6,
+        3840
+      ],
+      [
+        7,
+        3856
+      ],
+      [
+        8,
+        3856
+      ],
+      [
+        9,
+        6152
+      ],
+      [
+        10,
+        6260
+      ],
+      [
+        11,
+        6320
+      ],
+      [
+        12,
+        6320
+      ],
+      [
+        13,
+        9340
+      ],
+      [
+        14,
+        9340
+      ],
+      [
+        15,
+        9356
+      ],
+      [
+        16,
+        9356
+      ],
+      [
+        17,
+        12180
+      ],
+      [
+        18,
+        12180
+      ],
+      [
+        19,
+        12196
+      ],
+      [
+        20,
+        12196
+      ],
+      [
+        21,
+        15780
+      ],
+      [
+        22,
+        15780
+      ],
+      [
+        23,
+        15796
+      ],
+      [
+        24,
+        15796
+      ],
+      [
+        25,
+        18800
+      ],
+      [
+        26,
+        18800
+      ],
+      [
+        27,
+        18816
+      ]
+    ],
+    "jobs": 20000,
+    "finished": 20000,
+    "drainSeconds": 27.326,
+    "completionsPerSec": 731.9,
+    "startupSeconds": 3.97,
+    "completionsPerSecExcludingStartup": 856.3,
+    "clocks": {
+      "workerStartSeconds": 27.326,
+      "workerStartJobsPerSec": 731.9,
+      "firstClaimSeconds": 23.355,
+      "firstClaimJobsPerSec": 856.3,
+      "handlerReturns": 20000
+    },
+    "outcome": {
+      "wolverine_queue_bench": 0,
+      "wolverine_queue_bench_scheduled": 0
+    }
+  },
+  "outcome": {
+    "accepted": 20000,
+    "succeeded": 20000,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 57.15,
+      "cpuSeconds": 69.34,
+      "cpuAvgPct": 121.3,
+      "cpuPeakPct": 271.5,
+      "memPeakMB": 428.2,
+      "memAvgMB": 224.8,
+      "diskReadBytes": 26865664,
+      "diskWriteBytes": 0
+    },
+    "store": null
+  },
+  "derived": {
+    "jobs": 20000,
+    "cpuMsPerJob": 3.467,
+    "wireBytesPerJob": null,
+    "storeWriteBytesPerJob": 0,
+    "timed": {
+      "seconds": 27.306,
+      "appCpuSeconds": 27.22,
+      "jobs": 20000,
+      "cpuMsPerJob": 1.361,
+      "counters": {}
+    },
+    "confirmedPerSec_workerStart": 731.9,
+    "confirmedPerSec_firstClaim": 856.3
+  },
+  "phases": {
+    "seed-start": {
+      "harnessMs": 1795616812779,
+      "counters": {}
+    },
+    "seed-end": {
+      "harnessMs": 1795616841927,
+      "counters": {}
+    },
+    "timed-start": {
+      "harnessMs": 1795616841938,
+      "counters": {}
+    },
+    "timed-end": {
+      "harnessMs": 1795616869264,
+      "counters": {}
+    }
+  }
+}

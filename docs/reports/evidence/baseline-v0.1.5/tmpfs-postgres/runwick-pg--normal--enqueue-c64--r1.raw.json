@@ -1,0 +1,81 @@
+{
+  "system": "runwick",
+  "store": "postgres",
+  "mode": "enqueue",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "jobs": 10000,
+  "warmupJobs": 0,
+  "calls": 64,
+  "insertsPerSec": 631.2,
+  "insertLatencyMs": {
+    "p50": 70.49,
+    "p95": 271.85,
+    "p99": 484.45
+  },
+  "producerCalls": 64,
+  "pgGroup": {
+    "groups": 0,
+    "groupedCommands": 0,
+    "fallbacks": 0,
+    "meanGroupSize": 0
+  },
+  "finishReplayed": 0,
+  "batchClaims": 0,
+  "reservesSent": 0,
+  "claimsInFlightHighWater": 0,
+  "invocations": 0,
+  "finishesSent": 0,
+  "finishManyCalls": 0,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 168603648,
+  "gc": {
+    "pauseTotalMs": 575.6,
+    "pauseTimePercentage": 3.03,
+    "gen0": 47,
+    "gen1": 30,
+    "gen2": 8,
+    "allocatedMB": 1112.5,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "postgres",
+    "mode": "enqueue",
+    "payloadBytes": 1024,
+    "callers": 64,
+    "workerSlots": 16,
+    "producerSlots": 64,
+    "bulkChunk": 100,
+    "pgGroup": true,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 10000,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 10000,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}

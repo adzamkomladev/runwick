@@ -81,7 +81,7 @@ The throughput plan names pg-boss as the leader for single-caller add, bulk and 
 
 ## Caveats
 
-1. **Slow disk, one host.** Commits cost about 2.7 ms here, which squeezes the single-caller rows. The shapes (who scales with callers, who is bound by work per job) carry over better than the absolute numbers. A second host is still needed before any public claim.
+1. **Slow disk, one host.** (A second run with PostgreSQL's data on memory gave the same Runwick single-caller rate, 78/s against 75/s, so the commit time is not what limits it: see the [fast-disk report](queue-baseline-v0.1.5-fast-disk.md).) Commits cost about 2.7 ms here, which squeezes the single-caller rows. The shapes (who scales with callers, who is bound by work per job) carry over better than the absolute numbers. A second host is still needed before any public claim.
 2. **Bulk at 20,000 jobs on a fresh database may be hitting the known first-load validation plan problem** described in the throughput plan: a statement trigger that scans unrelated rows until statistics exist, fixed in the investigation by an `ANALYZE`. The Runwick bulk rate of about 1,100/s is the same one the plan reports (1,106/s). This run does not separate that effect from other costs.
 3. **Steady 500/s overloads Runwick and Wolverine.** Runwick's p99 there is about 20 seconds and Wolverine's about 73. The offers were made on a fixed schedule, so those numbers are what a producer at that rate would see.
 4. **Wolverine's PostgreSQL drain is bound by its listener wait, not by the work.** Seventy per second at 16 and 64 slots, in every round, with a 250 ms wait after each batch of 20.

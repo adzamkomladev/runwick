@@ -1,0 +1,33 @@
+{
+  "completed": 13676,
+  "completionsPerSec": 452.08199621630104,
+  "fetchCooldownMs": 1,
+  "inserted": 13676,
+  "latencyMs": {
+    "max": 479.334,
+    "p50": 142.345,
+    "p95": 281.306,
+    "p99": 348.801
+  },
+  "mode": "steady",
+  "offeredPerSec": 500,
+  "outcome": {
+    "completed": 13676
+  },
+  "payloadBytes": 1024,
+  "settings": {
+    "bulkChunk": 1000,
+    "callers": 16,
+    "cores": 8,
+    "fetchCooldownMs": 1,
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "poolMaxConns": 20,
+    "seedCall": "InsertManyFast",
+    "seedChunk": 5000,
+    "store": "postgres",
+    "workerSlots": 16
+  },
+  "system": "river v0.50.0",
+  "workers": 16
+}

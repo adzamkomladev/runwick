@@ -1,0 +1,100 @@
+{
+  "system": "wolverine-sqlite",
+  "workload": "normal",
+  "test": "enqueue-c16",
+  "round": 1,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "wolverine 6.65.1 (sqlite)",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll",
+    "--transport",
+    "sqlite",
+    "--redis",
+    "127.0.0.1:56392",
+    "--mode",
+    "enqueue",
+    "--n",
+    "10000",
+    "--workers",
+    "16",
+    "--calls",
+    "16",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-sqlite/wolverine-sqlite--normal--enqueue-c16--r1.raw.json"
+  ],
+  "result": {
+    "system": "wolverine 6.65.1 (sqlite)",
+    "mode": "enqueue",
+    "workers": 16,
+    "settings": {
+      "store": "sqlite",
+      "mode": "enqueue",
+      "payloadBytes": 1024,
+      "callers": 16,
+      "workerSlots": 16,
+      "seedCallers": 16,
+      "sendInline": false,
+      "durabilityMode": "Solo",
+      "serverGC": true,
+      "cores": 8
+    },
+    "jobs": 10000,
+    "calls": 16,
+    "insertsPerSec": 895.5,
+    "insertLatencyMs": {
+      "p50": 11.3,
+      "p95": 53.35,
+      "p99": 124.25
+    },
+    "outcome": {
+      "wolverine_queue_bench": 10001,
+      "wolverine_queue_bench_scheduled": 0
+    }
+  },
+  "outcome": {
+    "accepted": 10001,
+    "succeeded": 0,
+    "failed": 0,
+    "unfinished": 10001
+  },
+  "resources": {
+    "app": {
+      "seconds": 13.56,
+      "cpuSeconds": 19.41,
+      "cpuAvgPct": 143.2,
+      "cpuPeakPct": 211.2,
+      "memPeakMB": 100.7,
+      "memAvgMB": 79.8,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 0
+    },
+    "store": null
+  },
+  "derived": {
+    "jobs": 10000,
+    "cpuMsPerJob": 1.941,
+    "wireBytesPerJob": null,
+    "storeWriteBytesPerJob": 0,
+    "timed": {
+      "seconds": 11.143,
+      "appCpuSeconds": 16.76,
+      "jobs": 10000,
+      "cpuMsPerJob": 1.676,
+      "counters": {}
+    }
+  },
+  "phases": {
+    "timed-start": {
+      "harnessMs": 1795612907490,
+      "counters": {}
+    },
+    "timed-end": {
+      "harnessMs": 1795612918632,
+      "counters": {}
+    }
+  }
+}

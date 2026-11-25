@@ -1,0 +1,20 @@
+{
+  "system": "writefloor-redis",
+  "mode": "writefloor",
+  "jobs": 4000,
+  "writesPerSec": 4023.7,
+  "meanMicrosPerWrite": 248.5,
+  "latencyMicros": {
+    "p50": 2252,
+    "p95": 12141.2,
+    "p99": 25097.4
+  },
+  "settings": {
+    "store": "redis",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "n": 4000,
+    "appendfsync": "always",
+    "appendonly": "yes"
+  }
+}

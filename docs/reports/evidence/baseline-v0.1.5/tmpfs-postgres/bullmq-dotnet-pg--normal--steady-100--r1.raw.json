@@ -1,0 +1,34 @@
+{
+  "system": "bullmq-dotnet 1.3.7 (postgres)",
+  "mode": "steady",
+  "workers": 16,
+  "settings": {
+    "store": "postgres",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "removeOnComplete": 1000,
+    "serverGC": true,
+    "cores": 8
+  },
+  "offeredPerSec": 100,
+  "inserted": 2988,
+  "completed": 2988,
+  "completionsPerSec": 99.5,
+  "latencyMs": {
+    "p50": 19,
+    "p95": 109,
+    "p99": 189,
+    "max": 299
+  },
+  "outcome": {
+    "waiting": 0,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 2988,
+    "failedEvents": 0
+  }
+}

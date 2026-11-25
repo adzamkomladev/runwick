@@ -1,0 +1,37 @@
+node /root/work/Spindle/eng/bench-compare/pgboss/bench.mjs --mode enqueue --n 2000 --calls 1 --concurrency 1 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-postgres/pgboss--normal--enqueue-c1--r3.raw.json
+{
+  "system": "pg-boss 12.38.0",
+  "mode": "enqueue",
+  "concurrency": 1,
+  "batchSize": 1,
+  "burstWhenBatchFull": false,
+  "payloadBytes": 1018,
+  "settings": {
+    "store": "postgres",
+    "mode": "enqueue",
+    "payloadBytes": 1018,
+    "callers": 1,
+    "workerSlots": 1,
+    "fetchBatch": 1,
+    "burst": false,
+    "bulkChunk": 1000,
+    "seedChunk": 5000,
+    "pollingIntervalSeconds": 0.5,
+    "poolMax": 5,
+    "cores": 8
+  },
+  "jobs": 2000,
+  "calls": 1,
+  "insertsPerSec": 296.7911961875369,
+  "insertLatencyMs": {
+    "p50": 2.62585399999989,
+    "p99": 13.690746999999647
+  },
+  "outcome": {
+    "created": 2000
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795635891677
+@@PHASE timed-end 1795635898415

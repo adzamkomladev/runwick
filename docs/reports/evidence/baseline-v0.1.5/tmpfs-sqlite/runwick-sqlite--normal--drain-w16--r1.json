@@ -1,0 +1,413 @@
+{
+  "system": "runwick-sqlite",
+  "workload": "normal",
+  "test": "drain-w16",
+  "round": 1,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "runwick v0.1.5-19-gf21c47e",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll",
+    "bench",
+    "--store",
+    "sqlite",
+    "--mode",
+    "drain",
+    "--n",
+    "20000",
+    "--workers",
+    "16",
+    "--calls",
+    "8",
+    "--max-seconds",
+    "600",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-sqlite/runwick-sqlite--normal--drain-w16--r1.raw.json"
+  ],
+  "result": {
+    "system": "runwick-sqlite",
+    "store": "sqlite",
+    "mode": "drain",
+    "workers": 16,
+    "payloadBytes": 1024,
+    "bulkChunk": 100,
+    "insertSeconds": 8.778,
+    "insertCalls": 8,
+    "readyBeforeStart": {
+      "pending": 20000,
+      "reserved": 0,
+      "running": 0,
+      "retrying": 0,
+      "succeeded": 0,
+      "failed": 0,
+      "cancelled": 0
+    },
+    "progress": [
+      [
+        1.1,
+        128
+      ],
+      [
+        2,
+        463
+      ],
+      [
+        3,
+        761
+      ],
+      [
+        4.3,
+        970
+      ],
+      [
+        5,
+        1230
+      ],
+      [
+        6,
+        1670
+      ],
+      [
+        7,
+        2011
+      ],
+      [
+        8.1,
+        2379
+      ],
+      [
+        9.1,
+        2594
+      ],
+      [
+        10,
+        2923
+      ],
+      [
+        11,
+        3306
+      ],
+      [
+        12,
+        3730
+      ],
+      [
+        13,
+        3959
+      ],
+      [
+        14,
+        4262
+      ],
+      [
+        15,
+        4762
+      ],
+      [
+        16,
+        5067
+      ],
+      [
+        17,
+        5437
+      ],
+      [
+        18,
+        5785
+      ],
+      [
+        19,
+        6283
+      ],
+      [
+        20,
+        6698
+      ],
+      [
+        21,
+        7069
+      ],
+      [
+        22,
+        7391
+      ],
+      [
+        23,
+        7601
+      ],
+      [
+        24,
+        7935
+      ],
+      [
+        25,
+        8364
+      ],
+      [
+        26,
+        8743
+      ],
+      [
+        27,
+        9032
+      ],
+      [
+        28,
+        9376
+      ],
+      [
+        29,
+        9859
+      ],
+      [
+        30,
+        10307
+      ],
+      [
+        31,
+        10723
+      ],
+      [
+        32,
+        11049
+      ],
+      [
+        33,
+        11338
+      ],
+      [
+        34,
+        11609
+      ],
+      [
+        35,
+        11918
+      ],
+      [
+        36,
+        12284
+      ],
+      [
+        37,
+        12752
+      ],
+      [
+        38,
+        13074
+      ],
+      [
+        39,
+        13369
+      ],
+      [
+        40,
+        13775
+      ],
+      [
+        41,
+        14069
+      ],
+      [
+        42,
+        14487
+      ],
+      [
+        43,
+        14806
+      ],
+      [
+        44,
+        15124
+      ],
+      [
+        45,
+        15506
+      ],
+      [
+        46,
+        15843
+      ],
+      [
+        47,
+        15974
+      ],
+      [
+        48,
+        16360
+      ],
+      [
+        49,
+        16742
+      ],
+      [
+        50,
+        17030
+      ],
+      [
+        51,
+        17491
+      ],
+      [
+        52,
+        17823
+      ],
+      [
+        53,
+        18190
+      ],
+      [
+        54,
+        18653
+      ],
+      [
+        55,
+        19053
+      ],
+      [
+        56,
+        19501
+      ],
+      [
+        57,
+        19950
+      ]
+    ],
+    "clocks": {
+      "workerStartSeconds": 57.098,
+      "firstClaimSeconds": 57.169,
+      "firstClaimJobsPerSec": 349.8,
+      "workerStartJobsPerSec": 350.3
+    },
+    "jobs": 20000,
+    "accepted": 20000,
+    "failedDispatch": 0,
+    "finished": 20000,
+    "drained": true,
+    "drainWriteCommits": 3665,
+    "startToFirstClaimMs": 325.5,
+    "drainSeconds": 57.169,
+    "completionsPerSec": 349.8,
+    "finishReplayed": 0,
+    "batchClaims": 2385,
+    "reservesSent": 2386,
+    "claimsInFlightHighWater": 0,
+    "invocations": 20000,
+    "finishesSent": 20000,
+    "finishManyCalls": 1159,
+    "combinedCalls": 0,
+    "combinedClaimed": 0,
+    "combinedFallbacks": 0,
+    "inlineDeclined": {
+      "busy": 0,
+      "closed": 0,
+      "staleHint": 0,
+      "laneShape": 0
+    },
+    "sqlite": {
+      "profile": "sqlite.wal-synchronous-full",
+      "engine": {
+        "sqlite_version": "3.53.3",
+        "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+        "journal_mode": "wal",
+        "synchronous": "full",
+        "topology": "local"
+      },
+      "writeCommits": 3867,
+      "busyConflicts": 0,
+      "writerConnectionsOpened": 1,
+      "writerStatements": null
+    },
+    "peakWorkingSetBytes": 160190464,
+    "gc": {
+      "pauseTotalMs": 4782.2,
+      "pauseTimePercentage": 7.08,
+      "gen0": 164,
+      "gen1": 56,
+      "gen2": 11,
+      "allocatedMB": 3586.3,
+      "serverGC": true
+    },
+    "diagnostics": [],
+    "settings": {
+      "store": "sqlite",
+      "mode": "drain",
+      "payloadBytes": 1024,
+      "callers": 8,
+      "workerSlots": 16,
+      "producerSlots": 8,
+      "bulkChunk": 100,
+      "pgGroup": false,
+      "bufferedFinish": false,
+      "claimAhead": null,
+      "claimsInFlight": null,
+      "usage": true,
+      "jobMs": 0,
+      "serverGC": true,
+      "cores": 8
+    },
+    "outcome": {
+      "pending": 0,
+      "reserved": 0,
+      "running": 0,
+      "retrying": 0,
+      "succeeded": 20000,
+      "failed": 0,
+      "cancelled": 0
+    }
+  },
+  "outcome": {
+    "accepted": 20000,
+    "succeeded": 20000,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 68.02,
+      "cpuSeconds": 106.74,
+      "cpuAvgPct": 156.9,
+      "cpuPeakPct": 304.2,
+      "memPeakMB": 121.6,
+      "memAvgMB": 114.2,
+      "diskReadBytes": 4096,
+      "diskWriteBytes": 8192
+    },
+    "store": null
+  },
+  "derived": {
+    "jobs": 20000,
+    "cpuMsPerJob": 5.337,
+    "wireBytesPerJob": null,
+    "storeWriteBytesPerJob": 0,
+    "timed": {
+      "seconds": 57.498,
+      "appCpuSeconds": 88.56,
+      "jobs": 20000,
+      "cpuMsPerJob": 4.428,
+      "counters": {}
+    },
+    "confirmedPerSec_workerStart": 350.3,
+    "confirmedPerSec_firstClaim": 349.8
+  },
+  "phases": {
+    "seed-start": {
+      "harnessMs": 1795612700320,
+      "counters": {}
+    },
+    "seed-end": {
+      "harnessMs": 1795612709134,
+      "counters": {}
+    },
+    "timed-start": {
+      "harnessMs": 1795612709752,
+      "counters": {}
+    },
+    "timed-end": {
+      "harnessMs": 1795612767250,
+      "counters": {}
+    }
+  }
+}

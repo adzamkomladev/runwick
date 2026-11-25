@@ -1,0 +1,29 @@
+{
+  "system": "bullmq-dotnet 1.3.7 (redis)",
+  "mode": "bulk",
+  "workers": 16,
+  "settings": {
+    "store": "redis",
+    "mode": "bulk",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 100,
+    "removeOnComplete": 1000,
+    "serverGC": true,
+    "cores": 8
+  },
+  "jobs": 20000,
+  "batch": 100,
+  "calls": 1,
+  "insertsPerSec": 5625.4,
+  "accepted": 20000,
+  "outcome": {
+    "waiting": 20000,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 0,
+    "failedEvents": 0
+  }
+}

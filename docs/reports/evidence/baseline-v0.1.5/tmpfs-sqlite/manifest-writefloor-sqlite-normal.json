@@ -1,0 +1,43 @@
+{
+  "host": {
+    "cpu": "AMD EPYC Processor (with IBPB)",
+    "cores": 8,
+    "memMB": 24031,
+    "kernel": "6.8.0-149-generic",
+    "commit": "f21c47e",
+    "cpuIters": 50000,
+    "runner": null,
+    "when": "2026-11-25T14:52:43Z"
+  },
+  "systems": [
+    "writefloor-sqlite",
+    "runwick-sqlite",
+    "wolverine-sqlite",
+    "solidqueue"
+  ],
+  "workload": "normal",
+  "rounds": 3,
+  "scale": 1,
+  "freshStores": true,
+  "storeTmpfs": true,
+  "tmpdir": "/dev/shm/bench",
+  "runwick": {
+    "describe": "v0.1.5-19-gf21c47e",
+    "commit": "f21c47e9013717907ce4b703e2763001bd3cc0d7",
+    "srcDirty": false,
+    "srcIdenticalToV0_1_5": false
+  },
+  "libraries": {
+    "writefloor-sqlite": "writefloor-sqlite",
+    "runwick-sqlite": "runwick v0.1.5-19-gf21c47e",
+    "wolverine-sqlite": "wolverine 6.65.1 (sqlite)",
+    "solidqueue": "solid_queue 1.2.1 (sqlite 3.54.1, rails 8.0.5.2, ruby 3.2.3)"
+  },
+  "stores": {},
+  "cpuQuota": "",
+  "outDirMount": "/dev/sda1 ext4",
+  "gc": {
+    "DOTNET_gcServer": "1"
+  },
+  "orderPolicy": "reversed on even rounds"
+}

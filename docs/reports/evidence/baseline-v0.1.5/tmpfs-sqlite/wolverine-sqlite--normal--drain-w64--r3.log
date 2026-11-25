@@ -1,0 +1,177 @@
+dotnet /root/work/Spindle/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll --transport sqlite --redis 127.0.0.1:56392 --mode drain --n 20000 --workers 64 --max-seconds 600 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-sqlite/wolverine-sqlite--normal--drain-w64--r3.raw.json
+eDataReader.NextResult()
+         at Microsoft.Data.Sqlite.SqliteCommand.ExecuteNonQuery()
+         at System.Data.Common.DbConnection.BeginDbTransactionAsync(IsolationLevel isolationLevel, CancellationToken cancellationToken)
+      --- End of stack trace from previous location ---
+         at Wolverine.Sqlite.Transport.SqliteQueueSender.MoveFromOutgoingToQueueAsync(Envelope envelope, CancellationToken cancellationToken) in /home/runner/work/wolverine/wolverine/src/Persistence/Wolverine.Sqlite/Transport/SqliteQueueSender.cs:line 240
+         at Wolverine.Sqlite.Transport.SqliteQueueSender.MoveFromOutgoingToQueueAsync(Envelope envelope, CancellationToken cancellationToken) in /home/runner/work/wolverine/wolverine/src/Persistence/Wolverine.Sqlite/Transport/SqliteQueueSender.cs:line 253
+         at Wolverine.Sqlite.Transport.SqliteQueueSender.SendAsync(Envelope envelope) in /home/runner/work/wolverine/wolverine/src/Persistence/Wolverine.Sqlite/Transport/SqliteQueueSender.cs:line 190
+         at Wolverine.Transports.Sending.SendingAgent.sendWithExplicitHandlingAsync(Envelope envelope, CancellationToken token) in /home/runner/work/wolverine/wolverine/src/Wolverine/Transports/Sending/SendingAgent.cs:line 347
+fail: Wolverine.Persistence.Durability.DurableSendingAgent[201]
+      Failed to send outgoing envelopes batch to sqlite://bench/
+      Microsoft.Data.Sqlite.SqliteException (0x80004005): SQLite Error 1: 'cannot start a transaction within a transaction'.
+         at Microsoft.Data.Sqlite.SqliteDataReader.NextResult()
+         at Microsoft.Data.Sqlite.SqliteCommand.ExecuteNonQuery()
+         at System.Data.Common.DbConnection.BeginDbTransactionAsync(IsolationLevel isolationLevel, CancellationToken cancellationToken)
+      --- End of stack trace from previous location ---
+         at Wolverine.Sqlite.Transport.SqliteQueueSender.MoveFromOutgoingToQueueAsync(Envelope envelope, CancellationToken cancellationToken) in /home/runner/work/wolverine/wolverine/src/Persistence/Wolverine.Sqlite/Transport/SqliteQueueSender.cs:line 240
+         at Wolverine.Sqlite.Transport.SqliteQueueSender.MoveFromOutgoingToQueueAsync(Envelope envelope, CancellationToken cancellationToken) in /home/runner/work/wolverine/wolverine/src/Persistence/Wolverine.Sqlite/Transport/SqliteQueueSender.cs:line 253
+         at Wolverine.Sqlite.Transport.SqliteQueueSender.SendAsync(Envelope envelope) in /home/runner/work/wolverine/wolverine/src/Persistence/Wolverine.Sqlite/Transport/SqliteQueueSender.cs:line 190
+         at Wolverine.Transports.Sending.SendingAgent.sendWithExplicitHandlingAsync(Envelope envelope, CancellationToken token) in /home/runner/work/wolverine/wolverine/src/Wolverine/Transports/Sending/SendingAgent.cs:line 347
+fail: Wolverine.Persistence.Durability.DurableSendingAgent[201]
+      Failed to send outgoing envelopes batch to sqlite://bench/
+      Microsoft.Data.Sqlite.SqliteException (0x80004005): SQLite Error 1: 'cannot start a transaction within a transaction'.
+         at Microsoft.Data.Sqlite.SqliteDataReader.NextResult()
+         at Microsoft.Data.Sqlite.SqliteCommand.ExecuteNonQuery()
+         at System.Data.Common.DbConnection.BeginDbTransactionAsync(IsolationLevel isolationLevel, CancellationToken cancellationToken)
+      --- End of stack trace from previous location ---
+         at Wolverine.Sqlite.Transport.SqliteQueueSender.MoveFromOutgoingToQueueAsync(Envelope envelope, CancellationToken cancellationToken) in /home/runner/work/wolverine/wolverine/src/Persistence/Wolverine.Sqlite/Transport/SqliteQueueSender.cs:line 240
+         at Wolverine.Sqlite.Transport.SqliteQueueSender.MoveFromOutgoingToQueueAsync(Envelope envelope, CancellationToken cancellationToken) in /home/runner/work/wolverine/wolverine/src/Persistence/Wolverine.Sqlite/Transport/SqliteQueueSender.cs:line 253
+         at Wolverine.Sqlite.Transport.SqliteQueueSender.SendAsync(Envelope envelope) in /home/runner/work/wolverine/wolverine/src/Persistence/Wolverine.Sqlite/Transport/SqliteQueueSender.cs:line 190
+         at Wolverine.Transports.Sending.SendingAgent.sendWithExplicitHandlingAsync(Envelope envelope, CancellationToken token) in /home/runner/work/wolverine/wolverine/src/Wolverine/Transports/Sending/SendingAgent.cs:line 347
+{
+  "system": "wolverine 6.65.1 (sqlite)",
+  "mode": "drain",
+  "workers": 64,
+  "settings": {
+    "store": "sqlite",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 64,
+    "seedCallers": 16,
+    "sendInline": false,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 8
+  },
+  "readyBeforeStart": {
+    "wolverine_queue_bench": 20000,
+    "wolverine_queue_bench_scheduled": 0
+  },
+  "progress": [
+    [
+      1.7,
+      0
+    ],
+    [
+      3.3,
+      8
+    ],
+    [
+      4,
+      2401
+    ],
+    [
+      5,
+      3064
+    ],
+    [
+      6,
+      3064
+    ],
+    [
+      7,
+      3109
+    ],
+    [
+      8,
+      5120
+    ],
+    [
+      9,
+      5184
+    ],
+    [
+      10.1,
+      5184
+    ],
+    [
+      11,
+      6937
+    ],
+    [
+      12,
+      8080
+    ],
+    [
+      13,
+      8144
+    ],
+    [
+      14,
+      8144
+    ],
+    [
+      15,
+      9492
+    ],
+    [
+      16,
+      10660
+    ],
+    [
+      17,
+      10724
+    ],
+    [
+      18,
+      10724
+    ],
+    [
+      19,
+      12411
+    ],
+    [
+      20,
+      13980
+    ],
+    [
+      21,
+      14044
+    ],
+    [
+      22,
+      14044
+    ],
+    [
+      23,
+      14806
+    ],
+    [
+      24,
+      17300
+    ],
+    [
+      25,
+      17404
+    ],
+    [
+      26,
+      17404
+    ]
+  ],
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 26.31,
+  "completionsPerSec": 760.2,
+  "startupSeconds": 3.34,
+  "completionsPerSecExcludingStartup": 870.8,
+  "clocks": {
+    "workerStartSeconds": 26.31,
+    "workerStartJobsPerSec": 760.2,
+    "firstClaimSeconds": 22.967,
+    "firstClaimJobsPerSec": 870.8,
+    "handlerReturns": 20000
+  },
+  "outcome": {
+    "wolverine_queue_bench": 0,
+    "wolverine_queue_bench_scheduled": 0
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795616869818
+@@PHASE seed-end 1795616904252
+@@PHASE timed-start 1795616904281
+@@PHASE timed-end 1795616930590

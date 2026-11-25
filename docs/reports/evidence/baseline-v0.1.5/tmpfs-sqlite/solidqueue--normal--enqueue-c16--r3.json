@@ -1,0 +1,54 @@
+{
+  "system": "solidqueue",
+  "workload": "normal",
+  "test": "enqueue-c16",
+  "round": 3,
+  "trace": false,
+  "ok": false,
+  "complete": false,
+  "incompleteReason": "harness failed",
+  "version": null,
+  "command": [
+    "bin/rails",
+    "runner",
+    "../bench.rb",
+    "--mode",
+    "enqueue",
+    "--n",
+    "10000",
+    "--workers",
+    "16",
+    "--calls",
+    "16",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-sqlite/solidqueue--normal--enqueue-c16--r3.raw.json"
+  ],
+  "result": null,
+  "outcome": null,
+  "resources": {
+    "app": {
+      "seconds": 355.64,
+      "cpuSeconds": 392.24,
+      "cpuAvgPct": 110.3,
+      "cpuPeakPct": 191.4,
+      "memPeakMB": 188.2,
+      "memAvgMB": 181.7,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 37941248
+    },
+    "store": null
+  },
+  "derived": {
+    "jobs": 0,
+    "cpuMsPerJob": null,
+    "wireBytesPerJob": null,
+    "storeWriteBytesPerJob": null,
+    "timed": null
+  },
+  "phases": {
+    "timed-start": {
+      "harnessMs": 1795617077637,
+      "counters": {}
+    }
+  }
+}

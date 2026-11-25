@@ -1,0 +1,113 @@
+{
+  "system": "solidqueue",
+  "workload": "normal",
+  "test": "steady-500",
+  "round": 1,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "solid_queue 1.2.1 (sqlite 3.54.1, rails 8.0.5.2, ruby 3.2.3)",
+  "command": [
+    "bin/rails",
+    "runner",
+    "../bench.rb",
+    "--mode",
+    "steady",
+    "--n",
+    "0",
+    "--workers",
+    "16",
+    "--rate",
+    "500",
+    "--seconds",
+    "30",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-sqlite/solidqueue--normal--steady-500--r1.raw.json"
+  ],
+  "result": {
+    "system": "solid_queue 1.2.1 (sqlite 3.54.1, rails 8.0.5.2, ruby 3.2.3)",
+    "mode": "steady",
+    "workers": 16,
+    "processes": 8,
+    "threadsPerProcess": 2,
+    "settings": {
+      "store": "sqlite",
+      "mode": "steady",
+      "payloadBytes": 1024,
+      "callers": 1,
+      "workerSlots": 16,
+      "bulkChunk": 1000,
+      "processes": 8,
+      "threadsPerProcess": 2,
+      "pragmas": {
+        "journal_mode": "wal",
+        "synchronous": 1,
+        "wal_autocheckpoint": 1000,
+        "busy_timeout": 0
+      },
+      "sqliteVersion": "3.54.1",
+      "cores": 8
+    },
+    "offeredPerSec": 500.0,
+    "inserted": 654,
+    "completed": 654,
+    "completionsPerSec": 21.7,
+    "latencyMs": {
+      "p50": 64.01,
+      "p95": 197.02,
+      "p99": 372.0,
+      "max": 517.0
+    },
+    "outcome": {
+      "finished": 654,
+      "unfinished": 0,
+      "ready": 0,
+      "claimed": 0,
+      "failed": 0,
+      "scheduled": 0
+    }
+  },
+  "outcome": {
+    "accepted": 654,
+    "succeeded": 654,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 35.17,
+      "cpuSeconds": 71.18,
+      "cpuAvgPct": 202.4,
+      "cpuPeakPct": 384.8,
+      "memPeakMB": 539.9,
+      "memAvgMB": 441.2,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 3944448
+    },
+    "store": null
+  },
+  "derived": {
+    "jobs": 654,
+    "cpuMsPerJob": 108.838,
+    "wireBytesPerJob": null,
+    "storeWriteBytesPerJob": 6031,
+    "timed": {
+      "seconds": 30.076,
+      "appCpuSeconds": 64.16,
+      "jobs": 654,
+      "cpuMsPerJob": 98.104,
+      "counters": {}
+    }
+  },
+  "phases": {
+    "timed-start": {
+      "harnessMs": 1795614463795,
+      "counters": {}
+    },
+    "timed-end": {
+      "harnessMs": 1795614493871,
+      "counters": {}
+    }
+  }
+}

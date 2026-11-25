@@ -1,0 +1,204 @@
+{
+  "system": "runwick-pg",
+  "workload": "normal",
+  "test": "steady-100",
+  "round": 2,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "runwick v0.1.5-19-gf21c47e",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll",
+    "bench",
+    "--store",
+    "postgres",
+    "--mode",
+    "steady",
+    "--n",
+    "0",
+    "--workers",
+    "16",
+    "--rate",
+    "100",
+    "--seconds",
+    "30",
+    "--calls",
+    "16",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-postgres/runwick-pg--normal--steady-100--r2.raw.json"
+  ],
+  "result": {
+    "system": "runwick",
+    "store": "postgres",
+    "mode": "steady",
+    "workers": 16,
+    "payloadBytes": 1024,
+    "bulkChunk": 100,
+    "clocks": {
+      "offerWindowSeconds": 30,
+      "completedDuringOffers": 2993,
+      "secondsToClearAfterOffers": 0.08
+    },
+    "storeViewers": 0,
+    "storeWarmupSeconds": 0,
+    "storeSnapshotPolls": 0,
+    "storeSnapshotPollsWithDiagnostics": 0,
+    "offeredPerSec": 100,
+    "offered": 3000,
+    "seconds": 30,
+    "inserted": 3000,
+    "dispatchCalls": 16,
+    "failedDispatch": 0,
+    "failedDispatchByCode": {},
+    "completed": 3000,
+    "completedByEndOfOffers": 2993,
+    "completionsPerSec": 99.7,
+    "delayMs": 0,
+    "enqueueLatencyMs": {
+      "p50": 16.65,
+      "p95": 179.49,
+      "p99": 276.51
+    },
+    "latencyMs": {
+      "p50": 94.14,
+      "p95": 713.62,
+      "p99": 860.16,
+      "max": 1369.77
+    },
+    "latencySamples": 3000,
+    "finishReplayed": 0,
+    "batchClaims": 1283,
+    "reservesSent": 1360,
+    "claimsInFlightHighWater": 0,
+    "invocations": 3000,
+    "finishesSent": 3000,
+    "finishManyCalls": 573,
+    "combinedCalls": 0,
+    "combinedClaimed": 0,
+    "combinedFallbacks": 0,
+    "inlineDeclined": {
+      "busy": 0,
+      "closed": 0,
+      "staleHint": 0,
+      "laneShape": 0
+    },
+    "peakWorkingSetBytes": 170778624,
+    "gc": {
+      "pauseTotalMs": 310.9,
+      "pauseTimePercentage": 0.94,
+      "gen0": 43,
+      "gen1": 19,
+      "gen2": 9,
+      "allocatedMB": 672.3,
+      "serverGC": true
+    },
+    "diagnostics": [],
+    "settings": {
+      "store": "postgres",
+      "mode": "steady",
+      "payloadBytes": 1024,
+      "callers": 16,
+      "workerSlots": 16,
+      "producerSlots": 16,
+      "bulkChunk": 100,
+      "pgGroup": true,
+      "bufferedFinish": false,
+      "claimAhead": null,
+      "claimsInFlight": null,
+      "usage": true,
+      "jobMs": 0,
+      "serverGC": true,
+      "cores": 8
+    },
+    "outcome": {
+      "pending": 0,
+      "reserved": 0,
+      "running": 0,
+      "retrying": 0,
+      "succeeded": 3000,
+      "failed": 0,
+      "cancelled": 0,
+      "now:pending": 0,
+      "now:scheduled": 0,
+      "now:reserved": 0,
+      "now:running": 0
+    }
+  },
+  "outcome": {
+    "accepted": 3000,
+    "succeeded": 3000,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 34.34,
+      "cpuSeconds": 38.4,
+      "cpuAvgPct": 111.8,
+      "cpuPeakPct": 202.7,
+      "memPeakMB": 154.5,
+      "memAvgMB": 129.4,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 0
+    },
+    "store": {
+      "cpuSeconds": 60.52,
+      "cpuAvgPct": 176.2,
+      "cpuPeakPct": 330.0,
+      "memPeakMB": 686.1,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 0,
+      "netRxBytes": 13955694,
+      "netTxBytes": 13287156
+    }
+  },
+  "derived": {
+    "jobs": 3000,
+    "cpuMsPerJob": 32.973,
+    "wireBytesPerJob": 9081,
+    "storeWriteBytesPerJob": 0,
+    "timed": {
+      "seconds": 30.028,
+      "appCpuSeconds": 34.88,
+      "jobs": 3000,
+      "storeCpuSeconds": 58.899,
+      "storeDiskWriteBytes": 0,
+      "storeNetRxBytes": 13147710,
+      "storeNetTxBytes": 12075255,
+      "wireBytesPerJob": 8408,
+      "storeWriteBytesPerJob": 0,
+      "cpuMsPerJob": 31.26,
+      "counters": {
+        "walBytes": 36068528.0,
+        "walRecords": 266575.0,
+        "walFpi": 30.0,
+        "transactions": 5189.0
+      },
+      "walBytesPerJob": 12022.843,
+      "walFpiPerJob": 0.01,
+      "transactionsPerJob": 1.73
+    }
+  },
+  "phases": {
+    "timed-start": {
+      "harnessMs": 1795635348412,
+      "counters": {
+        "walBytes": 770597488.0,
+        "walRecords": 4755261.0,
+        "walFpi": 9608.0,
+        "transactions": 1136.0
+      }
+    },
+    "timed-end": {
+      "harnessMs": 1795635378494,
+      "counters": {
+        "walBytes": 806666016.0,
+        "walRecords": 5021836.0,
+        "walFpi": 9638.0,
+        "transactions": 6325.0
+      }
+    }
+  }
+}

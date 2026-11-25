@@ -1,0 +1,104 @@
+{
+  "system": "pg-boss 12.38.0",
+  "mode": "drain",
+  "concurrency": 1,
+  "batchSize": 16,
+  "burstWhenBatchFull": true,
+  "payloadBytes": 1018,
+  "settings": {
+    "store": "postgres",
+    "mode": "drain",
+    "payloadBytes": 1018,
+    "callers": 1,
+    "workerSlots": 1,
+    "fetchBatch": 16,
+    "burst": true,
+    "bulkChunk": 1000,
+    "seedChunk": 5000,
+    "pollingIntervalSeconds": 0.5,
+    "poolMax": 5,
+    "cores": 8
+  },
+  "insertSeconds": 0.929948464,
+  "readyBeforeStart": {
+    "created": 20000
+  },
+  "progress": [
+    [
+      1,
+      608
+    ],
+    [
+      2,
+      1120
+    ],
+    [
+      3,
+      1920
+    ],
+    [
+      4,
+      2608
+    ],
+    [
+      5,
+      3296
+    ],
+    [
+      6,
+      4704
+    ],
+    [
+      7,
+      6048
+    ],
+    [
+      8,
+      7616
+    ],
+    [
+      9,
+      8784
+    ],
+    [
+      10,
+      10512
+    ],
+    [
+      11.1,
+      11808
+    ],
+    [
+      12.1,
+      13056
+    ],
+    [
+      13.1,
+      14704
+    ],
+    [
+      14.1,
+      16320
+    ],
+    [
+      15.1,
+      17904
+    ],
+    [
+      16.1,
+      19456
+    ]
+  ],
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 16.905716294999998,
+  "completionsPerSec": 1183.0318012561918,
+  "clocks": {
+    "workerStartSeconds": 16.905716294999998,
+    "workerStartJobsPerSec": 1183.0318012561918,
+    "handlerReturns": 20000
+  },
+  "outcome": {
+    "completed": 20000
+  }
+}

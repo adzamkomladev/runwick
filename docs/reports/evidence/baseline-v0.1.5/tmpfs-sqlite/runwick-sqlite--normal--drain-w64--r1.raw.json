@@ -1,0 +1,303 @@
+{
+  "system": "runwick-sqlite",
+  "store": "sqlite",
+  "mode": "drain",
+  "workers": 64,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "insertSeconds": 8.695,
+  "insertCalls": 8,
+  "readyBeforeStart": {
+    "pending": 20000,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0
+  },
+  "progress": [
+    [
+      1,
+      192
+    ],
+    [
+      2,
+      640
+    ],
+    [
+      3,
+      1152
+    ],
+    [
+      4,
+      1632
+    ],
+    [
+      5.2,
+      2144
+    ],
+    [
+      6,
+      2528
+    ],
+    [
+      7,
+      2912
+    ],
+    [
+      8,
+      3424
+    ],
+    [
+      9,
+      4032
+    ],
+    [
+      10,
+      4576
+    ],
+    [
+      11,
+      5152
+    ],
+    [
+      12,
+      5632
+    ],
+    [
+      13,
+      6176
+    ],
+    [
+      14,
+      6816
+    ],
+    [
+      15,
+      7200
+    ],
+    [
+      16,
+      7488
+    ],
+    [
+      17,
+      7936
+    ],
+    [
+      18,
+      8352
+    ],
+    [
+      19,
+      8864
+    ],
+    [
+      20,
+      9408
+    ],
+    [
+      21,
+      9952
+    ],
+    [
+      22,
+      10592
+    ],
+    [
+      23,
+      11136
+    ],
+    [
+      24.3,
+      11488
+    ],
+    [
+      25,
+      11552
+    ],
+    [
+      26,
+      12064
+    ],
+    [
+      30,
+      12672
+    ],
+    [
+      30,
+      12672
+    ],
+    [
+      31,
+      12704
+    ],
+    [
+      32,
+      12704
+    ],
+    [
+      33,
+      12704
+    ],
+    [
+      34,
+      13152
+    ],
+    [
+      35,
+      13536
+    ],
+    [
+      36,
+      14016
+    ],
+    [
+      37.2,
+      14368
+    ],
+    [
+      38,
+      14816
+    ],
+    [
+      39,
+      15168
+    ],
+    [
+      40,
+      15424
+    ],
+    [
+      41,
+      15744
+    ],
+    [
+      42,
+      16000
+    ],
+    [
+      43.1,
+      16320
+    ],
+    [
+      44,
+      16704
+    ],
+    [
+      45,
+      17216
+    ],
+    [
+      46,
+      17568
+    ],
+    [
+      47,
+      17696
+    ],
+    [
+      48,
+      18080
+    ],
+    [
+      49,
+      18720
+    ],
+    [
+      50,
+      19104
+    ],
+    [
+      51.1,
+      19616
+    ],
+    [
+      52,
+      19936
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 52.069,
+    "firstClaimSeconds": 52.067,
+    "firstClaimJobsPerSec": 384.1,
+    "workerStartJobsPerSec": 384.1
+  },
+  "jobs": 20000,
+  "accepted": 20000,
+  "failedDispatch": 0,
+  "finished": 20000,
+  "drained": true,
+  "drainWriteCommits": 1285,
+  "startToFirstClaimMs": 168.4,
+  "drainSeconds": 52.067,
+  "completionsPerSec": 384.1,
+  "finishReplayed": 0,
+  "batchClaims": 625,
+  "reservesSent": 626,
+  "claimsInFlightHighWater": 0,
+  "invocations": 20000,
+  "finishesSent": 20000,
+  "finishManyCalls": 629,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "sqlite": {
+    "profile": "sqlite.wal-synchronous-full",
+    "engine": {
+      "sqlite_version": "3.53.3",
+      "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+      "journal_mode": "wal",
+      "synchronous": "full",
+      "topology": "local"
+    },
+    "writeCommits": 1487,
+    "busyConflicts": 0,
+    "writerConnectionsOpened": 1,
+    "writerStatements": null
+  },
+  "peakWorkingSetBytes": 172974080,
+  "gc": {
+    "pauseTotalMs": 9069.1,
+    "pauseTimePercentage": 14.71,
+    "gen0": 168,
+    "gen1": 77,
+    "gen2": 18,
+    "allocatedMB": 3486.5,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "sqlite",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 8,
+    "workerSlots": 64,
+    "producerSlots": 8,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 20000,
+    "failed": 0,
+    "cancelled": 0
+  }
+}

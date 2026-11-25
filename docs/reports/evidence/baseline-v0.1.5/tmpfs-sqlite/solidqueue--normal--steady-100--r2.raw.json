@@ -1,0 +1,43 @@
+{
+  "system": "solid_queue 1.2.1 (sqlite 3.54.1, rails 8.0.5.2, ruby 3.2.3)",
+  "mode": "steady",
+  "workers": 16,
+  "processes": 8,
+  "threadsPerProcess": 2,
+  "settings": {
+    "store": "sqlite",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "processes": 8,
+    "threadsPerProcess": 2,
+    "pragmas": {
+      "journal_mode": "wal",
+      "synchronous": 1,
+      "wal_autocheckpoint": 1000,
+      "busy_timeout": 0
+    },
+    "sqliteVersion": "3.54.1",
+    "cores": 8
+  },
+  "offeredPerSec": 100.0,
+  "inserted": 496,
+  "completed": 496,
+  "completionsPerSec": 16.5,
+  "latencyMs": {
+    "p50": 79.98,
+    "p95": 253.99,
+    "p99": 387.0,
+    "max": 495.99
+  },
+  "outcome": {
+    "finished": 496,
+    "unfinished": 0,
+    "ready": 0,
+    "claimed": 0,
+    "failed": 0,
+    "scheduled": 0
+  }
+}

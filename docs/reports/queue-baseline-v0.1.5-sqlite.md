@@ -10,7 +10,7 @@ Runwick's SQLite store is behind Wolverine everywhere except bulk adds, and the 
 - **Bulk:** 2,163/s at 100 per call. Solid Queue manages 1,641 at the same size, and 2,537 at its own 1,000 per call.
 - **Processing a backlog:** 302/s at 16 slots and 447 at 64. Wolverine does 801 and 752.
 - **Steady arrivals:** keeps up at 100/s. At 500/s it finishes only 153/s and refuses about 9,000 of roughly 15,000 offers over the 30-second window (Wolverine finishes 350, with a worse tail).
-- **The bare disk is slow here:** one `FULL` write costs about 2,100 µs on this machine (about 485/s), so Runwick's `FULL` numbers are bounded by the disk. Wolverine and Solid Queue use `NORMAL`, whose bare write runs near 18,000/s, so their numbers are not bounded the same way.
+- **The bare disk is slow here:** one `FULL` write costs about 2,100 µs on this machine (about 485/s), so Runwick's `FULL` numbers are bounded by the disk. Wolverine and Solid Queue use `NORMAL`, whose bare write runs near 18,000/s, so their numbers are not bounded the same way. On memory-backed storage Runwick's one-caller rate barely moves (215/s), so the disk is not its main limit either: see the [fast-disk report](queue-baseline-v0.1.5-fast-disk.md).
 
 ## What was run
 
@@ -74,6 +74,8 @@ The bulk gap at native chunk sizes is small and goes away at equal size, which m
 
 1. **Slow disk.** At one caller Runwick's wall time per add is about 6,100 µs, against a bare `FULL` write of about 2,100 µs. That leaves a lot unexplained even on this slow disk, which is why the one-caller gap is the most useful number here.
 2. **Wolverine does not use `FULL`, and the single-caller target is above the `FULL` ceiling on this disk.** Wolverine's one-caller rate (723/s) is faster than a bare insert at `FULL` (about 485/s, five runs 426 to 551). Its SQLite library's connection defaults (Weasel 9.50.0, read from the package, not observed on the harness's connections) are WAL, `synchronous = NORMAL`, busy timeout 5,000 ms. At `NORMAL` a bare insert runs at about 18,000/s with one caller, because the commit does not wait for the disk. So Wolverine's commits do not wait for the disk either, and Runwick's `FULL` commits do. At equal durability the Runwick one-caller target of 651/s is above the bare `FULL` ceiling here, and 163/s is about a third of that ceiling. At 16 callers the bare `FULL` write is about 490/s, close to Runwick's 501.
+
+   **Scope of this point:** it describes this slow disk only. On memory-backed storage, where a `FULL` commit does not wait for a disk, the bare write runs at about 21,700/s and Runwick still does only 215/s against Wolverine's 603: most of Runwick's one-caller cost is its own work, not the disk. See the [fast-disk report](queue-baseline-v0.1.5-fast-disk.md).
 3. **Solid Queue runs `synchronous=NORMAL`** (recorded: WAL, `synchronous=1`, auto-checkpoint 1000). Runwick requires `FULL`. Solid Queue's bulk and drain figures are therefore on weaker durability than Runwick's, and its rates here are not a fair measure of what `FULL` costs.
 4. **Solid Queue crashes under many producers.** With 16 callers, 4 of 5 rounds failed, and with 64 callers all 5, after its 10-second SQLite lock wait ran out. The one 16-caller round that finished did 42/s. Its steady numbers are low too. These are real results for the configuration used (Rails defaults plus a 10 s timeout), not tuned.
 5. **Different machine and day from the Redis baseline.** Do not compare across the three baseline reports.

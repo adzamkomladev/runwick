@@ -1,0 +1,175 @@
+dotnet /root/work/Spindle/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll --transport sqlite --redis 127.0.0.1:56392 --mode drain --n 20000 --workers 64 --max-seconds 600 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-sqlite/wolverine-sqlite--normal--drain-w64--r1.raw.json
+CREATE TABLE IF NOT EXISTS wolverine_queue_bench (
+    id              TEXT    PRIMARY KEY,
+    body            BLOB    NOT NULL,
+    message_type    TEXT    NOT NULL,
+    keep_until      TEXT    ,
+    timestamp       TEXT    DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS wolverine_queue_bench_scheduled (
+    id                TEXT    PRIMARY KEY,
+    body              BLOB    NOT NULL,
+    message_type      TEXT    NOT NULL,
+    execution_time    TEXT    NOT NULL,
+    timestamp         TEXT    DEFAULT (datetime('now'))
+);
+
+{
+  "system": "wolverine 6.65.1 (sqlite)",
+  "mode": "drain",
+  "workers": 64,
+  "settings": {
+    "store": "sqlite",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 64,
+    "seedCallers": 16,
+    "sendInline": false,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 8
+  },
+  "readyBeforeStart": {
+    "wolverine_queue_bench": 20000,
+    "wolverine_queue_bench_scheduled": 0
+  },
+  "progress": [
+    [
+      1.4,
+      0
+    ],
+    [
+      3.2,
+      16
+    ],
+    [
+      4,
+      3100
+    ],
+    [
+      5,
+      3164
+    ],
+    [
+      6,
+      3164
+    ],
+    [
+      7,
+      4620
+    ],
+    [
+      8,
+      5220
+    ],
+    [
+      9,
+      5284
+    ],
+    [
+      10,
+      5284
+    ],
+    [
+      11,
+      7900
+    ],
+    [
+      12,
+      7900
+    ],
+    [
+      13,
+      7964
+    ],
+    [
+      14,
+      7964
+    ],
+    [
+      15,
+      10268
+    ],
+    [
+      16,
+      11040
+    ],
+    [
+      17,
+      11104
+    ],
+    [
+      18,
+      11104
+    ],
+    [
+      19,
+      14480
+    ],
+    [
+      20,
+      14480
+    ],
+    [
+      21.1,
+      14544
+    ],
+    [
+      22,
+      14544
+    ],
+    [
+      23,
+      16582
+    ],
+    [
+      24,
+      17460
+    ],
+    [
+      25,
+      17585
+    ],
+    [
+      26,
+      17585
+    ],
+    [
+      27.1,
+      18449
+    ],
+    [
+      28,
+      19060
+    ],
+    [
+      29,
+      19124
+    ]
+  ],
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 29.241,
+  "completionsPerSec": 684,
+  "startupSeconds": 3.24,
+  "completionsPerSecExcludingStartup": 769.1,
+  "clocks": {
+    "workerStartSeconds": 29.241,
+    "workerStartJobsPerSec": 684,
+    "firstClaimSeconds": 26.004,
+    "firstClaimJobsPerSec": 769.1,
+    "handlerReturns": 20000
+  },
+  "outcome": {
+    "wolverine_queue_bench": 0,
+    "wolverine_queue_bench_scheduled": 0
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795612989335
+@@PHASE seed-end 1795613015851
+@@PHASE timed-start 1795613015860
+@@PHASE timed-end 1795613045101

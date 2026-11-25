@@ -1,0 +1,137 @@
+{
+  "system": "bullmq-dotnet-pg",
+  "workload": "normal",
+  "test": "enqueue-c64",
+  "round": 3,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "bullmq-dotnet 1.3.7 (postgres)",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/eng/bench-compare/bullmq-dotnet/bin/Release/net10.0/bench-bullmq-dotnet.dll",
+    "--backend",
+    "postgres",
+    "--redis",
+    "127.0.0.1:56392",
+    "--mode",
+    "enqueue",
+    "--n",
+    "10000",
+    "--workers",
+    "16",
+    "--calls",
+    "64",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-postgres/bullmq-dotnet-pg--normal--enqueue-c64--r3.raw.json"
+  ],
+  "result": {
+    "system": "bullmq-dotnet 1.3.7 (postgres)",
+    "mode": "enqueue",
+    "workers": 16,
+    "settings": {
+      "store": "postgres",
+      "mode": "enqueue",
+      "payloadBytes": 1024,
+      "callers": 64,
+      "workerSlots": 16,
+      "bulkChunk": 1000,
+      "removeOnComplete": 1000,
+      "serverGC": true,
+      "cores": 8
+    },
+    "jobs": 10000,
+    "calls": 64,
+    "insertsPerSec": 1023.6,
+    "accepted": 10000,
+    "insertLatencyMs": {
+      "p50": 47.4,
+      "p95": 158.82,
+      "p99": 215.49
+    },
+    "outcome": {
+      "waiting": 10000,
+      "active": 0,
+      "delayed": 0,
+      "failed": 0,
+      "completedEvents": 0,
+      "failedEvents": 0
+    }
+  },
+  "outcome": {
+    "accepted": 10000,
+    "succeeded": 0,
+    "failed": 0,
+    "unfinished": 10000
+  },
+  "resources": {
+    "app": {
+      "seconds": 11.24,
+      "cpuSeconds": 9.72,
+      "cpuAvgPct": 86.4,
+      "cpuPeakPct": 178.4,
+      "memPeakMB": 103.8,
+      "memAvgMB": 83.9,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 0
+    },
+    "store": {
+      "cpuSeconds": 20.81,
+      "cpuAvgPct": 185.1,
+      "cpuPeakPct": 308.1,
+      "memPeakMB": 358.4,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 0,
+      "netRxBytes": 16109429,
+      "netTxBytes": 2175097
+    }
+  },
+  "derived": {
+    "jobs": 10000,
+    "cpuMsPerJob": 3.053,
+    "wireBytesPerJob": 1828,
+    "storeWriteBytesPerJob": 0,
+    "timed": {
+      "seconds": 9.736,
+      "appCpuSeconds": 8.63,
+      "jobs": 10000,
+      "storeCpuSeconds": 20.017,
+      "storeDiskWriteBytes": 0,
+      "storeNetRxBytes": 15843884,
+      "storeNetTxBytes": 2120123,
+      "wireBytesPerJob": 1796,
+      "storeWriteBytesPerJob": 0,
+      "cpuMsPerJob": 2.865,
+      "counters": {
+        "walBytes": 21069688.0,
+        "walRecords": 106313.0,
+        "walFpi": 1035.0,
+        "transactions": 9895.0
+      },
+      "walBytesPerJob": 2106.969,
+      "walFpiPerJob": 0.103,
+      "transactionsPerJob": 0.99
+    }
+  },
+  "phases": {
+    "timed-start": {
+      "harnessMs": 1795636843469,
+      "counters": {
+        "walBytes": 64910264.0,
+        "walRecords": 156399.0,
+        "walFpi": 2811.0,
+        "transactions": 930.0
+      }
+    },
+    "timed-end": {
+      "harnessMs": 1795636853196,
+      "counters": {
+        "walBytes": 85979952.0,
+        "walRecords": 262712.0,
+        "walFpi": 3846.0,
+        "transactions": 10825.0
+      }
+    }
+  }
+}

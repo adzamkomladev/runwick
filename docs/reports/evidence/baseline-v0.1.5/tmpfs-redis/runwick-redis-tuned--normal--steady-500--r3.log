@@ -1,0 +1,104 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll bench --store redis --mode steady --n 0 --workers 16 --redis 127.0.0.1:56392 --rate 500 --seconds 30 --calls 16 --buffered-finish --claim-ahead 16 --claims-in-flight 2 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-redis/runwick-redis-tuned--normal--steady-500--r3.raw.json
+{
+  "system": "runwick-redis",
+  "store": "redis",
+  "mode": "steady",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "clocks": {
+    "offerWindowSeconds": 30.06,
+    "completedDuringOffers": 13633,
+    "secondsToClearAfterOffers": 0.05
+  },
+  "storeViewers": 0,
+  "storeWarmupSeconds": 0,
+  "storeSnapshotPolls": 0,
+  "storeSnapshotPollsWithDiagnostics": 0,
+  "offeredPerSec": 500,
+  "offered": 15000,
+  "seconds": 30,
+  "inserted": 13734,
+  "dispatchCalls": 16,
+  "failedDispatch": 1266,
+  "failedDispatchByCode": {
+    "local_capacity_exceeded": 1266
+  },
+  "completed": 13734,
+  "completedByEndOfOffers": 13633,
+  "completionsPerSec": 456.1,
+  "delayMs": 0,
+  "enqueueLatencyMs": {
+    "p50": 19.76,
+    "p95": 182.66,
+    "p99": 423.8
+  },
+  "latencyMs": {
+    "p50": 82.71,
+    "p95": 347.94,
+    "p99": 677.25,
+    "max": 895.71
+  },
+  "latencySamples": 13734,
+  "finishReplayed": 0,
+  "batchClaims": 1838,
+  "reservesSent": 2091,
+  "claimsInFlightHighWater": 2,
+  "invocations": 13734,
+  "finishesSent": 13734,
+  "finishManyCalls": 641,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 168542208,
+  "gc": {
+    "pauseTotalMs": 1802.1,
+    "pauseTimePercentage": 5.7,
+    "gen0": 69,
+    "gen1": 26,
+    "gen2": 5,
+    "allocatedMB": 1571.2,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "redis",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "workerSlots": 16,
+    "producerSlots": 16,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": true,
+    "claimAhead": 16,
+    "claimsInFlight": 2,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 13734,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 0,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795631702957
+@@PHASE timed-end 1795631733067

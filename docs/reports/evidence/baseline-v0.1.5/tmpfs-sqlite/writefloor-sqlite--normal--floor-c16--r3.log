@@ -1,0 +1,25 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll writefloor --store sqlite --callers 16 --n 4000 --redis 127.0.0.1:56392 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/tmpfs-sqlite/writefloor-sqlite--normal--floor-c16--r3.raw.json
+{
+  "system": "writefloor-sqlite",
+  "mode": "writefloor",
+  "jobs": 4000,
+  "writesPerSec": 8196.9,
+  "meanMicrosPerWrite": 122,
+  "latencyMicros": {
+    "p50": 26.9,
+    "p95": 569.4,
+    "p99": 9527.5
+  },
+  "settings": {
+    "store": "sqlite",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "n": 4000,
+    "journal_mode": "wal",
+    "synchronous": "FULL"
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795616495641
+@@PHASE timed-end 1795616496131

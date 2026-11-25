@@ -1,0 +1,85 @@
+{
+  "system": "runwick-sqlite",
+  "store": "sqlite",
+  "mode": "enqueue",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "jobs": 2000,
+  "warmupJobs": 0,
+  "calls": 1,
+  "insertsPerSec": 215,
+  "insertLatencyMs": {
+    "p50": 2.5,
+    "p95": 11.66,
+    "p99": 42.9
+  },
+  "producerCalls": 2,
+  "finishReplayed": 0,
+  "batchClaims": 0,
+  "reservesSent": 0,
+  "claimsInFlightHighWater": 0,
+  "invocations": 0,
+  "finishesSent": 0,
+  "finishManyCalls": 0,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "sqlite": {
+    "profile": "sqlite.wal-synchronous-full",
+    "engine": {
+      "sqlite_version": "3.53.3",
+      "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+      "journal_mode": "wal",
+      "synchronous": "full",
+      "topology": "local"
+    },
+    "writeCommits": 2002,
+    "busyConflicts": 0,
+    "writerConnectionsOpened": 1,
+    "writerStatements": null
+  },
+  "peakWorkingSetBytes": 96927744,
+  "gc": {
+    "pauseTotalMs": 157.1,
+    "pauseTimePercentage": 1.47,
+    "gen0": 69,
+    "gen1": 1,
+    "gen2": 0,
+    "allocatedMB": 172.6,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "sqlite",
+    "mode": "enqueue",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "producerSlots": 2,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 2000,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0
+  }
+}
