@@ -1,0 +1,6 @@
+/root/work/Spindle/eng/bench-compare/river/bench-river -mode bulk -n 20000 -workers 16 -out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/river--normal--bulk--r5.raw.json
+
+--- stderr ---
+failed to connect to `user=postgres database=postgres`:
+	127.0.0.1:55499 (127.0.0.1): tls error: server refused TLS connection
+	127.0.0.1:55499 (127.0.0.1): server error: FATAL: the database system is starting up (SQLSTATE 57P03)

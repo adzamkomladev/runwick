@@ -1,0 +1,112 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll bench --store sqlite --mode steady --n 0 --workers 16 --rate 500 --seconds 30 --calls 16 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/sqlite/runwick-sqlite--normal--steady-500--r3.raw.json
+warn: Runwick.Worker.WorkerEngine[1006] Presence publication failing: store_unavailable (1 in a row).
+warn: Runwick.Worker.WorkerEngine[1501] Retention batch for receipts_ownership failed: StoreNotAppliedException.
+warn: Runwick.Worker.WorkerEngine[1006] Presence publication failing: store_unavailable (1 in a row).
+warn: Runwick.Worker.WorkerEngine[1501] Retention batch for dispatch_keys failed: StoreNotAppliedException.
+{
+  "system": "runwick-sqlite",
+  "store": "sqlite",
+  "mode": "steady",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "clocks": {
+    "offerWindowSeconds": 30.74,
+    "completedDuringOffers": 2838,
+    "secondsToClearAfterOffers": 21.59
+  },
+  "storeViewers": 0,
+  "storeWarmupSeconds": 0,
+  "storeSnapshotPolls": 0,
+  "storeSnapshotPollsWithDiagnostics": 0,
+  "offeredPerSec": 500,
+  "offered": 15000,
+  "seconds": 30,
+  "inserted": 6395,
+  "dispatchCalls": 16,
+  "failedDispatch": 8605,
+  "failedDispatchByCode": {
+    "local_capacity_exceeded": 8605
+  },
+  "completed": 6395,
+  "completedByEndOfOffers": 2838,
+  "completionsPerSec": 122.2,
+  "delayMs": 0,
+  "enqueueLatencyMs": {
+    "p50": 197.94,
+    "p95": 884.02,
+    "p99": 1333.01
+  },
+  "latencyMs": {
+    "p50": 21059.43,
+    "p95": 24238.15,
+    "p99": 25434.34,
+    "max": 25922.44
+  },
+  "latencySamples": 6395,
+  "finishReplayed": 0,
+  "batchClaims": 748,
+  "reservesSent": 762,
+  "claimsInFlightHighWater": 0,
+  "invocations": 6395,
+  "finishesSent": 6395,
+  "finishManyCalls": 479,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "sqlite": {
+    "profile": "sqlite.wal-synchronous-full",
+    "engine": {
+      "sqlite_version": "3.53.3",
+      "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+      "journal_mode": "wal",
+      "synchronous": "full",
+      "topology": "local"
+    },
+    "writeCommits": 2168,
+    "busyConflicts": 0,
+    "writerConnectionsOpened": 1,
+    "writerStatements": null
+  },
+  "peakWorkingSetBytes": 153161728,
+  "gc": {
+    "pauseTotalMs": 708.1,
+    "pauseTimePercentage": 1.34,
+    "gen0": 123,
+    "gen1": 65,
+    "gen2": 8,
+    "allocatedMB": 1428.1,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "sqlite",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "workerSlots": 16,
+    "producerSlots": 16,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "error": "ManagementQueryBudgetException: The query did not finish within its budget."
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795570184401
+@@PHASE timed-end 1795570236731

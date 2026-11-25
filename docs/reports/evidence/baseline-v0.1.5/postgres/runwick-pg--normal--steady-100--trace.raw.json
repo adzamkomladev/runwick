@@ -1,0 +1,486 @@
+{
+  "system": "runwick",
+  "store": "postgres",
+  "mode": "steady",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "clocks": {
+    "offerWindowSeconds": 30,
+    "completedDuringOffers": 2992,
+    "secondsToClearAfterOffers": 0.05
+  },
+  "storeViewers": 0,
+  "storeWarmupSeconds": 0,
+  "storeSnapshotPolls": 0,
+  "storeSnapshotPollsWithDiagnostics": 0,
+  "offeredPerSec": 100,
+  "offered": 2998,
+  "seconds": 30,
+  "inserted": 2998,
+  "dispatchCalls": 16,
+  "failedDispatch": 0,
+  "failedDispatchByCode": {},
+  "completed": 2998,
+  "completedByEndOfOffers": 2992,
+  "completionsPerSec": 99.8,
+  "delayMs": 0,
+  "enqueueLatencyMs": {
+    "p50": 13.47,
+    "p95": 64.5,
+    "p99": 117.06
+  },
+  "latencyMs": {
+    "p50": 76.8,
+    "p95": 227.94,
+    "p99": 527.1,
+    "max": 781.04
+  },
+  "latencySamples": 2998,
+  "finishReplayed": 0,
+  "batchClaims": 1553,
+  "reservesSent": 1634,
+  "claimsInFlightHighWater": 0,
+  "invocations": 2998,
+  "finishesSent": 2998,
+  "finishManyCalls": 682,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 166297600,
+  "trace": {
+    "phase:Admission:engineLane": {
+      "count": 1754,
+      "meanMs": 0.001,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0,
+      "p95Ms": 0.003,
+      "p99Ms": 0.007,
+      "maxMs": 0.645
+    },
+    "phase:CleanupBatch:commit": {
+      "count": 14,
+      "meanMs": 5.722,
+      "minMs": 1.246,
+      "p01Ms": 1.246,
+      "p50Ms": 3.077,
+      "p95Ms": 25.563,
+      "p99Ms": 25.563,
+      "maxMs": 25.563
+    },
+    "phase:CleanupBatch:driverLane": {
+      "count": 14,
+      "meanMs": 0.416,
+      "minMs": 0.001,
+      "p01Ms": 0.001,
+      "p50Ms": 0.002,
+      "p95Ms": 5.797,
+      "p99Ms": 5.797,
+      "maxMs": 5.797
+    },
+    "phase:CleanupBatch:open": {
+      "count": 14,
+      "meanMs": 0.447,
+      "minMs": 0.012,
+      "p01Ms": 0.012,
+      "p50Ms": 0.02,
+      "p95Ms": 5.947,
+      "p99Ms": 5.947,
+      "maxMs": 5.947
+    },
+    "phase:CleanupBatch:statements": {
+      "count": 14,
+      "meanMs": 40.215,
+      "minMs": 12.561,
+      "p01Ms": 12.561,
+      "p50Ms": 31.071,
+      "p95Ms": 107.912,
+      "p99Ms": 107.912,
+      "maxMs": 107.912
+    },
+    "phase:Dispatch:commit": {
+      "count": 2989,
+      "meanMs": 7.465,
+      "minMs": 1.086,
+      "p01Ms": 1.326,
+      "p50Ms": 3.831,
+      "p95Ms": 25.943,
+      "p99Ms": 61.088,
+      "maxMs": 140.569
+    },
+    "phase:Dispatch:driverLane": {
+      "count": 2989,
+      "meanMs": 0.002,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0,
+      "p95Ms": 0.002,
+      "p99Ms": 0.003,
+      "maxMs": 1.125
+    },
+    "phase:Dispatch:function": {
+      "count": 2989,
+      "meanMs": 12.571,
+      "minMs": 3.521,
+      "p01Ms": 4.437,
+      "p50Ms": 7.806,
+      "p95Ms": 37.898,
+      "p99Ms": 77.905,
+      "maxMs": 144.177
+    },
+    "phase:Dispatch:open": {
+      "count": 2989,
+      "meanMs": 0.262,
+      "minMs": 0.001,
+      "p01Ms": 0.002,
+      "p50Ms": 0.006,
+      "p95Ms": 0.031,
+      "p99Ms": 0.237,
+      "maxMs": 198.59
+    },
+    "phase:Finish:commit": {
+      "count": 51,
+      "meanMs": 6.285,
+      "minMs": 1.406,
+      "p01Ms": 1.406,
+      "p50Ms": 4.004,
+      "p95Ms": 22.39,
+      "p99Ms": 33.64,
+      "maxMs": 33.64
+    },
+    "phase:Finish:driverLane": {
+      "count": 51,
+      "meanMs": 0.001,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0.001,
+      "p95Ms": 0.002,
+      "p99Ms": 0.003,
+      "maxMs": 0.003
+    },
+    "phase:Finish:engineLane": {
+      "count": 733,
+      "meanMs": 0.008,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0.001,
+      "p95Ms": 0.002,
+      "p99Ms": 0.005,
+      "maxMs": 5.233
+    },
+    "phase:Finish:function": {
+      "count": 51,
+      "meanMs": 14.727,
+      "minMs": 4.175,
+      "p01Ms": 4.175,
+      "p50Ms": 10.355,
+      "p95Ms": 51.123,
+      "p99Ms": 80.938,
+      "maxMs": 80.938
+    },
+    "phase:Finish:open": {
+      "count": 51,
+      "meanMs": 0.517,
+      "minMs": 0.003,
+      "p01Ms": 0.003,
+      "p50Ms": 0.006,
+      "p95Ms": 0.023,
+      "p99Ms": 25.977,
+      "maxMs": 25.977
+    },
+    "phase:FinishMany:commit": {
+      "count": 682,
+      "meanMs": 7.186,
+      "minMs": 1.327,
+      "p01Ms": 1.679,
+      "p50Ms": 4.253,
+      "p95Ms": 23.118,
+      "p99Ms": 54.949,
+      "maxMs": 93.238
+    },
+    "phase:FinishMany:driverLane": {
+      "count": 682,
+      "meanMs": 0.001,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0.001,
+      "p95Ms": 0.002,
+      "p99Ms": 0.003,
+      "maxMs": 0.455
+    },
+    "phase:FinishMany:function": {
+      "count": 682,
+      "meanMs": 16.739,
+      "minMs": 6.105,
+      "p01Ms": 6.883,
+      "p50Ms": 12.058,
+      "p95Ms": 41.097,
+      "p99Ms": 105.497,
+      "maxMs": 149.036
+    },
+    "phase:FinishMany:open": {
+      "count": 682,
+      "meanMs": 0.187,
+      "minMs": 0.002,
+      "p01Ms": 0.002,
+      "p50Ms": 0.006,
+      "p95Ms": 0.026,
+      "p99Ms": 0.22,
+      "maxMs": 54.735
+    },
+    "phase:PublishPresence:commit": {
+      "count": 8,
+      "meanMs": 3.673,
+      "minMs": 1.498,
+      "p01Ms": 1.498,
+      "p50Ms": 3.238,
+      "p95Ms": 6.703,
+      "p99Ms": 6.703,
+      "maxMs": 6.703
+    },
+    "phase:PublishPresence:driverLane": {
+      "count": 8,
+      "meanMs": 0.002,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0.001,
+      "p95Ms": 0.005,
+      "p99Ms": 0.005,
+      "maxMs": 0.005
+    },
+    "phase:PublishPresence:function": {
+      "count": 8,
+      "meanMs": 16.817,
+      "minMs": 2.808,
+      "p01Ms": 2.808,
+      "p50Ms": 8.578,
+      "p95Ms": 38.167,
+      "p99Ms": 38.167,
+      "maxMs": 38.167
+    },
+    "phase:PublishPresence:open": {
+      "count": 8,
+      "meanMs": 0.019,
+      "minMs": 0.003,
+      "p01Ms": 0.003,
+      "p50Ms": 0.007,
+      "p95Ms": 0.05,
+      "p99Ms": 0.05,
+      "maxMs": 0.05
+    },
+    "phase:RegisterApplication:commit": {
+      "count": 1,
+      "meanMs": 8.581,
+      "minMs": 8.581,
+      "p01Ms": 8.581,
+      "p50Ms": 8.581,
+      "p95Ms": 8.581,
+      "p99Ms": 8.581,
+      "maxMs": 8.581
+    },
+    "phase:RegisterApplication:driverLane": {
+      "count": 1,
+      "meanMs": 0.153,
+      "minMs": 0.153,
+      "p01Ms": 0.153,
+      "p50Ms": 0.153,
+      "p95Ms": 0.153,
+      "p99Ms": 0.153,
+      "maxMs": 0.153
+    },
+    "phase:RegisterApplication:open": {
+      "count": 1,
+      "meanMs": 0.455,
+      "minMs": 0.455,
+      "p01Ms": 0.455,
+      "p50Ms": 0.455,
+      "p95Ms": 0.455,
+      "p99Ms": 0.455,
+      "maxMs": 0.455
+    },
+    "phase:RegisterApplication:statements": {
+      "count": 1,
+      "meanMs": 66.803,
+      "minMs": 66.803,
+      "p01Ms": 66.803,
+      "p50Ms": 66.803,
+      "p95Ms": 66.803,
+      "p99Ms": 66.803,
+      "maxMs": 66.803
+    },
+    "phase:RegisterQueue:commit": {
+      "count": 1,
+      "meanMs": 1.776,
+      "minMs": 1.776,
+      "p01Ms": 1.776,
+      "p50Ms": 1.776,
+      "p95Ms": 1.776,
+      "p99Ms": 1.776,
+      "maxMs": 1.776
+    },
+    "phase:RegisterQueue:driverLane": {
+      "count": 1,
+      "meanMs": 0.004,
+      "minMs": 0.004,
+      "p01Ms": 0.004,
+      "p50Ms": 0.004,
+      "p95Ms": 0.004,
+      "p99Ms": 0.004,
+      "maxMs": 0.004
+    },
+    "phase:RegisterQueue:open": {
+      "count": 1,
+      "meanMs": 0.042,
+      "minMs": 0.042,
+      "p01Ms": 0.042,
+      "p50Ms": 0.042,
+      "p95Ms": 0.042,
+      "p99Ms": 0.042,
+      "maxMs": 0.042
+    },
+    "phase:RegisterQueue:statements": {
+      "count": 1,
+      "meanMs": 32.877,
+      "minMs": 32.877,
+      "p01Ms": 32.877,
+      "p50Ms": 32.877,
+      "p95Ms": 32.877,
+      "p99Ms": 32.877,
+      "maxMs": 32.877
+    },
+    "phase:ReserveAndBegin:commit": {
+      "count": 1553,
+      "meanMs": 5.189,
+      "minMs": 1.079,
+      "p01Ms": 1.338,
+      "p50Ms": 3.138,
+      "p95Ms": 14.155,
+      "p99Ms": 37.367,
+      "maxMs": 92.728
+    },
+    "phase:ReserveAndBegin:driverLane": {
+      "count": 1634,
+      "meanMs": 0.001,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0,
+      "p95Ms": 0.002,
+      "p99Ms": 0.003,
+      "maxMs": 0.378
+    },
+    "phase:ReserveAndBegin:function": {
+      "count": 1634,
+      "meanMs": 11.441,
+      "minMs": 1.992,
+      "p01Ms": 2.695,
+      "p50Ms": 8.822,
+      "p95Ms": 26.434,
+      "p99Ms": 56.122,
+      "maxMs": 131.094
+    },
+    "phase:ReserveAndBegin:open": {
+      "count": 1634,
+      "meanMs": 0.013,
+      "minMs": 0.001,
+      "p01Ms": 0.002,
+      "p50Ms": 0.005,
+      "p95Ms": 0.021,
+      "p99Ms": 0.054,
+      "maxMs": 4.516
+    },
+    "stage:due-\u003EhandlerInvoked": {
+      "count": 2998,
+      "meanMs": 44.58,
+      "minMs": 10.44,
+      "p01Ms": 13.611,
+      "p50Ms": 30.025,
+      "p95Ms": 127.593,
+      "p99Ms": 230.499,
+      "maxMs": 271.295
+    },
+    "stage:handlerInvoked-\u003Efinished": {
+      "count": 2998,
+      "meanMs": 48.979,
+      "minMs": 10.892,
+      "p01Ms": 14.281,
+      "p50Ms": 40.365,
+      "p95Ms": 102.741,
+      "p99Ms": 270.083,
+      "maxMs": 373.868
+    },
+    "stage:reserved-\u003Efinished": {
+      "count": 2998,
+      "meanMs": 50.374,
+      "minMs": 11.244,
+      "p01Ms": 14.704,
+      "p50Ms": 41.352,
+      "p95Ms": 105.626,
+      "p99Ms": 273.302,
+      "maxMs": 429.882
+    },
+    "stage:reserved-\u003EhandlerInvoked": {
+      "count": 2998,
+      "meanMs": 1.395,
+      "minMs": 0.048,
+      "p01Ms": 0.111,
+      "p50Ms": 0.541,
+      "p95Ms": 3.508,
+      "p99Ms": 10.567,
+      "maxMs": 88.975
+    }
+  },
+  "traceCounters": {},
+  "writerQueueMs": {},
+  "pickupMs": {
+    "p50": 30.025,
+    "p99": 230.499,
+    "max": 271.295
+  },
+  "gc": {
+    "pauseTotalMs": 280.1,
+    "pauseTimePercentage": 0.82,
+    "gen0": 55,
+    "gen1": 19,
+    "gen2": 13,
+    "allocatedMB": 743.2,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "postgres",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "workerSlots": 16,
+    "producerSlots": 16,
+    "bulkChunk": 100,
+    "pgGroup": true,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 2998,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 0,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}

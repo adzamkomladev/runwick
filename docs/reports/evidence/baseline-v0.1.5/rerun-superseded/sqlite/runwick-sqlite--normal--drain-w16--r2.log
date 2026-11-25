@@ -1,0 +1,424 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll bench --store sqlite --mode drain --n 20000 --workers 16 --calls 8 --max-seconds 600 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/sqlite/runwick-sqlite--normal--drain-w16--r2.raw.json
+{
+  "system": "runwick-sqlite",
+  "store": "sqlite",
+  "mode": "drain",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "insertSeconds": 8.854,
+  "insertCalls": 8,
+  "readyBeforeStart": {
+    "pending": 20000,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 20000,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  },
+  "progress": [
+    [
+      1,
+      285
+    ],
+    [
+      2,
+      660
+    ],
+    [
+      3,
+      1069
+    ],
+    [
+      4,
+      1423
+    ],
+    [
+      5,
+      1822
+    ],
+    [
+      6,
+      2182
+    ],
+    [
+      7,
+      2583
+    ],
+    [
+      8,
+      2955
+    ],
+    [
+      9,
+      3390
+    ],
+    [
+      10,
+      3777
+    ],
+    [
+      11,
+      4118
+    ],
+    [
+      12,
+      4499
+    ],
+    [
+      13,
+      4788
+    ],
+    [
+      14,
+      5137
+    ],
+    [
+      15,
+      5317
+    ],
+    [
+      16,
+      5640
+    ],
+    [
+      17,
+      5962
+    ],
+    [
+      18,
+      6314
+    ],
+    [
+      19,
+      6570
+    ],
+    [
+      20,
+      6940
+    ],
+    [
+      21,
+      7277
+    ],
+    [
+      22,
+      7453
+    ],
+    [
+      23,
+      7758
+    ],
+    [
+      24,
+      8000
+    ],
+    [
+      25,
+      8383
+    ],
+    [
+      26,
+      8621
+    ],
+    [
+      27,
+      8962
+    ],
+    [
+      28,
+      9279
+    ],
+    [
+      29,
+      9426
+    ],
+    [
+      30,
+      9522
+    ],
+    [
+      31,
+      9523
+    ],
+    [
+      32,
+      9539
+    ],
+    [
+      33,
+      9556
+    ],
+    [
+      34,
+      9572
+    ],
+    [
+      35,
+      9619
+    ],
+    [
+      36,
+      9682
+    ],
+    [
+      37,
+      9776
+    ],
+    [
+      38,
+      9840
+    ],
+    [
+      39,
+      9951
+    ],
+    [
+      40,
+      10143
+    ],
+    [
+      41,
+      10383
+    ],
+    [
+      42,
+      10543
+    ],
+    [
+      43,
+      10736
+    ],
+    [
+      44,
+      10968
+    ],
+    [
+      45,
+      11065
+    ],
+    [
+      46,
+      11247
+    ],
+    [
+      47,
+      11440
+    ],
+    [
+      48,
+      11617
+    ],
+    [
+      49,
+      11760
+    ],
+    [
+      50,
+      11971
+    ],
+    [
+      51,
+      12191
+    ],
+    [
+      52,
+      12352
+    ],
+    [
+      53,
+      12531
+    ],
+    [
+      54,
+      12770
+    ],
+    [
+      55,
+      12997
+    ],
+    [
+      56,
+      13157
+    ],
+    [
+      57,
+      13355
+    ],
+    [
+      58,
+      13579
+    ],
+    [
+      59,
+      13803
+    ],
+    [
+      60,
+      14018
+    ],
+    [
+      61,
+      14243
+    ],
+    [
+      62,
+      14534
+    ],
+    [
+      63,
+      14807
+    ],
+    [
+      64,
+      15125
+    ],
+    [
+      65,
+      15413
+    ],
+    [
+      66,
+      15757
+    ],
+    [
+      67,
+      16093
+    ],
+    [
+      68,
+      16429
+    ],
+    [
+      69,
+      16658
+    ],
+    [
+      70,
+      16964
+    ],
+    [
+      71,
+      17302
+    ],
+    [
+      72,
+      17622
+    ],
+    [
+      73,
+      17964
+    ],
+    [
+      74,
+      18364
+    ],
+    [
+      75,
+      18627
+    ],
+    [
+      76,
+      18960
+    ],
+    [
+      77,
+      19279
+    ],
+    [
+      78,
+      19630
+    ],
+    [
+      79,
+      19985
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 79.053,
+    "firstClaimSeconds": 79.055,
+    "firstClaimJobsPerSec": 253,
+    "workerStartJobsPerSec": 253
+  },
+  "jobs": 20000,
+  "accepted": 20000,
+  "failedDispatch": 0,
+  "finished": 20000,
+  "drained": true,
+  "drainWriteCommits": 3958,
+  "startToFirstClaimMs": 276.9,
+  "drainSeconds": 79.055,
+  "completionsPerSec": 253,
+  "finishReplayed": 0,
+  "batchClaims": 2393,
+  "reservesSent": 2394,
+  "claimsInFlightHighWater": 0,
+  "invocations": 20000,
+  "finishesSent": 20000,
+  "finishManyCalls": 1364,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "sqlite": {
+    "profile": "sqlite.wal-synchronous-full",
+    "engine": {
+      "sqlite_version": "3.53.3",
+      "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+      "journal_mode": "wal",
+      "synchronous": "full",
+      "topology": "local"
+    },
+    "writeCommits": 4160,
+    "busyConflicts": 0,
+    "writerConnectionsOpened": 1,
+    "writerStatements": null
+  },
+  "peakWorkingSetBytes": 167424000,
+  "gc": {
+    "pauseTotalMs": 3520.9,
+    "pauseTimePercentage": 3.96,
+    "gen0": 206,
+    "gen1": 69,
+    "gen2": 12,
+    "allocatedMB": 3606,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "sqlite",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 8,
+    "workerSlots": 16,
+    "producerSlots": 8,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "error": "ManagementQueryBudgetException: The query did not finish within its budget."
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795569382511
+@@PHASE seed-end 1795569391367
+@@PHASE timed-start 1795569391624
+@@PHASE timed-end 1795569470956

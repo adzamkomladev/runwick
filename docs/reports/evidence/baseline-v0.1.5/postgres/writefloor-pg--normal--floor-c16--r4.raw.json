@@ -1,0 +1,20 @@
+{
+  "system": "writefloor-postgres",
+  "mode": "writefloor",
+  "jobs": 4000,
+  "writesPerSec": 1433,
+  "meanMicrosPerWrite": 697.8,
+  "latencyMicros": {
+    "p50": 5753.5,
+    "p95": 37286.6,
+    "p99": 82547.9
+  },
+  "settings": {
+    "store": "postgres",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "n": 4000,
+    "synchronous_commit": "on",
+    "fsync": "on"
+  }
+}

@@ -1,0 +1,4 @@
+sqlite exit 0 04:06:39
+postgres exit 0 06:33:51
+all done 06:33:51
+rerun done 06:51:18

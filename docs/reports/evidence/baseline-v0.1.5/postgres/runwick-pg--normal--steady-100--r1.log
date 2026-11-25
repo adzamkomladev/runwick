@@ -1,0 +1,102 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll bench --store postgres --mode steady --n 0 --workers 16 --rate 100 --seconds 30 --calls 16 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/runwick-pg--normal--steady-100--r1.raw.json
+{
+  "system": "runwick",
+  "store": "postgres",
+  "mode": "steady",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "clocks": {
+    "offerWindowSeconds": 30.11,
+    "completedDuringOffers": 2989,
+    "secondsToClearAfterOffers": 0.19
+  },
+  "storeViewers": 0,
+  "storeWarmupSeconds": 0,
+  "storeSnapshotPolls": 0,
+  "storeSnapshotPollsWithDiagnostics": 0,
+  "offeredPerSec": 100,
+  "offered": 3000,
+  "seconds": 30,
+  "inserted": 3000,
+  "dispatchCalls": 16,
+  "failedDispatch": 0,
+  "failedDispatchByCode": {},
+  "completed": 3000,
+  "completedByEndOfOffers": 2989,
+  "completionsPerSec": 99,
+  "delayMs": 0,
+  "enqueueLatencyMs": {
+    "p50": 14.64,
+    "p95": 128.99,
+    "p99": 278.28
+  },
+  "latencyMs": {
+    "p50": 83.18,
+    "p95": 469.7,
+    "p99": 813.54,
+    "max": 972.2
+  },
+  "latencySamples": 3000,
+  "finishReplayed": 0,
+  "batchClaims": 1411,
+  "reservesSent": 1476,
+  "claimsInFlightHighWater": 0,
+  "invocations": 3000,
+  "finishesSent": 3000,
+  "finishManyCalls": 646,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 174874624,
+  "gc": {
+    "pauseTotalMs": 356.3,
+    "pauseTimePercentage": 1.08,
+    "gen0": 47,
+    "gen1": 11,
+    "gen2": 8,
+    "allocatedMB": 687.2,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "postgres",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "workerSlots": 16,
+    "producerSlots": 16,
+    "bulkChunk": 100,
+    "pgGroup": true,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 3000,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 0,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795576233295
+@@PHASE timed-end 1795576263592

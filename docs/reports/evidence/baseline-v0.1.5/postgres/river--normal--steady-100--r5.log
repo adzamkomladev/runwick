@@ -1,0 +1,38 @@
+/root/work/Spindle/eng/bench-compare/river/bench-river -mode steady -n 0 -workers 16 -rate 100 -seconds 30 -calls 16 -cooldown-ms 1 -out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/river--normal--steady-100--r5.raw.json
+{
+  "completed": 2951,
+  "completionsPerSec": 98.08992498910368,
+  "fetchCooldownMs": 1,
+  "inserted": 2951,
+  "latencyMs": {
+    "max": 756.688,
+    "p50": 168.528,
+    "p95": 324.864,
+    "p99": 476.23
+  },
+  "mode": "steady",
+  "offeredPerSec": 100,
+  "outcome": {
+    "completed": 2951
+  },
+  "payloadBytes": 1024,
+  "settings": {
+    "bulkChunk": 1000,
+    "callers": 16,
+    "cores": 8,
+    "fetchCooldownMs": 1,
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "poolMaxConns": 20,
+    "seedCall": "InsertManyFast",
+    "seedChunk": 5000,
+    "store": "postgres",
+    "workerSlots": 16
+  },
+  "system": "river v0.50.0",
+  "workers": 16
+}
+
+--- stderr ---
+@@PHASE timed-start 1795583519527
+@@PHASE timed-end 1795583549612

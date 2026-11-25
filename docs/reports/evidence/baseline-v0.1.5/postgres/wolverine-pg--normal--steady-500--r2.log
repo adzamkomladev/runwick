@@ -1,0 +1,88 @@
+dotnet /root/work/Spindle/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll --transport postgres --redis 127.0.0.1:56392 --mode steady --n 0 --workers 16 --rate 500 --seconds 30 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/wolverine-pg--normal--steady-500--r2.raw.json
+DO $$
+BEGIN      IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = 'wolverine_queues') THEN
+        BEGIN
+          EXECUTE 'CREATE SCHEMA IF NOT EXISTS wolverine_queues';
+        EXCEPTION
+          WHEN duplicate_schema THEN NULL;
+          WHEN unique_violation THEN NULL;
+        END;
+      END IF;
+
+END
+$$;
+
+
+CREATE TABLE IF NOT EXISTS wolverine_queues.wolverine_queue_bench (
+    id              uuid                        NOT NULL,
+    body            bytea                       NOT NULL,
+    message_type    varchar                     NOT NULL,
+    keep_until      timestamp with time zone    NULL,
+    timestamp       timestamp with time zone    NULL DEFAULT now(),
+CONSTRAINT pkey_wolverine_queue_bench_id PRIMARY KEY (id)
+);
+
+CREATE INDEX idx_wolverine_queue_bench_timestamp ON wolverine_queues.wolverine_queue_bench USING btree (timestamp);
+
+DO $$
+BEGIN      IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = 'wolverine_queues') THEN
+        BEGIN
+          EXECUTE 'CREATE SCHEMA IF NOT EXISTS wolverine_queues';
+        EXCEPTION
+          WHEN duplicate_schema THEN NULL;
+          WHEN unique_violation THEN NULL;
+        END;
+      END IF;
+
+END
+$$;
+
+
+CREATE TABLE IF NOT EXISTS wolverine_queues.wolverine_queue_bench_scheduled (
+    id                uuid                        NOT NULL,
+    body              bytea                       NOT NULL,
+    message_type      varchar                     NOT NULL,
+    execution_time    timestamp with time zone    NOT NULL,
+    keep_until        timestamp with time zone    NULL,
+    timestamp         timestamp with time zone    NULL DEFAULT now(),
+CONSTRAINT pkey_wolverine_queue_bench_scheduled_id PRIMARY KEY (id)
+);
+
+CREATE INDEX idx_wolverine_queue_bench_scheduled_execution_time ON wolverine_queues.wolverine_queue_bench_scheduled USING btree (execution_time);
+
+{
+  "system": "wolverine 6.65.1 (postgres)",
+  "mode": "steady",
+  "workers": 16,
+  "settings": {
+    "store": "postgres",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "seedCallers": 16,
+    "sendInline": false,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 8
+  },
+  "offeredPerSec": 500,
+  "inserted": 12683,
+  "completed": 6400,
+  "completionsPerSec": 71.1,
+  "latencyMs": {
+    "p50": 37707,
+    "p95": 70722,
+    "p99": 73662,
+    "max": 74293
+  },
+  "outcome": {
+    "deadLetters": 0,
+    "wolverine_queue_bench": 6263,
+    "wolverine_queue_bench_scheduled": 0
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795578725824
+@@PHASE timed-end 1795578815843

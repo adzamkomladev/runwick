@@ -1,0 +1,113 @@
+{
+  "system": "runwick-sqlite",
+  "store": "sqlite",
+  "mode": "steady",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "clocks": {
+    "offerWindowSeconds": 30.41,
+    "completedDuringOffers": 3184,
+    "secondsToClearAfterOffers": 8.23
+  },
+  "storeViewers": 0,
+  "storeWarmupSeconds": 0,
+  "storeSnapshotPolls": 0,
+  "storeSnapshotPollsWithDiagnostics": 0,
+  "offeredPerSec": 500,
+  "offered": 14999,
+  "seconds": 30,
+  "inserted": 5917,
+  "dispatchCalls": 16,
+  "failedDispatch": 9082,
+  "failedDispatchByCode": {
+    "local_capacity_exceeded": 9082
+  },
+  "completed": 5917,
+  "completedByEndOfOffers": 3184,
+  "completionsPerSec": 153.1,
+  "delayMs": 0,
+  "enqueueLatencyMs": {
+    "p50": 246.38,
+    "p95": 912.81,
+    "p99": 1193.6
+  },
+  "latencyMs": {
+    "p50": 8304.94,
+    "p95": 10992.04,
+    "p99": 11327.38,
+    "max": 11412.38
+  },
+  "latencySamples": 5917,
+  "finishReplayed": 0,
+  "batchClaims": 708,
+  "reservesSent": 714,
+  "claimsInFlightHighWater": 0,
+  "invocations": 5917,
+  "finishesSent": 5917,
+  "finishManyCalls": 412,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "sqlite": {
+    "profile": "sqlite.wal-synchronous-full",
+    "engine": {
+      "sqlite_version": "3.53.3",
+      "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+      "journal_mode": "wal",
+      "synchronous": "full",
+      "topology": "local"
+    },
+    "writeCommits": 1939,
+    "busyConflicts": 0,
+    "writerConnectionsOpened": 1,
+    "writerStatements": null
+  },
+  "peakWorkingSetBytes": 152240128,
+  "gc": {
+    "pauseTotalMs": 819.7,
+    "pauseTimePercentage": 2.09,
+    "gen0": 109,
+    "gen1": 57,
+    "gen2": 8,
+    "allocatedMB": 1323.7,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "sqlite",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "workerSlots": 16,
+    "producerSlots": 16,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 5917,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 0,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}

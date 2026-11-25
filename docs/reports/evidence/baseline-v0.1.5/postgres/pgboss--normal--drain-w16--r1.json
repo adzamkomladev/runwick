@@ -1,0 +1,247 @@
+{
+  "system": "pgboss",
+  "workload": "normal",
+  "test": "drain-w16",
+  "round": 1,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "pg-boss 12.38.0",
+  "command": [
+    "node",
+    "/root/work/Spindle/eng/bench-compare/pgboss/bench.mjs",
+    "--mode",
+    "drain",
+    "--n",
+    "20000",
+    "--concurrency",
+    "1",
+    "--batch",
+    "16",
+    "--burst",
+    "--max-seconds",
+    "600",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/pgboss--normal--drain-w16--r1.raw.json"
+  ],
+  "result": {
+    "system": "pg-boss 12.38.0",
+    "mode": "drain",
+    "concurrency": 1,
+    "batchSize": 16,
+    "burstWhenBatchFull": true,
+    "payloadBytes": 1018,
+    "settings": {
+      "store": "postgres",
+      "mode": "drain",
+      "payloadBytes": 1018,
+      "callers": 1,
+      "workerSlots": 1,
+      "fetchBatch": 16,
+      "burst": true,
+      "bulkChunk": 1000,
+      "seedChunk": 5000,
+      "pollingIntervalSeconds": 0.5,
+      "poolMax": 5,
+      "cores": 8
+    },
+    "insertSeconds": 1.8206470310000002,
+    "readyBeforeStart": {
+      "created": 20000
+    },
+    "progress": [
+      [
+        1,
+        624
+      ],
+      [
+        2,
+        1120
+      ],
+      [
+        3,
+        1584
+      ],
+      [
+        4,
+        1936
+      ],
+      [
+        5,
+        2528
+      ],
+      [
+        6,
+        2944
+      ],
+      [
+        7,
+        3680
+      ],
+      [
+        8,
+        4608
+      ],
+      [
+        9,
+        5616
+      ],
+      [
+        10,
+        6640
+      ],
+      [
+        11,
+        7584
+      ],
+      [
+        12,
+        8896
+      ],
+      [
+        13,
+        9552
+      ],
+      [
+        14,
+        11008
+      ],
+      [
+        15,
+        12416
+      ],
+      [
+        16,
+        13808
+      ],
+      [
+        17,
+        14976
+      ],
+      [
+        18,
+        16144
+      ],
+      [
+        19,
+        17248
+      ],
+      [
+        20,
+        18672
+      ],
+      [
+        21,
+        19664
+      ]
+    ],
+    "jobs": 20000,
+    "finished": 20000,
+    "drainSeconds": 21.396236038999998,
+    "completionsPerSec": 934.7438476349295,
+    "clocks": {
+      "workerStartSeconds": 21.396236038999998,
+      "workerStartJobsPerSec": 934.7438476349295,
+      "handlerReturns": 20000
+    },
+    "outcome": {
+      "completed": 20000
+    }
+  },
+  "outcome": {
+    "accepted": 20000,
+    "succeeded": 20000,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 24.44,
+      "cpuSeconds": 6.33,
+      "cpuAvgPct": 25.9,
+      "cpuPeakPct": 80.2,
+      "memPeakMB": 77.7,
+      "memAvgMB": 65.0,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 0
+    },
+    "store": {
+      "cpuSeconds": 14.36,
+      "cpuAvgPct": 58.8,
+      "cpuPeakPct": 99.2,
+      "memPeakMB": 362.4,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 168706048,
+      "netRxBytes": 25942383,
+      "netTxBytes": 30503913
+    }
+  },
+  "derived": {
+    "jobs": 20000,
+    "cpuMsPerJob": 1.034,
+    "wireBytesPerJob": 2822,
+    "storeWriteBytesPerJob": 8435,
+    "timed": {
+      "seconds": 21.3,
+      "appCpuSeconds": 5.18,
+      "jobs": 20000,
+      "storeCpuSeconds": 11.982,
+      "storeDiskWriteBytes": 131178496,
+      "storeNetRxBytes": 4829239,
+      "storeNetTxBytes": 30373345,
+      "wireBytesPerJob": 1760,
+      "storeWriteBytesPerJob": 6559,
+      "cpuMsPerJob": 0.858,
+      "counters": {
+        "walBytes": 60407816.0,
+        "walRecords": 227494.0,
+        "walFpi": 3.0,
+        "transactions": 2480.0
+      },
+      "walBytesPerJob": 3020.391,
+      "walFpiPerJob": 0.0,
+      "transactionsPerJob": 0.124
+    },
+    "confirmedPerSec_workerStart": 934.7,
+    "confirmedPerSec_firstClaim": 934.7
+  },
+  "phases": {
+    "seed-start": {
+      "harnessMs": 1795576468912,
+      "counters": {
+        "walBytes": 160807536.0,
+        "walRecords": 499258.0,
+        "walFpi": 6780.0,
+        "transactions": 982.0
+      }
+    },
+    "seed-end": {
+      "harnessMs": 1795576470734,
+      "counters": {
+        "walBytes": 192701864.0,
+        "walRecords": 625542.0,
+        "walFpi": 6822.0,
+        "transactions": 1004.0
+      }
+    },
+    "timed-start": {
+      "harnessMs": 1795576470858,
+      "counters": {
+        "walBytes": 192831032.0,
+        "walRecords": 625542.0,
+        "walFpi": 6822.0,
+        "transactions": 1010.0
+      }
+    },
+    "timed-end": {
+      "harnessMs": 1795576492161,
+      "counters": {
+        "walBytes": 253238848.0,
+        "walRecords": 853036.0,
+        "walFpi": 6825.0,
+        "transactions": 3490.0
+      }
+    }
+  }
+}

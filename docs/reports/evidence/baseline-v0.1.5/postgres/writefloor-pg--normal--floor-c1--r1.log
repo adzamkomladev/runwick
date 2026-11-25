@@ -1,0 +1,25 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll writefloor --store postgres --callers 1 --n 2000 --redis 127.0.0.1:56392 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/writefloor-pg--normal--floor-c1--r1.raw.json
+{
+  "system": "writefloor-postgres",
+  "mode": "writefloor",
+  "jobs": 2000,
+  "writesPerSec": 392.9,
+  "meanMicrosPerWrite": 2545.4,
+  "latencyMicros": {
+    "p50": 2046.3,
+    "p95": 4946.9,
+    "p99": 9745.4
+  },
+  "settings": {
+    "store": "postgres",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "n": 2000,
+    "synchronous_commit": "on",
+    "fsync": "on"
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795576005588
+@@PHASE timed-end 1795576010680

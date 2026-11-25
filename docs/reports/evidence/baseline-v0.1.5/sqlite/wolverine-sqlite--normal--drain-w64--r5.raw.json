@@ -1,0 +1,128 @@
+{
+  "system": "wolverine 6.65.1 (sqlite)",
+  "mode": "drain",
+  "workers": 64,
+  "settings": {
+    "store": "sqlite",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 64,
+    "seedCallers": 16,
+    "sendInline": false,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 8
+  },
+  "readyBeforeStart": {
+    "wolverine_queue_bench": 20000,
+    "wolverine_queue_bench_scheduled": 0
+  },
+  "progress": [
+    [
+      1.4,
+      0
+    ],
+    [
+      2.6,
+      15
+    ],
+    [
+      3,
+      2560
+    ],
+    [
+      4,
+      2560
+    ],
+    [
+      5,
+      2624
+    ],
+    [
+      6,
+      2752
+    ],
+    [
+      7,
+      5300
+    ],
+    [
+      8,
+      5300
+    ],
+    [
+      9,
+      5364
+    ],
+    [
+      10,
+      5432
+    ],
+    [
+      11,
+      8440
+    ],
+    [
+      12,
+      8440
+    ],
+    [
+      13,
+      8504
+    ],
+    [
+      14,
+      8699
+    ],
+    [
+      15,
+      11780
+    ],
+    [
+      16,
+      11780
+    ],
+    [
+      17,
+      11844
+    ],
+    [
+      18,
+      11845
+    ],
+    [
+      19,
+      15920
+    ],
+    [
+      20,
+      15920
+    ],
+    [
+      21,
+      15985
+    ],
+    [
+      22,
+      16305
+    ]
+  ],
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 22.824,
+  "completionsPerSec": 876.3,
+  "startupSeconds": 2.56,
+  "completionsPerSecExcludingStartup": 987.1,
+  "clocks": {
+    "workerStartSeconds": 22.824,
+    "workerStartJobsPerSec": 876.3,
+    "firstClaimSeconds": 20.261,
+    "firstClaimJobsPerSec": 987.1,
+    "handlerReturns": 20000
+  },
+  "outcome": {
+    "wolverine_queue_bench": 0,
+    "wolverine_queue_bench_scheduled": 0
+  }
+}

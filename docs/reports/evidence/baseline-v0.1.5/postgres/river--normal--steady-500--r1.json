@@ -1,0 +1,138 @@
+{
+  "system": "river",
+  "workload": "normal",
+  "test": "steady-500",
+  "round": 1,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "river v0.50.0",
+  "command": [
+    "/root/work/Spindle/eng/bench-compare/river/bench-river",
+    "-mode",
+    "steady",
+    "-n",
+    "0",
+    "-workers",
+    "16",
+    "-rate",
+    "500",
+    "-seconds",
+    "30",
+    "-calls",
+    "16",
+    "-cooldown-ms",
+    "1",
+    "-out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/river--normal--steady-500--r1.raw.json"
+  ],
+  "result": {
+    "completed": 13155,
+    "completionsPerSec": 437.37133676078577,
+    "fetchCooldownMs": 1,
+    "inserted": 13155,
+    "latencyMs": {
+      "max": 539.689,
+      "p50": 147.628,
+      "p95": 285.508,
+      "p99": 371.376
+    },
+    "mode": "steady",
+    "offeredPerSec": 500,
+    "outcome": {
+      "completed": 13155
+    },
+    "payloadBytes": 1024,
+    "settings": {
+      "bulkChunk": 1000,
+      "callers": 16,
+      "cores": 8,
+      "fetchCooldownMs": 1,
+      "mode": "steady",
+      "payloadBytes": 1024,
+      "poolMaxConns": 20,
+      "seedCall": "InsertManyFast",
+      "seedChunk": 5000,
+      "store": "postgres",
+      "workerSlots": 16
+    },
+    "system": "river v0.50.0",
+    "workers": 16
+  },
+  "outcome": {
+    "accepted": 13155,
+    "succeeded": 13155,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 30.42,
+      "cpuSeconds": 29.02,
+      "cpuAvgPct": 95.4,
+      "cpuPeakPct": 117.0,
+      "memPeakMB": 21.6,
+      "memAvgMB": 20.5,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 0
+    },
+    "store": {
+      "cpuSeconds": 35.86,
+      "cpuAvgPct": 117.9,
+      "cpuPeakPct": 147.4,
+      "memPeakMB": 408.4,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 213270528,
+      "netRxBytes": 30354572,
+      "netTxBytes": 55159676
+    }
+  },
+  "derived": {
+    "jobs": 13155,
+    "cpuMsPerJob": 4.932,
+    "wireBytesPerJob": 6501,
+    "storeWriteBytesPerJob": 16212,
+    "timed": {
+      "seconds": 30.077,
+      "appCpuSeconds": 28.85,
+      "jobs": 13155,
+      "storeCpuSeconds": 35.463,
+      "storeDiskWriteBytes": 208109568,
+      "storeNetRxBytes": 30300979,
+      "storeNetTxBytes": 55129234,
+      "wireBytesPerJob": 6494,
+      "storeWriteBytesPerJob": 15820,
+      "cpuMsPerJob": 4.889,
+      "counters": {
+        "walBytes": 76142432.0,
+        "walRecords": 321450.0,
+        "walFpi": 64.0,
+        "transactions": 29239.0
+      },
+      "walBytesPerJob": 5788.098,
+      "walFpiPerJob": 0.005,
+      "transactionsPerJob": 2.223
+    }
+  },
+  "phases": {
+    "timed-start": {
+      "harnessMs": 1795576399393,
+      "counters": {
+        "walBytes": 425505072.0,
+        "walRecords": 1455533.0,
+        "walFpi": 9668.0,
+        "transactions": 1008.0
+      }
+    },
+    "timed-end": {
+      "harnessMs": 1795576429470,
+      "counters": {
+        "walBytes": 501647504.0,
+        "walRecords": 1776983.0,
+        "walFpi": 9732.0,
+        "transactions": 30247.0
+      }
+    }
+  }
+}

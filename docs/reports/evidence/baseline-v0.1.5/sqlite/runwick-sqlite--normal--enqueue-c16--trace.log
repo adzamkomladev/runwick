@@ -1,0 +1,277 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll bench --store sqlite --mode enqueue --n 10000 --workers 16 --calls 16 --trace --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/sqlite/runwick-sqlite--normal--enqueue-c16--trace.raw.json
+{
+  "system": "runwick-sqlite",
+  "store": "sqlite",
+  "mode": "enqueue",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "enqueueManagedAllocatedBytes": 879046648,
+  "jobs": 10000,
+  "warmupJobs": 0,
+  "calls": 16,
+  "insertsPerSec": 539.4,
+  "insertLatencyMs": {
+    "p50": 24.39,
+    "p95": 53.92,
+    "p99": 113.37
+  },
+  "producerCalls": 16,
+  "finishReplayed": 0,
+  "batchClaims": 0,
+  "reservesSent": 0,
+  "claimsInFlightHighWater": 0,
+  "invocations": 0,
+  "finishesSent": 0,
+  "finishManyCalls": 0,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "sqlite": {
+    "profile": "sqlite.wal-synchronous-full",
+    "engine": {
+      "sqlite_version": "3.53.3",
+      "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+      "journal_mode": "wal",
+      "synchronous": "full",
+      "topology": "local"
+    },
+    "writeCommits": 1254,
+    "busyConflicts": 0,
+    "writerConnectionsOpened": 1,
+    "writerStatements": null,
+    "walBytesAfterRun": 4379592,
+    "walAfterRun": {
+      "autoCheckpointPages": 1000,
+      "busy": false,
+      "logFrames": 856,
+      "checkpointedFrames": 0,
+      "elapsedMs": 0.0791
+    }
+  },
+  "peakWorkingSetBytes": 105463808,
+  "trace": {
+    "phase:Dispatch:beginImmediate": {
+      "count": 1252,
+      "meanMs": 0.033,
+      "minMs": 0.011,
+      "p01Ms": 0.012,
+      "p50Ms": 0.021,
+      "p95Ms": 0.052,
+      "p99Ms": 0.406,
+      "maxMs": 1.192
+    },
+    "phase:Dispatch:commit": {
+      "count": 1252,
+      "meanMs": 4.763,
+      "minMs": 1.382,
+      "p01Ms": 1.609,
+      "p50Ms": 2.965,
+      "p95Ms": 12.103,
+      "p99Ms": 28.1,
+      "maxMs": 142.492
+    },
+    "phase:Dispatch:driverLane": {
+      "count": 10000,
+      "meanMs": 0.002,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0,
+      "p95Ms": 0.002,
+      "p99Ms": 0.004,
+      "maxMs": 2.916
+    },
+    "phase:Dispatch:statements": {
+      "count": 1252,
+      "meanMs": 9.429,
+      "minMs": 2.562,
+      "p01Ms": 4.692,
+      "p50Ms": 7.794,
+      "p95Ms": 19.03,
+      "p99Ms": 34.978,
+      "maxMs": 164.23
+    },
+    "phase:Dispatch:writerQueue": {
+      "count": 10000,
+      "meanMs": 13.208,
+      "minMs": 0.071,
+      "p01Ms": 5.064,
+      "p50Ms": 10.528,
+      "p95Ms": 26.82,
+      "p99Ms": 50.517,
+      "maxMs": 232.97
+    },
+    "phase:RegisterApplication:beginImmediate": {
+      "count": 1,
+      "meanMs": 0.024,
+      "minMs": 0.024,
+      "p01Ms": 0.024,
+      "p50Ms": 0.024,
+      "p95Ms": 0.024,
+      "p99Ms": 0.024,
+      "maxMs": 0.024
+    },
+    "phase:RegisterApplication:commit": {
+      "count": 1,
+      "meanMs": 9.946,
+      "minMs": 9.946,
+      "p01Ms": 9.946,
+      "p50Ms": 9.946,
+      "p95Ms": 9.946,
+      "p99Ms": 9.946,
+      "maxMs": 9.946
+    },
+    "phase:RegisterApplication:driverLane": {
+      "count": 1,
+      "meanMs": 0.128,
+      "minMs": 0.128,
+      "p01Ms": 0.128,
+      "p50Ms": 0.128,
+      "p95Ms": 0.128,
+      "p99Ms": 0.128,
+      "maxMs": 0.128
+    },
+    "phase:RegisterApplication:statements": {
+      "count": 1,
+      "meanMs": 17.027,
+      "minMs": 17.027,
+      "p01Ms": 17.027,
+      "p50Ms": 17.027,
+      "p95Ms": 17.027,
+      "p99Ms": 17.027,
+      "maxMs": 17.027
+    },
+    "phase:RegisterApplication:writerQueue": {
+      "count": 1,
+      "meanMs": 2.688,
+      "minMs": 2.688,
+      "p01Ms": 2.688,
+      "p50Ms": 2.688,
+      "p95Ms": 2.688,
+      "p99Ms": 2.688,
+      "maxMs": 2.688
+    },
+    "phase:RegisterQueue:beginImmediate": {
+      "count": 1,
+      "meanMs": 0.037,
+      "minMs": 0.037,
+      "p01Ms": 0.037,
+      "p50Ms": 0.037,
+      "p95Ms": 0.037,
+      "p99Ms": 0.037,
+      "maxMs": 0.037
+    },
+    "phase:RegisterQueue:commit": {
+      "count": 1,
+      "meanMs": 2.003,
+      "minMs": 2.003,
+      "p01Ms": 2.003,
+      "p50Ms": 2.003,
+      "p95Ms": 2.003,
+      "p99Ms": 2.003,
+      "maxMs": 2.003
+    },
+    "phase:RegisterQueue:driverLane": {
+      "count": 1,
+      "meanMs": 0.003,
+      "minMs": 0.003,
+      "p01Ms": 0.003,
+      "p50Ms": 0.003,
+      "p95Ms": 0.003,
+      "p99Ms": 0.003,
+      "maxMs": 0.003
+    },
+    "phase:RegisterQueue:statements": {
+      "count": 1,
+      "meanMs": 19.974,
+      "minMs": 19.974,
+      "p01Ms": 19.974,
+      "p50Ms": 19.974,
+      "p95Ms": 19.974,
+      "p99Ms": 19.974,
+      "maxMs": 19.974
+    },
+    "phase:RegisterQueue:writerQueue": {
+      "count": 1,
+      "meanMs": 0.179,
+      "minMs": 0.179,
+      "p01Ms": 0.179,
+      "p50Ms": 0.179,
+      "p95Ms": 0.179,
+      "p99Ms": 0.179,
+      "maxMs": 0.179
+    }
+  },
+  "traceCounters": {
+    "sqlite:dispatch:commitSize:2": 2,
+    "sqlite:dispatch:commitSize:6": 2,
+    "sqlite:dispatch:commitSize:8": 1248
+  },
+  "writerQueueMs": {
+    "Dispatch": {
+      "count": 10000,
+      "p99": 50.517,
+      "max": 232.97
+    },
+    "RegisterApplication": {
+      "count": 1,
+      "p99": 2.688,
+      "max": 2.688
+    },
+    "RegisterQueue": {
+      "count": 1,
+      "p99": 0.179,
+      "max": 0.179
+    }
+  },
+  "gc": {
+    "pauseTotalMs": 649.7,
+    "pauseTimePercentage": 3.39,
+    "gen0": 132,
+    "gen1": 4,
+    "gen2": 4,
+    "allocatedMB": 844,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "sqlite",
+    "mode": "enqueue",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "workerSlots": 16,
+    "producerSlots": 16,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 10000,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 10000,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795573622608
+@@PHASE timed-end 1795573641149

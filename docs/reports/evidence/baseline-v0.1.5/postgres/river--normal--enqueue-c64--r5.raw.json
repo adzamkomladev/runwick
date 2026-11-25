@@ -1,0 +1,30 @@
+{
+  "calls": 64,
+  "fetchCooldownMs": 100,
+  "insertLatencyMs": {
+    "p50": 27.849,
+    "p99": 94.684
+  },
+  "insertsPerSec": 1947.9257047578644,
+  "jobs": 10000,
+  "mode": "enqueue",
+  "outcome": {
+    "available": 10000
+  },
+  "payloadBytes": 1024,
+  "settings": {
+    "bulkChunk": 1000,
+    "callers": 64,
+    "cores": 8,
+    "fetchCooldownMs": 100,
+    "mode": "enqueue",
+    "payloadBytes": 1024,
+    "poolMaxConns": 20,
+    "seedCall": "InsertManyFast",
+    "seedChunk": 5000,
+    "store": "postgres",
+    "workerSlots": 16
+  },
+  "system": "river v0.50.0",
+  "workers": 16
+}

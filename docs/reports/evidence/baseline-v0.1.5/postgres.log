@@ -1,0 +1,278 @@
+04:06:44 writefloor-pg--normal--floor-c1--r1
+04:06:50 writefloor-pg--normal--floor-c16--r1
+04:06:56 runwick-pg--normal--enqueue-c1--r1
+04:07:26 runwick-pg--normal--enqueue-c16--r1
+04:07:46 runwick-pg--normal--enqueue-c64--r1
+04:08:05 runwick-pg--normal--bulk--r1
+04:08:29 runwick-pg--normal--bulk-100--r1
+04:08:50 runwick-pg--normal--drain-w16--r1
+04:09:52 runwick-pg--normal--drain-w64--r1
+04:10:29 runwick-pg--normal--steady-100--r1
+04:11:03 runwick-pg--normal--steady-500--r1
+04:12:12 river--normal--enqueue-c1--r1
+04:12:22 river--normal--enqueue-c16--r1
+04:12:27 river--normal--enqueue-c64--r1
+04:12:32 river--normal--bulk--r1
+04:12:33 river--normal--bulk-100--r1
+04:12:35 river--normal--drain-w16--r1
+04:12:45 river--normal--drain-w64--r1
+04:12:48 river--normal--steady-100--r1
+04:13:19 river--normal--steady-500--r1
+04:13:53 pgboss--normal--enqueue-c1--r1
+04:14:03 pgboss--normal--enqueue-c16--r1
+04:14:13 pgboss--normal--enqueue-c64--r1
+04:14:20 pgboss--normal--bulk--r1
+04:14:22 pgboss--normal--bulk-100--r1
+04:14:27 pgboss--normal--drain-w16--r1
+04:14:52 pgboss--normal--drain-w64--r1
+04:15:08 pgboss--normal--steady-100--r1
+04:15:41 pgboss--normal--steady-500--r1
+04:16:16 wolverine-pg--normal--enqueue-c1--r1
+04:16:42 wolverine-pg--normal--enqueue-c16--r1
+04:16:57 wolverine-pg--normal--enqueue-c64--r1
+04:17:19 wolverine-pg--normal--bulk--r1
+04:17:20 wolverine-pg--normal--bulk-100--r1
+04:17:21 wolverine-pg--normal--drain-w16--r1
+04:22:51 wolverine-pg--normal--drain-w64--r1
+04:28:07 wolverine-pg--normal--steady-100--r1
+04:29:00 wolverine-pg--normal--steady-500--r1
+  INCOMPLETE: succeeded 6240 failed 0 unfinished 6124 of 12384
+04:30:46 bullmq-dotnet-pg--normal--enqueue-c1--r1
+04:30:55 bullmq-dotnet-pg--normal--enqueue-c16--r1
+04:31:16 bullmq-dotnet-pg--normal--enqueue-c64--r1
+04:31:34 bullmq-dotnet-pg--normal--bulk--r1
+04:31:37 bullmq-dotnet-pg--normal--bulk-100--r1
+04:31:43 bullmq-dotnet-pg--normal--drain-w16--r1
+04:32:29 bullmq-dotnet-pg--normal--drain-w64--r1
+04:33:08 bullmq-dotnet-pg--normal--steady-100--r1
+04:33:40 bullmq-dotnet-pg--normal--steady-500--r1
+04:35:16 bullmq-dotnet-pg--normal--enqueue-c1--r2
+04:35:26 bullmq-dotnet-pg--normal--enqueue-c16--r2
+04:35:44 bullmq-dotnet-pg--normal--enqueue-c64--r2
+04:36:02 bullmq-dotnet-pg--normal--bulk--r2
+04:36:06 bullmq-dotnet-pg--normal--bulk-100--r2
+04:36:12 bullmq-dotnet-pg--normal--drain-w16--r2
+04:36:46 bullmq-dotnet-pg--normal--drain-w64--r2
+04:37:22 bullmq-dotnet-pg--normal--steady-100--r2
+04:37:54 bullmq-dotnet-pg--normal--steady-500--r2
+04:39:30 wolverine-pg--normal--enqueue-c1--r2
+04:39:51 wolverine-pg--normal--enqueue-c16--r2
+04:40:16 wolverine-pg--normal--enqueue-c64--r2
+04:40:26 wolverine-pg--normal--bulk--r2
+04:40:27 wolverine-pg--normal--bulk-100--r2
+04:40:28 wolverine-pg--normal--drain-w16--r2
+04:45:46 wolverine-pg--normal--drain-w64--r2
+04:51:03 wolverine-pg--normal--steady-100--r2
+04:51:55 wolverine-pg--normal--steady-500--r2
+  INCOMPLETE: succeeded 6400 failed 0 unfinished 6263 of 12683
+04:53:40 pgboss--normal--enqueue-c1--r2
+04:53:51 pgboss--normal--enqueue-c16--r2
+04:54:01 pgboss--normal--enqueue-c64--r2
+04:54:08 pgboss--normal--bulk--r2
+04:54:10 pgboss--normal--bulk-100--r2
+04:54:13 pgboss--normal--drain-w16--r2
+04:54:32 pgboss--normal--drain-w64--r2
+04:54:42 pgboss--normal--steady-100--r2
+04:55:13 pgboss--normal--steady-500--r2
+04:55:49 river--normal--enqueue-c1--r2
+04:55:59 river--normal--enqueue-c16--r2
+04:56:08 river--normal--enqueue-c64--r2
+04:56:13 river--normal--bulk--r2
+04:56:15 river--normal--bulk-100--r2
+04:56:17 river--normal--drain-w16--r2
+04:56:29 river--normal--drain-w64--r2
+04:56:34 river--normal--steady-100--r2
+04:57:04 river--normal--steady-500--r2
+04:57:39 runwick-pg--normal--enqueue-c1--r2
+04:58:08 runwick-pg--normal--enqueue-c16--r2
+04:58:31 runwick-pg--normal--enqueue-c64--r2
+04:58:49 runwick-pg--normal--bulk--r2
+04:59:11 runwick-pg--normal--bulk-100--r2
+04:59:32 runwick-pg--normal--drain-w16--r2
+05:01:02 runwick-pg--normal--drain-w64--r2
+05:01:53 runwick-pg--normal--steady-100--r2
+05:02:28 runwick-pg--normal--steady-500--r2
+05:03:27 writefloor-pg--normal--floor-c1--r2
+05:03:34 writefloor-pg--normal--floor-c16--r2
+05:03:40 writefloor-pg--normal--floor-c1--r3
+05:03:46 writefloor-pg--normal--floor-c16--r3
+05:03:52 runwick-pg--normal--enqueue-c1--r3
+05:04:22 runwick-pg--normal--enqueue-c16--r3
+05:04:45 runwick-pg--normal--enqueue-c64--r3
+05:05:06 runwick-pg--normal--bulk--r3
+05:05:28 runwick-pg--normal--bulk-100--r3
+05:05:48 runwick-pg--normal--drain-w16--r3
+05:06:48 runwick-pg--normal--drain-w64--r3
+05:07:26 runwick-pg--normal--steady-100--r3
+05:08:00 runwick-pg--normal--steady-500--r3
+05:09:01 river--normal--enqueue-c1--r3
+05:09:12 river--normal--enqueue-c16--r3
+05:09:18 river--normal--enqueue-c64--r3
+05:09:24 river--normal--bulk--r3
+05:09:25 river--normal--bulk-100--r3
+05:09:27 river--normal--drain-w16--r3
+05:09:37 river--normal--drain-w64--r3
+05:09:41 river--normal--steady-100--r3
+05:10:12 river--normal--steady-500--r3
+05:10:46 pgboss--normal--enqueue-c1--r3
+05:10:58 pgboss--normal--enqueue-c16--r3
+05:11:11 pgboss--normal--enqueue-c64--r3
+05:11:19 pgboss--normal--bulk--r3
+05:11:22 pgboss--normal--bulk-100--r3
+05:11:26 pgboss--normal--drain-w16--r3
+05:11:50 pgboss--normal--drain-w64--r3
+05:12:04 pgboss--normal--steady-100--r3
+05:12:35 pgboss--normal--steady-500--r3
+05:13:10 wolverine-pg--normal--enqueue-c1--r3
+05:13:37 wolverine-pg--normal--enqueue-c16--r3
+05:14:11 wolverine-pg--normal--enqueue-c64--r3
+05:14:24 wolverine-pg--normal--bulk--r3
+05:14:25 wolverine-pg--normal--bulk-100--r3
+05:14:25 wolverine-pg--normal--drain-w16--r3
+05:20:27 wolverine-pg--normal--drain-w64--r3
+05:26:04 wolverine-pg--normal--steady-100--r3
+05:26:59 wolverine-pg--normal--steady-500--r3
+  INCOMPLETE: succeeded 6500 failed 0 unfinished 4744 of 11244
+05:28:44 bullmq-dotnet-pg--normal--enqueue-c1--r3
+05:28:51 bullmq-dotnet-pg--normal--enqueue-c16--r3
+05:29:08 bullmq-dotnet-pg--normal--enqueue-c64--r3
+05:29:22 bullmq-dotnet-pg--normal--bulk--r3
+05:29:25 bullmq-dotnet-pg--normal--bulk-100--r3
+05:29:29 bullmq-dotnet-pg--normal--drain-w16--r3
+05:30:08 bullmq-dotnet-pg--normal--drain-w64--r3
+05:30:51 bullmq-dotnet-pg--normal--steady-100--r3
+05:32:23 bullmq-dotnet-pg--normal--steady-500--r3
+05:33:58 bullmq-dotnet-pg--normal--enqueue-c1--r4
+05:34:08 bullmq-dotnet-pg--normal--enqueue-c16--r4
+05:34:21 bullmq-dotnet-pg--normal--enqueue-c64--r4
+05:34:34 bullmq-dotnet-pg--normal--bulk--r4
+05:34:37 bullmq-dotnet-pg--normal--bulk-100--r4
+05:34:41 bullmq-dotnet-pg--normal--drain-w16--r4
+05:35:15 bullmq-dotnet-pg--normal--drain-w64--r4
+05:35:48 bullmq-dotnet-pg--normal--steady-100--r4
+05:36:20 bullmq-dotnet-pg--normal--steady-500--r4
+05:37:54 wolverine-pg--normal--enqueue-c1--r4
+05:38:16 wolverine-pg--normal--enqueue-c16--r4
+05:38:29 wolverine-pg--normal--enqueue-c64--r4
+05:38:37 wolverine-pg--normal--bulk--r4
+05:38:38 wolverine-pg--normal--bulk-100--r4
+05:38:39 wolverine-pg--normal--drain-w16--r4
+05:43:52 wolverine-pg--normal--drain-w64--r4
+05:49:08 wolverine-pg--normal--steady-100--r4
+05:50:03 wolverine-pg--normal--steady-500--r4
+  INCOMPLETE: succeeded 6360 failed 0 unfinished 4202 of 10562
+05:51:48 pgboss--normal--enqueue-c1--r4
+05:51:57 pgboss--normal--enqueue-c16--r4
+05:52:08 pgboss--normal--enqueue-c64--r4
+05:52:13 pgboss--normal--bulk--r4
+05:52:15 pgboss--normal--bulk-100--r4
+05:52:18 pgboss--normal--drain-w16--r4
+05:52:36 pgboss--normal--drain-w64--r4
+05:52:45 pgboss--normal--steady-100--r4
+05:53:15 pgboss--normal--steady-500--r4
+05:53:49 river--normal--enqueue-c1--r4
+  FAILED rc=1: failed to connect to `user=postgres database=postgres`:
+	127.0.0.1:55499 (127.0.0.1): tls error: read tcp 127.0.0.1:60264->127.0.0.1:55499: read: connection reset by peer
+	127.0.0.1:55499 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:60268->127.0.0.1:55499: read: connection reset by peer
+
+05:53:49 river--normal--enqueue-c16--r4
+  FAILED rc=1: failed to connect to `user=postgres database=postgres`:
+	127.0.0.1:55499 (127.0.0.1): tls error: read tcp 127.0.0.1:60278->127.0.0.1:55499: read: connection reset by peer
+	127.0.0.1:55499 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:60286->127.0.0.1:55499: read: connection reset by peer
+
+05:53:49 river--normal--enqueue-c64--r4
+  FAILED rc=1: failed to connect to `user=postgres database=postgres`:
+	127.0.0.1:55499 (127.0.0.1): tls error: read tcp 127.0.0.1:60292->127.0.0.1:55499: read: connection reset by peer
+	127.0.0.1:55499 (127.0.0.1): server error: FATAL: the database system is starting up (SQLSTATE 57P03)
+
+05:53:49 river--normal--bulk--r4
+05:53:50 river--normal--bulk-100--r4
+05:53:52 river--normal--drain-w16--r4
+05:54:04 river--normal--drain-w64--r4
+05:54:08 river--normal--steady-100--r4
+05:54:39 river--normal--steady-500--r4
+05:55:14 runwick-pg--normal--enqueue-c1--r4
+05:55:43 runwick-pg--normal--enqueue-c16--r4
+05:56:08 runwick-pg--normal--enqueue-c64--r4
+05:56:25 runwick-pg--normal--bulk--r4
+05:56:47 runwick-pg--normal--bulk-100--r4
+05:57:07 runwick-pg--normal--drain-w16--r4
+05:58:07 runwick-pg--normal--drain-w64--r4
+05:58:37 runwick-pg--normal--steady-100--r4
+05:59:11 runwick-pg--normal--steady-500--r4
+06:00:07 writefloor-pg--normal--floor-c1--r4
+06:00:23 writefloor-pg--normal--floor-c16--r4
+06:00:30 writefloor-pg--normal--floor-c1--r5
+06:00:38 writefloor-pg--normal--floor-c16--r5
+06:00:46 runwick-pg--normal--enqueue-c1--r5
+06:01:23 runwick-pg--normal--enqueue-c1--trace
+06:01:54 runwick-pg--normal--enqueue-c16--r5
+06:02:19 runwick-pg--normal--enqueue-c16--trace
+06:02:43 runwick-pg--normal--enqueue-c64--r5
+06:03:01 runwick-pg--normal--enqueue-c64--trace
+06:03:20 runwick-pg--normal--bulk--r5
+06:03:41 runwick-pg--normal--bulk--trace
+06:04:03 runwick-pg--normal--bulk-100--r5
+06:04:22 runwick-pg--normal--bulk-100--trace
+06:04:42 runwick-pg--normal--drain-w16--r5
+06:06:05 runwick-pg--normal--drain-w16--trace
+06:07:14 runwick-pg--normal--drain-w64--r5
+06:07:58 runwick-pg--normal--drain-w64--trace
+06:08:31 runwick-pg--normal--steady-100--r5
+06:09:05 runwick-pg--normal--steady-100--trace
+06:09:39 runwick-pg--normal--steady-500--r5
+06:10:40 runwick-pg--normal--steady-500--trace
+06:11:38 river--normal--enqueue-c1--r5
+  FAILED rc=1: failed to connect to `user=postgres database=postgres`:
+	127.0.0.1:55499 (127.0.0.1): tls error: read tcp 127.0.0.1:46204->127.0.0.1:55499: read: connection reset by peer
+	127.0.0.1:55499 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:46216->127.0.0.1:55499: read: connection reset by peer
+
+06:11:38 river--normal--enqueue-c16--r5
+  FAILED rc=1: failed to connect to `user=postgres database=postgres`:
+	127.0.0.1:55499 (127.0.0.1): tls error: read tcp 127.0.0.1:46232->127.0.0.1:55499: read: connection reset by peer
+	127.0.0.1:55499 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:46242->127.0.0.1:55499: read: connection reset by peer
+
+06:11:38 river--normal--enqueue-c64--r5
+  FAILED rc=1: failed to connect to `user=postgres database=postgres`:
+	127.0.0.1:55499 (127.0.0.1): tls error: read tcp 127.0.0.1:46254->127.0.0.1:55499: read: connection reset by peer
+	127.0.0.1:55499 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:46268->127.0.0.1:55499: read: connection reset by peer
+
+06:11:38 river--normal--bulk--r5
+  FAILED rc=1: failed to connect to `user=postgres database=postgres`:
+	127.0.0.1:55499 (127.0.0.1): tls error: server refused TLS connection
+	127.0.0.1:55499 (127.0.0.1): server error: FATAL: the database system is starting up (SQLSTATE 57P03)
+
+06:11:38 river--normal--bulk-100--r5
+06:11:41 river--normal--drain-w16--r5
+06:11:53 river--normal--drain-w64--r5
+06:11:59 river--normal--steady-100--r5
+06:12:29 river--normal--steady-500--r5
+06:13:04 pgboss--normal--enqueue-c1--r5
+06:13:14 pgboss--normal--enqueue-c16--r5
+06:13:20 pgboss--normal--enqueue-c64--r5
+06:13:24 pgboss--normal--bulk--r5
+06:13:26 pgboss--normal--bulk-100--r5
+06:13:29 pgboss--normal--drain-w16--r5
+06:13:45 pgboss--normal--drain-w64--r5
+06:13:53 pgboss--normal--steady-100--r5
+06:14:24 pgboss--normal--steady-500--r5
+06:14:58 wolverine-pg--normal--enqueue-c1--r5
+06:15:28 wolverine-pg--normal--enqueue-c16--r5
+06:15:44 wolverine-pg--normal--enqueue-c64--r5
+06:15:53 wolverine-pg--normal--bulk--r5
+06:15:54 wolverine-pg--normal--bulk-100--r5
+06:15:54 wolverine-pg--normal--drain-w16--r5
+06:21:05 wolverine-pg--normal--drain-w64--r5
+06:26:23 wolverine-pg--normal--steady-100--r5
+06:27:17 wolverine-pg--normal--steady-500--r5
+  INCOMPLETE: succeeded 6297 failed 0 unfinished 6331 of 12631
+06:29:01 bullmq-dotnet-pg--normal--enqueue-c1--r5
+06:29:12 bullmq-dotnet-pg--normal--enqueue-c16--r5
+06:29:28 bullmq-dotnet-pg--normal--enqueue-c64--r5
+06:29:45 bullmq-dotnet-pg--normal--bulk--r5
+06:29:48 bullmq-dotnet-pg--normal--bulk-100--r5
+06:29:53 bullmq-dotnet-pg--normal--drain-w16--r5
+06:31:01 bullmq-dotnet-pg--normal--drain-w64--r5
+06:31:44 bullmq-dotnet-pg--normal--steady-100--r5
+06:32:15 bullmq-dotnet-pg--normal--steady-500--r5
+7 failed run(s), 5 incomplete

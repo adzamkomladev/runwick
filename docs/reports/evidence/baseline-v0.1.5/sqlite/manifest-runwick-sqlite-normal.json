@@ -1,0 +1,35 @@
+{
+  "host": {
+    "cpu": "AMD EPYC Processor (with IBPB)",
+    "cores": 8,
+    "memMB": 24031,
+    "kernel": "6.8.0-149-generic",
+    "commit": "fcda4d5",
+    "cpuIters": 50000,
+    "runner": null,
+    "when": "2026-11-25T05:50:33Z"
+  },
+  "systems": [
+    "runwick-sqlite"
+  ],
+  "workload": "normal",
+  "rounds": 1,
+  "scale": 1,
+  "freshStores": true,
+  "runwick": {
+    "describe": "v0.1.5-13-gfcda4d5",
+    "commit": "fcda4d5408dd4a4c4ceb50e0773e0e4b745225e2",
+    "srcDirty": false,
+    "srcIdenticalToV0_1_5": true
+  },
+  "libraries": {
+    "runwick-sqlite": "runwick v0.1.5-13-gfcda4d5"
+  },
+  "stores": {},
+  "cpuQuota": "",
+  "outDirMount": "/dev/sda1 ext4",
+  "gc": {
+    "DOTNET_gcServer": "1"
+  },
+  "orderPolicy": "reversed on even rounds"
+}

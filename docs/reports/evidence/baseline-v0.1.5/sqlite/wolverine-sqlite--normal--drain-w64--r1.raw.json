@@ -1,0 +1,156 @@
+{
+  "system": "wolverine 6.65.1 (sqlite)",
+  "mode": "drain",
+  "workers": 64,
+  "settings": {
+    "store": "sqlite",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 64,
+    "seedCallers": 16,
+    "sendInline": false,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 8
+  },
+  "readyBeforeStart": {
+    "wolverine_queue_bench": 20000,
+    "wolverine_queue_bench_scheduled": 0
+  },
+  "progress": [
+    [
+      1.2,
+      0
+    ],
+    [
+      2.7,
+      0
+    ],
+    [
+      3.7,
+      18
+    ],
+    [
+      4,
+      1520
+    ],
+    [
+      5,
+      1824
+    ],
+    [
+      6.2,
+      1824
+    ],
+    [
+      7,
+      2860
+    ],
+    [
+      8,
+      3780
+    ],
+    [
+      9,
+      3844
+    ],
+    [
+      10,
+      3844
+    ],
+    [
+      11,
+      5947
+    ],
+    [
+      12,
+      6080
+    ],
+    [
+      13,
+      6145
+    ],
+    [
+      14,
+      6145
+    ],
+    [
+      15,
+      8177
+    ],
+    [
+      16,
+      8760
+    ],
+    [
+      17,
+      8824
+    ],
+    [
+      18,
+      8824
+    ],
+    [
+      19,
+      11427
+    ],
+    [
+      20,
+      12240
+    ],
+    [
+      21,
+      12386
+    ],
+    [
+      22,
+      12553
+    ],
+    [
+      23,
+      14868
+    ],
+    [
+      24,
+      15700
+    ],
+    [
+      25,
+      15840
+    ],
+    [
+      26,
+      16124
+    ],
+    [
+      27,
+      18840
+    ],
+    [
+      28,
+      18840
+    ],
+    [
+      29,
+      18960
+    ]
+  ],
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 29.704,
+  "completionsPerSec": 673.3,
+  "startupSeconds": 3.69,
+  "completionsPerSecExcludingStartup": 768.7,
+  "clocks": {
+    "workerStartSeconds": 29.704,
+    "workerStartJobsPerSec": 673.3,
+    "firstClaimSeconds": 26.017,
+    "firstClaimJobsPerSec": 768.7,
+    "handlerReturns": 20000
+  },
+  "outcome": {
+    "wolverine_queue_bench": 0,
+    "wolverine_queue_bench_scheduled": 0
+  }
+}

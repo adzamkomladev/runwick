@@ -1,0 +1,53 @@
+{
+  "clocks": {
+    "workerStartJobsPerSec": 4927.755747405253,
+    "workerStartSeconds": 4.058642722
+  },
+  "completionsPerSec": 4927.755747405253,
+  "drainSeconds": 4.058642722,
+  "failed": 0,
+  "fetchCooldownMs": 1,
+  "insertSeconds": 0.463303603,
+  "jobs": 20000,
+  "mode": "drain",
+  "outcome": {
+    "completed": 20000
+  },
+  "payloadBytes": 1024,
+  "progress": [
+    [
+      1,
+      3828
+    ],
+    [
+      2,
+      9529
+    ],
+    [
+      3,
+      15361
+    ],
+    [
+      4,
+      19966
+    ]
+  ],
+  "readyBeforeStart": {
+    "available": 20000
+  },
+  "settings": {
+    "bulkChunk": 1000,
+    "callers": 1,
+    "cores": 8,
+    "fetchCooldownMs": 1,
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "poolMaxConns": 68,
+    "seedCall": "InsertManyFast",
+    "seedChunk": 5000,
+    "store": "postgres",
+    "workerSlots": 64
+  },
+  "system": "river v0.50.0",
+  "workers": 64
+}

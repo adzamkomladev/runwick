@@ -1,0 +1,111 @@
+node /root/work/Spindle/eng/bench-compare/pgboss/bench.mjs --mode drain --n 20000 --concurrency 1 --batch 16 --burst --max-seconds 600 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/pgboss--normal--drain-w16--r2.raw.json
+{
+  "system": "pg-boss 12.38.0",
+  "mode": "drain",
+  "concurrency": 1,
+  "batchSize": 16,
+  "burstWhenBatchFull": true,
+  "payloadBytes": 1018,
+  "settings": {
+    "store": "postgres",
+    "mode": "drain",
+    "payloadBytes": 1018,
+    "callers": 1,
+    "workerSlots": 1,
+    "fetchBatch": 16,
+    "burst": true,
+    "bulkChunk": 1000,
+    "seedChunk": 5000,
+    "pollingIntervalSeconds": 0.5,
+    "poolMax": 5,
+    "cores": 8
+  },
+  "insertSeconds": 1.152782951,
+  "readyBeforeStart": {
+    "created": 20000
+  },
+  "progress": [
+    [
+      1,
+      752
+    ],
+    [
+      2,
+      1488
+    ],
+    [
+      3,
+      1904
+    ],
+    [
+      4,
+      2720
+    ],
+    [
+      5,
+      3440
+    ],
+    [
+      6,
+      5136
+    ],
+    [
+      7,
+      6416
+    ],
+    [
+      8,
+      8064
+    ],
+    [
+      9,
+      9280
+    ],
+    [
+      10,
+      11104
+    ],
+    [
+      11,
+      12512
+    ],
+    [
+      12,
+      13600
+    ],
+    [
+      13,
+      15056
+    ],
+    [
+      14,
+      16352
+    ],
+    [
+      15,
+      17568
+    ],
+    [
+      16.1,
+      19104
+    ]
+  ],
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 16.892903055,
+  "completionsPerSec": 1183.9291289888954,
+  "clocks": {
+    "workerStartSeconds": 16.892903055,
+    "workerStartJobsPerSec": 1183.9291289888954,
+    "handlerReturns": 20000
+  },
+  "outcome": {
+    "completed": 20000
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795578854318
+@@PHASE seed-end 1795578855471
+@@PHASE timed-start 1795578855521
+@@PHASE timed-end 1795578872331

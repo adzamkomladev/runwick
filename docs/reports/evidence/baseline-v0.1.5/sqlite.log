@@ -1,0 +1,206 @@
+01:14:27 writefloor-sqlite--normal--floor-c1--r1
+01:14:32 writefloor-sqlite--normal--floor-c16--r1
+01:14:41 runwick-sqlite--normal--enqueue-c1--r1
+01:14:54 runwick-sqlite--normal--enqueue-c16--r1
+01:15:20 runwick-sqlite--normal--enqueue-c64--r1
+01:15:42 runwick-sqlite--normal--bulk--r1
+01:15:53 runwick-sqlite--normal--bulk-100--r1
+01:16:07 runwick-sqlite--normal--drain-w16--r1
+  INCOMPLETE: no store counts
+01:19:17 runwick-sqlite--normal--drain-w64--r1
+  INCOMPLETE: no store counts
+01:22:03 runwick-sqlite--normal--steady-100--r1
+01:22:36 runwick-sqlite--normal--steady-500--r1
+01:23:08 wolverine-sqlite--normal--enqueue-c1--r1
+01:23:21 wolverine-sqlite--normal--enqueue-c16--r1
+01:23:37 wolverine-sqlite--normal--enqueue-c64--r1
+01:23:53 wolverine-sqlite--normal--bulk--r1
+01:23:53 wolverine-sqlite--normal--bulk-100--r1
+01:23:53 wolverine-sqlite--normal--drain-w16--r1
+01:24:54 wolverine-sqlite--normal--drain-w64--r1
+01:26:01 wolverine-sqlite--normal--steady-100--r1
+01:26:45 wolverine-sqlite--normal--steady-500--r1
+01:27:26 solidqueue--normal--enqueue-c1--r1
+01:28:08 solidqueue--normal--enqueue-c16--r1
+  FAILED rc=1: k/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:116:in `enqueue'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:83:in `perform_later'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/bench.rb:41:in `block (2 levels) in <top (required)>'
+
+01:33:01 solidqueue--normal--enqueue-c64--r1
+  FAILED rc=1: k/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:116:in `enqueue'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:83:in `perform_later'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/bench.rb:41:in `block (2 levels) in <top (required)>'
+
+01:38:09 solidqueue--normal--bulk--r1
+01:38:19 solidqueue--normal--bulk-100--r1
+01:38:33 solidqueue--normal--drain-w16--r1
+01:44:56 solidqueue--normal--drain-w64--r1
+01:50:24 solidqueue--normal--steady-100--r1
+01:51:00 solidqueue--normal--steady-500--r1
+01:51:35 solidqueue--normal--enqueue-c1--r2
+01:52:19 solidqueue--normal--enqueue-c16--r2
+  FAILED rc=1: k/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:116:in `enqueue'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:83:in `perform_later'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/bench.rb:41:in `block (2 levels) in <top (required)>'
+
+01:57:40 solidqueue--normal--enqueue-c64--r2
+  FAILED rc=1: k/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:116:in `enqueue'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:83:in `perform_later'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/bench.rb:41:in `block (2 levels) in <top (required)>'
+
+01:58:02 solidqueue--normal--bulk--r2
+01:58:13 solidqueue--normal--bulk-100--r2
+01:58:27 solidqueue--normal--drain-w16--r2
+02:05:20 solidqueue--normal--drain-w64--r2
+02:10:05 solidqueue--normal--steady-100--r2
+02:10:40 solidqueue--normal--steady-500--r2
+02:11:15 wolverine-sqlite--normal--enqueue-c1--r2
+02:11:19 wolverine-sqlite--normal--enqueue-c16--r2
+02:11:35 wolverine-sqlite--normal--enqueue-c64--r2
+02:11:48 wolverine-sqlite--normal--bulk--r2
+02:11:48 wolverine-sqlite--normal--bulk-100--r2
+02:11:48 wolverine-sqlite--normal--drain-w16--r2
+02:12:41 wolverine-sqlite--normal--drain-w64--r2
+02:13:34 wolverine-sqlite--normal--steady-100--r2
+02:14:17 wolverine-sqlite--normal--steady-500--r2
+02:14:59 runwick-sqlite--normal--enqueue-c1--r2
+02:15:19 runwick-sqlite--normal--enqueue-c16--r2
+02:15:40 runwick-sqlite--normal--enqueue-c64--r2
+02:15:59 runwick-sqlite--normal--bulk--r2
+02:16:11 runwick-sqlite--normal--bulk-100--r2
+02:16:21 runwick-sqlite--normal--drain-w16--r2
+  INCOMPLETE: no store counts
+02:19:08 runwick-sqlite--normal--drain-w64--r2
+  INCOMPLETE: no store counts
+02:21:27 runwick-sqlite--normal--steady-100--r2
+02:21:59 runwick-sqlite--normal--steady-500--r2
+02:22:42 writefloor-sqlite--normal--floor-c1--r2
+02:22:48 writefloor-sqlite--normal--floor-c16--r2
+02:23:00 writefloor-sqlite--normal--floor-c1--r3
+02:23:08 writefloor-sqlite--normal--floor-c16--r3
+02:23:19 runwick-sqlite--normal--enqueue-c1--r3
+02:23:32 runwick-sqlite--normal--enqueue-c16--r3
+02:23:48 runwick-sqlite--normal--enqueue-c64--r3
+02:24:09 runwick-sqlite--normal--bulk--r3
+02:24:19 runwick-sqlite--normal--bulk-100--r3
+02:24:29 runwick-sqlite--normal--drain-w16--r3
+  INCOMPLETE: no store counts
+02:27:05 runwick-sqlite--normal--drain-w64--r3
+  INCOMPLETE: no store counts
+02:29:11 runwick-sqlite--normal--steady-100--r3
+02:29:43 runwick-sqlite--normal--steady-500--r3
+  INCOMPLETE: no store counts
+02:31:54 wolverine-sqlite--normal--enqueue-c1--r3
+02:32:12 wolverine-sqlite--normal--enqueue-c16--r3
+02:32:29 wolverine-sqlite--normal--enqueue-c64--r3
+02:32:47 wolverine-sqlite--normal--bulk--r3
+02:32:47 wolverine-sqlite--normal--bulk-100--r3
+02:32:47 wolverine-sqlite--normal--drain-w16--r3
+02:33:39 wolverine-sqlite--normal--drain-w64--r3
+02:34:32 wolverine-sqlite--normal--steady-100--r3
+02:35:15 wolverine-sqlite--normal--steady-500--r3
+02:35:58 solidqueue--normal--enqueue-c1--r3
+02:36:41 solidqueue--normal--enqueue-c16--r3
+  FAILED rc=1: k/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:116:in `enqueue'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:83:in `perform_later'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/bench.rb:41:in `block (2 levels) in <top (required)>'
+
+02:41:36 solidqueue--normal--enqueue-c64--r3
+  FAILED rc=1: k/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:116:in `enqueue'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:83:in `perform_later'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/bench.rb:41:in `block (2 levels) in <top (required)>'
+
+02:45:00 solidqueue--normal--bulk--r3
+02:45:13 solidqueue--normal--bulk-100--r3
+02:45:29 solidqueue--normal--drain-w16--r3
+02:51:32 solidqueue--normal--drain-w64--r3
+02:56:37 solidqueue--normal--steady-100--r3
+02:57:11 solidqueue--normal--steady-500--r3
+02:57:46 solidqueue--normal--enqueue-c1--r4
+02:58:26 solidqueue--normal--enqueue-c16--r4
+  FAILED rc=1: k/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:116:in `enqueue'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:83:in `perform_later'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/bench.rb:41:in `block (2 levels) in <top (required)>'
+
+03:00:07 solidqueue--normal--enqueue-c64--r4
+  FAILED rc=1: k/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:116:in `enqueue'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:83:in `perform_later'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/bench.rb:41:in `block (2 levels) in <top (required)>'
+
+03:00:24 solidqueue--normal--bulk--r4
+03:00:36 solidqueue--normal--bulk-100--r4
+03:00:51 solidqueue--normal--drain-w16--r4
+03:07:44 solidqueue--normal--drain-w64--r4
+03:12:49 solidqueue--normal--steady-100--r4
+03:13:24 solidqueue--normal--steady-500--r4
+03:13:59 wolverine-sqlite--normal--enqueue-c1--r4
+03:14:03 wolverine-sqlite--normal--enqueue-c16--r4
+03:14:17 wolverine-sqlite--normal--enqueue-c64--r4
+03:14:29 wolverine-sqlite--normal--bulk--r4
+03:14:29 wolverine-sqlite--normal--bulk-100--r4
+03:14:30 wolverine-sqlite--normal--drain-w16--r4
+03:15:24 wolverine-sqlite--normal--drain-w64--r4
+03:16:16 wolverine-sqlite--normal--steady-100--r4
+03:16:59 wolverine-sqlite--normal--steady-500--r4
+03:17:44 runwick-sqlite--normal--enqueue-c1--r4
+03:17:58 runwick-sqlite--normal--enqueue-c16--r4
+03:18:21 runwick-sqlite--normal--enqueue-c64--r4
+03:18:39 runwick-sqlite--normal--bulk--r4
+03:18:49 runwick-sqlite--normal--bulk-100--r4
+03:18:59 runwick-sqlite--normal--drain-w16--r4
+  INCOMPLETE: no store counts
+03:21:26 runwick-sqlite--normal--drain-w64--r4
+  INCOMPLETE: no store counts
+03:23:32 runwick-sqlite--normal--steady-100--r4
+03:24:05 runwick-sqlite--normal--steady-500--r4
+  INCOMPLETE: no store counts
+03:25:53 writefloor-sqlite--normal--floor-c1--r4
+03:25:58 writefloor-sqlite--normal--floor-c16--r4
+03:26:07 writefloor-sqlite--normal--floor-c1--r5
+03:26:11 writefloor-sqlite--normal--floor-c16--r5
+03:26:19 runwick-sqlite--normal--enqueue-c1--r5
+03:26:31 runwick-sqlite--normal--enqueue-c1--trace
+03:26:43 runwick-sqlite--normal--enqueue-c16--r5
+03:27:01 runwick-sqlite--normal--enqueue-c16--trace
+03:27:21 runwick-sqlite--normal--enqueue-c64--r5
+03:27:39 runwick-sqlite--normal--enqueue-c64--trace
+03:27:56 runwick-sqlite--normal--bulk--r5
+03:28:07 runwick-sqlite--normal--bulk--trace
+03:28:18 runwick-sqlite--normal--bulk-100--r5
+03:28:28 runwick-sqlite--normal--bulk-100--trace
+03:28:38 runwick-sqlite--normal--drain-w16--r5
+  INCOMPLETE: no store counts
+03:30:58 runwick-sqlite--normal--drain-w16--trace
+  INCOMPLETE: no store counts
+03:33:50 runwick-sqlite--normal--drain-w64--r5
+  INCOMPLETE: no store counts
+03:35:56 runwick-sqlite--normal--drain-w64--trace
+  INCOMPLETE: no store counts
+03:38:02 runwick-sqlite--normal--steady-100--r5
+03:38:35 runwick-sqlite--normal--steady-100--trace
+03:39:07 runwick-sqlite--normal--steady-500--r5
+  INCOMPLETE: no store counts
+03:40:55 runwick-sqlite--normal--steady-500--trace
+03:41:29 wolverine-sqlite--normal--enqueue-c1--r5
+03:41:38 wolverine-sqlite--normal--enqueue-c16--r5
+03:41:52 wolverine-sqlite--normal--enqueue-c64--r5
+03:42:05 wolverine-sqlite--normal--bulk--r5
+03:42:05 wolverine-sqlite--normal--bulk-100--r5
+03:42:06 wolverine-sqlite--normal--drain-w16--r5
+03:42:54 wolverine-sqlite--normal--drain-w64--r5
+03:43:41 wolverine-sqlite--normal--steady-100--r5
+03:44:24 wolverine-sqlite--normal--steady-500--r5
+03:45:06 solidqueue--normal--enqueue-c1--r5
+03:45:50 solidqueue--normal--enqueue-c16--r5
+03:49:52 solidqueue--normal--enqueue-c64--r5
+  FAILED rc=1: k/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:116:in `enqueue'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/app/vendor/bundle/ruby/3.2.0/gems/activejob-8.0.5.2/lib/active_job/enqueuing.rb:83:in `perform_later'
+	from /root/work/Spindle/eng/bench-compare/solidqueue/bench.rb:41:in `block (2 levels) in <top (required)>'
+
+03:54:06 solidqueue--normal--bulk--r5
+03:54:15 solidqueue--normal--bulk-100--r5
+03:54:28 solidqueue--normal--drain-w16--r5
+03:59:47 solidqueue--normal--drain-w64--r5
+04:05:29 solidqueue--normal--steady-100--r5
+04:06:04 solidqueue--normal--steady-500--r5
+9 failed run(s), 15 incomplete

@@ -1,0 +1,6 @@
+/root/work/Spindle/eng/bench-compare/river/bench-river -mode enqueue -n 10000 -workers 16 -calls 64 -out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/river--normal--enqueue-c64--r4.raw.json
+
+--- stderr ---
+failed to connect to `user=postgres database=postgres`:
+	127.0.0.1:55499 (127.0.0.1): tls error: read tcp 127.0.0.1:60292->127.0.0.1:55499: read: connection reset by peer
+	127.0.0.1:55499 (127.0.0.1): server error: FATAL: the database system is starting up (SQLSTATE 57P03)

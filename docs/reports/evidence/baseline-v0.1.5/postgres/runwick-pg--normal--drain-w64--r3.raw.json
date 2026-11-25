@@ -1,0 +1,205 @@
+{
+  "system": "runwick",
+  "store": "postgres",
+  "mode": "drain",
+  "workers": 64,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "insertSeconds": 6.512,
+  "insertCalls": 8,
+  "readyBeforeStart": {
+    "pending": 20000,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 20000,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  },
+  "progress": [
+    [
+      1,
+      352
+    ],
+    [
+      2,
+      896
+    ],
+    [
+      3,
+      1248
+    ],
+    [
+      4.1,
+      1440
+    ],
+    [
+      5,
+      1536
+    ],
+    [
+      6,
+      1984
+    ],
+    [
+      7,
+      2688
+    ],
+    [
+      8,
+      3744
+    ],
+    [
+      9,
+      4448
+    ],
+    [
+      10,
+      5216
+    ],
+    [
+      11,
+      6048
+    ],
+    [
+      12,
+      7104
+    ],
+    [
+      13,
+      7904
+    ],
+    [
+      14,
+      8672
+    ],
+    [
+      15,
+      9568
+    ],
+    [
+      16,
+      10336
+    ],
+    [
+      17,
+      10976
+    ],
+    [
+      18,
+      11904
+    ],
+    [
+      19,
+      12576
+    ],
+    [
+      20,
+      13376
+    ],
+    [
+      21,
+      14176
+    ],
+    [
+      22,
+      15264
+    ],
+    [
+      23,
+      16224
+    ],
+    [
+      24,
+      17376
+    ],
+    [
+      25,
+      17952
+    ],
+    [
+      26,
+      18848
+    ],
+    [
+      27,
+      19488
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 27.577,
+    "firstClaimSeconds": 27.578,
+    "firstClaimJobsPerSec": 725.2,
+    "workerStartJobsPerSec": 725.2
+  },
+  "jobs": 20000,
+  "accepted": 20000,
+  "failedDispatch": 0,
+  "finished": 20000,
+  "drained": true,
+  "drainWriteCommits": null,
+  "startToFirstClaimMs": 113.4,
+  "drainSeconds": 27.578,
+  "completionsPerSec": 725.2,
+  "finishReplayed": 0,
+  "batchClaims": 625,
+  "reservesSent": 626,
+  "claimsInFlightHighWater": 0,
+  "invocations": 20000,
+  "finishesSent": 20000,
+  "finishManyCalls": 630,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 200491008,
+  "gc": {
+    "pauseTotalMs": 1151.8,
+    "pauseTimePercentage": 3.11,
+    "gen0": 76,
+    "gen1": 45,
+    "gen2": 17,
+    "allocatedMB": 1781.4,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "postgres",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 8,
+    "workerSlots": 64,
+    "producerSlots": 8,
+    "bulkChunk": 100,
+    "pgGroup": true,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 20000,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 0,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}

@@ -1,0 +1,179 @@
+{
+  "system": "bullmq-dotnet 1.3.7 (postgres)",
+  "mode": "drain",
+  "workers": 64,
+  "settings": {
+    "store": "postgres",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 64,
+    "bulkChunk": 1000,
+    "removeOnComplete": 1000,
+    "serverGC": true,
+    "cores": 8
+  },
+  "readyBeforeStart": {
+    "waiting": 20000,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 0,
+    "failedEvents": 0
+  },
+  "progress": [
+    [
+      1,
+      671
+    ],
+    [
+      2,
+      1491
+    ],
+    [
+      3,
+      2261
+    ],
+    [
+      4,
+      2965
+    ],
+    [
+      5,
+      3817
+    ],
+    [
+      6,
+      4671
+    ],
+    [
+      7,
+      5538
+    ],
+    [
+      8,
+      6241
+    ],
+    [
+      9,
+      7264
+    ],
+    [
+      10,
+      7739
+    ],
+    [
+      11,
+      7871
+    ],
+    [
+      12,
+      8224
+    ],
+    [
+      13,
+      8652
+    ],
+    [
+      14,
+      9058
+    ],
+    [
+      15,
+      9400
+    ],
+    [
+      16,
+      9507
+    ],
+    [
+      17,
+      10284
+    ],
+    [
+      18,
+      11164
+    ],
+    [
+      19,
+      11669
+    ],
+    [
+      20,
+      12060
+    ],
+    [
+      21,
+      12582
+    ],
+    [
+      22,
+      12846
+    ],
+    [
+      23,
+      13927
+    ],
+    [
+      24,
+      14824
+    ],
+    [
+      25,
+      15665
+    ],
+    [
+      26,
+      15773
+    ],
+    [
+      27,
+      16457
+    ],
+    [
+      28,
+      16869
+    ],
+    [
+      29,
+      17217
+    ],
+    [
+      30,
+      17560
+    ],
+    [
+      31,
+      17935
+    ],
+    [
+      32,
+      18474
+    ],
+    [
+      33,
+      18655
+    ],
+    [
+      34,
+      19236
+    ]
+  ],
+  "failed": 161,
+  "clocks": {
+    "workerStartSeconds": 34.986,
+    "workerStartJobsPerSec": 567.1
+  },
+  "jobs": 20000,
+  "finished": 19839,
+  "drainSeconds": 34.986,
+  "completionsPerSec": 567.1,
+  "outcome": {
+    "waiting": 0,
+    "active": 0,
+    "delayed": 0,
+    "failed": 161,
+    "completedEvents": 19839,
+    "failedEvents": 161
+  }
+}

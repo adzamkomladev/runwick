@@ -1,0 +1,111 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll bench --store sqlite --mode steady --n 0 --workers 16 --rate 500 --seconds 30 --calls 16 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/sqlite/runwick-sqlite--normal--steady-500--r5.raw.json
+warn: Runwick.Worker.WorkerEngine[1006] Presence publication failing: store_unavailable (1 in a row).
+warn: Runwick.Worker.WorkerEngine[1006] Presence publication failing: store_unavailable (2 in a row).
+warn: Runwick.Worker.WorkerEngine[1006] Presence publication failing: store_unavailable (3 in a row).
+{
+  "system": "runwick-sqlite",
+  "store": "sqlite",
+  "mode": "steady",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "clocks": {
+    "offerWindowSeconds": 30.29,
+    "completedDuringOffers": 6163,
+    "secondsToClearAfterOffers": 0.08
+  },
+  "storeViewers": 0,
+  "storeWarmupSeconds": 0,
+  "storeSnapshotPolls": 0,
+  "storeSnapshotPollsWithDiagnostics": 0,
+  "offeredPerSec": 500,
+  "offered": 15000,
+  "seconds": 30,
+  "inserted": 6265,
+  "dispatchCalls": 16,
+  "failedDispatch": 8735,
+  "failedDispatchByCode": {
+    "local_capacity_exceeded": 8735
+  },
+  "completed": 6265,
+  "completedByEndOfOffers": 6163,
+  "completionsPerSec": 206.3,
+  "delayMs": 0,
+  "enqueueLatencyMs": {
+    "p50": 357.87,
+    "p95": 570.13,
+    "p99": 668.65
+  },
+  "latencyMs": {
+    "p50": 492.21,
+    "p95": 744.61,
+    "p99": 831.38,
+    "max": 939.97
+  },
+  "latencySamples": 6265,
+  "finishReplayed": 0,
+  "batchClaims": 719,
+  "reservesSent": 792,
+  "claimsInFlightHighWater": 0,
+  "invocations": 6265,
+  "finishesSent": 6265,
+  "finishManyCalls": 455,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "sqlite": {
+    "profile": "sqlite.wal-synchronous-full",
+    "engine": {
+      "sqlite_version": "3.53.3",
+      "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+      "journal_mode": "wal",
+      "synchronous": "full",
+      "topology": "local"
+    },
+    "writeCommits": 2000,
+    "busyConflicts": 0,
+    "writerConnectionsOpened": 1,
+    "writerStatements": null
+  },
+  "peakWorkingSetBytes": 132497408,
+  "gc": {
+    "pauseTotalMs": 501,
+    "pauseTimePercentage": 1.61,
+    "gen0": 106,
+    "gen1": 97,
+    "gen2": 12,
+    "allocatedMB": 1398,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "sqlite",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "workerSlots": 16,
+    "producerSlots": 16,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "error": "ManagementQueryBudgetException: The query did not finish within its budget."
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795574348225
+@@PHASE timed-end 1795574378592

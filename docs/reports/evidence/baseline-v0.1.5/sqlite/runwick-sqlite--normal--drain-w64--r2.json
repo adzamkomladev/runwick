@@ -1,0 +1,337 @@
+{
+  "system": "runwick-sqlite",
+  "workload": "normal",
+  "test": "drain-w64",
+  "round": 2,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "runwick v0.1.5-13-gfcda4d5",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll",
+    "bench",
+    "--store",
+    "sqlite",
+    "--mode",
+    "drain",
+    "--n",
+    "20000",
+    "--workers",
+    "64",
+    "--calls",
+    "8",
+    "--max-seconds",
+    "600",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/sqlite/runwick-sqlite--normal--drain-w64--r2.raw.json"
+  ],
+  "result": {
+    "system": "runwick-sqlite",
+    "store": "sqlite",
+    "mode": "drain",
+    "workers": 64,
+    "payloadBytes": 1024,
+    "bulkChunk": 100,
+    "insertSeconds": 11.759,
+    "insertCalls": 8,
+    "readyBeforeStart": {
+      "pending": 20000,
+      "reserved": 0,
+      "running": 0,
+      "retrying": 0,
+      "succeeded": 0,
+      "failed": 0,
+      "cancelled": 0
+    },
+    "progress": [
+      [
+        1,
+        320
+      ],
+      [
+        2,
+        896
+      ],
+      [
+        3,
+        1440
+      ],
+      [
+        4,
+        1920
+      ],
+      [
+        5,
+        2464
+      ],
+      [
+        6,
+        3008
+      ],
+      [
+        7,
+        3520
+      ],
+      [
+        8,
+        4064
+      ],
+      [
+        9,
+        4672
+      ],
+      [
+        10,
+        5184
+      ],
+      [
+        11,
+        5696
+      ],
+      [
+        12,
+        6272
+      ],
+      [
+        13,
+        6784
+      ],
+      [
+        14,
+        7264
+      ],
+      [
+        15,
+        7808
+      ],
+      [
+        16,
+        8320
+      ],
+      [
+        17,
+        8768
+      ],
+      [
+        18,
+        9312
+      ],
+      [
+        19,
+        9856
+      ],
+      [
+        20,
+        10400
+      ],
+      [
+        21,
+        10912
+      ],
+      [
+        22,
+        11456
+      ],
+      [
+        23,
+        11968
+      ],
+      [
+        24,
+        12448
+      ],
+      [
+        25,
+        13024
+      ],
+      [
+        26,
+        13568
+      ],
+      [
+        27,
+        14016
+      ],
+      [
+        28,
+        14560
+      ],
+      [
+        29,
+        15008
+      ],
+      [
+        30,
+        15456
+      ],
+      [
+        31,
+        15872
+      ],
+      [
+        32,
+        16352
+      ],
+      [
+        33,
+        16832
+      ],
+      [
+        34,
+        17312
+      ],
+      [
+        35,
+        17856
+      ],
+      [
+        36,
+        18400
+      ],
+      [
+        37,
+        18912
+      ],
+      [
+        38,
+        19456
+      ]
+    ],
+    "clocks": {
+      "workerStartSeconds": 38.92,
+      "firstClaimSeconds": 38.927,
+      "firstClaimJobsPerSec": 513.8,
+      "workerStartJobsPerSec": 513.9
+    },
+    "jobs": 20000,
+    "accepted": 20000,
+    "failedDispatch": 0,
+    "finished": 20000,
+    "drained": true,
+    "drainWriteCommits": 1273,
+    "startToFirstClaimMs": 117.7,
+    "drainSeconds": 38.927,
+    "completionsPerSec": 513.8,
+    "finishReplayed": 0,
+    "batchClaims": 625,
+    "reservesSent": 626,
+    "claimsInFlightHighWater": 0,
+    "invocations": 20000,
+    "finishesSent": 20000,
+    "finishManyCalls": 625,
+    "combinedCalls": 0,
+    "combinedClaimed": 0,
+    "combinedFallbacks": 0,
+    "inlineDeclined": {
+      "busy": 0,
+      "closed": 0,
+      "staleHint": 0,
+      "laneShape": 0
+    },
+    "sqlite": {
+      "profile": "sqlite.wal-synchronous-full",
+      "engine": {
+        "sqlite_version": "3.53.3",
+        "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+        "journal_mode": "wal",
+        "synchronous": "full",
+        "topology": "local"
+      },
+      "writeCommits": 1475,
+      "busyConflicts": 0,
+      "writerConnectionsOpened": 1,
+      "writerStatements": null
+    },
+    "peakWorkingSetBytes": 157650944,
+    "gc": {
+      "pauseTotalMs": 1515.4,
+      "pauseTimePercentage": 2.94,
+      "gen0": 236,
+      "gen1": 120,
+      "gen2": 32,
+      "allocatedMB": 3473.2,
+      "serverGC": true
+    },
+    "diagnostics": [],
+    "settings": {
+      "store": "sqlite",
+      "mode": "drain",
+      "payloadBytes": 1024,
+      "callers": 8,
+      "workerSlots": 64,
+      "producerSlots": 8,
+      "bulkChunk": 100,
+      "pgGroup": false,
+      "bufferedFinish": false,
+      "claimAhead": null,
+      "claimsInFlight": null,
+      "usage": true,
+      "jobMs": 0,
+      "serverGC": true,
+      "cores": 8
+    },
+    "outcome": {
+      "pending": 0,
+      "reserved": 0,
+      "running": 0,
+      "retrying": 0,
+      "succeeded": 20000,
+      "failed": 0,
+      "cancelled": 0
+    }
+  },
+  "outcome": {
+    "accepted": 20000,
+    "succeeded": 20000,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 51.72,
+      "cpuSeconds": 66.74,
+      "cpuAvgPct": 129.1,
+      "cpuPeakPct": 209.9,
+      "memPeakMB": 111.9,
+      "memAvgMB": 95.6,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 836186112
+    },
+    "store": null
+  },
+  "derived": {
+    "jobs": 20000,
+    "cpuMsPerJob": 3.337,
+    "wireBytesPerJob": null,
+    "storeWriteBytesPerJob": 41809,
+    "timed": {
+      "seconds": 39.019,
+      "appCpuSeconds": 49.3,
+      "jobs": 20000,
+      "cpuMsPerJob": 2.465,
+      "counters": {}
+    },
+    "confirmedPerSec_workerStart": 513.9,
+    "confirmedPerSec_firstClaim": 513.8
+  },
+  "phases": {
+    "seed-start": {
+      "harnessMs": 1795585261459,
+      "counters": {}
+    },
+    "seed-end": {
+      "harnessMs": 1795585273220,
+      "counters": {}
+    },
+    "timed-start": {
+      "harnessMs": 1795585273246,
+      "counters": {}
+    },
+    "timed-end": {
+      "harnessMs": 1795585312293,
+      "counters": {}
+    }
+  }
+}

@@ -1,0 +1,119 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll bench --store sqlite --mode steady --n 0 --workers 16 --rate 500 --seconds 30 --calls 16 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/sqlite/runwick-sqlite--normal--steady-500--r1.raw.json
+warn: Runwick.Worker.WorkerEngine[1006] Presence publication failing: store_unavailable (1 in a row).
+{
+  "system": "runwick-sqlite",
+  "store": "sqlite",
+  "mode": "steady",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "clocks": {
+    "offerWindowSeconds": 30.47,
+    "completedDuringOffers": 3472,
+    "secondsToClearAfterOffers": 0.09
+  },
+  "storeViewers": 0,
+  "storeWarmupSeconds": 0,
+  "storeSnapshotPolls": 0,
+  "storeSnapshotPollsWithDiagnostics": 0,
+  "offeredPerSec": 500,
+  "offered": 15000,
+  "seconds": 30,
+  "inserted": 3565,
+  "dispatchCalls": 16,
+  "failedDispatch": 11435,
+  "failedDispatchByCode": {
+    "local_capacity_exceeded": 11435
+  },
+  "completed": 3565,
+  "completedByEndOfOffers": 3472,
+  "completionsPerSec": 116.7,
+  "delayMs": 0,
+  "enqueueLatencyMs": {
+    "p50": 627.73,
+    "p95": 1131.4,
+    "p99": 1303.72
+  },
+  "latencyMs": {
+    "p50": 1207.91,
+    "p95": 4883.65,
+    "p99": 4996.09,
+    "max": 5265.63
+  },
+  "latencySamples": 3565,
+  "finishReplayed": 0,
+  "batchClaims": 409,
+  "reservesSent": 445,
+  "claimsInFlightHighWater": 0,
+  "invocations": 3565,
+  "finishesSent": 3565,
+  "finishManyCalls": 279,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "sqlite": {
+    "profile": "sqlite.wal-synchronous-full",
+    "engine": {
+      "sqlite_version": "3.53.3",
+      "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+      "journal_mode": "wal",
+      "synchronous": "full",
+      "topology": "local"
+    },
+    "writeCommits": 1238,
+    "busyConflicts": 0,
+    "writerConnectionsOpened": 1,
+    "writerStatements": null
+  },
+  "peakWorkingSetBytes": 135675904,
+  "gc": {
+    "pauseTotalMs": 465,
+    "pauseTimePercentage": 1.5,
+    "gen0": 62,
+    "gen1": 44,
+    "gen2": 7,
+    "allocatedMB": 824.8,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "sqlite",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "workerSlots": 16,
+    "producerSlots": 16,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 3565,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 0,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795566156839
+@@PHASE timed-end 1795566187391

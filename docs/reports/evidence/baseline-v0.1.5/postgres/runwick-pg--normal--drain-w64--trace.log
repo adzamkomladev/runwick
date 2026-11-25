@@ -1,0 +1,287 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll bench --store postgres --mode drain --n 20000 --workers 64 --calls 8 --max-seconds 600 --trace --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/runwick-pg--normal--drain-w64--trace.raw.json
+    },
+    "phase:ManagementRead:statements": {
+      "count": 1,
+      "meanMs": 128.197,
+      "minMs": 128.197,
+      "p01Ms": 128.197,
+      "p50Ms": 128.197,
+      "p95Ms": 128.197,
+      "p99Ms": 128.197,
+      "maxMs": 128.197
+    },
+    "phase:PublishPresence:commit": {
+      "count": 6,
+      "meanMs": 30.901,
+      "minMs": 1.858,
+      "p01Ms": 1.858,
+      "p50Ms": 2.726,
+      "p95Ms": 167.75,
+      "p99Ms": 167.75,
+      "maxMs": 167.75
+    },
+    "phase:PublishPresence:driverLane": {
+      "count": 6,
+      "meanMs": 0.001,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0,
+      "p95Ms": 0.001,
+      "p99Ms": 0.001,
+      "maxMs": 0.001
+    },
+    "phase:PublishPresence:function": {
+      "count": 6,
+      "meanMs": 9.468,
+      "minMs": 5.986,
+      "p01Ms": 5.986,
+      "p50Ms": 8.611,
+      "p95Ms": 12.9,
+      "p99Ms": 12.9,
+      "maxMs": 12.9
+    },
+    "phase:PublishPresence:open": {
+      "count": 6,
+      "meanMs": 0.011,
+      "minMs": 0.005,
+      "p01Ms": 0.005,
+      "p50Ms": 0.005,
+      "p95Ms": 0.022,
+      "p99Ms": 0.022,
+      "maxMs": 0.022
+    },
+    "phase:RegisterApplication:commit": {
+      "count": 1,
+      "meanMs": 6.698,
+      "minMs": 6.698,
+      "p01Ms": 6.698,
+      "p50Ms": 6.698,
+      "p95Ms": 6.698,
+      "p99Ms": 6.698,
+      "maxMs": 6.698
+    },
+    "phase:RegisterApplication:driverLane": {
+      "count": 1,
+      "meanMs": 0.15,
+      "minMs": 0.15,
+      "p01Ms": 0.15,
+      "p50Ms": 0.15,
+      "p95Ms": 0.15,
+      "p99Ms": 0.15,
+      "maxMs": 0.15
+    },
+    "phase:RegisterApplication:open": {
+      "count": 1,
+      "meanMs": 0.391,
+      "minMs": 0.391,
+      "p01Ms": 0.391,
+      "p50Ms": 0.391,
+      "p95Ms": 0.391,
+      "p99Ms": 0.391,
+      "maxMs": 0.391
+    },
+    "phase:RegisterApplication:statements": {
+      "count": 1,
+      "meanMs": 228.859,
+      "minMs": 228.859,
+      "p01Ms": 228.859,
+      "p50Ms": 228.859,
+      "p95Ms": 228.859,
+      "p99Ms": 228.859,
+      "maxMs": 228.859
+    },
+    "phase:RegisterQueue:commit": {
+      "count": 1,
+      "meanMs": 2.039,
+      "minMs": 2.039,
+      "p01Ms": 2.039,
+      "p50Ms": 2.039,
+      "p95Ms": 2.039,
+      "p99Ms": 2.039,
+      "maxMs": 2.039
+    },
+    "phase:RegisterQueue:driverLane": {
+      "count": 1,
+      "meanMs": 0.002,
+      "minMs": 0.002,
+      "p01Ms": 0.002,
+      "p50Ms": 0.002,
+      "p95Ms": 0.002,
+      "p99Ms": 0.002,
+      "maxMs": 0.002
+    },
+    "phase:RegisterQueue:open": {
+      "count": 1,
+      "meanMs": 0.041,
+      "minMs": 0.041,
+      "p01Ms": 0.041,
+      "p50Ms": 0.041,
+      "p95Ms": 0.041,
+      "p99Ms": 0.041,
+      "maxMs": 0.041
+    },
+    "phase:RegisterQueue:statements": {
+      "count": 1,
+      "meanMs": 36.911,
+      "minMs": 36.911,
+      "p01Ms": 36.911,
+      "p50Ms": 36.911,
+      "p95Ms": 36.911,
+      "p99Ms": 36.911,
+      "maxMs": 36.911
+    },
+    "phase:ReserveAndBegin:commit": {
+      "count": 625,
+      "meanMs": 6.363,
+      "minMs": 2.059,
+      "p01Ms": 2.497,
+      "p50Ms": 4.766,
+      "p95Ms": 14.663,
+      "p99Ms": 29.327,
+      "maxMs": 196.968
+    },
+    "phase:ReserveAndBegin:driverLane": {
+      "count": 626,
+      "meanMs": 0.001,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0,
+      "p95Ms": 0.001,
+      "p99Ms": 0.002,
+      "maxMs": 0.051
+    },
+    "phase:ReserveAndBegin:function": {
+      "count": 626,
+      "meanMs": 24.897,
+      "minMs": 6.044,
+      "p01Ms": 12.545,
+      "p50Ms": 19.27,
+      "p95Ms": 47.581,
+      "p99Ms": 76.447,
+      "maxMs": 146.746
+    },
+    "phase:ReserveAndBegin:open": {
+      "count": 626,
+      "meanMs": 0.009,
+      "minMs": 0.002,
+      "p01Ms": 0.003,
+      "p50Ms": 0.005,
+      "p95Ms": 0.01,
+      "p99Ms": 0.045,
+      "maxMs": 0.799
+    },
+    "sample:heldJobs": {
+      "count": 1892,
+      "meanMs": 42.436,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 32,
+      "p95Ms": 64,
+      "p99Ms": 96,
+      "maxMs": 160
+    },
+    "sample:settlementQueue": {
+      "count": 1892,
+      "meanMs": 0.316,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "p99Ms": 13,
+      "maxMs": 33
+    },
+    "stage:due-\u003EhandlerInvoked": {
+      "count": 20000,
+      "meanMs": 16112.77,
+      "minMs": 6587.63,
+      "p01Ms": 7004.387,
+      "p50Ms": 16508.99,
+      "p95Ms": 21533.32,
+      "p99Ms": 21892.423,
+      "maxMs": 22021.852
+    },
+    "stage:handlerInvoked-\u003Efinished": {
+      "count": 20000,
+      "meanMs": 43.841,
+      "minMs": 22.132,
+      "p01Ms": 25.088,
+      "p50Ms": 38.128,
+      "p95Ms": 77.779,
+      "p99Ms": 162.332,
+      "maxMs": 308.371
+    },
+    "stage:reserved-\u003Efinished": {
+      "count": 20000,
+      "meanMs": 44.965,
+      "minMs": 22.503,
+      "p01Ms": 25.652,
+      "p50Ms": 38.908,
+      "p95Ms": 79.488,
+      "p99Ms": 164.918,
+      "maxMs": 408.253
+    },
+    "stage:reserved-\u003EhandlerInvoked": {
+      "count": 20000,
+      "meanMs": 1.123,
+      "minMs": 0.063,
+      "p01Ms": 0.179,
+      "p50Ms": 0.654,
+      "p95Ms": 2.285,
+      "p99Ms": 5.358,
+      "maxMs": 146.374
+    }
+  },
+  "traceCounters": {},
+  "writerQueueMs": {},
+  "pickupMs": {
+    "p50": 16508.99,
+    "p99": 21892.423,
+    "max": 22021.852
+  },
+  "gc": {
+    "pauseTotalMs": 721.6,
+    "pauseTimePercentage": 2.25,
+    "gen0": 78,
+    "gen1": 49,
+    "gen2": 19,
+    "allocatedMB": 1817.7,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "postgres",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 8,
+    "workerSlots": 64,
+    "producerSlots": 8,
+    "bulkChunk": 100,
+    "pgGroup": true,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 20000,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 0,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795583282551
+@@PHASE seed-end 1795583289350
+@@PHASE timed-start 1795583289616
+@@PHASE timed-end 1795583311149

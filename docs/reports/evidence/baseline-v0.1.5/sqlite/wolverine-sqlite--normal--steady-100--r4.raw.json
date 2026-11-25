@@ -1,0 +1,31 @@
+{
+  "system": "wolverine 6.65.1 (sqlite)",
+  "mode": "steady",
+  "workers": 16,
+  "settings": {
+    "store": "sqlite",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "seedCallers": 16,
+    "sendInline": false,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 8
+  },
+  "offeredPerSec": 100,
+  "inserted": 3001,
+  "completed": 3001,
+  "completionsPerSec": 88.6,
+  "latencyMs": {
+    "p50": 2637,
+    "p95": 4913,
+    "p99": 5054,
+    "max": 5137
+  },
+  "outcome": {
+    "wolverine_queue_bench": 0,
+    "wolverine_queue_bench_scheduled": 0
+  }
+}

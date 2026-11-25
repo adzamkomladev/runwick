@@ -1,0 +1,32 @@
+node /root/work/Spindle/eng/bench-compare/pgboss/bench.mjs --mode bulk --n 20000 --concurrency 1 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/pgboss--normal--bulk--r4.raw.json
+{
+  "system": "pg-boss 12.38.0",
+  "mode": "bulk",
+  "concurrency": 1,
+  "batchSize": 1,
+  "burstWhenBatchFull": false,
+  "payloadBytes": 1018,
+  "settings": {
+    "store": "postgres",
+    "mode": "bulk",
+    "payloadBytes": 1018,
+    "callers": 1,
+    "workerSlots": 1,
+    "fetchBatch": 1,
+    "burst": false,
+    "bulkChunk": 1000,
+    "seedChunk": 5000,
+    "pollingIntervalSeconds": 0.5,
+    "poolMax": 5,
+    "cores": 8
+  },
+  "jobs": 20000,
+  "insertsPerSec": 13009.156328164376,
+  "outcome": {
+    "created": 20000
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795582333693
+@@PHASE timed-end 1795582335231

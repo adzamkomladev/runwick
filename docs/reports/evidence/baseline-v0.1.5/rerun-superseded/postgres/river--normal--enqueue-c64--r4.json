@@ -1,0 +1,56 @@
+{
+  "system": "river",
+  "workload": "normal",
+  "test": "enqueue-c64",
+  "round": 4,
+  "trace": false,
+  "ok": false,
+  "complete": false,
+  "incompleteReason": "harness failed",
+  "version": null,
+  "command": [
+    "/root/work/Spindle/eng/bench-compare/river/bench-river",
+    "-mode",
+    "enqueue",
+    "-n",
+    "10000",
+    "-workers",
+    "16",
+    "-calls",
+    "64",
+    "-out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/river--normal--enqueue-c64--r4.raw.json"
+  ],
+  "result": null,
+  "outcome": null,
+  "resources": {
+    "app": {
+      "seconds": 0.03,
+      "cpuSeconds": 0.02,
+      "cpuAvgPct": 48.5,
+      "cpuPeakPct": 0,
+      "memPeakMB": 8.3,
+      "memAvgMB": 8.3,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 0
+    },
+    "store": {
+      "cpuSeconds": 0.06,
+      "cpuAvgPct": 200.3,
+      "cpuPeakPct": 96.9,
+      "memPeakMB": 64.8,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 28672,
+      "netRxBytes": 519,
+      "netTxBytes": 432
+    }
+  },
+  "derived": {
+    "jobs": 0,
+    "cpuMsPerJob": null,
+    "wireBytesPerJob": null,
+    "storeWriteBytesPerJob": null,
+    "timed": null
+  },
+  "phases": {}
+}

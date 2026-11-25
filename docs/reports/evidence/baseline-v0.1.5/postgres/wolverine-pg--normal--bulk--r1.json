@@ -1,0 +1,76 @@
+{
+  "system": "wolverine-pg",
+  "workload": "normal",
+  "test": "bulk",
+  "round": 1,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "skipped",
+  "version": "wolverine 6.65.1 (postgres)",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll",
+    "--transport",
+    "postgres",
+    "--redis",
+    "127.0.0.1:56392",
+    "--mode",
+    "bulk",
+    "--n",
+    "20000",
+    "--workers",
+    "16",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/wolverine-pg--normal--bulk--r1.raw.json"
+  ],
+  "result": {
+    "system": "wolverine 6.65.1 (postgres)",
+    "mode": "bulk",
+    "workers": 16,
+    "settings": {
+      "store": "postgres",
+      "mode": "bulk",
+      "payloadBytes": 1024,
+      "callers": 1,
+      "workerSlots": 16,
+      "seedCallers": 16,
+      "sendInline": false,
+      "durabilityMode": "Solo",
+      "serverGC": true,
+      "cores": 8
+    },
+    "skipped": "Wolverine has no bulk-send API"
+  },
+  "outcome": null,
+  "resources": {
+    "app": {
+      "seconds": 0.83,
+      "cpuSeconds": 0.56,
+      "cpuAvgPct": 67.9,
+      "cpuPeakPct": 78.1,
+      "memPeakMB": 52.0,
+      "memAvgMB": 28.7,
+      "diskReadBytes": 1748992,
+      "diskWriteBytes": 0
+    },
+    "store": {
+      "cpuSeconds": 0.14,
+      "cpuAvgPct": 17.4,
+      "cpuPeakPct": 36.0,
+      "memPeakMB": 140.2,
+      "diskReadBytes": 20480,
+      "diskWriteBytes": 4689920,
+      "netRxBytes": 5172,
+      "netTxBytes": 12193
+    }
+  },
+  "derived": {
+    "jobs": 0,
+    "cpuMsPerJob": null,
+    "wireBytesPerJob": null,
+    "storeWriteBytesPerJob": null,
+    "timed": null
+  },
+  "phases": {}
+}

@@ -1,0 +1,32 @@
+{
+  "system": "wolverine 6.65.1 (postgres)",
+  "mode": "steady",
+  "workers": 16,
+  "settings": {
+    "store": "postgres",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "seedCallers": 16,
+    "sendInline": false,
+    "durabilityMode": "Solo",
+    "serverGC": true,
+    "cores": 8
+  },
+  "offeredPerSec": 100,
+  "inserted": 2977,
+  "completed": 2977,
+  "completionsPerSec": 70.3,
+  "latencyMs": {
+    "p50": 7393,
+    "p95": 11742,
+    "p99": 12345,
+    "max": 12509
+  },
+  "outcome": {
+    "deadLetters": 0,
+    "wolverine_queue_bench": 0,
+    "wolverine_queue_bench_scheduled": 0
+  }
+}

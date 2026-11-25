@@ -1,0 +1,32 @@
+{
+  "system": "pg-boss 12.38.0",
+  "mode": "enqueue",
+  "concurrency": 16,
+  "batchSize": 1,
+  "burstWhenBatchFull": false,
+  "payloadBytes": 1018,
+  "settings": {
+    "store": "postgres",
+    "mode": "enqueue",
+    "payloadBytes": 1018,
+    "callers": 16,
+    "workerSlots": 16,
+    "fetchBatch": 1,
+    "burst": false,
+    "bulkChunk": 1000,
+    "seedChunk": 5000,
+    "pollingIntervalSeconds": 0.5,
+    "poolMax": 20,
+    "cores": 8
+  },
+  "jobs": 10000,
+  "calls": 16,
+  "insertsPerSec": 1025.053744070078,
+  "insertLatencyMs": {
+    "p50": 7.587873999999829,
+    "p99": 173.91233000000102
+  },
+  "outcome": {
+    "created": 10000
+  }
+}

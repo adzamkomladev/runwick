@@ -1,0 +1,222 @@
+dotnet /root/work/Spindle/eng/bench-compare/bullmq-dotnet/bin/Release/net10.0/bench-bullmq-dotnet.dll --backend postgres --redis 127.0.0.1:56392 --mode drain --n 20000 --workers 16 --max-seconds 600 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/bullmq-dotnet-pg--normal--drain-w16--r1.raw.json
+{
+  "system": "bullmq-dotnet 1.3.7 (postgres)",
+  "mode": "drain",
+  "workers": 16,
+  "settings": {
+    "store": "postgres",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "removeOnComplete": 1000,
+    "serverGC": true,
+    "cores": 8
+  },
+  "readyBeforeStart": {
+    "waiting": 20000,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 0,
+    "failedEvents": 0
+  },
+  "progress": [
+    [
+      1,
+      913
+    ],
+    [
+      2,
+      1800
+    ],
+    [
+      3,
+      2494
+    ],
+    [
+      4,
+      3473
+    ],
+    [
+      5,
+      4106
+    ],
+    [
+      6,
+      4798
+    ],
+    [
+      7,
+      5025
+    ],
+    [
+      8,
+      5308
+    ],
+    [
+      9,
+      5733
+    ],
+    [
+      10,
+      6109
+    ],
+    [
+      11,
+      6634
+    ],
+    [
+      12,
+      7089
+    ],
+    [
+      13,
+      7666
+    ],
+    [
+      14,
+      8038
+    ],
+    [
+      15.1,
+      8258
+    ],
+    [
+      16,
+      8327
+    ],
+    [
+      17,
+      8584
+    ],
+    [
+      18,
+      8904
+    ],
+    [
+      19,
+      9089
+    ],
+    [
+      20,
+      9412
+    ],
+    [
+      21,
+      9758
+    ],
+    [
+      22,
+      10143
+    ],
+    [
+      23,
+      10544
+    ],
+    [
+      24,
+      11026
+    ],
+    [
+      25,
+      11568
+    ],
+    [
+      26,
+      12159
+    ],
+    [
+      27,
+      12570
+    ],
+    [
+      28,
+      13188
+    ],
+    [
+      29,
+      13370
+    ],
+    [
+      30,
+      13583
+    ],
+    [
+      31,
+      14057
+    ],
+    [
+      32,
+      14603
+    ],
+    [
+      33,
+      15012
+    ],
+    [
+      34,
+      15126
+    ],
+    [
+      35,
+      15749
+    ],
+    [
+      36,
+      16271
+    ],
+    [
+      37,
+      16851
+    ],
+    [
+      38,
+      16980
+    ],
+    [
+      39,
+      17571
+    ],
+    [
+      40,
+      18211
+    ],
+    [
+      41,
+      18901
+    ],
+    [
+      42,
+      19364
+    ],
+    [
+      43,
+      19984
+    ]
+  ],
+  "failed": 28,
+  "clocks": {
+    "workerStartSeconds": 43.03,
+    "workerStartJobsPerSec": 464.1
+  },
+  "jobs": 20000,
+  "finished": 19972,
+  "drainSeconds": 43.03,
+  "completionsPerSec": 464.1,
+  "outcome": {
+    "waiting": 0,
+    "active": 0,
+    "delayed": 0,
+    "failed": 28,
+    "completedEvents": 19972,
+    "failedEvents": 28
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795577504589
+@@PHASE seed-end 1795577506613
+@@PHASE timed-start 1795577506706
+@@PHASE timed-end 1795577549736

@@ -1,0 +1,131 @@
+node /root/work/Spindle/eng/bench-compare/pgboss/bench.mjs --mode drain --n 20000 --concurrency 1 --batch 16 --burst --max-seconds 600 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/pgboss--normal--drain-w16--r1.raw.json
+{
+  "system": "pg-boss 12.38.0",
+  "mode": "drain",
+  "concurrency": 1,
+  "batchSize": 16,
+  "burstWhenBatchFull": true,
+  "payloadBytes": 1018,
+  "settings": {
+    "store": "postgres",
+    "mode": "drain",
+    "payloadBytes": 1018,
+    "callers": 1,
+    "workerSlots": 1,
+    "fetchBatch": 16,
+    "burst": true,
+    "bulkChunk": 1000,
+    "seedChunk": 5000,
+    "pollingIntervalSeconds": 0.5,
+    "poolMax": 5,
+    "cores": 8
+  },
+  "insertSeconds": 1.8206470310000002,
+  "readyBeforeStart": {
+    "created": 20000
+  },
+  "progress": [
+    [
+      1,
+      624
+    ],
+    [
+      2,
+      1120
+    ],
+    [
+      3,
+      1584
+    ],
+    [
+      4,
+      1936
+    ],
+    [
+      5,
+      2528
+    ],
+    [
+      6,
+      2944
+    ],
+    [
+      7,
+      3680
+    ],
+    [
+      8,
+      4608
+    ],
+    [
+      9,
+      5616
+    ],
+    [
+      10,
+      6640
+    ],
+    [
+      11,
+      7584
+    ],
+    [
+      12,
+      8896
+    ],
+    [
+      13,
+      9552
+    ],
+    [
+      14,
+      11008
+    ],
+    [
+      15,
+      12416
+    ],
+    [
+      16,
+      13808
+    ],
+    [
+      17,
+      14976
+    ],
+    [
+      18,
+      16144
+    ],
+    [
+      19,
+      17248
+    ],
+    [
+      20,
+      18672
+    ],
+    [
+      21,
+      19664
+    ]
+  ],
+  "jobs": 20000,
+  "finished": 20000,
+  "drainSeconds": 21.396236038999998,
+  "completionsPerSec": 934.7438476349295,
+  "clocks": {
+    "workerStartSeconds": 21.396236038999998,
+    "workerStartJobsPerSec": 934.7438476349295,
+    "handlerReturns": 20000
+  },
+  "outcome": {
+    "completed": 20000
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795576468912
+@@PHASE seed-end 1795576470734
+@@PHASE timed-start 1795576470858
+@@PHASE timed-end 1795576492161

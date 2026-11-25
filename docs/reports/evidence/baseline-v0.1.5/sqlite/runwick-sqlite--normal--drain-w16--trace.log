@@ -1,0 +1,289 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll bench --store sqlite --mode drain --n 20000 --workers 16 --calls 8 --max-seconds 600 --trace --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/sqlite/runwick-sqlite--normal--drain-w16--trace.raw.json
+     "maxMs": 0.04
+    },
+    "phase:RegisterApplication:commit": {
+      "count": 1,
+      "meanMs": 8.111,
+      "minMs": 8.111,
+      "p01Ms": 8.111,
+      "p50Ms": 8.111,
+      "p95Ms": 8.111,
+      "p99Ms": 8.111,
+      "maxMs": 8.111
+    },
+    "phase:RegisterApplication:driverLane": {
+      "count": 1,
+      "meanMs": 0.172,
+      "minMs": 0.172,
+      "p01Ms": 0.172,
+      "p50Ms": 0.172,
+      "p95Ms": 0.172,
+      "p99Ms": 0.172,
+      "maxMs": 0.172
+    },
+    "phase:RegisterApplication:statements": {
+      "count": 1,
+      "meanMs": 16.866,
+      "minMs": 16.866,
+      "p01Ms": 16.866,
+      "p50Ms": 16.866,
+      "p95Ms": 16.866,
+      "p99Ms": 16.866,
+      "maxMs": 16.866
+    },
+    "phase:RegisterApplication:writerQueue": {
+      "count": 1,
+      "meanMs": 2.449,
+      "minMs": 2.449,
+      "p01Ms": 2.449,
+      "p50Ms": 2.449,
+      "p95Ms": 2.449,
+      "p99Ms": 2.449,
+      "maxMs": 2.449
+    },
+    "phase:RegisterQueue:beginImmediate": {
+      "count": 1,
+      "meanMs": 0.042,
+      "minMs": 0.042,
+      "p01Ms": 0.042,
+      "p50Ms": 0.042,
+      "p95Ms": 0.042,
+      "p99Ms": 0.042,
+      "maxMs": 0.042
+    },
+    "phase:RegisterQueue:commit": {
+      "count": 1,
+      "meanMs": 3.907,
+      "minMs": 3.907,
+      "p01Ms": 3.907,
+      "p50Ms": 3.907,
+      "p95Ms": 3.907,
+      "p99Ms": 3.907,
+      "maxMs": 3.907
+    },
+    "phase:RegisterQueue:driverLane": {
+      "count": 1,
+      "meanMs": 0.004,
+      "minMs": 0.004,
+      "p01Ms": 0.004,
+      "p50Ms": 0.004,
+      "p95Ms": 0.004,
+      "p99Ms": 0.004,
+      "maxMs": 0.004
+    },
+    "phase:RegisterQueue:statements": {
+      "count": 1,
+      "meanMs": 14.831,
+      "minMs": 14.831,
+      "p01Ms": 14.831,
+      "p50Ms": 14.831,
+      "p95Ms": 14.831,
+      "p99Ms": 14.831,
+      "maxMs": 14.831
+    },
+    "phase:RegisterQueue:writerQueue": {
+      "count": 1,
+      "meanMs": 0.09,
+      "minMs": 0.09,
+      "p01Ms": 0.09,
+      "p50Ms": 0.09,
+      "p95Ms": 0.09,
+      "p99Ms": 0.09,
+      "maxMs": 0.09
+    },
+    "phase:ReserveAndBegin:beginImmediate": {
+      "count": 2383,
+      "meanMs": 0.037,
+      "minMs": 0.01,
+      "p01Ms": 0.012,
+      "p50Ms": 0.023,
+      "p95Ms": 0.053,
+      "p99Ms": 0.313,
+      "maxMs": 6.955
+    },
+    "phase:ReserveAndBegin:commit": {
+      "count": 2382,
+      "meanMs": 4.546,
+      "minMs": 0.929,
+      "p01Ms": 1.23,
+      "p50Ms": 2.527,
+      "p95Ms": 11.874,
+      "p99Ms": 41.002,
+      "maxMs": 331.449
+    },
+    "phase:ReserveAndBegin:driverLane": {
+      "count": 2383,
+      "meanMs": 0.001,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0.001,
+      "p95Ms": 0.001,
+      "p99Ms": 0.002,
+      "maxMs": 0.034
+    },
+    "phase:ReserveAndBegin:statements": {
+      "count": 2383,
+      "meanMs": 15.977,
+      "minMs": 0.765,
+      "p01Ms": 1.736,
+      "p50Ms": 12.803,
+      "p95Ms": 38.363,
+      "p99Ms": 61.675,
+      "maxMs": 266.786
+    },
+    "phase:ReserveAndBegin:writerQueue": {
+      "count": 2383,
+      "meanMs": 12.552,
+      "minMs": 0.032,
+      "p01Ms": 0.057,
+      "p50Ms": 7.61,
+      "p95Ms": 48.925,
+      "p99Ms": 108.13,
+      "maxMs": 320.635
+    },
+    "sample:heldJobs": {
+      "count": 7234,
+      "meanMs": 15.417,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 16,
+      "p95Ms": 31,
+      "p99Ms": 32,
+      "maxMs": 46
+    },
+    "sample:settlementQueue": {
+      "count": 7234,
+      "meanMs": 0.059,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0,
+      "p95Ms": 0,
+      "p99Ms": 1,
+      "maxMs": 15
+    },
+    "stage:due-\u003EhandlerInvoked": {
+      "count": 20000,
+      "meanMs": 52044.839,
+      "minMs": 9991.588,
+      "p01Ms": 10978.581,
+      "p50Ms": 53308.228,
+      "p95Ms": 81366.137,
+      "p99Ms": 83331.17,
+      "maxMs": 83690.836
+    },
+    "stage:handlerInvoked-\u003Efinished": {
+      "count": 20000,
+      "meanMs": 62.995,
+      "minMs": 11.744,
+      "p01Ms": 22.863,
+      "p50Ms": 54.962,
+      "p95Ms": 111.938,
+      "p99Ms": 194.682,
+      "maxMs": 359.51
+    },
+    "stage:reserved-\u003Efinished": {
+      "count": 20000,
+      "meanMs": 63.857,
+      "minMs": 11.971,
+      "p01Ms": 23.352,
+      "p50Ms": 55.903,
+      "p95Ms": 113.823,
+      "p99Ms": 198.258,
+      "maxMs": 360.084
+    },
+    "stage:reserved-\u003EhandlerInvoked": {
+      "count": 20000,
+      "meanMs": 0.861,
+      "minMs": 0.019,
+      "p01Ms": 0.156,
+      "p50Ms": 0.504,
+      "p95Ms": 1.819,
+      "p99Ms": 6.419,
+      "maxMs": 83.554
+    }
+  },
+  "traceCounters": {},
+  "writerQueueMs": {
+    "CleanupBatch": {
+      "count": 28,
+      "p99": 172.898,
+      "max": 172.898
+    },
+    "DispatchMany": {
+      "count": 200,
+      "p99": 552.299,
+      "max": 587.359
+    },
+    "Finish": {
+      "count": 181,
+      "p99": 130.027,
+      "max": 159.594
+    },
+    "FinishMany": {
+      "count": 1474,
+      "p99": 98.434,
+      "max": 200.402
+    },
+    "PublishPresence": {
+      "count": 18,
+      "p99": 132.898,
+      "max": 132.898
+    },
+    "RegisterApplication": {
+      "count": 1,
+      "p99": 2.449,
+      "max": 2.449
+    },
+    "RegisterQueue": {
+      "count": 1,
+      "p99": 0.09,
+      "max": 0.09
+    },
+    "ReserveAndBegin": {
+      "count": 2383,
+      "p99": 108.13,
+      "max": 320.635
+    }
+  },
+  "pickupMs": {
+    "p50": 53308.228,
+    "p99": 83331.17,
+    "max": 83690.836
+  },
+  "gc": {
+    "pauseTotalMs": 1746.1,
+    "pauseTimePercentage": 1.86,
+    "gen0": 288,
+    "gen1": 107,
+    "gen2": 14,
+    "allocatedMB": 3656.6,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "sqlite",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 8,
+    "workerSlots": 16,
+    "producerSlots": 8,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "error": "ManagementQueryBudgetException: The query did not finish within its budget."
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795573859402
+@@PHASE seed-end 1795573869007
+@@PHASE timed-start 1795573869244
+@@PHASE timed-end 1795573952684

@@ -1,0 +1,310 @@
+{
+  "system": "runwick-pg",
+  "workload": "normal",
+  "test": "enqueue-c64",
+  "round": 5,
+  "trace": true,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "runwick v0.1.5-13-gfcda4d5",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll",
+    "bench",
+    "--store",
+    "postgres",
+    "--mode",
+    "enqueue",
+    "--n",
+    "10000",
+    "--workers",
+    "16",
+    "--calls",
+    "64",
+    "--trace",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/runwick-pg--normal--enqueue-c64--trace.raw.json"
+  ],
+  "result": {
+    "system": "runwick",
+    "store": "postgres",
+    "mode": "enqueue",
+    "workers": 16,
+    "payloadBytes": 1024,
+    "bulkChunk": 100,
+    "enqueueManagedAllocatedBytes": 1089457016,
+    "jobs": 10000,
+    "warmupJobs": 0,
+    "calls": 64,
+    "insertsPerSec": 704.7,
+    "insertLatencyMs": {
+      "p50": 69.69,
+      "p95": 206.56,
+      "p99": 333.95
+    },
+    "producerCalls": 64,
+    "pgGroup": {
+      "groups": 0,
+      "groupedCommands": 0,
+      "fallbacks": 0,
+      "meanGroupSize": 0
+    },
+    "finishReplayed": 0,
+    "batchClaims": 0,
+    "reservesSent": 0,
+    "claimsInFlightHighWater": 0,
+    "invocations": 0,
+    "finishesSent": 0,
+    "finishManyCalls": 0,
+    "combinedCalls": 0,
+    "combinedClaimed": 0,
+    "combinedFallbacks": 0,
+    "inlineDeclined": {
+      "busy": 0,
+      "closed": 0,
+      "staleHint": 0,
+      "laneShape": 0
+    },
+    "peakWorkingSetBytes": 165859328,
+    "trace": {
+      "phase:Dispatch:commit": {
+        "count": 10000,
+        "meanMs": 25.095,
+        "minMs": 1.203,
+        "p01Ms": 3.109,
+        "p50Ms": 20.236,
+        "p95Ms": 58.73,
+        "p99Ms": 104.381,
+        "maxMs": 228.801
+      },
+      "phase:Dispatch:driverLane": {
+        "count": 10000,
+        "meanMs": 0.001,
+        "minMs": 0,
+        "p01Ms": 0,
+        "p50Ms": 0,
+        "p95Ms": 0.001,
+        "p99Ms": 0.002,
+        "maxMs": 1.827
+      },
+      "phase:Dispatch:function": {
+        "count": 10000,
+        "meanMs": 60.49,
+        "minMs": 3.065,
+        "p01Ms": 6.02,
+        "p50Ms": 43.616,
+        "p95Ms": 167.978,
+        "p99Ms": 277.784,
+        "maxMs": 598.225
+      },
+      "phase:Dispatch:open": {
+        "count": 10000,
+        "meanMs": 0.903,
+        "minMs": 0,
+        "p01Ms": 0,
+        "p50Ms": 0.004,
+        "p95Ms": 0.02,
+        "p99Ms": 0.193,
+        "maxMs": 293.388
+      },
+      "phase:RegisterApplication:commit": {
+        "count": 1,
+        "meanMs": 5.204,
+        "minMs": 5.204,
+        "p01Ms": 5.204,
+        "p50Ms": 5.204,
+        "p95Ms": 5.204,
+        "p99Ms": 5.204,
+        "maxMs": 5.204
+      },
+      "phase:RegisterApplication:driverLane": {
+        "count": 1,
+        "meanMs": 0.19,
+        "minMs": 0.19,
+        "p01Ms": 0.19,
+        "p50Ms": 0.19,
+        "p95Ms": 0.19,
+        "p99Ms": 0.19,
+        "maxMs": 0.19
+      },
+      "phase:RegisterApplication:open": {
+        "count": 1,
+        "meanMs": 0.461,
+        "minMs": 0.461,
+        "p01Ms": 0.461,
+        "p50Ms": 0.461,
+        "p95Ms": 0.461,
+        "p99Ms": 0.461,
+        "maxMs": 0.461
+      },
+      "phase:RegisterApplication:statements": {
+        "count": 1,
+        "meanMs": 91.072,
+        "minMs": 91.072,
+        "p01Ms": 91.072,
+        "p50Ms": 91.072,
+        "p95Ms": 91.072,
+        "p99Ms": 91.072,
+        "maxMs": 91.072
+      },
+      "phase:RegisterQueue:commit": {
+        "count": 1,
+        "meanMs": 1.734,
+        "minMs": 1.734,
+        "p01Ms": 1.734,
+        "p50Ms": 1.734,
+        "p95Ms": 1.734,
+        "p99Ms": 1.734,
+        "maxMs": 1.734
+      },
+      "phase:RegisterQueue:driverLane": {
+        "count": 1,
+        "meanMs": 0.004,
+        "minMs": 0.004,
+        "p01Ms": 0.004,
+        "p50Ms": 0.004,
+        "p95Ms": 0.004,
+        "p99Ms": 0.004,
+        "maxMs": 0.004
+      },
+      "phase:RegisterQueue:open": {
+        "count": 1,
+        "meanMs": 0.044,
+        "minMs": 0.044,
+        "p01Ms": 0.044,
+        "p50Ms": 0.044,
+        "p95Ms": 0.044,
+        "p99Ms": 0.044,
+        "maxMs": 0.044
+      },
+      "phase:RegisterQueue:statements": {
+        "count": 1,
+        "meanMs": 34.606,
+        "minMs": 34.606,
+        "p01Ms": 34.606,
+        "p50Ms": 34.606,
+        "p95Ms": 34.606,
+        "p99Ms": 34.606,
+        "maxMs": 34.606
+      }
+    },
+    "traceCounters": {},
+    "writerQueueMs": {},
+    "gc": {
+      "pauseTotalMs": 466.4,
+      "pauseTimePercentage": 2.61,
+      "gen0": 53,
+      "gen1": 34,
+      "gen2": 11,
+      "allocatedMB": 1144,
+      "serverGC": true
+    },
+    "diagnostics": [],
+    "settings": {
+      "store": "postgres",
+      "mode": "enqueue",
+      "payloadBytes": 1024,
+      "callers": 64,
+      "workerSlots": 16,
+      "producerSlots": 64,
+      "bulkChunk": 100,
+      "pgGroup": true,
+      "bufferedFinish": false,
+      "claimAhead": null,
+      "claimsInFlight": null,
+      "usage": true,
+      "jobMs": 0,
+      "serverGC": true,
+      "cores": 8
+    },
+    "outcome": {
+      "pending": 10000,
+      "reserved": 0,
+      "running": 0,
+      "retrying": 0,
+      "succeeded": 0,
+      "failed": 0,
+      "cancelled": 0,
+      "now:pending": 10000,
+      "now:scheduled": 0,
+      "now:reserved": 0,
+      "now:running": 0
+    }
+  },
+  "outcome": {
+    "accepted": 10000,
+    "succeeded": 0,
+    "failed": 0,
+    "unfinished": 10000
+  },
+  "resources": {
+    "app": {
+      "seconds": 18.56,
+      "cpuSeconds": 21.19,
+      "cpuAvgPct": 114.2,
+      "cpuPeakPct": 187.9,
+      "memPeakMB": 148.0,
+      "memAvgMB": 121.5,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 8192
+    },
+    "store": {
+      "cpuSeconds": 66.35,
+      "cpuAvgPct": 357.5,
+      "cpuPeakPct": 561.0,
+      "memPeakMB": 615.8,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 80347136,
+      "netRxBytes": 29730865,
+      "netTxBytes": 7167134
+    }
+  },
+  "derived": {
+    "jobs": 10000,
+    "cpuMsPerJob": 8.754,
+    "wireBytesPerJob": 3690,
+    "storeWriteBytesPerJob": 8035,
+    "timed": {
+      "seconds": 14.191,
+      "appCpuSeconds": 17.77,
+      "jobs": 10000,
+      "storeCpuSeconds": 64.754,
+      "storeDiskWriteBytes": 68812800,
+      "storeNetRxBytes": 28937594,
+      "storeNetTxBytes": 5997219,
+      "wireBytesPerJob": 3493,
+      "storeWriteBytesPerJob": 6881,
+      "cpuMsPerJob": 8.252,
+      "counters": {
+        "walBytes": 48451392.0,
+        "walRecords": 263668.0,
+        "walFpi": 20.0,
+        "transactions": 9647.0
+      },
+      "walBytesPerJob": 4845.139,
+      "walFpiPerJob": 0.002,
+      "transactionsPerJob": 0.965
+    }
+  },
+  "phases": {
+    "timed-start": {
+      "harnessMs": 1795582985962,
+      "counters": {
+        "walBytes": 217670704.0,
+        "walRecords": 1064028.0,
+        "walFpi": 7357.0,
+        "transactions": 1095.0
+      }
+    },
+    "timed-end": {
+      "harnessMs": 1795583000154,
+      "counters": {
+        "walBytes": 266122096.0,
+        "walRecords": 1327696.0,
+        "walFpi": 7377.0,
+        "transactions": 10742.0
+      }
+    }
+  }
+}

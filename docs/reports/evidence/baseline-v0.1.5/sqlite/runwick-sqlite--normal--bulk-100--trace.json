@@ -1,0 +1,341 @@
+{
+  "system": "runwick-sqlite",
+  "workload": "normal",
+  "test": "bulk-100",
+  "round": 5,
+  "trace": true,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "runwick v0.1.5-13-gfcda4d5",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll",
+    "bench",
+    "--store",
+    "sqlite",
+    "--mode",
+    "bulk",
+    "--n",
+    "20000",
+    "--workers",
+    "16",
+    "--calls",
+    "1",
+    "--batch-items",
+    "100",
+    "--trace",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/sqlite/runwick-sqlite--normal--bulk-100--trace.raw.json"
+  ],
+  "result": {
+    "system": "runwick-sqlite",
+    "store": "sqlite",
+    "mode": "bulk",
+    "workers": 16,
+    "payloadBytes": 1024,
+    "bulkChunk": 100,
+    "batchItems": 100,
+    "callLatencyMs": {
+      "p50": 39.11,
+      "p95": 78.45,
+      "p99": 136.52,
+      "max": 309.35
+    },
+    "jobs": 20000,
+    "calls": 1,
+    "failedDispatch": 0,
+    "insertsPerSec": 2233,
+    "finishReplayed": 0,
+    "batchClaims": 0,
+    "reservesSent": 0,
+    "claimsInFlightHighWater": 0,
+    "invocations": 0,
+    "finishesSent": 0,
+    "finishManyCalls": 0,
+    "combinedCalls": 0,
+    "combinedClaimed": 0,
+    "combinedFallbacks": 0,
+    "inlineDeclined": {
+      "busy": 0,
+      "closed": 0,
+      "staleHint": 0,
+      "laneShape": 0
+    },
+    "sqlite": {
+      "profile": "sqlite.wal-synchronous-full",
+      "engine": {
+        "sqlite_version": "3.53.3",
+        "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+        "journal_mode": "wal",
+        "synchronous": "full",
+        "topology": "local"
+      },
+      "writeCommits": 202,
+      "busyConflicts": 0,
+      "writerConnectionsOpened": 1,
+      "writerStatements": null,
+      "walBytesAfterRun": 4688592,
+      "walAfterRun": {
+        "autoCheckpointPages": 1000,
+        "busy": false,
+        "logFrames": 851,
+        "checkpointedFrames": 0,
+        "elapsedMs": 0.0889
+      }
+    },
+    "peakWorkingSetBytes": 110153728,
+    "trace": {
+      "phase:DispatchMany:beginImmediate": {
+        "count": 200,
+        "meanMs": 0.084,
+        "minMs": 0.023,
+        "p01Ms": 0.027,
+        "p50Ms": 0.036,
+        "p95Ms": 0.088,
+        "p99Ms": 0.287,
+        "maxMs": 6.336
+      },
+      "phase:DispatchMany:commit": {
+        "count": 200,
+        "meanMs": 9.236,
+        "minMs": 2.942,
+        "p01Ms": 3.017,
+        "p50Ms": 5.562,
+        "p95Ms": 20.108,
+        "p99Ms": 62.944,
+        "maxMs": 105.603
+      },
+      "phase:DispatchMany:driverLane": {
+        "count": 200,
+        "meanMs": 0.003,
+        "minMs": 0.001,
+        "p01Ms": 0.001,
+        "p50Ms": 0.002,
+        "p95Ms": 0.006,
+        "p99Ms": 0.006,
+        "maxMs": 0.013
+      },
+      "phase:DispatchMany:statements": {
+        "count": 200,
+        "meanMs": 27.624,
+        "minMs": 18.256,
+        "p01Ms": 18.335,
+        "p50Ms": 25.032,
+        "p95Ms": 39.68,
+        "p99Ms": 72.477,
+        "maxMs": 132.135
+      },
+      "phase:DispatchMany:writerQueue": {
+        "count": 200,
+        "meanMs": 0.368,
+        "minMs": 0.063,
+        "p01Ms": 0.071,
+        "p50Ms": 0.203,
+        "p95Ms": 0.924,
+        "p99Ms": 3.634,
+        "maxMs": 9.912
+      },
+      "phase:RegisterApplication:beginImmediate": {
+        "count": 1,
+        "meanMs": 0.042,
+        "minMs": 0.042,
+        "p01Ms": 0.042,
+        "p50Ms": 0.042,
+        "p95Ms": 0.042,
+        "p99Ms": 0.042,
+        "maxMs": 0.042
+      },
+      "phase:RegisterApplication:commit": {
+        "count": 1,
+        "meanMs": 5.728,
+        "minMs": 5.728,
+        "p01Ms": 5.728,
+        "p50Ms": 5.728,
+        "p95Ms": 5.728,
+        "p99Ms": 5.728,
+        "maxMs": 5.728
+      },
+      "phase:RegisterApplication:driverLane": {
+        "count": 1,
+        "meanMs": 0.19,
+        "minMs": 0.19,
+        "p01Ms": 0.19,
+        "p50Ms": 0.19,
+        "p95Ms": 0.19,
+        "p99Ms": 0.19,
+        "maxMs": 0.19
+      },
+      "phase:RegisterApplication:statements": {
+        "count": 1,
+        "meanMs": 16.333,
+        "minMs": 16.333,
+        "p01Ms": 16.333,
+        "p50Ms": 16.333,
+        "p95Ms": 16.333,
+        "p99Ms": 16.333,
+        "maxMs": 16.333
+      },
+      "phase:RegisterApplication:writerQueue": {
+        "count": 1,
+        "meanMs": 3.271,
+        "minMs": 3.271,
+        "p01Ms": 3.271,
+        "p50Ms": 3.271,
+        "p95Ms": 3.271,
+        "p99Ms": 3.271,
+        "maxMs": 3.271
+      },
+      "phase:RegisterQueue:beginImmediate": {
+        "count": 1,
+        "meanMs": 0.034,
+        "minMs": 0.034,
+        "p01Ms": 0.034,
+        "p50Ms": 0.034,
+        "p95Ms": 0.034,
+        "p99Ms": 0.034,
+        "maxMs": 0.034
+      },
+      "phase:RegisterQueue:commit": {
+        "count": 1,
+        "meanMs": 2.764,
+        "minMs": 2.764,
+        "p01Ms": 2.764,
+        "p50Ms": 2.764,
+        "p95Ms": 2.764,
+        "p99Ms": 2.764,
+        "maxMs": 2.764
+      },
+      "phase:RegisterQueue:driverLane": {
+        "count": 1,
+        "meanMs": 0.004,
+        "minMs": 0.004,
+        "p01Ms": 0.004,
+        "p50Ms": 0.004,
+        "p95Ms": 0.004,
+        "p99Ms": 0.004,
+        "maxMs": 0.004
+      },
+      "phase:RegisterQueue:statements": {
+        "count": 1,
+        "meanMs": 10.088,
+        "minMs": 10.088,
+        "p01Ms": 10.088,
+        "p50Ms": 10.088,
+        "p95Ms": 10.088,
+        "p99Ms": 10.088,
+        "maxMs": 10.088
+      },
+      "phase:RegisterQueue:writerQueue": {
+        "count": 1,
+        "meanMs": 0.316,
+        "minMs": 0.316,
+        "p01Ms": 0.316,
+        "p50Ms": 0.316,
+        "p95Ms": 0.316,
+        "p99Ms": 0.316,
+        "maxMs": 0.316
+      }
+    },
+    "traceCounters": {},
+    "writerQueueMs": {
+      "DispatchMany": {
+        "count": 200,
+        "p99": 3.634,
+        "max": 9.912
+      },
+      "RegisterApplication": {
+        "count": 1,
+        "p99": 3.271,
+        "max": 3.271
+      },
+      "RegisterQueue": {
+        "count": 1,
+        "p99": 0.316,
+        "max": 0.316
+      }
+    },
+    "gc": {
+      "pauseTotalMs": 295.8,
+      "pauseTimePercentage": 3.11,
+      "gen0": 123,
+      "gen1": 119,
+      "gen2": 5,
+      "allocatedMB": 955.1,
+      "serverGC": true
+    },
+    "diagnostics": [],
+    "settings": {
+      "store": "sqlite",
+      "mode": "bulk",
+      "payloadBytes": 1024,
+      "callers": 1,
+      "workerSlots": 16,
+      "producerSlots": 2,
+      "bulkChunk": 100,
+      "pgGroup": false,
+      "bufferedFinish": false,
+      "claimAhead": null,
+      "claimsInFlight": null,
+      "usage": true,
+      "jobMs": 0,
+      "serverGC": true,
+      "cores": 8
+    },
+    "outcome": {
+      "pending": 20000,
+      "reserved": 0,
+      "running": 0,
+      "retrying": 0,
+      "succeeded": 0,
+      "failed": 0,
+      "cancelled": 0,
+      "now:pending": 20000,
+      "now:scheduled": 0,
+      "now:reserved": 0,
+      "now:running": 0
+    }
+  },
+  "outcome": {
+    "accepted": 20000,
+    "succeeded": 0,
+    "failed": 0,
+    "unfinished": 20000
+  },
+  "resources": {
+    "app": {
+      "seconds": 9.89,
+      "cpuSeconds": 11.18,
+      "cpuAvgPct": 113.1,
+      "cpuPeakPct": 171.4,
+      "memPeakMB": 105.0,
+      "memAvgMB": 86.2,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 325066752
+    },
+    "store": null
+  },
+  "derived": {
+    "jobs": 20000,
+    "cpuMsPerJob": 0.559,
+    "wireBytesPerJob": null,
+    "storeWriteBytesPerJob": 16253,
+    "timed": {
+      "seconds": 8.957,
+      "appCpuSeconds": 10.3,
+      "jobs": 20000,
+      "cpuMsPerJob": 0.515,
+      "counters": {}
+    }
+  },
+  "phases": {
+    "timed-start": {
+      "harnessMs": 1795573709556,
+      "counters": {}
+    },
+    "timed-end": {
+      "harnessMs": 1795573718514,
+      "counters": {}
+    }
+  }
+}

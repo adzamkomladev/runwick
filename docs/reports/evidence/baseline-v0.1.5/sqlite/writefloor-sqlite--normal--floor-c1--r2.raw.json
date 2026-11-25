@@ -1,0 +1,20 @@
+{
+  "system": "writefloor-sqlite",
+  "mode": "writefloor",
+  "jobs": 2000,
+  "writesPerSec": 429.8,
+  "meanMicrosPerWrite": 2326.9,
+  "latencyMicros": {
+    "p50": 1595.5,
+    "p95": 5594.6,
+    "p99": 13574.4
+  },
+  "settings": {
+    "store": "sqlite",
+    "payloadBytes": 1024,
+    "callers": 1,
+    "n": 2000,
+    "journal_mode": "wal",
+    "synchronous": "FULL"
+  }
+}

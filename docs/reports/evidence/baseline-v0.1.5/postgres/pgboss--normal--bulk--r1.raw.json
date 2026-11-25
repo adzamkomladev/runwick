@@ -1,0 +1,27 @@
+{
+  "system": "pg-boss 12.38.0",
+  "mode": "bulk",
+  "concurrency": 1,
+  "batchSize": 1,
+  "burstWhenBatchFull": false,
+  "payloadBytes": 1018,
+  "settings": {
+    "store": "postgres",
+    "mode": "bulk",
+    "payloadBytes": 1018,
+    "callers": 1,
+    "workerSlots": 1,
+    "fetchBatch": 1,
+    "burst": false,
+    "bulkChunk": 1000,
+    "seedChunk": 5000,
+    "pollingIntervalSeconds": 0.5,
+    "poolMax": 5,
+    "cores": 8
+  },
+  "jobs": 20000,
+  "insertsPerSec": 15314.408645756754,
+  "outcome": {
+    "created": 20000
+  }
+}

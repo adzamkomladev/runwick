@@ -1,0 +1,6 @@
+/root/work/Spindle/eng/bench-compare/river/bench-river -mode enqueue -n 10000 -workers 16 -calls 16 -out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/river--normal--enqueue-c16--r4.raw.json
+
+--- stderr ---
+failed to connect to `user=postgres database=postgres`:
+	127.0.0.1:55499 (127.0.0.1): tls error: read tcp 127.0.0.1:60278->127.0.0.1:55499: read: connection reset by peer
+	127.0.0.1:55499 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:60286->127.0.0.1:55499: read: connection reset by peer

@@ -1,0 +1,64 @@
+{
+  "host": {
+    "cpu": "AMD EPYC Processor (with IBPB)",
+    "cores": 8,
+    "memMB": 24031,
+    "kernel": "6.8.0-149-generic",
+    "commit": "fcda4d5",
+    "cpuIters": 50000,
+    "runner": null,
+    "when": "2026-11-25T05:33:48Z"
+  },
+  "systems": [
+    "writefloor-pg",
+    "runwick-pg",
+    "river",
+    "pgboss",
+    "wolverine-pg",
+    "bullmq-dotnet-pg"
+  ],
+  "workload": "normal",
+  "rounds": 5,
+  "scale": 1,
+  "freshStores": true,
+  "runwick": {
+    "describe": "v0.1.5-13-gfcda4d5",
+    "commit": "fcda4d5408dd4a4c4ceb50e0773e0e4b745225e2",
+    "srcDirty": false,
+    "srcIdenticalToV0_1_5": true
+  },
+  "libraries": {
+    "writefloor-pg": "writefloor-postgres",
+    "runwick-pg": "runwick v0.1.5-13-gfcda4d5",
+    "river": "river v0.50.0",
+    "pgboss": "pg-boss 12.38.0",
+    "wolverine-pg": "wolverine 6.65.1 (postgres)",
+    "bullmq-dotnet-pg": "bullmq-dotnet 1.3.7 (postgres)"
+  },
+  "stores": {
+    "bench-pg": {
+      "container": "bench-pg",
+      "image": "postgres:18",
+      "imageId": "sha256:b9f6b8ff03b62f3cfd9d9ba3fe56226a9991c79d3fb46fd46536263bf02be553",
+      "cpus": "0",
+      "repoDigest": "postgres@sha256:b9f6b8ff03b62f3cfd9d9ba3fe56226a9991c79d3fb46fd46536263bf02be553",
+      "settings": {
+        "server_version": "18.7 (Debian 18.7-1.pgdg13+2)",
+        "fsync": "on",
+        "synchronous_commit": "on",
+        "full_page_writes": "on",
+        "wal_sync_method": "fdatasync",
+        "wal_level": "replica",
+        "shared_buffers": "128MB",
+        "max_wal_size": "1GB",
+        "checkpoint_timeout": "5min"
+      }
+    }
+  },
+  "cpuQuota": "",
+  "outDirMount": "/dev/sda1 ext4",
+  "gc": {
+    "DOTNET_gcServer": "1"
+  },
+  "orderPolicy": "reversed on even rounds"
+}

@@ -1,0 +1,337 @@
+{
+  "system": "runwick-sqlite",
+  "store": "sqlite",
+  "mode": "drain",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "insertSeconds": 9.007,
+  "insertCalls": 8,
+  "readyBeforeStart": {
+    "pending": 20000,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 20000,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  },
+  "progress": [
+    [
+      1,
+      279
+    ],
+    [
+      2,
+      681
+    ],
+    [
+      3,
+      1037
+    ],
+    [
+      4,
+      1429
+    ],
+    [
+      5,
+      1869
+    ],
+    [
+      6,
+      2284
+    ],
+    [
+      7,
+      2674
+    ],
+    [
+      8,
+      3154
+    ],
+    [
+      9,
+      3587
+    ],
+    [
+      10,
+      4000
+    ],
+    [
+      11,
+      4355
+    ],
+    [
+      12,
+      4757
+    ],
+    [
+      13,
+      5160
+    ],
+    [
+      14,
+      5500
+    ],
+    [
+      15,
+      5925
+    ],
+    [
+      16,
+      6360
+    ],
+    [
+      17,
+      6712
+    ],
+    [
+      18,
+      7108
+    ],
+    [
+      19,
+      7428
+    ],
+    [
+      20,
+      7767
+    ],
+    [
+      21,
+      8023
+    ],
+    [
+      22,
+      8380
+    ],
+    [
+      23,
+      8778
+    ],
+    [
+      24,
+      9163
+    ],
+    [
+      25,
+      9455
+    ],
+    [
+      26,
+      9795
+    ],
+    [
+      27,
+      10116
+    ],
+    [
+      28,
+      10469
+    ],
+    [
+      29,
+      10741
+    ],
+    [
+      30,
+      11050
+    ],
+    [
+      31,
+      11338
+    ],
+    [
+      32,
+      11596
+    ],
+    [
+      33,
+      11941
+    ],
+    [
+      34,
+      12329
+    ],
+    [
+      35,
+      12689
+    ],
+    [
+      36,
+      13037
+    ],
+    [
+      37,
+      13390
+    ],
+    [
+      38,
+      13807
+    ],
+    [
+      39,
+      14142
+    ],
+    [
+      40,
+      14513
+    ],
+    [
+      41,
+      14946
+    ],
+    [
+      42,
+      15283
+    ],
+    [
+      43,
+      15682
+    ],
+    [
+      44,
+      16116
+    ],
+    [
+      45,
+      16469
+    ],
+    [
+      46,
+      16896
+    ],
+    [
+      47,
+      17270
+    ],
+    [
+      48,
+      17688
+    ],
+    [
+      49,
+      18104
+    ],
+    [
+      50,
+      18473
+    ],
+    [
+      51,
+      18802
+    ],
+    [
+      52,
+      19018
+    ],
+    [
+      53,
+      19134
+    ],
+    [
+      54,
+      19201
+    ],
+    [
+      55,
+      19330
+    ],
+    [
+      56,
+      19461
+    ],
+    [
+      57,
+      19654
+    ],
+    [
+      58,
+      19767
+    ],
+    [
+      59,
+      19975
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 59.108,
+    "firstClaimSeconds": 59.108,
+    "firstClaimJobsPerSec": 338.4,
+    "workerStartJobsPerSec": 338.4
+  },
+  "jobs": 20000,
+  "accepted": 20000,
+  "failedDispatch": 0,
+  "finished": 20000,
+  "drained": true,
+  "drainWriteCommits": 3856,
+  "startToFirstClaimMs": 98.1,
+  "drainSeconds": 59.108,
+  "completionsPerSec": 338.4,
+  "finishReplayed": 0,
+  "batchClaims": 2409,
+  "reservesSent": 2410,
+  "claimsInFlightHighWater": 0,
+  "invocations": 20000,
+  "finishesSent": 20000,
+  "finishManyCalls": 1317,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "sqlite": {
+    "profile": "sqlite.wal-synchronous-full",
+    "engine": {
+      "sqlite_version": "3.53.3",
+      "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+      "journal_mode": "wal",
+      "synchronous": "full",
+      "topology": "local"
+    },
+    "writeCommits": 4058,
+    "busyConflicts": 0,
+    "writerConnectionsOpened": 1,
+    "writerStatements": null
+  },
+  "peakWorkingSetBytes": 154935296,
+  "gc": {
+    "pauseTotalMs": 1472.1,
+    "pauseTimePercentage": 2.14,
+    "gen0": 269,
+    "gen1": 103,
+    "gen2": 12,
+    "allocatedMB": 3598.9,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "sqlite",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 8,
+    "workerSlots": 16,
+    "producerSlots": 8,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "error": "ManagementQueryBudgetException: The query did not finish within its budget."
+  }
+}

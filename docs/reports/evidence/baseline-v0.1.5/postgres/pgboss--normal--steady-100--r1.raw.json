@@ -1,0 +1,35 @@
+{
+  "system": "pg-boss 12.38.0",
+  "mode": "steady",
+  "concurrency": 1,
+  "batchSize": 100,
+  "burstWhenBatchFull": true,
+  "payloadBytes": 1018,
+  "settings": {
+    "store": "postgres",
+    "mode": "steady",
+    "payloadBytes": 1018,
+    "callers": 16,
+    "workerSlots": 1,
+    "fetchBatch": 100,
+    "burst": true,
+    "bulkChunk": 1000,
+    "seedChunk": 5000,
+    "pollingIntervalSeconds": 0.5,
+    "poolMax": 5,
+    "cores": 8
+  },
+  "offeredPerSec": 100,
+  "inserted": 2913,
+  "completed": 2913,
+  "completionsPerSec": 95.56464737263484,
+  "latencyMs": {
+    "p50": 289,
+    "p95": 539,
+    "p99": 700,
+    "max": 902
+  },
+  "outcome": {
+    "completed": 2913
+  }
+}

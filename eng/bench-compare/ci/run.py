@@ -14,7 +14,7 @@ HERE = os.path.dirname(os.path.abspath(__file__)); BC = os.path.dirname(HERE); R
 ap = argparse.ArgumentParser()
 ap.add_argument("--system", default=""); ap.add_argument("--systems", default="", help="comma list, run one after another on this host"); ap.add_argument("--fresh-stores", action="store_true", help="recreate bench-pg / bench-redis before each library (pinned images and settings)"); ap.add_argument("--store-cpus", default="", help="docker --cpus for the store containers"); ap.add_argument("--trace-round", action="store_true", help="one extra --trace run of each Runwick test, kept out of the timing rounds"); ap.add_argument("--workload", choices=["normal", "cpu"], required=True)
 ap.add_argument("--out", required=True); ap.add_argument("--rounds", type=int, default=3); ap.add_argument("--scale", type=int, default=1, help="divide job counts and seconds (smoke tests)")
-ap.add_argument("--tests", default="", help="comma list; default all for the workload")
+ap.add_argument("--first-round", type=int, default=1, help="number the rounds from here (re-run one round of some cells without touching the others)"); ap.add_argument("--tests", default="", help="comma list; default all for the workload")
 a = ap.parse_args()
 SYSTEMS = [x for x in (a.systems or a.system).split(",") if x]
 if not SYSTEMS: ap.error("--system or --systems is required")
@@ -376,19 +376,19 @@ def main():
     libs = {}; failures = incomplete = 0
     env = dict(os.environ, BENCH_CPU_ITERS=str(CPU_ITERS if a.workload == "cpu" else 0), DOTNET_NOLOGO="1", DOTNET_gcServer="1")
     tests = a.tests.split(",") if a.tests else list(TESTS[a.workload])
-    for rnd in range(1, a.rounds + 1):
+    for rnd in range(a.first_round, a.first_round + a.rounds):
         order = SYSTEMS if rnd % 2 else SYSTEMS[::-1]
         for system in order:
             tag = f"{system}--{a.workload}"
             kind = STORE[system]
             if a.fresh_stores and kind: reset_store(kind)
             store = Container(kind); pipe = Pipe(kind); atexit.register(pipe.close)
-            if rnd == 1 and not os.path.exists(MANIFEST):
+            if not os.path.exists(MANIFEST):
                 json.dump(manifest({}), open(MANIFEST, "w"), indent=2)
             json.dump(host(), open(f"{a.out}/{tag}--host.json", "w"), indent=2)
             for test in tests:
                 if test not in TESTS[a.workload] or (TESTS[a.workload][test][0] == "writefloor") != system.startswith("writefloor-"): continue
-                for trace in ([False, True] if (a.trace_round and rnd == a.rounds and system.startswith("runwick")) else [False]):
+                for trace in ([False, True] if (a.trace_round and rnd == a.first_round + a.rounds - 1 and system.startswith("runwick")) else [False]):
                     c, cwd = cmd(system, test, trace)
                     name = f"{tag}--{test}--" + ("trace" if trace else f"r{rnd}"); outf = os.path.abspath(f"{a.out}/{name}.raw.json")
                     if os.path.exists(outf): os.remove(outf)

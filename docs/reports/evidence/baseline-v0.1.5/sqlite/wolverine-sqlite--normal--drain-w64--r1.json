@@ -1,0 +1,237 @@
+{
+  "system": "wolverine-sqlite",
+  "workload": "normal",
+  "test": "drain-w64",
+  "round": 1,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "wolverine 6.65.1 (sqlite)",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll",
+    "--transport",
+    "sqlite",
+    "--redis",
+    "127.0.0.1:56392",
+    "--mode",
+    "drain",
+    "--n",
+    "20000",
+    "--workers",
+    "64",
+    "--max-seconds",
+    "600",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/sqlite/wolverine-sqlite--normal--drain-w64--r1.raw.json"
+  ],
+  "result": {
+    "system": "wolverine 6.65.1 (sqlite)",
+    "mode": "drain",
+    "workers": 64,
+    "settings": {
+      "store": "sqlite",
+      "mode": "drain",
+      "payloadBytes": 1024,
+      "callers": 1,
+      "workerSlots": 64,
+      "seedCallers": 16,
+      "sendInline": false,
+      "durabilityMode": "Solo",
+      "serverGC": true,
+      "cores": 8
+    },
+    "readyBeforeStart": {
+      "wolverine_queue_bench": 20000,
+      "wolverine_queue_bench_scheduled": 0
+    },
+    "progress": [
+      [
+        1.2,
+        0
+      ],
+      [
+        2.7,
+        0
+      ],
+      [
+        3.7,
+        18
+      ],
+      [
+        4,
+        1520
+      ],
+      [
+        5,
+        1824
+      ],
+      [
+        6.2,
+        1824
+      ],
+      [
+        7,
+        2860
+      ],
+      [
+        8,
+        3780
+      ],
+      [
+        9,
+        3844
+      ],
+      [
+        10,
+        3844
+      ],
+      [
+        11,
+        5947
+      ],
+      [
+        12,
+        6080
+      ],
+      [
+        13,
+        6145
+      ],
+      [
+        14,
+        6145
+      ],
+      [
+        15,
+        8177
+      ],
+      [
+        16,
+        8760
+      ],
+      [
+        17,
+        8824
+      ],
+      [
+        18,
+        8824
+      ],
+      [
+        19,
+        11427
+      ],
+      [
+        20,
+        12240
+      ],
+      [
+        21,
+        12386
+      ],
+      [
+        22,
+        12553
+      ],
+      [
+        23,
+        14868
+      ],
+      [
+        24,
+        15700
+      ],
+      [
+        25,
+        15840
+      ],
+      [
+        26,
+        16124
+      ],
+      [
+        27,
+        18840
+      ],
+      [
+        28,
+        18840
+      ],
+      [
+        29,
+        18960
+      ]
+    ],
+    "jobs": 20000,
+    "finished": 20000,
+    "drainSeconds": 29.704,
+    "completionsPerSec": 673.3,
+    "startupSeconds": 3.69,
+    "completionsPerSecExcludingStartup": 768.7,
+    "clocks": {
+      "workerStartSeconds": 29.704,
+      "workerStartJobsPerSec": 673.3,
+      "firstClaimSeconds": 26.017,
+      "firstClaimJobsPerSec": 768.7,
+      "handlerReturns": 20000
+    },
+    "outcome": {
+      "wolverine_queue_bench": 0,
+      "wolverine_queue_bench_scheduled": 0
+    }
+  },
+  "outcome": {
+    "accepted": 20000,
+    "succeeded": 20000,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 66.53,
+      "cpuSeconds": 71.06,
+      "cpuAvgPct": 106.8,
+      "cpuPeakPct": 277.8,
+      "memPeakMB": 390.0,
+      "memAvgMB": 215.6,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 1215205376
+    },
+    "store": null
+  },
+  "derived": {
+    "jobs": 20000,
+    "cpuMsPerJob": 3.553,
+    "wireBytesPerJob": null,
+    "storeWriteBytesPerJob": 60760,
+    "timed": {
+      "seconds": 29.682,
+      "appCpuSeconds": 28.23,
+      "jobs": 20000,
+      "cpuMsPerJob": 1.412,
+      "counters": {}
+    },
+    "confirmedPerSec_workerStart": 673.3,
+    "confirmedPerSec_firstClaim": 768.7
+  },
+  "phases": {
+    "seed-start": {
+      "harnessMs": 1795566295040,
+      "counters": {}
+    },
+    "seed-end": {
+      "harnessMs": 1795566331247,
+      "counters": {}
+    },
+    "timed-start": {
+      "harnessMs": 1795566331255,
+      "counters": {}
+    },
+    "timed-end": {
+      "harnessMs": 1795566360960,
+      "counters": {}
+    }
+  }
+}

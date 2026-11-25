@@ -1,0 +1,887 @@
+{
+  "system": "runwick-pg",
+  "workload": "normal",
+  "test": "drain-w16",
+  "round": 5,
+  "trace": true,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "runwick v0.1.5-13-gfcda4d5",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll",
+    "bench",
+    "--store",
+    "postgres",
+    "--mode",
+    "drain",
+    "--n",
+    "20000",
+    "--workers",
+    "16",
+    "--calls",
+    "8",
+    "--max-seconds",
+    "600",
+    "--trace",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/runwick-pg--normal--drain-w16--trace.raw.json"
+  ],
+  "result": {
+    "system": "runwick",
+    "store": "postgres",
+    "mode": "drain",
+    "workers": 16,
+    "payloadBytes": 1024,
+    "bulkChunk": 100,
+    "insertSeconds": 7.091,
+    "insertCalls": 8,
+    "readyBeforeStart": {
+      "pending": 20000,
+      "reserved": 0,
+      "running": 0,
+      "retrying": 0,
+      "succeeded": 0,
+      "failed": 0,
+      "cancelled": 0,
+      "now:pending": 20000,
+      "now:scheduled": 0,
+      "now:reserved": 0,
+      "now:running": 0
+    },
+    "progress": [
+      [
+        1.2,
+        228
+      ],
+      [
+        2,
+        468
+      ],
+      [
+        3,
+        869
+      ],
+      [
+        4,
+        1130
+      ],
+      [
+        5,
+        1481
+      ],
+      [
+        6,
+        1896
+      ],
+      [
+        7,
+        2233
+      ],
+      [
+        8,
+        2576
+      ],
+      [
+        9,
+        3052
+      ],
+      [
+        10,
+        3359
+      ],
+      [
+        11,
+        3723
+      ],
+      [
+        12,
+        4109
+      ],
+      [
+        13,
+        4508
+      ],
+      [
+        14,
+        4891
+      ],
+      [
+        15,
+        5234
+      ],
+      [
+        16,
+        5573
+      ],
+      [
+        17,
+        5864
+      ],
+      [
+        18,
+        6251
+      ],
+      [
+        19,
+        6640
+      ],
+      [
+        20,
+        6896
+      ],
+      [
+        21,
+        7299
+      ],
+      [
+        22,
+        7717
+      ],
+      [
+        23,
+        8150
+      ],
+      [
+        24,
+        8581
+      ],
+      [
+        25,
+        8853
+      ],
+      [
+        26,
+        9060
+      ],
+      [
+        27,
+        9443
+      ],
+      [
+        28,
+        9793
+      ],
+      [
+        29,
+        10209
+      ],
+      [
+        30,
+        10516
+      ],
+      [
+        31,
+        10916
+      ],
+      [
+        32,
+        11339
+      ],
+      [
+        33,
+        11773
+      ],
+      [
+        34,
+        12104
+      ],
+      [
+        35,
+        12410
+      ],
+      [
+        36,
+        12841
+      ],
+      [
+        37,
+        13116
+      ],
+      [
+        38,
+        13537
+      ],
+      [
+        39,
+        13889
+      ],
+      [
+        40,
+        14228
+      ],
+      [
+        41,
+        14726
+      ],
+      [
+        42,
+        15212
+      ],
+      [
+        43,
+        15545
+      ],
+      [
+        44,
+        15879
+      ],
+      [
+        45,
+        16245
+      ],
+      [
+        46,
+        16478
+      ],
+      [
+        47,
+        16704
+      ],
+      [
+        48,
+        16978
+      ],
+      [
+        49,
+        17320
+      ],
+      [
+        50,
+        17610
+      ],
+      [
+        51,
+        17987
+      ],
+      [
+        52,
+        18179
+      ],
+      [
+        53,
+        18533
+      ],
+      [
+        54,
+        18868
+      ],
+      [
+        55,
+        19348
+      ],
+      [
+        56,
+        19733
+      ]
+    ],
+    "clocks": {
+      "workerStartSeconds": 56.565,
+      "firstClaimSeconds": 56.567,
+      "firstClaimJobsPerSec": 353.6,
+      "workerStartJobsPerSec": 353.6
+    },
+    "drainManagedAllocatedBytes": 1240858840,
+    "jobs": 20000,
+    "accepted": 20000,
+    "failedDispatch": 0,
+    "finished": 20000,
+    "drained": true,
+    "drainWriteCommits": null,
+    "startToFirstClaimMs": 112,
+    "drainSeconds": 56.567,
+    "completionsPerSec": 353.6,
+    "finishReplayed": 0,
+    "batchClaims": 2365,
+    "reservesSent": 2366,
+    "claimsInFlightHighWater": 0,
+    "invocations": 20000,
+    "finishesSent": 20000,
+    "finishManyCalls": 1248,
+    "combinedCalls": 0,
+    "combinedClaimed": 0,
+    "combinedFallbacks": 0,
+    "inlineDeclined": {
+      "busy": 0,
+      "closed": 0,
+      "staleHint": 0,
+      "laneShape": 0
+    },
+    "peakWorkingSetBytes": 208134144,
+    "trace": {
+      "phase:Admission:engineLane": {
+        "count": 2434,
+        "meanMs": 0.015,
+        "minMs": 0,
+        "p01Ms": 0,
+        "p50Ms": 0.001,
+        "p95Ms": 0.002,
+        "p99Ms": 0.006,
+        "maxMs": 29.197
+      },
+      "phase:CleanupBatch:commit": {
+        "count": 14,
+        "meanMs": 2.724,
+        "minMs": 0.849,
+        "p01Ms": 0.849,
+        "p50Ms": 2.48,
+        "p95Ms": 7.94,
+        "p99Ms": 7.94,
+        "maxMs": 7.94
+      },
+      "phase:CleanupBatch:driverLane": {
+        "count": 14,
+        "meanMs": 0.001,
+        "minMs": 0,
+        "p01Ms": 0,
+        "p50Ms": 0.001,
+        "p95Ms": 0.001,
+        "p99Ms": 0.001,
+        "maxMs": 0.001
+      },
+      "phase:CleanupBatch:open": {
+        "count": 14,
+        "meanMs": 0.02,
+        "minMs": 0.013,
+        "p01Ms": 0.013,
+        "p50Ms": 0.017,
+        "p95Ms": 0.044,
+        "p99Ms": 0.044,
+        "maxMs": 0.044
+      },
+      "phase:CleanupBatch:statements": {
+        "count": 14,
+        "meanMs": 29.237,
+        "minMs": 8.362,
+        "p01Ms": 8.362,
+        "p50Ms": 23.541,
+        "p95Ms": 104.664,
+        "p99Ms": 104.664,
+        "maxMs": 104.664
+      },
+      "phase:DispatchMany:commit": {
+        "count": 200,
+        "meanMs": 24.062,
+        "minMs": 3.166,
+        "p01Ms": 3.805,
+        "p50Ms": 15.023,
+        "p95Ms": 71.594,
+        "p99Ms": 178.61,
+        "maxMs": 183.642
+      },
+      "phase:DispatchMany:driverLane": {
+        "count": 200,
+        "meanMs": 0.003,
+        "minMs": 0.001,
+        "p01Ms": 0.001,
+        "p50Ms": 0.003,
+        "p95Ms": 0.005,
+        "p99Ms": 0.008,
+        "maxMs": 0.024
+      },
+      "phase:DispatchMany:function": {
+        "count": 200,
+        "meanMs": 204.664,
+        "minMs": 31.43,
+        "p01Ms": 32.258,
+        "p50Ms": 167.485,
+        "p95Ms": 536.921,
+        "p99Ms": 961.025,
+        "maxMs": 1026.971
+      },
+      "phase:DispatchMany:open": {
+        "count": 200,
+        "meanMs": 0.666,
+        "minMs": 0.01,
+        "p01Ms": 0.011,
+        "p50Ms": 0.03,
+        "p95Ms": 0.12,
+        "p99Ms": 18.833,
+        "maxMs": 23.526
+      },
+      "phase:Finish:commit": {
+        "count": 81,
+        "meanMs": 14.286,
+        "minMs": 1.474,
+        "p01Ms": 1.474,
+        "p50Ms": 6.11,
+        "p95Ms": 51.081,
+        "p99Ms": 168.463,
+        "maxMs": 168.463
+      },
+      "phase:Finish:driverLane": {
+        "count": 81,
+        "meanMs": 0.001,
+        "minMs": 0,
+        "p01Ms": 0,
+        "p50Ms": 0.001,
+        "p95Ms": 0.001,
+        "p99Ms": 0.003,
+        "maxMs": 0.003
+      },
+      "phase:Finish:engineLane": {
+        "count": 1329,
+        "meanMs": 0.003,
+        "minMs": 0,
+        "p01Ms": 0,
+        "p50Ms": 0,
+        "p95Ms": 0.002,
+        "p99Ms": 0.008,
+        "maxMs": 0.815
+      },
+      "phase:Finish:function": {
+        "count": 81,
+        "meanMs": 17.992,
+        "minMs": 5.477,
+        "p01Ms": 5.477,
+        "p50Ms": 12.536,
+        "p95Ms": 42.477,
+        "p99Ms": 149.849,
+        "maxMs": 149.849
+      },
+      "phase:Finish:open": {
+        "count": 81,
+        "meanMs": 0.057,
+        "minMs": 0.003,
+        "p01Ms": 0.003,
+        "p50Ms": 0.006,
+        "p95Ms": 0.013,
+        "p99Ms": 3.534,
+        "maxMs": 3.534
+      },
+      "phase:FinishMany:commit": {
+        "count": 1248,
+        "meanMs": 11.297,
+        "minMs": 1.83,
+        "p01Ms": 2.66,
+        "p50Ms": 6.83,
+        "p95Ms": 34.274,
+        "p99Ms": 74.113,
+        "maxMs": 220.832
+      },
+      "phase:FinishMany:driverLane": {
+        "count": 1248,
+        "meanMs": 0.001,
+        "minMs": 0,
+        "p01Ms": 0,
+        "p50Ms": 0,
+        "p95Ms": 0.001,
+        "p99Ms": 0.003,
+        "maxMs": 0.046
+      },
+      "phase:FinishMany:function": {
+        "count": 1248,
+        "meanMs": 25.478,
+        "minMs": 7.065,
+        "p01Ms": 9.64,
+        "p50Ms": 19.347,
+        "p95Ms": 58.296,
+        "p99Ms": 111.712,
+        "maxMs": 255.161
+      },
+      "phase:FinishMany:open": {
+        "count": 1248,
+        "meanMs": 0.107,
+        "minMs": 0.002,
+        "p01Ms": 0.003,
+        "p50Ms": 0.006,
+        "p95Ms": 0.021,
+        "p99Ms": 0.129,
+        "maxMs": 46.816
+      },
+      "phase:ManagementRead:driverLane": {
+        "count": 1,
+        "meanMs": 0.003,
+        "minMs": 0.003,
+        "p01Ms": 0.003,
+        "p50Ms": 0.003,
+        "p95Ms": 0.003,
+        "p99Ms": 0.003,
+        "maxMs": 0.003
+      },
+      "phase:ManagementRead:open": {
+        "count": 1,
+        "meanMs": 0.028,
+        "minMs": 0.028,
+        "p01Ms": 0.028,
+        "p50Ms": 0.028,
+        "p95Ms": 0.028,
+        "p99Ms": 0.028,
+        "maxMs": 0.028
+      },
+      "phase:ManagementRead:statements": {
+        "count": 1,
+        "meanMs": 163.262,
+        "minMs": 163.262,
+        "p01Ms": 163.262,
+        "p50Ms": 163.262,
+        "p95Ms": 163.262,
+        "p99Ms": 163.262,
+        "maxMs": 163.262
+      },
+      "phase:PublishPresence:commit": {
+        "count": 13,
+        "meanMs": 3.616,
+        "minMs": 1.166,
+        "p01Ms": 1.166,
+        "p50Ms": 2.294,
+        "p95Ms": 12.101,
+        "p99Ms": 12.101,
+        "maxMs": 12.101
+      },
+      "phase:PublishPresence:driverLane": {
+        "count": 13,
+        "meanMs": 0.001,
+        "minMs": 0,
+        "p01Ms": 0,
+        "p50Ms": 0,
+        "p95Ms": 0.007,
+        "p99Ms": 0.007,
+        "maxMs": 0.007
+      },
+      "phase:PublishPresence:function": {
+        "count": 13,
+        "meanMs": 6.903,
+        "minMs": 2.631,
+        "p01Ms": 2.631,
+        "p50Ms": 5.911,
+        "p95Ms": 11.434,
+        "p99Ms": 11.434,
+        "maxMs": 11.434
+      },
+      "phase:PublishPresence:open": {
+        "count": 13,
+        "meanMs": 0.009,
+        "minMs": 0.004,
+        "p01Ms": 0.004,
+        "p50Ms": 0.005,
+        "p95Ms": 0.029,
+        "p99Ms": 0.029,
+        "maxMs": 0.029
+      },
+      "phase:RegisterApplication:commit": {
+        "count": 1,
+        "meanMs": 7.737,
+        "minMs": 7.737,
+        "p01Ms": 7.737,
+        "p50Ms": 7.737,
+        "p95Ms": 7.737,
+        "p99Ms": 7.737,
+        "maxMs": 7.737
+      },
+      "phase:RegisterApplication:driverLane": {
+        "count": 1,
+        "meanMs": 0.133,
+        "minMs": 0.133,
+        "p01Ms": 0.133,
+        "p50Ms": 0.133,
+        "p95Ms": 0.133,
+        "p99Ms": 0.133,
+        "maxMs": 0.133
+      },
+      "phase:RegisterApplication:open": {
+        "count": 1,
+        "meanMs": 0.32,
+        "minMs": 0.32,
+        "p01Ms": 0.32,
+        "p50Ms": 0.32,
+        "p95Ms": 0.32,
+        "p99Ms": 0.32,
+        "maxMs": 0.32
+      },
+      "phase:RegisterApplication:statements": {
+        "count": 1,
+        "meanMs": 84.214,
+        "minMs": 84.214,
+        "p01Ms": 84.214,
+        "p50Ms": 84.214,
+        "p95Ms": 84.214,
+        "p99Ms": 84.214,
+        "maxMs": 84.214
+      },
+      "phase:RegisterQueue:commit": {
+        "count": 1,
+        "meanMs": 3.366,
+        "minMs": 3.366,
+        "p01Ms": 3.366,
+        "p50Ms": 3.366,
+        "p95Ms": 3.366,
+        "p99Ms": 3.366,
+        "maxMs": 3.366
+      },
+      "phase:RegisterQueue:driverLane": {
+        "count": 1,
+        "meanMs": 0.004,
+        "minMs": 0.004,
+        "p01Ms": 0.004,
+        "p50Ms": 0.004,
+        "p95Ms": 0.004,
+        "p99Ms": 0.004,
+        "maxMs": 0.004
+      },
+      "phase:RegisterQueue:open": {
+        "count": 1,
+        "meanMs": 0.231,
+        "minMs": 0.231,
+        "p01Ms": 0.231,
+        "p50Ms": 0.231,
+        "p95Ms": 0.231,
+        "p99Ms": 0.231,
+        "maxMs": 0.231
+      },
+      "phase:RegisterQueue:statements": {
+        "count": 1,
+        "meanMs": 32.707,
+        "minMs": 32.707,
+        "p01Ms": 32.707,
+        "p50Ms": 32.707,
+        "p95Ms": 32.707,
+        "p99Ms": 32.707,
+        "maxMs": 32.707
+      },
+      "phase:ReserveAndBegin:commit": {
+        "count": 2365,
+        "meanMs": 6.33,
+        "minMs": 1.046,
+        "p01Ms": 1.588,
+        "p50Ms": 3.713,
+        "p95Ms": 19.13,
+        "p99Ms": 52.071,
+        "maxMs": 212.512
+      },
+      "phase:ReserveAndBegin:driverLane": {
+        "count": 2366,
+        "meanMs": 0.001,
+        "minMs": 0,
+        "p01Ms": 0,
+        "p50Ms": 0,
+        "p95Ms": 0.001,
+        "p99Ms": 0.002,
+        "maxMs": 0.441
+      },
+      "phase:ReserveAndBegin:function": {
+        "count": 2366,
+        "meanMs": 16.047,
+        "minMs": 3.986,
+        "p01Ms": 6.552,
+        "p50Ms": 12.42,
+        "p95Ms": 36.663,
+        "p99Ms": 75.386,
+        "maxMs": 425.606
+      },
+      "phase:ReserveAndBegin:open": {
+        "count": 2366,
+        "meanMs": 0.009,
+        "minMs": 0.002,
+        "p01Ms": 0.003,
+        "p50Ms": 0.005,
+        "p95Ms": 0.016,
+        "p99Ms": 0.038,
+        "maxMs": 2.894
+      },
+      "sample:heldJobs": {
+        "count": 4701,
+        "meanMs": 21.168,
+        "minMs": 0,
+        "p01Ms": 0,
+        "p50Ms": 17,
+        "p95Ms": 32,
+        "p99Ms": 46,
+        "maxMs": 80
+      },
+      "sample:settlementQueue": {
+        "count": 4701,
+        "meanMs": 0.122,
+        "minMs": 0,
+        "p01Ms": 0,
+        "p50Ms": 0,
+        "p95Ms": 0,
+        "p99Ms": 4,
+        "maxMs": 16
+      },
+      "stage:due->handlerInvoked": {
+        "count": 20000,
+        "meanMs": 32138.081,
+        "minMs": 6963.068,
+        "p01Ms": 7555.841,
+        "p50Ms": 32683.595,
+        "p95Ms": 54792.98,
+        "p99Ms": 56486.548,
+        "maxMs": 56893.412
+      },
+      "stage:handlerInvoked->finished": {
+        "count": 20000,
+        "meanMs": 58.417,
+        "minMs": 15.11,
+        "p01Ms": 23.213,
+        "p50Ms": 51.215,
+        "p95Ms": 116.355,
+        "p99Ms": 190.713,
+        "maxMs": 361.585
+      },
+      "stage:reserved->finished": {
+        "count": 20000,
+        "meanMs": 59.477,
+        "minMs": 17.428,
+        "p01Ms": 24.305,
+        "p50Ms": 51.971,
+        "p95Ms": 117.937,
+        "p99Ms": 192.095,
+        "maxMs": 363.406
+      },
+      "stage:reserved->handlerInvoked": {
+        "count": 20000,
+        "meanMs": 1.06,
+        "minMs": 0.038,
+        "p01Ms": 0.155,
+        "p50Ms": 0.647,
+        "p95Ms": 2.276,
+        "p99Ms": 7.433,
+        "maxMs": 105.562
+      }
+    },
+    "traceCounters": {},
+    "writerQueueMs": {},
+    "pickupMs": {
+      "p50": 32683.595,
+      "p99": 56486.548,
+      "max": 56893.412
+    },
+    "gc": {
+      "pauseTotalMs": 1581.3,
+      "pauseTimePercentage": 2.35,
+      "gen0": 89,
+      "gen1": 45,
+      "gen2": 18,
+      "allocatedMB": 1996.9,
+      "serverGC": true
+    },
+    "diagnostics": [],
+    "settings": {
+      "store": "postgres",
+      "mode": "drain",
+      "payloadBytes": 1024,
+      "callers": 8,
+      "workerSlots": 16,
+      "producerSlots": 8,
+      "bulkChunk": 100,
+      "pgGroup": true,
+      "bufferedFinish": false,
+      "claimAhead": null,
+      "claimsInFlight": null,
+      "usage": true,
+      "jobMs": 0,
+      "serverGC": true,
+      "cores": 8
+    },
+    "outcome": {
+      "pending": 0,
+      "reserved": 0,
+      "running": 0,
+      "retrying": 0,
+      "succeeded": 20000,
+      "failed": 0,
+      "cancelled": 0,
+      "now:pending": 0,
+      "now:scheduled": 0,
+      "now:reserved": 0,
+      "now:running": 0
+    }
+  },
+  "outcome": {
+    "accepted": 20000,
+    "succeeded": 20000,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 68.6,
+      "cpuSeconds": 54.82,
+      "cpuAvgPct": 79.9,
+      "cpuPeakPct": 206.6,
+      "memPeakMB": 187.4,
+      "memAvgMB": 154.0,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 0
+    },
+    "store": {
+      "cpuSeconds": 101.45,
+      "cpuAvgPct": 147.9,
+      "cpuPeakPct": 719.2,
+      "memPeakMB": 719.5,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 423858176,
+      "netRxBytes": 42995979,
+      "netTxBytes": 68163410
+    }
+  },
+  "derived": {
+    "jobs": 20000,
+    "cpuMsPerJob": 7.814,
+    "wireBytesPerJob": 5558,
+    "storeWriteBytesPerJob": 21193,
+    "timed": {
+      "seconds": 56.681,
+      "appCpuSeconds": 41.95,
+      "jobs": 20000,
+      "storeCpuSeconds": 71.757,
+      "storeDiskWriteBytes": 342208512,
+      "storeNetRxBytes": 12074955,
+      "storeNetTxBytes": 64145179,
+      "wireBytesPerJob": 3811,
+      "storeWriteBytesPerJob": 17110,
+      "cpuMsPerJob": 5.685,
+      "counters": {
+        "walBytes": 152982552.0,
+        "walRecords": 1282078.0,
+        "walFpi": 13.0,
+        "transactions": 3838.0
+      },
+      "walBytesPerJob": 7649.128,
+      "walFpiPerJob": 0.001,
+      "transactionsPerJob": 0.192
+    },
+    "confirmedPerSec_workerStart": 353.6,
+    "confirmedPerSec_firstClaim": 353.6
+  },
+  "phases": {
+    "seed-start": {
+      "harnessMs": 1795583169830,
+      "counters": {
+        "walBytes": 806459248.0,
+        "walRecords": 4528861.0,
+        "walFpi": 14000.0,
+        "transactions": 1171.0
+      }
+    },
+    "seed-end": {
+      "harnessMs": 1795583176923,
+      "counters": {
+        "walBytes": 876620736.0,
+        "walRecords": 4837876.0,
+        "walFpi": 14014.0,
+        "transactions": 1399.0
+      }
+    },
+    "timed-start": {
+      "harnessMs": 1795583177145,
+      "counters": {
+        "walBytes": 876621000.0,
+        "walRecords": 4837876.0,
+        "walFpi": 14014.0,
+        "transactions": 1401.0
+      }
+    },
+    "timed-end": {
+      "harnessMs": 1795583233827,
+      "counters": {
+        "walBytes": 1029603552.0,
+        "walRecords": 6119954.0,
+        "walFpi": 14027.0,
+        "transactions": 5239.0
+      }
+    }
+  }
+}

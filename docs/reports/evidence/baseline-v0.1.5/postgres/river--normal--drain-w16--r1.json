@@ -1,0 +1,190 @@
+{
+  "system": "river",
+  "workload": "normal",
+  "test": "drain-w16",
+  "round": 1,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "river v0.50.0",
+  "command": [
+    "/root/work/Spindle/eng/bench-compare/river/bench-river",
+    "-mode",
+    "drain",
+    "-n",
+    "20000",
+    "-workers",
+    "16",
+    "-cooldown-ms",
+    "1",
+    "-max-seconds",
+    "600",
+    "-out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/river--normal--drain-w16--r1.raw.json"
+  ],
+  "result": {
+    "clocks": {
+      "workerStartJobsPerSec": 2407.0424142605375,
+      "workerStartSeconds": 8.308952049
+    },
+    "completionsPerSec": 2407.0424142605375,
+    "drainSeconds": 8.308952049,
+    "failed": 0,
+    "fetchCooldownMs": 1,
+    "insertSeconds": 0.443270459,
+    "jobs": 20000,
+    "mode": "drain",
+    "outcome": {
+      "completed": 20000
+    },
+    "payloadBytes": 1024,
+    "progress": [
+      [
+        1,
+        2056
+      ],
+      [
+        2,
+        4636
+      ],
+      [
+        3,
+        6897
+      ],
+      [
+        4,
+        9438
+      ],
+      [
+        5,
+        11625
+      ],
+      [
+        6,
+        14182
+      ],
+      [
+        7,
+        16855
+      ],
+      [
+        8,
+        19369
+      ]
+    ],
+    "readyBeforeStart": {
+      "available": 20000
+    },
+    "settings": {
+      "bulkChunk": 1000,
+      "callers": 1,
+      "cores": 8,
+      "fetchCooldownMs": 1,
+      "mode": "drain",
+      "payloadBytes": 1024,
+      "poolMaxConns": 20,
+      "seedCall": "InsertManyFast",
+      "seedChunk": 5000,
+      "store": "postgres",
+      "workerSlots": 16
+    },
+    "system": "river v0.50.0",
+    "workers": 16
+  },
+  "outcome": {
+    "accepted": 20000,
+    "succeeded": 20000,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 9.04,
+      "cpuSeconds": 6.47,
+      "cpuAvgPct": 71.6,
+      "cpuPeakPct": 82.9,
+      "memPeakMB": 26.4,
+      "memAvgMB": 17.7,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 0
+    },
+    "store": {
+      "cpuSeconds": 5.83,
+      "cpuAvgPct": 64.4,
+      "cpuPeakPct": 75.0,
+      "memPeakMB": 351.8,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 206745600,
+      "netRxBytes": 25576831,
+      "netTxBytes": 50007307
+    }
+  },
+  "derived": {
+    "jobs": 20000,
+    "cpuMsPerJob": 0.615,
+    "wireBytesPerJob": 3779,
+    "storeWriteBytesPerJob": 10337,
+    "timed": {
+      "seconds": 8.294,
+      "appCpuSeconds": 6.15,
+      "jobs": 20000,
+      "storeCpuSeconds": 5.23,
+      "storeDiskWriteBytes": 167489536,
+      "storeNetRxBytes": 2852166,
+      "storeNetTxBytes": 49903997,
+      "wireBytesPerJob": 2638,
+      "storeWriteBytesPerJob": 8374,
+      "cpuMsPerJob": 0.569,
+      "counters": {
+        "walBytes": 79703096.0,
+        "walRecords": 408210.0,
+        "walFpi": 61.0,
+        "transactions": 2325.0
+      },
+      "walBytesPerJob": 3985.155,
+      "walFpiPerJob": 0.003,
+      "transactionsPerJob": 0.116
+    },
+    "confirmedPerSec_workerStart": 2407.0,
+    "confirmedPerSec_firstClaim": 2407.0
+  },
+  "phases": {
+    "seed-start": {
+      "harnessMs": 1795576356209,
+      "counters": {
+        "walBytes": 165800456.0,
+        "walRecords": 505167.0,
+        "walFpi": 6659.0,
+        "transactions": 947.0
+      }
+    },
+    "seed-end": {
+      "harnessMs": 1795576356652,
+      "counters": {
+        "walBytes": 199879176.0,
+        "walRecords": 505167.0,
+        "walFpi": 6659.0,
+        "transactions": 947.0
+      }
+    },
+    "timed-start": {
+      "harnessMs": 1795576356663,
+      "counters": {
+        "walBytes": 199946072.0,
+        "walRecords": 505167.0,
+        "walFpi": 6659.0,
+        "transactions": 949.0
+      }
+    },
+    "timed-end": {
+      "harnessMs": 1795576364972,
+      "counters": {
+        "walBytes": 279649168.0,
+        "walRecords": 913377.0,
+        "walFpi": 6720.0,
+        "transactions": 3274.0
+      }
+    }
+  }
+}

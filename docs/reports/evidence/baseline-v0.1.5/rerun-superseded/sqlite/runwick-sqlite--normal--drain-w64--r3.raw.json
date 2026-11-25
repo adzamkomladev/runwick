@@ -1,0 +1,261 @@
+{
+  "system": "runwick-sqlite",
+  "store": "sqlite",
+  "mode": "drain",
+  "workers": 64,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "insertSeconds": 8.236,
+  "insertCalls": 8,
+  "readyBeforeStart": {
+    "pending": 20000,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 20000,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  },
+  "progress": [
+    [
+      1,
+      221
+    ],
+    [
+      2,
+      605
+    ],
+    [
+      3,
+      1021
+    ],
+    [
+      4,
+      1501
+    ],
+    [
+      5,
+      2013
+    ],
+    [
+      6,
+      2589
+    ],
+    [
+      7,
+      3165
+    ],
+    [
+      8,
+      3677
+    ],
+    [
+      9,
+      4253
+    ],
+    [
+      10,
+      4765
+    ],
+    [
+      11,
+      5341
+    ],
+    [
+      12,
+      5789
+    ],
+    [
+      13,
+      6333
+    ],
+    [
+      14,
+      6845
+    ],
+    [
+      15,
+      7357
+    ],
+    [
+      16,
+      7997
+    ],
+    [
+      17,
+      8509
+    ],
+    [
+      18,
+      9021
+    ],
+    [
+      19,
+      9501
+    ],
+    [
+      20,
+      10013
+    ],
+    [
+      21,
+      10589
+    ],
+    [
+      22,
+      11133
+    ],
+    [
+      23,
+      11645
+    ],
+    [
+      24,
+      12221
+    ],
+    [
+      25,
+      12797
+    ],
+    [
+      26,
+      13277
+    ],
+    [
+      27,
+      13789
+    ],
+    [
+      28,
+      14269
+    ],
+    [
+      29,
+      14717
+    ],
+    [
+      30,
+      15261
+    ],
+    [
+      31,
+      15773
+    ],
+    [
+      32,
+      16221
+    ],
+    [
+      33,
+      16701
+    ],
+    [
+      34,
+      17117
+    ],
+    [
+      35,
+      17501
+    ],
+    [
+      36,
+      17885
+    ],
+    [
+      37,
+      18365
+    ],
+    [
+      38,
+      18877
+    ],
+    [
+      39,
+      19389
+    ],
+    [
+      40,
+      19901
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 40.129,
+    "firstClaimSeconds": 40.129,
+    "firstClaimJobsPerSec": 498.4,
+    "workerStartJobsPerSec": 498.4
+  },
+  "jobs": 20000,
+  "accepted": 20000,
+  "failedDispatch": 0,
+  "finished": 20000,
+  "drained": true,
+  "drainWriteCommits": 1280,
+  "startToFirstClaimMs": 84.5,
+  "drainSeconds": 40.129,
+  "completionsPerSec": 498.4,
+  "finishReplayed": 0,
+  "batchClaims": 626,
+  "reservesSent": 627,
+  "claimsInFlightHighWater": 0,
+  "invocations": 20000,
+  "finishesSent": 20000,
+  "finishManyCalls": 629,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "sqlite": {
+    "profile": "sqlite.wal-synchronous-full",
+    "engine": {
+      "sqlite_version": "3.53.3",
+      "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+      "journal_mode": "wal",
+      "synchronous": "full",
+      "topology": "local"
+    },
+    "writeCommits": 1482,
+    "busyConflicts": 0,
+    "writerConnectionsOpened": 1,
+    "writerStatements": null
+  },
+  "peakWorkingSetBytes": 170651648,
+  "gc": {
+    "pauseTotalMs": 1870.6,
+    "pauseTimePercentage": 3.8,
+    "gen0": 194,
+    "gen1": 88,
+    "gen2": 22,
+    "allocatedMB": 3487.6,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "sqlite",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 8,
+    "workerSlots": 64,
+    "producerSlots": 8,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "error": "ManagementQueryBudgetException: The query did not finish within its budget."
+  }
+}

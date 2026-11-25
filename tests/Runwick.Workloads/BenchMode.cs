@@ -816,7 +816,7 @@ internal static class BenchMode
             var expected = check ? Interlocked.Read(ref acceptedItems) : n - failedDispatch;
             Phase("seed-end");
             // Count the backlog in the store before the worker exists, so a short seed fails the round instead of inflating the rate.
-            result["readyBeforeStart"] = await StoreJobCountsAsync(provider).ConfigureAwait(false);
+            result["readyBeforeStart"] = await StoreJobCountsAsync(provider, sqliteDirectory?.DatabasePath).ConfigureAwait(false);
             var startTicks = clock.ElapsedTicks;
             var allocatedBeforeDrain = trace ? GC.GetTotalAllocatedBytes(precise: true) : 0;
             Phase("timed-start");
@@ -1457,7 +1457,7 @@ internal static class BenchMode
             ["claimAhead"] = a.OptInt("claim-ahead"), ["claimsInFlight"] = a.OptInt("claims-in-flight"), ["usage"] = !a.Has("no-usage"),
             ["jobMs"] = a.Double("job-ms", 0), ["serverGC"] = System.Runtime.GCSettings.IsServerGC, ["cores"] = Environment.ProcessorCount,
         };
-        result["outcome"] = await StoreJobCountsAsync(provider).ConfigureAwait(false);
+        result["outcome"] = await StoreJobCountsAsync(provider, sqliteDirectory?.DatabasePath).ConfigureAwait(false);
 
         var json = result.ToJsonString(Json.Indented);
         Console.WriteLine(json);
@@ -1476,8 +1476,37 @@ internal static class BenchMode
     /// Load-queue jobs by state as the store itself reports them (management job stats, the same for all three stores). States count jobs created in the
     /// last 12 hours; "now:" keys are live. Null when management is not available; an error object when the read fails.
     /// </summary>
-    static async Task<JsonObject?> StoreJobCountsAsync(IServiceProvider provider)
+    static async Task<JsonObject?> StoreJobCountsAsync(IServiceProvider provider, string? sqliteFile = null)
     {
+        if (sqliteFile is not null)
+        {
+            // SQLite: count straight from the file. The management read has a time budget that 20,000-job runs exceed, and a count must not depend on it.
+            try
+            {
+                using var read = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = sqliteFile, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ConnectionString);
+                await read.OpenAsync().ConfigureAwait(false);
+                using var cmd = read.CreateCommand();
+                cmd.CommandText = $"SELECT state, count(*) FROM runwick_jobs WHERE application = 'bench' AND queue = '{LoadRegistration.Queue}' GROUP BY state";
+                var counts = new JsonObject();
+                foreach (var state in new[] { "pending", "reserved", "running", "retrying", "succeeded", "failed", "cancelled" })
+                {
+                    counts[state] = 0L;
+                }
+
+                using var rows = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+                while (await rows.ReadAsync().ConfigureAwait(false))
+                {
+                    counts[rows.GetString(0)] = rows.GetInt64(1);
+                }
+
+                return counts;
+            }
+            catch (Exception ex) when (ex is SqliteException or InvalidOperationException)
+            {
+                return new JsonObject { ["error"] = ex.GetType().Name + ": " + ex.Message };
+            }
+        }
+
         if (provider.GetService<IManagementSession>() is not { } session)
         {
             return null;

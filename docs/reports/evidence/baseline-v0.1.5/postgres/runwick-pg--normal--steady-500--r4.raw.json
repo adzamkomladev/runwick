@@ -1,0 +1,99 @@
+{
+  "system": "runwick",
+  "store": "postgres",
+  "mode": "steady",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "clocks": {
+    "offerWindowSeconds": 30.01,
+    "completedDuringOffers": 8429,
+    "secondsToClearAfterOffers": 14.13
+  },
+  "storeViewers": 0,
+  "storeWarmupSeconds": 0,
+  "storeSnapshotPolls": 0,
+  "storeSnapshotPollsWithDiagnostics": 0,
+  "offeredPerSec": 500,
+  "offered": 15000,
+  "seconds": 30,
+  "inserted": 14968,
+  "dispatchCalls": 16,
+  "failedDispatch": 32,
+  "failedDispatchByCode": {
+    "local_capacity_exceeded": 32
+  },
+  "completed": 14968,
+  "completedByEndOfOffers": 8429,
+  "completionsPerSec": 339.1,
+  "delayMs": 0,
+  "enqueueLatencyMs": {
+    "p50": 20.46,
+    "p95": 78.32,
+    "p99": 151.27
+  },
+  "latencyMs": {
+    "p50": 11596.65,
+    "p95": 14215.68,
+    "p99": 14261.13,
+    "max": 14298.99
+  },
+  "latencySamples": 14968,
+  "finishReplayed": 0,
+  "batchClaims": 1795,
+  "reservesSent": 1796,
+  "claimsInFlightHighWater": 0,
+  "invocations": 14968,
+  "finishesSent": 14968,
+  "finishManyCalls": 954,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 180744192,
+  "gc": {
+    "pauseTotalMs": 555,
+    "pauseTimePercentage": 1.16,
+    "gen0": 94,
+    "gen1": 74,
+    "gen2": 9,
+    "allocatedMB": 2369,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "postgres",
+    "mode": "steady",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "workerSlots": 16,
+    "producerSlots": 16,
+    "bulkChunk": 100,
+    "pgGroup": true,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 14968,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 0,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}

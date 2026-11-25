@@ -1,0 +1,38 @@
+dotnet /root/work/Spindle/eng/bench-compare/bullmq-dotnet/bin/Release/net10.0/bench-bullmq-dotnet.dll --backend postgres --redis 127.0.0.1:56392 --mode enqueue --n 10000 --workers 16 --calls 16 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/bullmq-dotnet-pg--normal--enqueue-c16--r1.raw.json
+{
+  "system": "bullmq-dotnet 1.3.7 (postgres)",
+  "mode": "enqueue",
+  "workers": 16,
+  "settings": {
+    "store": "postgres",
+    "mode": "enqueue",
+    "payloadBytes": 1024,
+    "callers": 16,
+    "workerSlots": 16,
+    "bulkChunk": 1000,
+    "removeOnComplete": 1000,
+    "serverGC": true,
+    "cores": 8
+  },
+  "jobs": 10000,
+  "calls": 16,
+  "insertsPerSec": 509.3,
+  "accepted": 10000,
+  "insertLatencyMs": {
+    "p50": 21.48,
+    "p95": 76.39,
+    "p99": 176.51
+  },
+  "outcome": {
+    "waiting": 10000,
+    "active": 0,
+    "delayed": 0,
+    "failed": 0,
+    "completedEvents": 0,
+    "failedEvents": 0
+  }
+}
+
+--- stderr ---
+@@PHASE timed-start 1795577456669
+@@PHASE timed-end 1795577476286

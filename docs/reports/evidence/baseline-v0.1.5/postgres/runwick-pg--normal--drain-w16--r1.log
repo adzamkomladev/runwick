@@ -1,0 +1,312 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll bench --store postgres --mode drain --n 20000 --workers 16 --calls 8 --max-seconds 600 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/runwick-pg--normal--drain-w16--r1.raw.json
+{
+  "system": "runwick",
+  "store": "postgres",
+  "mode": "drain",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "insertSeconds": 6.349,
+  "insertCalls": 8,
+  "readyBeforeStart": {
+    "pending": 20000,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 20000,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  },
+  "progress": [
+    [
+      1,
+      0
+    ],
+    [
+      2,
+      163
+    ],
+    [
+      3,
+      241
+    ],
+    [
+      4,
+      342
+    ],
+    [
+      5,
+      453
+    ],
+    [
+      6,
+      570
+    ],
+    [
+      7,
+      766
+    ],
+    [
+      8,
+      1150
+    ],
+    [
+      9,
+      1487
+    ],
+    [
+      10,
+      1891
+    ],
+    [
+      11,
+      2243
+    ],
+    [
+      12,
+      2613
+    ],
+    [
+      13,
+      3056
+    ],
+    [
+      14,
+      3490
+    ],
+    [
+      15,
+      3919
+    ],
+    [
+      16,
+      4207
+    ],
+    [
+      17,
+      4462
+    ],
+    [
+      18,
+      4910
+    ],
+    [
+      19,
+      5202
+    ],
+    [
+      20,
+      5653
+    ],
+    [
+      21,
+      6079
+    ],
+    [
+      22,
+      6489
+    ],
+    [
+      23,
+      6902
+    ],
+    [
+      24,
+      7241
+    ],
+    [
+      25,
+      7625
+    ],
+    [
+      26,
+      8070
+    ],
+    [
+      27,
+      8364
+    ],
+    [
+      28,
+      8768
+    ],
+    [
+      29,
+      9186
+    ],
+    [
+      30,
+      9620
+    ],
+    [
+      31,
+      10104
+    ],
+    [
+      32,
+      10469
+    ],
+    [
+      33,
+      11035
+    ],
+    [
+      34,
+      11548
+    ],
+    [
+      35,
+      12058
+    ],
+    [
+      36,
+      12507
+    ],
+    [
+      37,
+      12970
+    ],
+    [
+      38,
+      13440
+    ],
+    [
+      39,
+      14002
+    ],
+    [
+      40,
+      14417
+    ],
+    [
+      41,
+      14958
+    ],
+    [
+      42,
+      15340
+    ],
+    [
+      43,
+      15725
+    ],
+    [
+      44,
+      16205
+    ],
+    [
+      45,
+      16699
+    ],
+    [
+      46,
+      17151
+    ],
+    [
+      47,
+      17531
+    ],
+    [
+      48,
+      17969
+    ],
+    [
+      49,
+      18447
+    ],
+    [
+      50,
+      18846
+    ],
+    [
+      51,
+      19294
+    ],
+    [
+      52,
+      19722
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 52.599,
+    "firstClaimSeconds": 52.595,
+    "firstClaimJobsPerSec": 380.3,
+    "workerStartJobsPerSec": 380.2
+  },
+  "jobs": 20000,
+  "accepted": 20000,
+  "failedDispatch": 0,
+  "finished": 20000,
+  "drained": true,
+  "drainWriteCommits": null,
+  "startToFirstClaimMs": 115.3,
+  "drainSeconds": 52.595,
+  "completionsPerSec": 380.3,
+  "finishReplayed": 0,
+  "batchClaims": 2377,
+  "reservesSent": 2378,
+  "claimsInFlightHighWater": 0,
+  "invocations": 20000,
+  "finishesSent": 20000,
+  "finishManyCalls": 1238,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "peakWorkingSetBytes": 181125120,
+  "gc": {
+    "pauseTotalMs": 698.1,
+    "pauseTimePercentage": 1.13,
+    "gen0": 90,
+    "gen1": 45,
+    "gen2": 14,
+    "allocatedMB": 1945.5,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "postgres",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 8,
+    "workerSlots": 16,
+    "producerSlots": 8,
+    "bulkChunk": 100,
+    "pgGroup": true,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 20000,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 0,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795576133236
+@@PHASE seed-end 1795576139592
+@@PHASE timed-start 1795576139813
+@@PHASE timed-end 1795576192528

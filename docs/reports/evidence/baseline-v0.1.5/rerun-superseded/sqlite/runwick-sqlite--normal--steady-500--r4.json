@@ -1,0 +1,172 @@
+{
+  "system": "runwick-sqlite",
+  "workload": "normal",
+  "test": "steady-500",
+  "round": 4,
+  "trace": false,
+  "ok": true,
+  "complete": false,
+  "incompleteReason": "no store counts",
+  "version": "runwick v0.1.5-13-gfcda4d5",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll",
+    "bench",
+    "--store",
+    "sqlite",
+    "--mode",
+    "steady",
+    "--n",
+    "0",
+    "--workers",
+    "16",
+    "--rate",
+    "500",
+    "--seconds",
+    "30",
+    "--calls",
+    "16",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/sqlite/runwick-sqlite--normal--steady-500--r4.raw.json"
+  ],
+  "result": {
+    "system": "runwick-sqlite",
+    "store": "sqlite",
+    "mode": "steady",
+    "workers": 16,
+    "payloadBytes": 1024,
+    "bulkChunk": 100,
+    "clocks": {
+      "offerWindowSeconds": 30.35,
+      "completedDuringOffers": 6855,
+      "secondsToClearAfterOffers": 0.07
+    },
+    "storeViewers": 0,
+    "storeWarmupSeconds": 0,
+    "storeSnapshotPolls": 0,
+    "storeSnapshotPollsWithDiagnostics": 0,
+    "offeredPerSec": 500,
+    "offered": 15000,
+    "seconds": 30,
+    "inserted": 6974,
+    "dispatchCalls": 16,
+    "failedDispatch": 8026,
+    "failedDispatchByCode": {
+      "local_capacity_exceeded": 8026
+    },
+    "completed": 6974,
+    "completedByEndOfOffers": 6855,
+    "completionsPerSec": 229.2,
+    "delayMs": 0,
+    "enqueueLatencyMs": {
+      "p50": 352.79,
+      "p95": 520.92,
+      "p99": 740.51
+    },
+    "latencyMs": {
+      "p50": 1948.17,
+      "p95": 4623.19,
+      "p99": 4909.65,
+      "max": 4986.46
+    },
+    "latencySamples": 6974,
+    "finishReplayed": 0,
+    "batchClaims": 818,
+    "reservesSent": 846,
+    "claimsInFlightHighWater": 0,
+    "invocations": 6974,
+    "finishesSent": 6974,
+    "finishManyCalls": 477,
+    "combinedCalls": 0,
+    "combinedClaimed": 0,
+    "combinedFallbacks": 0,
+    "inlineDeclined": {
+      "busy": 0,
+      "closed": 0,
+      "staleHint": 0,
+      "laneShape": 0
+    },
+    "sqlite": {
+      "profile": "sqlite.wal-synchronous-full",
+      "engine": {
+        "sqlite_version": "3.53.3",
+        "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+        "journal_mode": "wal",
+        "synchronous": "full",
+        "topology": "local"
+      },
+      "writeCommits": 2288,
+      "busyConflicts": 0,
+      "writerConnectionsOpened": 1,
+      "writerStatements": null
+    },
+    "peakWorkingSetBytes": 139980800,
+    "gc": {
+      "pauseTotalMs": 571.2,
+      "pauseTimePercentage": 1.84,
+      "gen0": 109,
+      "gen1": 86,
+      "gen2": 12,
+      "allocatedMB": 1545.7,
+      "serverGC": true
+    },
+    "diagnostics": [],
+    "settings": {
+      "store": "sqlite",
+      "mode": "steady",
+      "payloadBytes": 1024,
+      "callers": 16,
+      "workerSlots": 16,
+      "producerSlots": 16,
+      "bulkChunk": 100,
+      "pgGroup": false,
+      "bufferedFinish": false,
+      "claimAhead": null,
+      "claimsInFlight": null,
+      "usage": true,
+      "jobMs": 0,
+      "serverGC": true,
+      "cores": 8
+    },
+    "outcome": {
+      "error": "ManagementQueryBudgetException: The query did not finish within its budget."
+    }
+  },
+  "outcome": null,
+  "resources": {
+    "app": {
+      "seconds": 108.58,
+      "cpuSeconds": 100.16,
+      "cpuAvgPct": 92.2,
+      "cpuPeakPct": 247.5,
+      "memPeakMB": 134.0,
+      "memAvgMB": 124.7,
+      "diskReadBytes": 0,
+      "diskWriteBytes": 719400960
+    },
+    "store": null
+  },
+  "derived": {
+    "jobs": 6974,
+    "cpuMsPerJob": 14.362,
+    "wireBytesPerJob": null,
+    "storeWriteBytesPerJob": 103155,
+    "timed": {
+      "seconds": 30.421,
+      "appCpuSeconds": 48.19,
+      "jobs": 6974,
+      "cpuMsPerJob": 6.91,
+      "counters": {}
+    }
+  },
+  "phases": {
+    "timed-start": {
+      "harnessMs": 1795573445904,
+      "counters": {}
+    },
+    "timed-end": {
+      "harnessMs": 1795573476327,
+      "counters": {}
+    }
+  }
+}

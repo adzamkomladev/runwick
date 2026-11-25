@@ -1,0 +1,183 @@
+{
+  "system": "runwick-sqlite",
+  "workload": "normal",
+  "test": "steady-500",
+  "round": 4,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "runwick v0.1.5-13-gfcda4d5",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll",
+    "bench",
+    "--store",
+    "sqlite",
+    "--mode",
+    "steady",
+    "--n",
+    "0",
+    "--workers",
+    "16",
+    "--rate",
+    "500",
+    "--seconds",
+    "30",
+    "--calls",
+    "16",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/sqlite/runwick-sqlite--normal--steady-500--r4.raw.json"
+  ],
+  "result": {
+    "system": "runwick-sqlite",
+    "store": "sqlite",
+    "mode": "steady",
+    "workers": 16,
+    "payloadBytes": 1024,
+    "bulkChunk": 100,
+    "clocks": {
+      "offerWindowSeconds": 30.52,
+      "completedDuringOffers": 3889,
+      "secondsToClearAfterOffers": 15.37
+    },
+    "storeViewers": 0,
+    "storeWarmupSeconds": 0,
+    "storeSnapshotPolls": 0,
+    "storeSnapshotPollsWithDiagnostics": 0,
+    "offeredPerSec": 500,
+    "offered": 14985,
+    "seconds": 30,
+    "inserted": 9177,
+    "dispatchCalls": 16,
+    "failedDispatch": 5808,
+    "failedDispatchByCode": {
+      "local_capacity_exceeded": 5808
+    },
+    "completed": 9177,
+    "completedByEndOfOffers": 3889,
+    "completionsPerSec": 200,
+    "delayMs": 0,
+    "enqueueLatencyMs": {
+      "p50": 131.22,
+      "p95": 588.19,
+      "p99": 678.57
+    },
+    "latencyMs": {
+      "p50": 14690.84,
+      "p95": 16700.19,
+      "p99": 16939,
+      "max": 16998.59
+    },
+    "latencySamples": 9177,
+    "finishReplayed": 0,
+    "batchClaims": 1090,
+    "reservesSent": 1099,
+    "claimsInFlightHighWater": 0,
+    "invocations": 9177,
+    "finishesSent": 9177,
+    "finishManyCalls": 611,
+    "combinedCalls": 0,
+    "combinedClaimed": 0,
+    "combinedFallbacks": 0,
+    "inlineDeclined": {
+      "busy": 0,
+      "closed": 0,
+      "staleHint": 0,
+      "laneShape": 0
+    },
+    "sqlite": {
+      "profile": "sqlite.wal-synchronous-full",
+      "engine": {
+        "sqlite_version": "3.53.3",
+        "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+        "journal_mode": "wal",
+        "synchronous": "full",
+        "topology": "local"
+      },
+      "writeCommits": 3071,
+      "busyConflicts": 0,
+      "writerConnectionsOpened": 1,
+      "writerStatements": null
+    },
+    "peakWorkingSetBytes": 150884352,
+    "gc": {
+      "pauseTotalMs": 806.9,
+      "pauseTimePercentage": 1.72,
+      "gen0": 175,
+      "gen1": 82,
+      "gen2": 9,
+      "allocatedMB": 2014.8,
+      "serverGC": true
+    },
+    "diagnostics": [],
+    "settings": {
+      "store": "sqlite",
+      "mode": "steady",
+      "payloadBytes": 1024,
+      "callers": 16,
+      "workerSlots": 16,
+      "producerSlots": 16,
+      "bulkChunk": 100,
+      "pgGroup": false,
+      "bufferedFinish": false,
+      "claimAhead": null,
+      "claimsInFlight": null,
+      "usage": true,
+      "jobMs": 0,
+      "serverGC": true,
+      "cores": 8
+    },
+    "outcome": {
+      "pending": 0,
+      "reserved": 0,
+      "running": 0,
+      "retrying": 0,
+      "succeeded": 9177,
+      "failed": 0,
+      "cancelled": 0
+    }
+  },
+  "outcome": {
+    "accepted": 9177,
+    "succeeded": 9177,
+    "failed": 0,
+    "unfinished": 0
+  },
+  "resources": {
+    "app": {
+      "seconds": 47.03,
+      "cpuSeconds": 65.57,
+      "cpuAvgPct": 139.4,
+      "cpuPeakPct": 249.3,
+      "memPeakMB": 100.9,
+      "memAvgMB": 84.9,
+      "diskReadBytes": 4096,
+      "diskWriteBytes": 960946176
+    },
+    "store": null
+  },
+  "derived": {
+    "jobs": 9177,
+    "cpuMsPerJob": 7.145,
+    "wireBytesPerJob": null,
+    "storeWriteBytesPerJob": 104712,
+    "timed": {
+      "seconds": 45.852,
+      "appCpuSeconds": 64.2,
+      "jobs": 9177,
+      "cpuMsPerJob": 6.996,
+      "counters": {}
+    }
+  },
+  "phases": {
+    "timed-start": {
+      "harnessMs": 1795585751992,
+      "counters": {}
+    },
+    "timed-end": {
+      "harnessMs": 1795585797846,
+      "counters": {}
+    }
+  }
+}

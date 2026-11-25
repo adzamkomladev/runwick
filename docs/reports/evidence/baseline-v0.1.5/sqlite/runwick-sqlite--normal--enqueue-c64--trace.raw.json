@@ -1,0 +1,272 @@
+{
+  "system": "runwick-sqlite",
+  "store": "sqlite",
+  "mode": "enqueue",
+  "workers": 16,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "enqueueManagedAllocatedBytes": 876888344,
+  "jobs": 10000,
+  "warmupJobs": 0,
+  "calls": 64,
+  "insertsPerSec": 616.6,
+  "insertLatencyMs": {
+    "p50": 93.46,
+    "p95": 154.28,
+    "p99": 236.25
+  },
+  "producerCalls": 64,
+  "finishReplayed": 0,
+  "batchClaims": 0,
+  "reservesSent": 0,
+  "claimsInFlightHighWater": 0,
+  "invocations": 0,
+  "finishesSent": 0,
+  "finishManyCalls": 0,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "sqlite": {
+    "profile": "sqlite.wal-synchronous-full",
+    "engine": {
+      "sqlite_version": "3.53.3",
+      "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+      "journal_mode": "wal",
+      "synchronous": "full",
+      "topology": "local"
+    },
+    "writeCommits": 1253,
+    "busyConflicts": 0,
+    "writerConnectionsOpened": 1,
+    "writerStatements": null,
+    "walBytesAfterRun": 4391952,
+    "walAfterRun": {
+      "autoCheckpointPages": 1000,
+      "busy": false,
+      "logFrames": 612,
+      "checkpointedFrames": 0,
+      "elapsedMs": 0.0783
+    }
+  },
+  "peakWorkingSetBytes": 104747008,
+  "trace": {
+    "phase:Dispatch:beginImmediate": {
+      "count": 1251,
+      "meanMs": 0.035,
+      "minMs": 0.011,
+      "p01Ms": 0.012,
+      "p50Ms": 0.021,
+      "p95Ms": 0.055,
+      "p99Ms": 0.407,
+      "maxMs": 2.611
+    },
+    "phase:Dispatch:commit": {
+      "count": 1251,
+      "meanMs": 3.804,
+      "minMs": 1.26,
+      "p01Ms": 1.578,
+      "p50Ms": 2.783,
+      "p95Ms": 9.023,
+      "p99Ms": 18.341,
+      "maxMs": 83.077
+    },
+    "phase:Dispatch:driverLane": {
+      "count": 10000,
+      "meanMs": 0.001,
+      "minMs": 0,
+      "p01Ms": 0,
+      "p50Ms": 0,
+      "p95Ms": 0.002,
+      "p99Ms": 0.003,
+      "maxMs": 0.825
+    },
+    "phase:Dispatch:statements": {
+      "count": 1251,
+      "meanMs": 8.567,
+      "minMs": 1.336,
+      "p01Ms": 4.121,
+      "p50Ms": 7.433,
+      "p95Ms": 15.597,
+      "p99Ms": 24.384,
+      "maxMs": 59.85
+    },
+    "phase:Dispatch:writerQueue": {
+      "count": 10000,
+      "meanMs": 87.286,
+      "minMs": 1.942,
+      "p01Ms": 56.424,
+      "p50Ms": 80.033,
+      "p95Ms": 131.198,
+      "p99Ms": 191.997,
+      "maxMs": 231.134
+    },
+    "phase:RegisterApplication:beginImmediate": {
+      "count": 1,
+      "meanMs": 0.033,
+      "minMs": 0.033,
+      "p01Ms": 0.033,
+      "p50Ms": 0.033,
+      "p95Ms": 0.033,
+      "p99Ms": 0.033,
+      "maxMs": 0.033
+    },
+    "phase:RegisterApplication:commit": {
+      "count": 1,
+      "meanMs": 6.249,
+      "minMs": 6.249,
+      "p01Ms": 6.249,
+      "p50Ms": 6.249,
+      "p95Ms": 6.249,
+      "p99Ms": 6.249,
+      "maxMs": 6.249
+    },
+    "phase:RegisterApplication:driverLane": {
+      "count": 1,
+      "meanMs": 0.153,
+      "minMs": 0.153,
+      "p01Ms": 0.153,
+      "p50Ms": 0.153,
+      "p95Ms": 0.153,
+      "p99Ms": 0.153,
+      "maxMs": 0.153
+    },
+    "phase:RegisterApplication:statements": {
+      "count": 1,
+      "meanMs": 14.962,
+      "minMs": 14.962,
+      "p01Ms": 14.962,
+      "p50Ms": 14.962,
+      "p95Ms": 14.962,
+      "p99Ms": 14.962,
+      "maxMs": 14.962
+    },
+    "phase:RegisterApplication:writerQueue": {
+      "count": 1,
+      "meanMs": 3.16,
+      "minMs": 3.16,
+      "p01Ms": 3.16,
+      "p50Ms": 3.16,
+      "p95Ms": 3.16,
+      "p99Ms": 3.16,
+      "maxMs": 3.16
+    },
+    "phase:RegisterQueue:beginImmediate": {
+      "count": 1,
+      "meanMs": 0.043,
+      "minMs": 0.043,
+      "p01Ms": 0.043,
+      "p50Ms": 0.043,
+      "p95Ms": 0.043,
+      "p99Ms": 0.043,
+      "maxMs": 0.043
+    },
+    "phase:RegisterQueue:commit": {
+      "count": 1,
+      "meanMs": 1.452,
+      "minMs": 1.452,
+      "p01Ms": 1.452,
+      "p50Ms": 1.452,
+      "p95Ms": 1.452,
+      "p99Ms": 1.452,
+      "maxMs": 1.452
+    },
+    "phase:RegisterQueue:driverLane": {
+      "count": 1,
+      "meanMs": 0.004,
+      "minMs": 0.004,
+      "p01Ms": 0.004,
+      "p50Ms": 0.004,
+      "p95Ms": 0.004,
+      "p99Ms": 0.004,
+      "maxMs": 0.004
+    },
+    "phase:RegisterQueue:statements": {
+      "count": 1,
+      "meanMs": 4.264,
+      "minMs": 4.264,
+      "p01Ms": 4.264,
+      "p50Ms": 4.264,
+      "p95Ms": 4.264,
+      "p99Ms": 4.264,
+      "maxMs": 4.264
+    },
+    "phase:RegisterQueue:writerQueue": {
+      "count": 1,
+      "meanMs": 0.086,
+      "minMs": 0.086,
+      "p01Ms": 0.086,
+      "p50Ms": 0.086,
+      "p95Ms": 0.086,
+      "p99Ms": 0.086,
+      "maxMs": 0.086
+    }
+  },
+  "traceCounters": {
+    "sqlite:dispatch:commitSize:1": 1,
+    "sqlite:dispatch:commitSize:7": 1,
+    "sqlite:dispatch:commitSize:8": 1249
+  },
+  "writerQueueMs": {
+    "Dispatch": {
+      "count": 10000,
+      "p99": 191.997,
+      "max": 231.134
+    },
+    "RegisterApplication": {
+      "count": 1,
+      "p99": 3.16,
+      "max": 3.16
+    },
+    "RegisterQueue": {
+      "count": 1,
+      "p99": 0.086,
+      "max": 0.086
+    }
+  },
+  "gc": {
+    "pauseTotalMs": 366.5,
+    "pauseTimePercentage": 2.21,
+    "gen0": 136,
+    "gen1": 131,
+    "gen2": 4,
+    "allocatedMB": 841.9,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "sqlite",
+    "mode": "enqueue",
+    "payloadBytes": 1024,
+    "callers": 64,
+    "workerSlots": 16,
+    "producerSlots": 64,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 10000,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0,
+    "now:pending": 10000,
+    "now:scheduled": 0,
+    "now:reserved": 0,
+    "now:running": 0
+  }
+}

@@ -1,0 +1,100 @@
+{
+  "system": "wolverine-sqlite",
+  "workload": "normal",
+  "test": "enqueue-c1",
+  "round": 5,
+  "trace": false,
+  "ok": true,
+  "complete": true,
+  "incompleteReason": "",
+  "version": "wolverine 6.65.1 (sqlite)",
+  "command": [
+    "dotnet",
+    "/root/work/Spindle/eng/bench-compare/wolverine/bin/Release/net10.0/bench-wolverine.dll",
+    "--transport",
+    "sqlite",
+    "--redis",
+    "127.0.0.1:56392",
+    "--mode",
+    "enqueue",
+    "--n",
+    "2000",
+    "--workers",
+    "16",
+    "--calls",
+    "1",
+    "--out",
+    "/root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/sqlite/wolverine-sqlite--normal--enqueue-c1--r5.raw.json"
+  ],
+  "result": {
+    "system": "wolverine 6.65.1 (sqlite)",
+    "mode": "enqueue",
+    "workers": 16,
+    "settings": {
+      "store": "sqlite",
+      "mode": "enqueue",
+      "payloadBytes": 1024,
+      "callers": 1,
+      "workerSlots": 16,
+      "seedCallers": 16,
+      "sendInline": false,
+      "durabilityMode": "Solo",
+      "serverGC": true,
+      "cores": 8
+    },
+    "jobs": 2000,
+    "calls": 1,
+    "insertsPerSec": 997.5,
+    "insertLatencyMs": {
+      "p50": 0.67,
+      "p95": 1.93,
+      "p99": 6.71
+    },
+    "outcome": {
+      "wolverine_queue_bench": 2001,
+      "wolverine_queue_bench_scheduled": 0
+    }
+  },
+  "outcome": {
+    "accepted": 2001,
+    "succeeded": 0,
+    "failed": 0,
+    "unfinished": 2001
+  },
+  "resources": {
+    "app": {
+      "seconds": 9.22,
+      "cpuSeconds": 7.47,
+      "cpuAvgPct": 81.0,
+      "cpuPeakPct": 187.6,
+      "memPeakMB": 119.9,
+      "memAvgMB": 63.3,
+      "diskReadBytes": 78413824,
+      "diskWriteBytes": 68915200
+    },
+    "store": null
+  },
+  "derived": {
+    "jobs": 2000,
+    "cpuMsPerJob": 3.735,
+    "wireBytesPerJob": null,
+    "storeWriteBytesPerJob": 34458,
+    "timed": {
+      "seconds": 1.995,
+      "appCpuSeconds": 3.19,
+      "jobs": 2000,
+      "cpuMsPerJob": 1.595,
+      "counters": {}
+    }
+  },
+  "phases": {
+    "timed-start": {
+      "harnessMs": 1795574496131,
+      "counters": {}
+    },
+    "timed-end": {
+      "harnessMs": 1795574498126,
+      "counters": {}
+    }
+  }
+}

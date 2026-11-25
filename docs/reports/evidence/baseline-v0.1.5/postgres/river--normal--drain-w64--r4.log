@@ -1,0 +1,56 @@
+/root/work/Spindle/eng/bench-compare/river/bench-river -mode drain -n 20000 -workers 64 -cooldown-ms 1 -max-seconds 600 -out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/river--normal--drain-w64--r4.raw.json
+{
+  "clocks": {
+    "workerStartJobsPerSec": 5462.167276361334,
+    "workerStartSeconds": 3.661550258
+  },
+  "completionsPerSec": 5462.167276361334,
+  "drainSeconds": 3.661550258,
+  "failed": 0,
+  "fetchCooldownMs": 1,
+  "insertSeconds": 0.528337155,
+  "jobs": 20000,
+  "mode": "drain",
+  "outcome": {
+    "completed": 20000
+  },
+  "payloadBytes": 1024,
+  "progress": [
+    [
+      1,
+      4369
+    ],
+    [
+      2,
+      9815
+    ],
+    [
+      3,
+      16138
+    ]
+  ],
+  "readyBeforeStart": {
+    "available": 20000
+  },
+  "settings": {
+    "bulkChunk": 1000,
+    "callers": 1,
+    "cores": 8,
+    "fetchCooldownMs": 1,
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "poolMaxConns": 68,
+    "seedCall": "InsertManyFast",
+    "seedChunk": 5000,
+    "store": "postgres",
+    "workerSlots": 64
+  },
+  "system": "river v0.50.0",
+  "workers": 64
+}
+
+--- stderr ---
+@@PHASE seed-start 1795582444703
+@@PHASE seed-end 1795582445231
+@@PHASE timed-start 1795582445245
+@@PHASE timed-end 1795582448907

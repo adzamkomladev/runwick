@@ -1,0 +1,35 @@
+/root/work/Spindle/eng/bench-compare/river/bench-river -mode enqueue -n 10000 -workers 16 -calls 64 -out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/postgres/river--normal--enqueue-c64--r3.raw.json
+{
+  "calls": 64,
+  "fetchCooldownMs": 100,
+  "insertLatencyMs": {
+    "p50": 28.671,
+    "p99": 118.958
+  },
+  "insertsPerSec": 1805.38761616784,
+  "jobs": 10000,
+  "mode": "enqueue",
+  "outcome": {
+    "available": 10000
+  },
+  "payloadBytes": 1024,
+  "settings": {
+    "bulkChunk": 1000,
+    "callers": 64,
+    "cores": 8,
+    "fetchCooldownMs": 100,
+    "mode": "enqueue",
+    "payloadBytes": 1024,
+    "poolMaxConns": 20,
+    "seedCall": "InsertManyFast",
+    "seedChunk": 5000,
+    "store": "postgres",
+    "workerSlots": 16
+  },
+  "system": "river v0.50.0",
+  "workers": 16
+}
+
+--- stderr ---
+@@PHASE timed-start 1795579758927
+@@PHASE timed-end 1795579764466

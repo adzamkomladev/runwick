@@ -1,0 +1,286 @@
+dotnet /root/work/Spindle/tests/Runwick.Workloads/bin/Release/net10.0/Runwick.Workloads.dll bench --store sqlite --mode drain --n 20000 --workers 64 --calls 8 --max-seconds 600 --out /root/work/Spindle/docs/reports/evidence/baseline-v0.1.5/sqlite/runwick-sqlite--normal--drain-w64--r1.raw.json
+{
+  "system": "runwick-sqlite",
+  "store": "sqlite",
+  "mode": "drain",
+  "workers": 64,
+  "payloadBytes": 1024,
+  "bulkChunk": 100,
+  "insertSeconds": 8.064,
+  "insertCalls": 8,
+  "readyBeforeStart": {
+    "pending": 20000,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "cancelled": 0
+  },
+  "progress": [
+    [
+      1,
+      352
+    ],
+    [
+      2,
+      928
+    ],
+    [
+      3,
+      1440
+    ],
+    [
+      4,
+      1888
+    ],
+    [
+      5,
+      2336
+    ],
+    [
+      6,
+      2816
+    ],
+    [
+      7,
+      3328
+    ],
+    [
+      8.1,
+      3872
+    ],
+    [
+      9,
+      4320
+    ],
+    [
+      10,
+      4864
+    ],
+    [
+      11,
+      5280
+    ],
+    [
+      12,
+      5856
+    ],
+    [
+      13,
+      6336
+    ],
+    [
+      14,
+      6752
+    ],
+    [
+      15,
+      7328
+    ],
+    [
+      16,
+      7872
+    ],
+    [
+      17,
+      8416
+    ],
+    [
+      18,
+      8960
+    ],
+    [
+      19,
+      9408
+    ],
+    [
+      20,
+      9952
+    ],
+    [
+      21,
+      10400
+    ],
+    [
+      22.1,
+      10624
+    ],
+    [
+      23,
+      10880
+    ],
+    [
+      24,
+      11200
+    ],
+    [
+      25,
+      11648
+    ],
+    [
+      26,
+      12000
+    ],
+    [
+      27,
+      12320
+    ],
+    [
+      28,
+      12672
+    ],
+    [
+      29,
+      12960
+    ],
+    [
+      30,
+      13344
+    ],
+    [
+      31,
+      13824
+    ],
+    [
+      32,
+      14400
+    ],
+    [
+      33,
+      14880
+    ],
+    [
+      34,
+      15296
+    ],
+    [
+      35,
+      15680
+    ],
+    [
+      36,
+      16160
+    ],
+    [
+      37,
+      16512
+    ],
+    [
+      38,
+      17024
+    ],
+    [
+      39,
+      17536
+    ],
+    [
+      40,
+      17888
+    ],
+    [
+      41,
+      18336
+    ],
+    [
+      42,
+      18816
+    ],
+    [
+      43,
+      19328
+    ],
+    [
+      44,
+      19712
+    ]
+  ],
+  "clocks": {
+    "workerStartSeconds": 44.756,
+    "firstClaimSeconds": 44.755,
+    "firstClaimJobsPerSec": 446.9,
+    "workerStartJobsPerSec": 446.9
+  },
+  "jobs": 20000,
+  "accepted": 20000,
+  "failedDispatch": 0,
+  "finished": 20000,
+  "drained": true,
+  "drainWriteCommits": 1274,
+  "startToFirstClaimMs": 95,
+  "drainSeconds": 44.755,
+  "completionsPerSec": 446.9,
+  "finishReplayed": 0,
+  "batchClaims": 625,
+  "reservesSent": 626,
+  "claimsInFlightHighWater": 0,
+  "invocations": 20000,
+  "finishesSent": 20000,
+  "finishManyCalls": 625,
+  "combinedCalls": 0,
+  "combinedClaimed": 0,
+  "combinedFallbacks": 0,
+  "inlineDeclined": {
+    "busy": 0,
+    "closed": 0,
+    "staleHint": 0,
+    "laneShape": 0
+  },
+  "sqlite": {
+    "profile": "sqlite.wal-synchronous-full",
+    "engine": {
+      "sqlite_version": "3.53.3",
+      "sqlite_source_id": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+      "journal_mode": "wal",
+      "synchronous": "full",
+      "topology": "local"
+    },
+    "writeCommits": 1476,
+    "busyConflicts": 0,
+    "writerConnectionsOpened": 1,
+    "writerStatements": null
+  },
+  "peakWorkingSetBytes": 172318720,
+  "gc": {
+    "pauseTotalMs": 2732.9,
+    "pauseTimePercentage": 5.14,
+    "gen0": 162,
+    "gen1": 71,
+    "gen2": 16,
+    "allocatedMB": 3477.5,
+    "serverGC": true
+  },
+  "diagnostics": [],
+  "settings": {
+    "store": "sqlite",
+    "mode": "drain",
+    "payloadBytes": 1024,
+    "callers": 8,
+    "workerSlots": 64,
+    "producerSlots": 8,
+    "bulkChunk": 100,
+    "pgGroup": false,
+    "bufferedFinish": false,
+    "claimAhead": null,
+    "claimsInFlight": null,
+    "usage": true,
+    "jobMs": 0,
+    "serverGC": true,
+    "cores": 8
+  },
+  "outcome": {
+    "pending": 0,
+    "reserved": 0,
+    "running": 0,
+    "retrying": 0,
+    "succeeded": 20000,
+    "failed": 0,
+    "cancelled": 0
+  }
+}
+
+--- stderr ---
+@@PHASE seed-start 1795585111785
+@@PHASE seed-end 1795585119853
+@@PHASE timed-start 1795585119880
+@@PHASE timed-end 1795585164735
