@@ -10,7 +10,7 @@ On one GitHub runner, with Redis 8.2.11 set to the same strict durability for ev
 - **Adding in bulk:** about 5,100 jobs/s, against 9,000 to 13,150.
 - **Processing a backlog:** with the default settings, 1,921 jobs/s at 16 slots and 3,066 at 64. With the already-existing "short job" worker settings, 3,110 and 3,852. The peers do about 5,000 to 5,500 and 6,600 to 7,400.
 - **The cause is mostly work per job, not the disk.** Runwick makes Redis run about 21 commands per accepted job (Wolverine: 1, BullMQ: 9) and moves about 2,900 bytes per single add (peers: 1,500 to 2,000).
-- **One open item:** every Runwick round on Redis is flagged "incomplete" because the store's own count comes up 1 to 3 jobs short. See [the flagged item](#open-item-the-store-count-is-1-to-3-jobs-short).
+- **Flagged rounds explained:** every Runwick round on Redis is flagged "incomplete" because the store's count came up 1 to 3 jobs short. That was a bug in Runwick's Redis job statistics, not lost jobs; fixed after the baseline. See [Resolved](#resolved-the-store-count-was-1-to-3-jobs-short).
 
 ## What was run
 
@@ -22,7 +22,7 @@ Raw results, logs and the manifest: [`evidence/baseline-v0.1.5/ci-redis/`](evide
 
 ## Results
 
-Jobs per second, median of 5 rounds, min to max in brackets. `*` = some of that cell's rounds are flagged incomplete (all Runwick; see the open item). The throughput comes from the harness's own count in both cases.
+Jobs per second, median of 5 rounds, min to max in brackets. `*` = some of that cell's rounds are flagged incomplete (all Runwick; explained and resolved below). The throughput comes from the harness's own count in both cases.
 
 | Test | Floor | Runwick | Runwick tuned | Wolverine | BullMQ .NET | BullMQ Node |
 |---|---:|---:|---:|---:|---:|---:|
@@ -85,15 +85,15 @@ This is a reading of the numbers, not a diagnosis; Stage 2 is the experiment tha
 - **Bulk path:** commands per job are low but throughput is still about 40% of BullMQ Node, so look at time per call (the batch script and the client work around it), not command count.
 - **Worker:** the tuned profile closes about a third of the gap at 16 slots (1,921 → 3,110 against about 5,300) and about a fifth at 64 (3,066 → 3,852 against about 7,000). Most of the gap is still open.
 
-## Open item: the store count is 1 to 3 jobs short
+## Resolved: the store count was 1 to 3 jobs short
 
-70 Runwick Redis rounds are marked incomplete, 35 per arm: bulk, bulk-100, add-one at 16 and 64 callers, both drains and steady-500, in all 5 rounds each (the 1-caller and steady-100 cells were complete). Examples: "store holds 19,997 of 20,000" or "9,999 of 10,000", and "14,999 of 15,001" in a steady round. It happened identically on the author's own machine and on this CI runner, and the shortfall is already there before the worker starts (19,997 jobs ready after seeding 20,000).
+70 Runwick Redis rounds were marked incomplete, 35 per arm: bulk, bulk-100, add-one at 16 and 64 callers, both drains and steady-500, in all 5 rounds each. The store count came up 1 to 3 jobs short (for example 19,997 of 20,000), and the shortfall was already there before the worker started.
 
-What is known:
-- The worker's own count reaches the full 20,000 finished, and the store reports no job left unfinished, running or failed.
-- The count comes from Runwick's management job statistics for the load queue, read after the run. In the local smoke runs it was exact on SQLite and PostgreSQL.
+**Cause: a bug in Runwick's Redis job statistics, not lost jobs.** Redis held all 20,000 jobs (20,000 job records and 20,000 entries in every index). The statistics read walks the creation index 5,000 entries at a time, handing back a cursor at each page boundary. The cursor named the next job not yet counted, but the next page skipped everything up to and including that id, so one job was dropped per boundary: 3 at 20,000 jobs, 1 at 10,000, and none below 5,000. The management dashboard and API stats on a Redis store with more than 5,000 jobs were therefore off by one per 5,000 jobs. SQLite and PostgreSQL were never affected.
 
-What is not known: whether this is an undercount in the Redis statistics read (the likely reading), a harness counting problem, or jobs genuinely missing from the store. Until it is explained, treat Runwick's Redis rows as "throughput measured, completeness unverified". If it turns out to be a statistics bug, it is a Runwick bug to fix separately.
+**Fix and check:** one comparison in `src/Runwick.Redis/Lua/ops/mread.lua`, with a new contract test (JST-06, 5,300 jobs on every store) that failed on Redis before the fix (5,299 of 5,300) and passes after. A local 20,000-job bulk run and drain now count exactly 20,000. The four other Lua scans with the same shape keep the last examined job as their cursor, where the skip is correct.
+
+**What it means for the numbers above:** the throughput figures were always from the harness's own counts and are unaffected. The 70 rounds stay flagged incomplete in the raw results because that is what the checker said at the time; read them as complete for Runwick Redis. The baseline was measured on code identical to v0.1.5; the statistics fix lands after it, so a re-run on current main would show these rounds as complete. I did not re-run on GitHub.
 
 ## Caveats
 

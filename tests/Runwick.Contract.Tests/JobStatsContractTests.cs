@@ -294,4 +294,23 @@ public sealed class JobStatsContractTests
         Assert.Equal(1L, (long)await db.HashGetAsync(p + "jobtypes", "other\0test.other"));
         Assert.True((await Session(fresh).ListJobTypesAsync(Admin, Ct)).Single(t => t.Name == "test.other").SeenInStore);
     }
+
+    [Theory]
+    [MemberData(nameof(Kinds))]
+    [Trait("Case", "JST-06")]
+    public async Task Job_stats_count_every_job_across_scan_pages(StoreKind kind)
+    {
+        // Redis scans its creation index 5,000 entries at a time and resumes from a cursor: a job on a page boundary must be counted once, not skipped.
+        var (f, c) = await OpenAsync(kind, "jst06", Jobs);
+        await using var _ = f;
+        const int total = 5_300;
+        for (var sent = 0; sent < total; sent += 100)
+        {
+            await c.Dispatcher.DispatchManyAsync([.. Enumerable.Range(sent, 100).Select(n => new BatchDispatchItem(new PingJob("p" + n)))], cancellationToken: Ct);
+        }
+
+        var stats = await Session(c).GetJobStatsAsync(Admin, new JobStatsQuery(), Ct);
+        Assert.Equal(total, stats.States["pending"]);
+        Assert.Equal(total, stats.Buckets.Sum(b => b.Created));
+    }
 }

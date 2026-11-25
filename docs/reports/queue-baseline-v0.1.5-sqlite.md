@@ -85,7 +85,7 @@ On this machine most cells vary by more than 15% between the lowest and highest 
 ## Re-runs
 
 - The first pass of Runwick's drains (all 5 rounds) and three of its steady-500 rounds came back "no store counts": the store-count check used Runwick's management statistics, whose read has a time budget that 20,000-job runs on SQLite exceeded. The harness now counts straight from the database file for SQLite, and those cells were re-run alone, one round at a time. Their first-pass results are kept in [`rerun-superseded/sqlite/`](evidence/baseline-v0.1.5/rerun-superseded/sqlite/); throughput was the same within noise.
-- The management-statistics read missing its budget on a 20,000-job SQLite store is itself worth a look, separately from this baseline.
+- **The statistics read missing its budget was a real bug, now fixed.** After a drain, Runwick's job-statistics read on SQLite took 136 ms at 1,000 finished jobs, 1.4 s at 4,000 and over its 5 s budget by 8,000. On a copy of an 8,000-job file the "ended jobs" query took 12.3 s: it looked up each job's first start with a per-job subquery that SQLite, without table statistics, planned as a scan of every attempt (quadratic). Grouping the attempts once instead takes 31 ms on the same file, and the read now succeeds and counts exactly after 8,000 and 20,000 drained jobs. Baseline throughput is unaffected; only the management stats read (dashboard and API) was slow.
 
 ## Reproduce
 

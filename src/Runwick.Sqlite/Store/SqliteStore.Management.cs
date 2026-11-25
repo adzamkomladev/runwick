@@ -140,11 +140,13 @@ internal sealed partial class SqliteStore : IManagementQueryStore
                 SELECT j.queue, j.job_name, j.state, j.created_at, j.execution_count, j.job_id FROM runwick_jobs AS j
                 WHERE j.application = @application AND j.created_at >= @from AND j.created_at < @to{filter}{worker}
                 """), r => (r.GetString(0), r.GetString(1), r.GetString(2), r.Time(3), r.GetInt64(4), r.Uuid(5)));
+            // First start per (job, generation) is grouped once, not looked up per job: without table statistics SQLite planned the per-job lookup as a scan of every attempt (quadratic).
             var ended = tx.Query(Cmd($"""
-                SELECT j.queue, j.job_name, j.state, j.terminal_at,
-                       j.terminal_at - (SELECT coalesce(min(a.authorized_at), min(a.reserved_at)) FROM runwick_job_attempts AS a
-                                        WHERE a.application = j.application AND a.job_id = j.job_id AND a.generation = j.generation)
+                SELECT j.queue, j.job_name, j.state, j.terminal_at, j.terminal_at - s.started_at
                 FROM runwick_jobs AS j
+                LEFT JOIN (SELECT job_id, generation, coalesce(min(authorized_at), min(reserved_at)) AS started_at
+                           FROM runwick_job_attempts WHERE application = @application GROUP BY job_id, generation) AS s
+                       ON s.job_id = j.job_id AND s.generation = j.generation
                 WHERE j.application = @application AND j.state IN ('succeeded', 'failed', 'cancelled')
                   AND j.terminal_at >= @from AND j.terminal_at < @to{filter}{worker}
                 """), r => (r.GetString(0), r.GetString(1), r.GetString(2), r.Time(3), r.IsDBNull(4) ? (double?)null : r.GetInt64(4)));

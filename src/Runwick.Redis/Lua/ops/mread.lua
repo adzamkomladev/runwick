@@ -184,7 +184,8 @@ elseif SUB == 'jscan' then
     offset = offset + #page / 2
     for i = 1, #page, 2 do
       local id, score = page[i], page[i + 1]
-      if not (from and tonumber(score) == from and not U.blt(after, id)) then
+      -- The cursor row is the first job NOT yet examined, so only jobs strictly before it (same score, smaller id) were seen on the last page.
+      if not (from and tonumber(score) == from and U.blt(id, after)) then
         if examined >= BUDGET then
           add(U.enc({ more = true, sc = U.raw(score), id = id }))
           return out
