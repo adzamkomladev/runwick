@@ -86,6 +86,10 @@ The throughput plan names pg-boss as the leader for single-caller add, bulk and 
 3. **Steady 500/s overloads Runwick and Wolverine.** Runwick's p99 there is about 20 seconds and Wolverine's about 73. The offers were made on a fixed schedule, so those numbers are what a producer at that rate would see.
 4. **Wolverine's PostgreSQL drain is bound by its listener wait, not by the work.** Seventy per second at 16 and 64 slots, in every round, with a 250 ms wait after each batch of 20.
 
+## How noisy these numbers are
+
+On this machine most cells vary by more than 15% between the lowest and highest of five rounds (PostgreSQL: 36 of 45 cells; SQLite: 17 of 26). The disk is the reason: even the bare write ranges widely (PostgreSQL one-caller floor 144 to 393/s). I did not re-run these cells, because more rounds on the same disk would tighten the medians but not the spread. The gaps that drive the conclusions (2 to 14 times for PostgreSQL, 2 to 4 times for most SQLite rows) are much larger than the spread. The small SQLite gaps (bulk at native chunk size, 1.14 times, and 16 or 64 callers, 1.35 to 1.5 times) are inside it and should be re-measured on a quieter disk before anyone acts on them. The Redis run on CI had no cell above 15%.
+
 ## Re-runs
 
 - Seven River rounds failed on the first pass with `connection reset by peer` while connecting (six single-add rounds and one bulk round), each at the start of a test. I did not find the cause; the store had just been recreated and the same cells ran cleanly the second time. Those seven were re-run one at a time against a freshly started PostgreSQL. The failed first-pass files are in [`rerun-superseded/postgres/`](evidence/baseline-v0.1.5/rerun-superseded/postgres/). Treat River's numbers for those cells as measured under better conditions than the rest of its rounds, which may flatter it slightly.

@@ -78,6 +78,10 @@ The bulk gap at native chunk sizes is small and goes away at equal size, which m
 4. **Solid Queue crashes under many producers.** With 16 callers, 4 of 5 rounds failed, and with 64 callers all 5, after its 10-second SQLite lock wait ran out. The one 16-caller round that finished did 42/s. Its steady numbers are low too. These are real results for the configuration used (Rails defaults plus a 10 s timeout), not tuned.
 5. **Different machine and day from the Redis baseline.** Do not compare across the three baseline reports.
 
+## How noisy these numbers are
+
+On this machine most cells vary by more than 15% between the lowest and highest of five rounds (PostgreSQL: 36 of 45 cells; SQLite: 17 of 26). The disk is the reason: even the bare write ranges widely (PostgreSQL one-caller floor 144 to 393/s). I did not re-run these cells, because more rounds on the same disk would tighten the medians but not the spread. The gaps that drive the conclusions (2 to 14 times for PostgreSQL, 2 to 4 times for most SQLite rows) are much larger than the spread. The small SQLite gaps (bulk at native chunk size, 1.14 times, and 16 or 64 callers, 1.35 to 1.5 times) are inside it and should be re-measured on a quieter disk before anyone acts on them. The Redis run on CI had no cell above 15%.
+
 ## Re-runs
 
 - The first pass of Runwick's drains (all 5 rounds) and three of its steady-500 rounds came back "no store counts": the store-count check used Runwick's management statistics, whose read has a time budget that 20,000-job runs on SQLite exceeded. The harness now counts straight from the database file for SQLite, and those cells were re-run alone, one round at a time. Their first-pass results are kept in [`rerun-superseded/sqlite/`](evidence/baseline-v0.1.5/rerun-superseded/sqlite/); throughput was the same within noise.
