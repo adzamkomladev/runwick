@@ -1,0 +1,360 @@
+{
+  "mode": "stage2-redis-replay",
+  "captured": "dispatch",
+  "argShape": "0:1 1:32 2:8 3:32 =commandId 4:64 5:13 6:6 7:8 8:7 9:1 10:143 11:1 12:1 13:7 14:0 15:1 16:726 17:1011",
+  "n": 3000,
+  "appliedStatus": "R",
+  "notApplied": 0,
+  "results": [
+    {
+      "round": 1,
+      "appendfsync": "always",
+      "arm": "ping",
+      "meanMs": 1.1419,
+      "p50Ms": 0.6499,
+      "clientCpuMsPerOp": 0.8129,
+      "storeCpuMsPerOp": 0.1713
+    },
+    {
+      "round": 1,
+      "appendfsync": "always",
+      "arm": "echo-sized",
+      "meanMs": 1.1856,
+      "p50Ms": 0.6946,
+      "clientCpuMsPerOp": 0.6698,
+      "storeCpuMsPerOp": 0.2008
+    },
+    {
+      "round": 1,
+      "appendfsync": "always",
+      "arm": "fcall-replay",
+      "meanMs": 2.6893,
+      "p50Ms": 1.8379,
+      "clientCpuMsPerOp": 1.0186,
+      "storeCpuMsPerOp": 1.3014
+    },
+    {
+      "round": 1,
+      "appendfsync": "no",
+      "arm": "ping",
+      "meanMs": 1.1773,
+      "p50Ms": 0.7499,
+      "clientCpuMsPerOp": 0.571,
+      "storeCpuMsPerOp": 0.1996
+    },
+    {
+      "round": 1,
+      "appendfsync": "no",
+      "arm": "echo-sized",
+      "meanMs": 1.2849,
+      "p50Ms": 0.7981,
+      "clientCpuMsPerOp": 0.6068,
+      "storeCpuMsPerOp": 0.1867
+    },
+    {
+      "round": 1,
+      "appendfsync": "no",
+      "arm": "fcall-replay",
+      "meanMs": 2.5838,
+      "p50Ms": 1.7981,
+      "clientCpuMsPerOp": 0.8745,
+      "storeCpuMsPerOp": 1.2474
+    },
+    {
+      "round": 2,
+      "appendfsync": "no",
+      "arm": "ping",
+      "meanMs": 1.1193,
+      "p50Ms": 0.5697,
+      "clientCpuMsPerOp": 0.4965,
+      "storeCpuMsPerOp": 0.1596
+    },
+    {
+      "round": 2,
+      "appendfsync": "no",
+      "arm": "echo-sized",
+      "meanMs": 0.9051,
+      "p50Ms": 0.4201,
+      "clientCpuMsPerOp": 0.4769,
+      "storeCpuMsPerOp": 0.1409
+    },
+    {
+      "round": 2,
+      "appendfsync": "no",
+      "arm": "fcall-replay",
+      "meanMs": 3.9915,
+      "p50Ms": 1.9825,
+      "clientCpuMsPerOp": 1.0984,
+      "storeCpuMsPerOp": 1.831
+    },
+    {
+      "round": 2,
+      "appendfsync": "always",
+      "arm": "ping",
+      "meanMs": 1.3989,
+      "p50Ms": 0.5274,
+      "clientCpuMsPerOp": 0.6273,
+      "storeCpuMsPerOp": 0.2116
+    },
+    {
+      "round": 2,
+      "appendfsync": "always",
+      "arm": "echo-sized",
+      "meanMs": 1.3411,
+      "p50Ms": 0.5047,
+      "clientCpuMsPerOp": 0.559,
+      "storeCpuMsPerOp": 0.1917
+    },
+    {
+      "round": 2,
+      "appendfsync": "always",
+      "arm": "fcall-replay",
+      "meanMs": 2.9068,
+      "p50Ms": 1.7479,
+      "clientCpuMsPerOp": 0.897,
+      "storeCpuMsPerOp": 1.4494
+    },
+    {
+      "round": 3,
+      "appendfsync": "always",
+      "arm": "ping",
+      "meanMs": 0.9605,
+      "p50Ms": 0.3854,
+      "clientCpuMsPerOp": 0.4628,
+      "storeCpuMsPerOp": 0.1483
+    },
+    {
+      "round": 3,
+      "appendfsync": "always",
+      "arm": "echo-sized",
+      "meanMs": 1.7926,
+      "p50Ms": 1.0187,
+      "clientCpuMsPerOp": 0.765,
+      "storeCpuMsPerOp": 0.2533
+    },
+    {
+      "round": 3,
+      "appendfsync": "always",
+      "arm": "fcall-replay",
+      "meanMs": 3.1677,
+      "p50Ms": 2.0705,
+      "clientCpuMsPerOp": 1.0553,
+      "storeCpuMsPerOp": 1.548
+    },
+    {
+      "round": 3,
+      "appendfsync": "no",
+      "arm": "ping",
+      "meanMs": 1.2322,
+      "p50Ms": 0.8335,
+      "clientCpuMsPerOp": 0.6089,
+      "storeCpuMsPerOp": 0.2143
+    },
+    {
+      "round": 3,
+      "appendfsync": "no",
+      "arm": "echo-sized",
+      "meanMs": 1.312,
+      "p50Ms": 0.923,
+      "clientCpuMsPerOp": 0.657,
+      "storeCpuMsPerOp": 0.1976
+    },
+    {
+      "round": 3,
+      "appendfsync": "no",
+      "arm": "fcall-replay",
+      "meanMs": 3.3505,
+      "p50Ms": 2.2082,
+      "clientCpuMsPerOp": 1.1462,
+      "storeCpuMsPerOp": 1.5522
+    },
+    {
+      "round": 4,
+      "appendfsync": "no",
+      "arm": "ping",
+      "meanMs": 1.6208,
+      "p50Ms": 0.97,
+      "clientCpuMsPerOp": 0.6814,
+      "storeCpuMsPerOp": 0.2589
+    },
+    {
+      "round": 4,
+      "appendfsync": "no",
+      "arm": "echo-sized",
+      "meanMs": 1.2572,
+      "p50Ms": 0.8993,
+      "clientCpuMsPerOp": 0.6317,
+      "storeCpuMsPerOp": 0.2094
+    },
+    {
+      "round": 4,
+      "appendfsync": "no",
+      "arm": "fcall-replay",
+      "meanMs": 2.8843,
+      "p50Ms": 2.1132,
+      "clientCpuMsPerOp": 1.011,
+      "storeCpuMsPerOp": 1.631
+    },
+    {
+      "round": 4,
+      "appendfsync": "always",
+      "arm": "ping",
+      "meanMs": 1.0346,
+      "p50Ms": 0.7182,
+      "clientCpuMsPerOp": 0.5695,
+      "storeCpuMsPerOp": 0.1888
+    },
+    {
+      "round": 4,
+      "appendfsync": "always",
+      "arm": "echo-sized",
+      "meanMs": 1.4408,
+      "p50Ms": 0.8952,
+      "clientCpuMsPerOp": 0.7504,
+      "storeCpuMsPerOp": 0.2118
+    },
+    {
+      "round": 4,
+      "appendfsync": "always",
+      "arm": "fcall-replay",
+      "meanMs": 2.529,
+      "p50Ms": 1.9253,
+      "clientCpuMsPerOp": 0.9233,
+      "storeCpuMsPerOp": 1.2748
+    },
+    {
+      "round": 5,
+      "appendfsync": "always",
+      "arm": "ping",
+      "meanMs": 1.0204,
+      "p50Ms": 0.7825,
+      "clientCpuMsPerOp": 0.5384,
+      "storeCpuMsPerOp": 0.1923
+    },
+    {
+      "round": 5,
+      "appendfsync": "always",
+      "arm": "echo-sized",
+      "meanMs": 1.0902,
+      "p50Ms": 0.8136,
+      "clientCpuMsPerOp": 0.603,
+      "storeCpuMsPerOp": 0.1869
+    },
+    {
+      "round": 5,
+      "appendfsync": "always",
+      "arm": "fcall-replay",
+      "meanMs": 2.4585,
+      "p50Ms": 1.8705,
+      "clientCpuMsPerOp": 0.8943,
+      "storeCpuMsPerOp": 1.2264
+    },
+    {
+      "round": 5,
+      "appendfsync": "no",
+      "arm": "ping",
+      "meanMs": 1.0081,
+      "p50Ms": 0.7343,
+      "clientCpuMsPerOp": 0.5426,
+      "storeCpuMsPerOp": 0.214
+    },
+    {
+      "round": 5,
+      "appendfsync": "no",
+      "arm": "echo-sized",
+      "meanMs": 1.1024,
+      "p50Ms": 0.7997,
+      "clientCpuMsPerOp": 0.5858,
+      "storeCpuMsPerOp": 0.1982
+    },
+    {
+      "round": 5,
+      "appendfsync": "no",
+      "arm": "fcall-replay",
+      "meanMs": 2.416,
+      "p50Ms": 1.8621,
+      "clientCpuMsPerOp": 0.897,
+      "storeCpuMsPerOp": 1.2119
+    },
+    {
+      "round": 1,
+      "appendfsync": "always",
+      "arm": "fcall-replay-c16",
+      "opsPerSec": 1195.2,
+      "storeCpuMsPerOp": 0.828,
+      "redisCommandsPerOp": 21
+    },
+    {
+      "round": 2,
+      "appendfsync": "always",
+      "arm": "fcall-replay-c16",
+      "opsPerSec": 1585.3,
+      "storeCpuMsPerOp": 0.6826,
+      "redisCommandsPerOp": 21
+    },
+    {
+      "round": 3,
+      "appendfsync": "always",
+      "arm": "fcall-replay-c16",
+      "opsPerSec": 1820.7,
+      "storeCpuMsPerOp": 0.5947,
+      "redisCommandsPerOp": 21
+    },
+    {
+      "round": 4,
+      "appendfsync": "always",
+      "arm": "fcall-replay-c16",
+      "opsPerSec": 1665.4,
+      "storeCpuMsPerOp": 0.5393,
+      "redisCommandsPerOp": 21
+    },
+    {
+      "round": 5,
+      "appendfsync": "always",
+      "arm": "fcall-replay-c16",
+      "opsPerSec": 1665.6,
+      "storeCpuMsPerOp": 0.7762,
+      "redisCommandsPerOp": 21
+    },
+    {
+      "round": 1,
+      "appendfsync": "always",
+      "arm": "fcall-replay-c64",
+      "opsPerSec": 1970.4,
+      "storeCpuMsPerOp": 0.5377,
+      "redisCommandsPerOp": 21
+    },
+    {
+      "round": 2,
+      "appendfsync": "always",
+      "arm": "fcall-replay-c64",
+      "opsPerSec": 2075,
+      "storeCpuMsPerOp": 0.48,
+      "redisCommandsPerOp": 21
+    },
+    {
+      "round": 3,
+      "appendfsync": "always",
+      "arm": "fcall-replay-c64",
+      "opsPerSec": 2254.3,
+      "storeCpuMsPerOp": 0.4362,
+      "redisCommandsPerOp": 21
+    },
+    {
+      "round": 4,
+      "appendfsync": "always",
+      "arm": "fcall-replay-c64",
+      "opsPerSec": 2128.9,
+      "storeCpuMsPerOp": 0.55,
+      "redisCommandsPerOp": 21
+    },
+    {
+      "round": 5,
+      "appendfsync": "always",
+      "arm": "fcall-replay-c64",
+      "opsPerSec": 2056.5,
+      "storeCpuMsPerOp": 0.8204,
+      "redisCommandsPerOp": 21
+    }
+  ]
+}

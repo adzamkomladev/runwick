@@ -1,0 +1,113 @@
+{
+ "mode": "stage2-worker",
+ "store": "postgres",
+ "arm": "direct",
+ "slots": 16,
+ "jobs": 20000,
+ "confirmed": 20000,
+ "buffered": true,
+ "claimAhead": 0,
+ "claimsInFlightSetting": 1,
+ "claimSize": 9,
+ "finishSize": 17,
+ "flushMs": 5,
+ "usage": false,
+ "startupMsToFirstClaim": 12.9,
+ "drainSeconds": 41.346,
+ "jobsPerSec": 483.7,
+ "handlerReturnToConfirmMs": {
+  "p50": 35.65,
+  "p95": 95.51,
+  "p99": 155.54
+ },
+ "clientCpuMsPerJob": 1.2034,
+ "storeCpuMsPerJob": 2.9737,
+ "storeCallLatencies": {
+  "dispatchMany": {
+   "count": 200,
+   "meanMs": 59.043,
+   "minMs": 24.146,
+   "p01Ms": 27.03,
+   "p50Ms": 43.114,
+   "p95Ms": 124.06,
+   "p99Ms": 154.844,
+   "maxMs": 247.882
+  },
+  "dueToBegin": {
+   "count": 20000,
+   "meanMs": 24630.073,
+   "minMs": 6814,
+   "p01Ms": 7167,
+   "p50Ms": 24528,
+   "p95Ms": 40040,
+   "p99Ms": 41205,
+   "maxMs": 41519
+  },
+  "finishMany": {
+   "count": 1396,
+   "meanMs": 25.733,
+   "minMs": 10.395,
+   "p01Ms": 13.225,
+   "p50Ms": 21.429,
+   "p95Ms": 51.914,
+   "p99Ms": 91.358,
+   "maxMs": 229.739
+  },
+  "finishManySize": {
+   "count": 1396,
+   "meanMs": 14.327,
+   "minMs": 1,
+   "p01Ms": 9,
+   "p50Ms": 17,
+   "p95Ms": 17,
+   "p99Ms": 17,
+   "maxMs": 17
+  },
+  "reserveAndBegin": {
+   "count": 2223,
+   "meanMs": 18.491,
+   "minMs": 8.851,
+   "p01Ms": 9.871,
+   "p50Ms": 15.155,
+   "p95Ms": 37.812,
+   "p99Ms": 69.118,
+   "maxMs": 179.518
+  },
+  "reserveAndBeginSize": {
+   "count": 2223,
+   "meanMs": 8.997,
+   "minMs": 2,
+   "p01Ms": 9,
+   "p50Ms": 9,
+   "p95Ms": 9,
+   "p99Ms": 9,
+   "maxMs": 9
+  }
+ },
+ "storeCallCounts": {
+  "dispatchMany:Applied": 200,
+  "finishMany.item:Applied": 20000,
+  "finishMany:Applied": 1396,
+  "reserveAndBegin.item:Applied": 20000,
+  "reserveAndBegin:Applied": 2223
+ },
+ "idleWithBacklog": {
+  "samples": 17108,
+  "idleSlotWithBacklogShare": 0.9991
+ },
+ "direct": {
+  "claimSizeUsed": 9,
+  "finishSizeUsed": 17,
+  "flushMsUsed": 5,
+  "claimers": 1,
+  "finishFailures": 0
+ },
+ "storeCountersPerJob": {
+  "walBytes": 6792.8672,
+  "transactions": 0.1798,
+  "rowsWritten": 10.6296
+ },
+ "cpuIdlePctBefore": 91,
+ "idleGateTimedOut": false,
+ "returncode": 0
+}

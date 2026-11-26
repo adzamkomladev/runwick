@@ -1,0 +1,2177 @@
+{
+ "mode": "stage2-dispatch",
+ "store": "postgres",
+ "payloadBytes": 1024,
+ "opsPerSingleArm": 600,
+ "batchItems": 100,
+ "batchesPerArm": 15,
+ "rounds": 5,
+ "container": "bench-pg",
+ "tmpdir": "/dev/shm/s2/",
+ "preparationSplit": [
+  {
+   "round": 1,
+   "serializePayloadMs": 0.0061,
+   "prepareItemMs": 0.0141,
+   "digestsMs": 0.0351,
+   "prepareSingleMs": 0.0357
+  },
+  {
+   "round": 2,
+   "serializePayloadMs": 0.0087,
+   "prepareItemMs": 0.0066,
+   "digestsMs": 0.044,
+   "prepareSingleMs": 0.0402
+  },
+  {
+   "round": 3,
+   "serializePayloadMs": 0.0056,
+   "prepareItemMs": 0.0241,
+   "digestsMs": 0.0218,
+   "prepareSingleMs": 0.0335
+  },
+  {
+   "round": 4,
+   "serializePayloadMs": 0.0095,
+   "prepareItemMs": 0.0225,
+   "digestsMs": 0.0397,
+   "prepareSingleMs": 0.0527
+  },
+  {
+   "round": 5,
+   "serializePayloadMs": 0.0204,
+   "prepareItemMs": 0.0129,
+   "digestsMs": 0.0302,
+   "prepareSingleMs": 0.0349
+  }
+ ],
+ "arms": [
+  {
+   "arm": "replay-single",
+   "round": 1,
+   "ops": 600,
+   "meanMs": 6.2044,
+   "p50Ms": 4.805,
+   "p99Ms": 24.3103,
+   "clientCpuMsPerOp": 3.2103,
+   "allocBytesPerOp": 62280,
+   "storeCpuMsPerOp": 2.8855,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 3.305,
+     "minMs": 0.697,
+     "p01Ms": 0.819,
+     "p50Ms": 2.022,
+     "p95Ms": 7.931,
+     "p99Ms": 25.617,
+     "maxMs": 54.998
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 1200,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.002,
+     "p99Ms": 0.003,
+     "maxMs": 0.035
+    },
+    "phase:Dispatch:function": {
+     "count": 1200,
+     "meanMs": 7.928,
+     "minMs": 1.57,
+     "p01Ms": 1.853,
+     "p50Ms": 5.867,
+     "p95Ms": 20.583,
+     "p99Ms": 41.84,
+     "maxMs": 142.154
+    },
+    "phase:Dispatch:open": {
+     "count": 1200,
+     "meanMs": 0.014,
+     "minMs": 0.003,
+     "p01Ms": 0.004,
+     "p50Ms": 0.007,
+     "p95Ms": 0.032,
+     "p99Ms": 0.077,
+     "maxMs": 1.144
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 2.072,
+    "rowsWritten": 7.14
+   }
+  },
+  {
+   "arm": "public-single",
+   "round": 1,
+   "ops": 600,
+   "meanMs": 12.8517,
+   "p50Ms": 9.8601,
+   "p99Ms": 49.9581,
+   "clientCpuMsPerOp": 3.8564,
+   "allocBytesPerOp": 107608,
+   "storeCpuMsPerOp": 8.8181,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 2.673,
+     "minMs": 0.706,
+     "p01Ms": 0.78,
+     "p50Ms": 1.836,
+     "p95Ms": 6.379,
+     "p99Ms": 12.054,
+     "maxMs": 65.644
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 600,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.002,
+     "maxMs": 0.161
+    },
+    "phase:Dispatch:function": {
+     "count": 600,
+     "meanMs": 9.673,
+     "minMs": 3.951,
+     "p01Ms": 4.358,
+     "p50Ms": 7.43,
+     "p95Ms": 22.119,
+     "p99Ms": 40.79,
+     "maxMs": 85.182
+    },
+    "phase:Dispatch:open": {
+     "count": 600,
+     "meanMs": 0.008,
+     "minMs": 0.003,
+     "p01Ms": 0.003,
+     "p50Ms": 0.005,
+     "p95Ms": 0.006,
+     "p99Ms": 0.03,
+     "maxMs": 1.288
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.247,
+    "rowsWritten": 5.86
+   }
+  },
+  {
+   "arm": "prepare-single",
+   "round": 1,
+   "ops": 600,
+   "meanMs": 0.0325,
+   "p50Ms": 0.0217,
+   "p99Ms": 0.1165,
+   "clientCpuMsPerOp": 0.0336,
+   "allocBytesPerOp": 39608,
+   "storeCpuMsPerOp": 0,
+   "storePhases": {},
+   "storeCountersPerOp": null
+  },
+  {
+   "arm": "prepared-single",
+   "round": 1,
+   "ops": 600,
+   "meanMs": 11.6826,
+   "p50Ms": 9.1251,
+   "p99Ms": 52.5839,
+   "clientCpuMsPerOp": 3.4197,
+   "allocBytesPerOp": 68056,
+   "storeCpuMsPerOp": 8.1637,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 2.549,
+     "minMs": 0.73,
+     "p01Ms": 0.826,
+     "p50Ms": 1.795,
+     "p95Ms": 6.696,
+     "p99Ms": 11.137,
+     "maxMs": 43.782
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 600,
+     "meanMs": 0,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.002
+    },
+    "phase:Dispatch:function": {
+     "count": 600,
+     "meanMs": 8.904,
+     "minMs": 3.931,
+     "p01Ms": 4.234,
+     "p50Ms": 6.902,
+     "p95Ms": 19.422,
+     "p99Ms": 37.139,
+     "maxMs": 105.66
+    },
+    "phase:Dispatch:open": {
+     "count": 600,
+     "meanMs": 0.008,
+     "minMs": 0.003,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.009,
+     "p99Ms": 0.075,
+     "maxMs": 0.363
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.097,
+    "rowsWritten": 5.9
+   }
+  },
+  {
+   "arm": "store-single",
+   "round": 1,
+   "ops": 600,
+   "meanMs": 10.7275,
+   "p50Ms": 8.9071,
+   "p99Ms": 41.1551,
+   "clientCpuMsPerOp": 3.2137,
+   "allocBytesPerOp": 66536,
+   "storeCpuMsPerOp": 7.5508,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 2.264,
+     "minMs": 0.675,
+     "p01Ms": 0.809,
+     "p50Ms": 1.722,
+     "p95Ms": 5.454,
+     "p99Ms": 7.542,
+     "maxMs": 52.439
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 600,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.11
+    },
+    "phase:Dispatch:function": {
+     "count": 600,
+     "meanMs": 8.259,
+     "minMs": 4.034,
+     "p01Ms": 4.352,
+     "p50Ms": 6.773,
+     "p95Ms": 15.913,
+     "p99Ms": 36.156,
+     "maxMs": 51.654
+    },
+    "phase:Dispatch:open": {
+     "count": 600,
+     "meanMs": 0.008,
+     "minMs": 0.003,
+     "p01Ms": 0.005,
+     "p50Ms": 0.006,
+     "p95Ms": 0.013,
+     "p99Ms": 0.059,
+     "maxMs": 0.296
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.087,
+    "rowsWritten": 5.88
+   }
+  },
+  {
+   "arm": "store-batch",
+   "round": 1,
+   "ops": 15,
+   "meanMs": 61.1623,
+   "p50Ms": 52.9096,
+   "p99Ms": 166.8334,
+   "clientCpuMsPerOp": 20.0787,
+   "allocBytesPerOp": 809313,
+   "storeCpuMsPerOp": 53.746,
+   "storePhases": {
+    "phase:DispatchMany:commit": {
+     "count": 15,
+     "meanMs": 9.112,
+     "minMs": 4.321,
+     "p01Ms": 4.321,
+     "p50Ms": 8.121,
+     "p95Ms": 20.938,
+     "p99Ms": 20.938,
+     "maxMs": 20.938
+    },
+    "phase:DispatchMany:driverLane": {
+     "count": 15,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.002,
+     "p99Ms": 0.002,
+     "maxMs": 0.002
+    },
+    "phase:DispatchMany:function": {
+     "count": 15,
+     "meanMs": 49.981,
+     "minMs": 23.795,
+     "p01Ms": 23.795,
+     "p50Ms": 36.144,
+     "p95Ms": 157.535,
+     "p99Ms": 157.535,
+     "maxMs": 157.535
+    },
+    "phase:DispatchMany:open": {
+     "count": 15,
+     "meanMs": 0.006,
+     "minMs": 0.004,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.012,
+     "p99Ms": 0.012,
+     "maxMs": 0.012
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 3.867,
+    "rowsWritten": 204.133
+   }
+  },
+  {
+   "arm": "public-batch",
+   "round": 1,
+   "ops": 15,
+   "meanMs": 59.1637,
+   "p50Ms": 45.0298,
+   "p99Ms": 188.3047,
+   "clientCpuMsPerOp": 14.9098,
+   "allocBytesPerOp": 3586238,
+   "storeCpuMsPerOp": 51.3638,
+   "storePhases": {
+    "phase:DispatchMany:commit": {
+     "count": 15,
+     "meanMs": 9.02,
+     "minMs": 3.928,
+     "p01Ms": 3.928,
+     "p50Ms": 5.281,
+     "p95Ms": 48.816,
+     "p99Ms": 48.816,
+     "maxMs": 48.816
+    },
+    "phase:DispatchMany:driverLane": {
+     "count": 15,
+     "meanMs": 0.002,
+     "minMs": 0.001,
+     "p01Ms": 0.001,
+     "p50Ms": 0.001,
+     "p95Ms": 0.003,
+     "p99Ms": 0.003,
+     "maxMs": 0.003
+    },
+    "phase:DispatchMany:function": {
+     "count": 15,
+     "meanMs": 44.606,
+     "minMs": 29.211,
+     "p01Ms": 29.211,
+     "p50Ms": 33.54,
+     "p95Ms": 174.861,
+     "p99Ms": 174.861,
+     "maxMs": 174.861
+    },
+    "phase:DispatchMany:open": {
+     "count": 15,
+     "meanMs": 0.01,
+     "minMs": 0.004,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.048,
+     "p99Ms": 0.048,
+     "maxMs": 0.048
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.733,
+    "rowsWritten": 404
+   }
+  },
+  {
+   "arm": "prepare-batch",
+   "round": 1,
+   "ops": 15,
+   "meanMs": 3.037,
+   "p50Ms": 2.3611,
+   "p99Ms": 6.4502,
+   "clientCpuMsPerOp": 3.1053,
+   "allocBytesPerOp": 2750016,
+   "storeCpuMsPerOp": 0,
+   "storePhases": {},
+   "storeCountersPerOp": null
+  },
+  {
+   "arm": "prepared-batch",
+   "round": 1,
+   "ops": 15,
+   "meanMs": 42.3055,
+   "p50Ms": 39.3928,
+   "p99Ms": 64.5591,
+   "clientCpuMsPerOp": 12.8718,
+   "allocBytesPerOp": 836466,
+   "storeCpuMsPerOp": 37.8523,
+   "storePhases": {
+    "phase:DispatchMany:commit": {
+     "count": 15,
+     "meanMs": 5.39,
+     "minMs": 3.231,
+     "p01Ms": 3.231,
+     "p50Ms": 4.892,
+     "p95Ms": 10.619,
+     "p99Ms": 10.619,
+     "maxMs": 10.619
+    },
+    "phase:DispatchMany:driverLane": {
+     "count": 15,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.002,
+     "p99Ms": 0.002,
+     "maxMs": 0.002
+    },
+    "phase:DispatchMany:function": {
+     "count": 15,
+     "meanMs": 35.776,
+     "minMs": 26.952,
+     "p01Ms": 26.952,
+     "p50Ms": 33.082,
+     "p95Ms": 52.974,
+     "p99Ms": 52.974,
+     "maxMs": 52.974
+    },
+    "phase:DispatchMany:open": {
+     "count": 15,
+     "meanMs": 0.005,
+     "minMs": 0.004,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.007,
+     "p99Ms": 0.007,
+     "maxMs": 0.007
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 0.867,
+    "rowsWritten": 188.533
+   }
+  },
+  {
+   "arm": "store-single",
+   "round": 2,
+   "ops": 600,
+   "meanMs": 10.6998,
+   "p50Ms": 8.7845,
+   "p99Ms": 32.1822,
+   "clientCpuMsPerOp": 3.3983,
+   "allocBytesPerOp": 66485,
+   "storeCpuMsPerOp": 7.4812,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 2.273,
+     "minMs": 0.648,
+     "p01Ms": 0.825,
+     "p50Ms": 1.677,
+     "p95Ms": 5.529,
+     "p99Ms": 11.391,
+     "maxMs": 14.396
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 600,
+     "meanMs": 0,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.017
+    },
+    "phase:Dispatch:function": {
+     "count": 600,
+     "meanMs": 8.242,
+     "minMs": 3.666,
+     "p01Ms": 4.257,
+     "p50Ms": 6.621,
+     "p95Ms": 16.566,
+     "p99Ms": 26.35,
+     "maxMs": 48.524
+    },
+    "phase:Dispatch:open": {
+     "count": 600,
+     "meanMs": 0.011,
+     "minMs": 0.003,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.013,
+     "p99Ms": 0.069,
+     "maxMs": 1.917
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.085,
+    "rowsWritten": 16.453
+   }
+  },
+  {
+   "arm": "replay-single",
+   "round": 2,
+   "ops": 600,
+   "meanMs": 7.3107,
+   "p50Ms": 4.5834,
+   "p99Ms": 43.9616,
+   "clientCpuMsPerOp": 2.8342,
+   "allocBytesPerOp": 62263,
+   "storeCpuMsPerOp": 3.295,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 2.362,
+     "minMs": 0.629,
+     "p01Ms": 0.78,
+     "p50Ms": 1.672,
+     "p95Ms": 4.814,
+     "p99Ms": 13.213,
+     "maxMs": 67.487
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 1200,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.182
+    },
+    "phase:Dispatch:function": {
+     "count": 1200,
+     "meanMs": 6.379,
+     "minMs": 1.254,
+     "p01Ms": 1.644,
+     "p50Ms": 5.559,
+     "p95Ms": 14.062,
+     "p99Ms": 28.213,
+     "maxMs": 186.57
+    },
+    "phase:Dispatch:open": {
+     "count": 1200,
+     "meanMs": 0.01,
+     "minMs": 0.003,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.016,
+     "p99Ms": 0.07,
+     "maxMs": 0.624
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 2.135,
+    "rowsWritten": 6.32
+   }
+  },
+  {
+   "arm": "public-single",
+   "round": 2,
+   "ops": 600,
+   "meanMs": 11.4047,
+   "p50Ms": 8.8948,
+   "p99Ms": 47.9525,
+   "clientCpuMsPerOp": 3.429,
+   "allocBytesPerOp": 107576,
+   "storeCpuMsPerOp": 7.8477,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 2.365,
+     "minMs": 0.681,
+     "p01Ms": 0.804,
+     "p50Ms": 1.654,
+     "p95Ms": 6.172,
+     "p99Ms": 13.025,
+     "maxMs": 21.891
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 600,
+     "meanMs": 0,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.014
+    },
+    "phase:Dispatch:function": {
+     "count": 600,
+     "meanMs": 8.562,
+     "minMs": 3.573,
+     "p01Ms": 4.353,
+     "p50Ms": 6.52,
+     "p95Ms": 19.304,
+     "p99Ms": 39.421,
+     "maxMs": 54.22
+    },
+    "phase:Dispatch:open": {
+     "count": 600,
+     "meanMs": 0.007,
+     "minMs": 0.002,
+     "p01Ms": 0.003,
+     "p50Ms": 0.005,
+     "p95Ms": 0.006,
+     "p99Ms": 0.073,
+     "maxMs": 0.38
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 0.973,
+    "rowsWritten": 5.07
+   }
+  },
+  {
+   "arm": "prepare-single",
+   "round": 2,
+   "ops": 600,
+   "meanMs": 0.0283,
+   "p50Ms": 0.0216,
+   "p99Ms": 0.162,
+   "clientCpuMsPerOp": 0.0433,
+   "allocBytesPerOp": 39627,
+   "storeCpuMsPerOp": 0.003,
+   "storePhases": {},
+   "storeCountersPerOp": null
+  },
+  {
+   "arm": "prepared-single",
+   "round": 2,
+   "ops": 600,
+   "meanMs": 11.2547,
+   "p50Ms": 8.9384,
+   "p99Ms": 50.6063,
+   "clientCpuMsPerOp": 3.4972,
+   "allocBytesPerOp": 68158,
+   "storeCpuMsPerOp": 7.9675,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 2.472,
+     "minMs": 0.63,
+     "p01Ms": 0.794,
+     "p50Ms": 1.738,
+     "p95Ms": 6.089,
+     "p99Ms": 13.335,
+     "maxMs": 51.369
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 600,
+     "meanMs": 0,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.009
+    },
+    "phase:Dispatch:function": {
+     "count": 600,
+     "meanMs": 8.553,
+     "minMs": 4.169,
+     "p01Ms": 4.55,
+     "p50Ms": 6.741,
+     "p95Ms": 16.347,
+     "p99Ms": 28.419,
+     "maxMs": 126.3
+    },
+    "phase:Dispatch:open": {
+     "count": 600,
+     "meanMs": 0.008,
+     "minMs": 0.003,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.009,
+     "p99Ms": 0.034,
+     "maxMs": 0.678
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.185,
+    "rowsWritten": 6.382
+   }
+  },
+  {
+   "arm": "prepared-batch",
+   "round": 2,
+   "ops": 15,
+   "meanMs": 50.8972,
+   "p50Ms": 50.1778,
+   "p99Ms": 70.226,
+   "clientCpuMsPerOp": 9.8043,
+   "allocBytesPerOp": 843139,
+   "storeCpuMsPerOp": 45.1,
+   "storePhases": {
+    "phase:DispatchMany:commit": {
+     "count": 15,
+     "meanMs": 8.346,
+     "minMs": 4.737,
+     "p01Ms": 4.737,
+     "p50Ms": 6.532,
+     "p95Ms": 15.863,
+     "p99Ms": 15.863,
+     "maxMs": 15.863
+    },
+    "phase:DispatchMany:driverLane": {
+     "count": 15,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0.001,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.001
+    },
+    "phase:DispatchMany:function": {
+     "count": 15,
+     "meanMs": 41.512,
+     "minMs": 27.646,
+     "p01Ms": 27.646,
+     "p50Ms": 38.059,
+     "p95Ms": 57.696,
+     "p99Ms": 57.696,
+     "maxMs": 57.696
+    },
+    "phase:DispatchMany:open": {
+     "count": 15,
+     "meanMs": 0.006,
+     "minMs": 0.004,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.007,
+     "p99Ms": 0.007,
+     "maxMs": 0.007
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 5.6,
+    "rowsWritten": 135.333
+   }
+  },
+  {
+   "arm": "store-batch",
+   "round": 2,
+   "ops": 15,
+   "meanMs": 42.276,
+   "p50Ms": 42.7337,
+   "p99Ms": 58.4961,
+   "clientCpuMsPerOp": 5.1097,
+   "allocBytesPerOp": 808901,
+   "storeCpuMsPerOp": 38.4411,
+   "storePhases": {
+    "phase:DispatchMany:commit": {
+     "count": 15,
+     "meanMs": 7.186,
+     "minMs": 3.948,
+     "p01Ms": 3.948,
+     "p50Ms": 7.042,
+     "p95Ms": 14.975,
+     "p99Ms": 14.975,
+     "maxMs": 14.975
+    },
+    "phase:DispatchMany:driverLane": {
+     "count": 15,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.003,
+     "p99Ms": 0.003,
+     "maxMs": 0.003
+    },
+    "phase:DispatchMany:function": {
+     "count": 15,
+     "meanMs": 34.009,
+     "minMs": 27.64,
+     "p01Ms": 27.64,
+     "p50Ms": 33.769,
+     "p95Ms": 47.448,
+     "p99Ms": 47.448,
+     "maxMs": 47.448
+    },
+    "phase:DispatchMany:open": {
+     "count": 15,
+     "meanMs": 0.006,
+     "minMs": 0.004,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.008,
+     "p99Ms": 0.008,
+     "maxMs": 0.008
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.867,
+    "rowsWritten": 484.8
+   }
+  },
+  {
+   "arm": "public-batch",
+   "round": 2,
+   "ops": 15,
+   "meanMs": 54.5839,
+   "p50Ms": 44.9181,
+   "p99Ms": 133.2253,
+   "clientCpuMsPerOp": 18.6907,
+   "allocBytesPerOp": 3586039,
+   "storeCpuMsPerOp": 43.9948,
+   "storePhases": {
+    "phase:DispatchMany:commit": {
+     "count": 15,
+     "meanMs": 9.577,
+     "minMs": 3.624,
+     "p01Ms": 3.624,
+     "p50Ms": 5.359,
+     "p95Ms": 58.704,
+     "p99Ms": 58.704,
+     "maxMs": 58.704
+    },
+    "phase:DispatchMany:driverLane": {
+     "count": 15,
+     "meanMs": 0.001,
+     "minMs": 0.001,
+     "p01Ms": 0.001,
+     "p50Ms": 0.001,
+     "p95Ms": 0.002,
+     "p99Ms": 0.002,
+     "maxMs": 0.002
+    },
+    "phase:DispatchMany:function": {
+     "count": 15,
+     "meanMs": 41.044,
+     "minMs": 31.24,
+     "p01Ms": 31.24,
+     "p50Ms": 36.537,
+     "p95Ms": 61.158,
+     "p99Ms": 61.158,
+     "maxMs": 61.158
+    },
+    "phase:DispatchMany:open": {
+     "count": 15,
+     "meanMs": 0.006,
+     "minMs": 0.004,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.007,
+     "p99Ms": 0.007,
+     "maxMs": 0.007
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 2.267,
+    "rowsWritten": 565.6
+   }
+  },
+  {
+   "arm": "prepare-batch",
+   "round": 2,
+   "ops": 15,
+   "meanMs": 2.1621,
+   "p50Ms": 2.1379,
+   "p99Ms": 2.7357,
+   "clientCpuMsPerOp": 4.3929,
+   "allocBytesPerOp": 2750016,
+   "storeCpuMsPerOp": 0,
+   "storePhases": {},
+   "storeCountersPerOp": null
+  },
+  {
+   "arm": "prepared-single",
+   "round": 3,
+   "ops": 600,
+   "meanMs": 11.5549,
+   "p50Ms": 9.251,
+   "p99Ms": 44.2323,
+   "clientCpuMsPerOp": 3.4415,
+   "allocBytesPerOp": 68059,
+   "storeCpuMsPerOp": 7.9369,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 2.611,
+     "minMs": 0.747,
+     "p01Ms": 0.825,
+     "p50Ms": 1.804,
+     "p95Ms": 5.93,
+     "p99Ms": 14.376,
+     "maxMs": 61.234
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 600,
+     "meanMs": 0,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.002
+    },
+    "phase:Dispatch:function": {
+     "count": 600,
+     "meanMs": 8.706,
+     "minMs": 3.935,
+     "p01Ms": 4.39,
+     "p50Ms": 6.95,
+     "p95Ms": 19.046,
+     "p99Ms": 35.782,
+     "maxMs": 58.297
+    },
+    "phase:Dispatch:open": {
+     "count": 600,
+     "meanMs": 0.011,
+     "minMs": 0.002,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.01,
+     "p99Ms": 0.044,
+     "maxMs": 1.432
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.045,
+    "rowsWritten": 6.927
+   }
+  },
+  {
+   "arm": "store-single",
+   "round": 3,
+   "ops": 600,
+   "meanMs": 11.1236,
+   "p50Ms": 8.9028,
+   "p99Ms": 41.8428,
+   "clientCpuMsPerOp": 3.1768,
+   "allocBytesPerOp": 66498,
+   "storeCpuMsPerOp": 7.9231,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 2.487,
+     "minMs": 0.602,
+     "p01Ms": 0.756,
+     "p50Ms": 1.77,
+     "p95Ms": 5.567,
+     "p99Ms": 13.046,
+     "maxMs": 34.619
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 600,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0,
+     "p99Ms": 0.001,
+     "maxMs": 0.186
+    },
+    "phase:Dispatch:function": {
+     "count": 600,
+     "meanMs": 8.454,
+     "minMs": 3.647,
+     "p01Ms": 4.217,
+     "p50Ms": 6.671,
+     "p95Ms": 17.13,
+     "p99Ms": 32.2,
+     "maxMs": 67.645
+    },
+    "phase:Dispatch:open": {
+     "count": 600,
+     "meanMs": 0.012,
+     "minMs": 0.003,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.015,
+     "p99Ms": 0.116,
+     "maxMs": 1.125
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.175,
+    "rowsWritten": 6.37
+   }
+  },
+  {
+   "arm": "replay-single",
+   "round": 3,
+   "ops": 600,
+   "meanMs": 6.1666,
+   "p50Ms": 4.7614,
+   "p99Ms": 27.6839,
+   "clientCpuMsPerOp": 2.6272,
+   "allocBytesPerOp": 62245,
+   "storeCpuMsPerOp": 2.6863,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 2.992,
+     "minMs": 0.578,
+     "p01Ms": 0.782,
+     "p50Ms": 1.758,
+     "p95Ms": 6.951,
+     "p99Ms": 17.884,
+     "maxMs": 200.623
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 1200,
+     "meanMs": 0,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.033
+    },
+    "phase:Dispatch:function": {
+     "count": 1200,
+     "meanMs": 6.643,
+     "minMs": 1.23,
+     "p01Ms": 1.514,
+     "p50Ms": 5.591,
+     "p95Ms": 14.513,
+     "p99Ms": 29.919,
+     "maxMs": 122.402
+    },
+    "phase:Dispatch:open": {
+     "count": 1200,
+     "meanMs": 0.009,
+     "minMs": 0.002,
+     "p01Ms": 0.003,
+     "p50Ms": 0.006,
+     "p95Ms": 0.013,
+     "p99Ms": 0.032,
+     "maxMs": 0.637
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 2.077,
+    "rowsWritten": 6.05
+   }
+  },
+  {
+   "arm": "public-single",
+   "round": 3,
+   "ops": 600,
+   "meanMs": 12.1522,
+   "p50Ms": 9.559,
+   "p99Ms": 47.5752,
+   "clientCpuMsPerOp": 3.7483,
+   "allocBytesPerOp": 107595,
+   "storeCpuMsPerOp": 8.3563,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 2.808,
+     "minMs": 0.688,
+     "p01Ms": 0.833,
+     "p50Ms": 1.838,
+     "p95Ms": 7.741,
+     "p99Ms": 19.211,
+     "maxMs": 41.692
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 600,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.123
+    },
+    "phase:Dispatch:function": {
+     "count": 600,
+     "meanMs": 8.879,
+     "minMs": 4.054,
+     "p01Ms": 4.456,
+     "p50Ms": 7.03,
+     "p95Ms": 18.762,
+     "p99Ms": 37.043,
+     "maxMs": 75.127
+    },
+    "phase:Dispatch:open": {
+     "count": 600,
+     "meanMs": 0.005,
+     "minMs": 0.002,
+     "p01Ms": 0.003,
+     "p50Ms": 0.005,
+     "p95Ms": 0.006,
+     "p99Ms": 0.016,
+     "maxMs": 0.081
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.098,
+    "rowsWritten": 5.59
+   }
+  },
+  {
+   "arm": "prepare-single",
+   "round": 3,
+   "ops": 600,
+   "meanMs": 0.2634,
+   "p50Ms": 0.0242,
+   "p99Ms": 4.6479,
+   "clientCpuMsPerOp": 0.4548,
+   "allocBytesPerOp": 39638,
+   "storeCpuMsPerOp": 0.025,
+   "storePhases": {},
+   "storeCountersPerOp": null
+  },
+  {
+   "arm": "prepare-batch",
+   "round": 3,
+   "ops": 15,
+   "meanMs": 8.1293,
+   "p50Ms": 4.0472,
+   "p99Ms": 61.4418,
+   "clientCpuMsPerOp": 21.1245,
+   "allocBytesPerOp": 2750046,
+   "storeCpuMsPerOp": 0.0171,
+   "storePhases": {},
+   "storeCountersPerOp": null
+  },
+  {
+   "arm": "prepared-batch",
+   "round": 3,
+   "ops": 15,
+   "meanMs": 51.2138,
+   "p50Ms": 48.3399,
+   "p99Ms": 68.6131,
+   "clientCpuMsPerOp": 7.0207,
+   "allocBytesPerOp": 838168,
+   "storeCpuMsPerOp": 45.2115,
+   "storePhases": {
+    "phase:DispatchMany:commit": {
+     "count": 15,
+     "meanMs": 9.212,
+     "minMs": 3.907,
+     "p01Ms": 3.907,
+     "p50Ms": 7.094,
+     "p95Ms": 28.382,
+     "p99Ms": 28.382,
+     "maxMs": 28.382
+    },
+    "phase:DispatchMany:driverLane": {
+     "count": 15,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0.001,
+     "p95Ms": 0.003,
+     "p99Ms": 0.003,
+     "maxMs": 0.003
+    },
+    "phase:DispatchMany:function": {
+     "count": 15,
+     "meanMs": 40.663,
+     "minMs": 32.098,
+     "p01Ms": 32.098,
+     "p50Ms": 39.546,
+     "p95Ms": 57.94,
+     "p99Ms": 57.94,
+     "maxMs": 57.94
+    },
+    "phase:DispatchMany:open": {
+     "count": 15,
+     "meanMs": 0.006,
+     "minMs": 0.004,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.008,
+     "p99Ms": 0.008,
+     "maxMs": 0.008
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 3.4,
+    "rowsWritten": 43.333
+   }
+  },
+  {
+   "arm": "store-batch",
+   "round": 3,
+   "ops": 15,
+   "meanMs": 54.0996,
+   "p50Ms": 44.5634,
+   "p99Ms": 134.8492,
+   "clientCpuMsPerOp": 6.5921,
+   "allocBytesPerOp": 807375,
+   "storeCpuMsPerOp": 44.4445,
+   "storePhases": {
+    "phase:DispatchMany:commit": {
+     "count": 15,
+     "meanMs": 9.797,
+     "minMs": 3.758,
+     "p01Ms": 3.758,
+     "p50Ms": 6.048,
+     "p95Ms": 54.583,
+     "p99Ms": 54.583,
+     "maxMs": 54.583
+    },
+    "phase:DispatchMany:driverLane": {
+     "count": 15,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.002,
+     "p99Ms": 0.002,
+     "maxMs": 0.002
+    },
+    "phase:DispatchMany:function": {
+     "count": 15,
+     "meanMs": 43.314,
+     "minMs": 28.748,
+     "p01Ms": 28.748,
+     "p50Ms": 38.724,
+     "p95Ms": 79.789,
+     "p99Ms": 79.789,
+     "maxMs": 79.789
+    },
+    "phase:DispatchMany:open": {
+     "count": 15,
+     "meanMs": 0.043,
+     "minMs": 0.004,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.531,
+     "p99Ms": 0.531,
+     "maxMs": 0.531
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.867,
+    "rowsWritten": 484.8
+   }
+  },
+  {
+   "arm": "public-batch",
+   "round": 3,
+   "ops": 15,
+   "meanMs": 50.1331,
+   "p50Ms": 45.9581,
+   "p99Ms": 79.316,
+   "clientCpuMsPerOp": 13.7286,
+   "allocBytesPerOp": 3585649,
+   "storeCpuMsPerOp": 41.3687,
+   "storePhases": {
+    "phase:DispatchMany:commit": {
+     "count": 15,
+     "meanMs": 6.488,
+     "minMs": 3.513,
+     "p01Ms": 3.513,
+     "p50Ms": 5.126,
+     "p95Ms": 15.162,
+     "p99Ms": 15.162,
+     "maxMs": 15.162
+    },
+    "phase:DispatchMany:driverLane": {
+     "count": 15,
+     "meanMs": 0.002,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0.002,
+     "p95Ms": 0.003,
+     "p99Ms": 0.003,
+     "maxMs": 0.003
+    },
+    "phase:DispatchMany:function": {
+     "count": 15,
+     "meanMs": 38.722,
+     "minMs": 28.112,
+     "p01Ms": 28.112,
+     "p50Ms": 36.658,
+     "p95Ms": 63.695,
+     "p99Ms": 63.695,
+     "maxMs": 63.695
+    },
+    "phase:DispatchMany:open": {
+     "count": 15,
+     "meanMs": 0.006,
+     "minMs": 0.005,
+     "p01Ms": 0.005,
+     "p50Ms": 0.006,
+     "p95Ms": 0.008,
+     "p99Ms": 0.008,
+     "maxMs": 0.008
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 2,
+    "rowsWritten": 484.8
+   }
+  },
+  {
+   "arm": "prepare-single",
+   "round": 4,
+   "ops": 600,
+   "meanMs": 0.0283,
+   "p50Ms": 0.0213,
+   "p99Ms": 0.1061,
+   "clientCpuMsPerOp": 0.0297,
+   "allocBytesPerOp": 39632,
+   "storeCpuMsPerOp": 0,
+   "storePhases": {},
+   "storeCountersPerOp": null
+  },
+  {
+   "arm": "prepared-single",
+   "round": 4,
+   "ops": 600,
+   "meanMs": 16.7496,
+   "p50Ms": 11.3316,
+   "p99Ms": 97.7527,
+   "clientCpuMsPerOp": 4.6355,
+   "allocBytesPerOp": 68189,
+   "storeCpuMsPerOp": 10.9748,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 3.788,
+     "minMs": 0.777,
+     "p01Ms": 0.854,
+     "p50Ms": 2.164,
+     "p95Ms": 10.387,
+     "p99Ms": 38.104,
+     "maxMs": 90.202
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 600,
+     "meanMs": 0,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.002,
+     "maxMs": 0.035
+    },
+    "phase:Dispatch:function": {
+     "count": 600,
+     "meanMs": 12.703,
+     "minMs": 3.848,
+     "p01Ms": 4.417,
+     "p50Ms": 8.05,
+     "p95Ms": 31.766,
+     "p99Ms": 74.338,
+     "maxMs": 214.025
+    },
+    "phase:Dispatch:open": {
+     "count": 600,
+     "meanMs": 0.008,
+     "minMs": 0.003,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.009,
+     "p99Ms": 0.024,
+     "maxMs": 0.28
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.075,
+    "rowsWritten": 10.867
+   }
+  },
+  {
+   "arm": "store-single",
+   "round": 4,
+   "ops": 600,
+   "meanMs": 13.0982,
+   "p50Ms": 9.9528,
+   "p99Ms": 51.9224,
+   "clientCpuMsPerOp": 3.7761,
+   "allocBytesPerOp": 66582,
+   "storeCpuMsPerOp": 9.7345,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 3.024,
+     "minMs": 0.706,
+     "p01Ms": 0.786,
+     "p50Ms": 1.923,
+     "p95Ms": 7.134,
+     "p99Ms": 17.554,
+     "maxMs": 112.969
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 600,
+     "meanMs": 0,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.022
+    },
+    "phase:Dispatch:function": {
+     "count": 600,
+     "meanMs": 9.883,
+     "minMs": 4.252,
+     "p01Ms": 4.454,
+     "p50Ms": 7.363,
+     "p95Ms": 22.768,
+     "p99Ms": 43.802,
+     "maxMs": 88.126
+    },
+    "phase:Dispatch:open": {
+     "count": 600,
+     "meanMs": 0.01,
+     "minMs": 0.004,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.015,
+     "p99Ms": 0.069,
+     "maxMs": 1.068
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.143,
+    "rowsWritten": 6.053
+   }
+  },
+  {
+   "arm": "replay-single",
+   "round": 4,
+   "ops": 600,
+   "meanMs": 7.1869,
+   "p50Ms": 5.1911,
+   "p99Ms": 27.2395,
+   "clientCpuMsPerOp": 2.8807,
+   "allocBytesPerOp": 62268,
+   "storeCpuMsPerOp": 3.4884,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 2.719,
+     "minMs": 0.668,
+     "p01Ms": 0.786,
+     "p50Ms": 1.898,
+     "p95Ms": 6.709,
+     "p99Ms": 14.405,
+     "maxMs": 23.779
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 1200,
+     "meanMs": 0,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.013
+    },
+    "phase:Dispatch:function": {
+     "count": 1200,
+     "meanMs": 7.549,
+     "minMs": 1.508,
+     "p01Ms": 1.862,
+     "p50Ms": 5.848,
+     "p95Ms": 18.487,
+     "p99Ms": 34.514,
+     "maxMs": 153.102
+    },
+    "phase:Dispatch:open": {
+     "count": 1200,
+     "meanMs": 0.016,
+     "minMs": 0.002,
+     "p01Ms": 0.004,
+     "p50Ms": 0.007,
+     "p95Ms": 0.016,
+     "p99Ms": 0.199,
+     "maxMs": 2.208
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 2.047,
+    "rowsWritten": 6.44
+   }
+  },
+  {
+   "arm": "public-single",
+   "round": 4,
+   "ops": 600,
+   "meanMs": 12.5146,
+   "p50Ms": 9.7754,
+   "p99Ms": 51.8056,
+   "clientCpuMsPerOp": 4.4689,
+   "allocBytesPerOp": 107592,
+   "storeCpuMsPerOp": 8.1384,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 2.598,
+     "minMs": 0.699,
+     "p01Ms": 0.848,
+     "p50Ms": 1.81,
+     "p95Ms": 6.902,
+     "p99Ms": 15.6,
+     "maxMs": 37.629
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 600,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.047
+    },
+    "phase:Dispatch:function": {
+     "count": 600,
+     "meanMs": 9.454,
+     "minMs": 3.833,
+     "p01Ms": 4.269,
+     "p50Ms": 7.171,
+     "p95Ms": 19.541,
+     "p99Ms": 37.046,
+     "maxMs": 192.629
+    },
+    "phase:Dispatch:open": {
+     "count": 600,
+     "meanMs": 0.008,
+     "minMs": 0.002,
+     "p01Ms": 0.004,
+     "p50Ms": 0.005,
+     "p95Ms": 0.007,
+     "p99Ms": 0.037,
+     "maxMs": 0.855
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.28,
+    "rowsWritten": 5.96
+   }
+  },
+  {
+   "arm": "public-batch",
+   "round": 4,
+   "ops": 15,
+   "meanMs": 61.0021,
+   "p50Ms": 57.617,
+   "p99Ms": 110.5904,
+   "clientCpuMsPerOp": 21.2066,
+   "allocBytesPerOp": 3587362,
+   "storeCpuMsPerOp": 47.2519,
+   "storePhases": {
+    "phase:DispatchMany:commit": {
+     "count": 15,
+     "meanMs": 6.912,
+     "minMs": 4.388,
+     "p01Ms": 4.388,
+     "p50Ms": 5.974,
+     "p95Ms": 13.002,
+     "p99Ms": 13.002,
+     "maxMs": 13.002
+    },
+    "phase:DispatchMany:driverLane": {
+     "count": 15,
+     "meanMs": 0.002,
+     "minMs": 0.001,
+     "p01Ms": 0.001,
+     "p50Ms": 0.002,
+     "p95Ms": 0.003,
+     "p99Ms": 0.003,
+     "maxMs": 0.003
+    },
+    "phase:DispatchMany:function": {
+     "count": 15,
+     "meanMs": 44.404,
+     "minMs": 29.386,
+     "p01Ms": 29.386,
+     "p50Ms": 40.459,
+     "p95Ms": 77.919,
+     "p99Ms": 77.919,
+     "maxMs": 77.919
+    },
+    "phase:DispatchMany:open": {
+     "count": 15,
+     "meanMs": 0.01,
+     "minMs": 0.005,
+     "p01Ms": 0.005,
+     "p50Ms": 0.006,
+     "p95Ms": 0.056,
+     "p99Ms": 0.056,
+     "maxMs": 0.056
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 2.933,
+    "rowsWritten": 331.6
+   }
+  },
+  {
+   "arm": "prepare-batch",
+   "round": 4,
+   "ops": 15,
+   "meanMs": 2.1429,
+   "p50Ms": 1.9902,
+   "p99Ms": 3.4278,
+   "clientCpuMsPerOp": 2.2678,
+   "allocBytesPerOp": 2750236,
+   "storeCpuMsPerOp": 0.124,
+   "storePhases": {},
+   "storeCountersPerOp": null
+  },
+  {
+   "arm": "prepared-batch",
+   "round": 4,
+   "ops": 15,
+   "meanMs": 61.1796,
+   "p50Ms": 53.0925,
+   "p99Ms": 139.5141,
+   "clientCpuMsPerOp": 8.2683,
+   "allocBytesPerOp": -58119468,
+   "storeCpuMsPerOp": 54.3719,
+   "storePhases": {
+    "phase:DispatchMany:commit": {
+     "count": 15,
+     "meanMs": 11.841,
+     "minMs": 5.08,
+     "p01Ms": 5.08,
+     "p50Ms": 9.166,
+     "p95Ms": 41.967,
+     "p99Ms": 41.967,
+     "maxMs": 41.967
+    },
+    "phase:DispatchMany:driverLane": {
+     "count": 15,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.003,
+     "p99Ms": 0.003,
+     "maxMs": 0.003
+    },
+    "phase:DispatchMany:function": {
+     "count": 15,
+     "meanMs": 47.928,
+     "minMs": 27.068,
+     "p01Ms": 27.068,
+     "p50Ms": 42.772,
+     "p95Ms": 96.97,
+     "p99Ms": 96.97,
+     "maxMs": 96.97
+    },
+    "phase:DispatchMany:open": {
+     "count": 15,
+     "meanMs": 0.007,
+     "minMs": 0.005,
+     "p01Ms": 0.005,
+     "p50Ms": 0.006,
+     "p95Ms": 0.017,
+     "p99Ms": 0.017,
+     "maxMs": 0.017
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.667,
+    "rowsWritten": 404
+   }
+  },
+  {
+   "arm": "store-batch",
+   "round": 4,
+   "ops": 15,
+   "meanMs": 49.9238,
+   "p50Ms": 44.1441,
+   "p99Ms": 104.567,
+   "clientCpuMsPerOp": 6.1105,
+   "allocBytesPerOp": 59763783,
+   "storeCpuMsPerOp": 45.6582,
+   "storePhases": {
+    "phase:DispatchMany:commit": {
+     "count": 15,
+     "meanMs": 7.322,
+     "minMs": 4.585,
+     "p01Ms": 4.585,
+     "p50Ms": 6.1,
+     "p95Ms": 14.928,
+     "p99Ms": 14.928,
+     "maxMs": 14.928
+    },
+    "phase:DispatchMany:driverLane": {
+     "count": 15,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.001
+    },
+    "phase:DispatchMany:function": {
+     "count": 15,
+     "meanMs": 41.904,
+     "minMs": 27.303,
+     "p01Ms": 27.303,
+     "p50Ms": 32.81,
+     "p95Ms": 96.402,
+     "p99Ms": 96.402,
+     "maxMs": 96.402
+    },
+    "phase:DispatchMany:open": {
+     "count": 15,
+     "meanMs": 0.005,
+     "minMs": 0.002,
+     "p01Ms": 0.002,
+     "p50Ms": 0.005,
+     "p95Ms": 0.007,
+     "p99Ms": 0.007,
+     "maxMs": 0.007
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1,
+    "rowsWritten": 215.467
+   }
+  },
+  {
+   "arm": "public-single",
+   "round": 5,
+   "ops": 600,
+   "meanMs": 11.4206,
+   "p50Ms": 9.2941,
+   "p99Ms": 49.7478,
+   "clientCpuMsPerOp": 4.0667,
+   "allocBytesPerOp": 107563,
+   "storeCpuMsPerOp": 7.6689,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 2.291,
+     "minMs": 0.65,
+     "p01Ms": 0.775,
+     "p50Ms": 1.71,
+     "p95Ms": 5.52,
+     "p99Ms": 10.655,
+     "maxMs": 22.836
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 600,
+     "meanMs": 0,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.004
+    },
+    "phase:Dispatch:function": {
+     "count": 600,
+     "meanMs": 8.595,
+     "minMs": 3.904,
+     "p01Ms": 4.205,
+     "p50Ms": 6.744,
+     "p95Ms": 16.607,
+     "p99Ms": 40.226,
+     "maxMs": 176.468
+    },
+    "phase:Dispatch:open": {
+     "count": 600,
+     "meanMs": 0.008,
+     "minMs": 0.002,
+     "p01Ms": 0.003,
+     "p50Ms": 0.005,
+     "p95Ms": 0.007,
+     "p99Ms": 0.032,
+     "maxMs": 1.132
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.057,
+    "rowsWritten": 12.323
+   }
+  },
+  {
+   "arm": "prepare-single",
+   "round": 5,
+   "ops": 600,
+   "meanMs": 0.0401,
+   "p50Ms": 0.034,
+   "p99Ms": 0.1464,
+   "clientCpuMsPerOp": 0.0822,
+   "allocBytesPerOp": 39637,
+   "storeCpuMsPerOp": 0.0058,
+   "storePhases": {},
+   "storeCountersPerOp": null
+  },
+  {
+   "arm": "prepared-single",
+   "round": 5,
+   "ops": 600,
+   "meanMs": 10.399,
+   "p50Ms": 8.6077,
+   "p99Ms": 37.5034,
+   "clientCpuMsPerOp": 3.2303,
+   "allocBytesPerOp": 68015,
+   "storeCpuMsPerOp": 7.3113,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 2.292,
+     "minMs": 0.683,
+     "p01Ms": 0.817,
+     "p50Ms": 1.642,
+     "p95Ms": 5.974,
+     "p99Ms": 11.538,
+     "maxMs": 41.603
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 600,
+     "meanMs": 0,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.011
+    },
+    "phase:Dispatch:function": {
+     "count": 600,
+     "meanMs": 7.844,
+     "minMs": 3.815,
+     "p01Ms": 4.311,
+     "p50Ms": 6.581,
+     "p95Ms": 15.17,
+     "p99Ms": 29.235,
+     "maxMs": 49.123
+    },
+    "phase:Dispatch:open": {
+     "count": 600,
+     "meanMs": 0.01,
+     "minMs": 0.003,
+     "p01Ms": 0.005,
+     "p50Ms": 0.006,
+     "p95Ms": 0.009,
+     "p99Ms": 0.04,
+     "maxMs": 0.577
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.108,
+    "rowsWritten": 6
+   }
+  },
+  {
+   "arm": "store-single",
+   "round": 5,
+   "ops": 600,
+   "meanMs": 11.2878,
+   "p50Ms": 8.9398,
+   "p99Ms": 41.1143,
+   "clientCpuMsPerOp": 3.269,
+   "allocBytesPerOp": 66491,
+   "storeCpuMsPerOp": 7.912,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 2.512,
+     "minMs": 0.731,
+     "p01Ms": 0.84,
+     "p50Ms": 1.731,
+     "p95Ms": 5.223,
+     "p99Ms": 12.937,
+     "maxMs": 63.853
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 600,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0,
+     "p99Ms": 0.001,
+     "maxMs": 0.402
+    },
+    "phase:Dispatch:function": {
+     "count": 600,
+     "meanMs": 8.585,
+     "minMs": 3.582,
+     "p01Ms": 4.399,
+     "p50Ms": 6.844,
+     "p95Ms": 17.724,
+     "p99Ms": 34.746,
+     "maxMs": 55.418
+    },
+    "phase:Dispatch:open": {
+     "count": 600,
+     "meanMs": 0.011,
+     "minMs": 0.003,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.017,
+     "p99Ms": 0.138,
+     "maxMs": 0.593
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.06,
+    "rowsWritten": 5.71
+   }
+  },
+  {
+   "arm": "replay-single",
+   "round": 5,
+   "ops": 600,
+   "meanMs": 6.969,
+   "p50Ms": 4.9763,
+   "p99Ms": 38.9249,
+   "clientCpuMsPerOp": 2.9781,
+   "allocBytesPerOp": 62315,
+   "storeCpuMsPerOp": 2.9588,
+   "storePhases": {
+    "phase:Dispatch:commit": {
+     "count": 600,
+     "meanMs": 3.497,
+     "minMs": 0.758,
+     "p01Ms": 0.853,
+     "p50Ms": 2.096,
+     "p95Ms": 11.078,
+     "p99Ms": 19.473,
+     "maxMs": 63.637
+    },
+    "phase:Dispatch:driverLane": {
+     "count": 1200,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.001,
+     "p99Ms": 0.001,
+     "maxMs": 0.204
+    },
+    "phase:Dispatch:function": {
+     "count": 1200,
+     "meanMs": 8.577,
+     "minMs": 1.534,
+     "p01Ms": 1.876,
+     "p50Ms": 5.885,
+     "p95Ms": 22.915,
+     "p99Ms": 57.423,
+     "maxMs": 214.174
+    },
+    "phase:Dispatch:open": {
+     "count": 1200,
+     "meanMs": 0.011,
+     "minMs": 0.003,
+     "p01Ms": 0.004,
+     "p50Ms": 0.007,
+     "p95Ms": 0.015,
+     "p99Ms": 0.067,
+     "maxMs": 1.506
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 2.148,
+    "rowsWritten": 6.64
+   }
+  },
+  {
+   "arm": "store-batch",
+   "round": 5,
+   "ops": 15,
+   "meanMs": 58.4669,
+   "p50Ms": 52.3028,
+   "p99Ms": 145.0077,
+   "clientCpuMsPerOp": 10.9484,
+   "allocBytesPerOp": 809156,
+   "storeCpuMsPerOp": 50.7585,
+   "storePhases": {
+    "phase:DispatchMany:commit": {
+     "count": 15,
+     "meanMs": 8.36,
+     "minMs": 3.844,
+     "p01Ms": 3.844,
+     "p50Ms": 5.902,
+     "p95Ms": 30.783,
+     "p99Ms": 30.783,
+     "maxMs": 30.783
+    },
+    "phase:DispatchMany:driverLane": {
+     "count": 15,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.002,
+     "p99Ms": 0.002,
+     "maxMs": 0.002
+    },
+    "phase:DispatchMany:function": {
+     "count": 15,
+     "meanMs": 49.145,
+     "minMs": 29.381,
+     "p01Ms": 29.381,
+     "p50Ms": 42.033,
+     "p95Ms": 136.348,
+     "p99Ms": 136.348,
+     "maxMs": 136.348
+    },
+    "phase:DispatchMany:open": {
+     "count": 15,
+     "meanMs": 0.006,
+     "minMs": 0.003,
+     "p01Ms": 0.003,
+     "p50Ms": 0.006,
+     "p95Ms": 0.008,
+     "p99Ms": 0.008,
+     "maxMs": 0.008
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 6.267,
+    "rowsWritten": 190.933
+   }
+  },
+  {
+   "arm": "public-batch",
+   "round": 5,
+   "ops": 15,
+   "meanMs": 51.1102,
+   "p50Ms": 46.5835,
+   "p99Ms": 98.3235,
+   "clientCpuMsPerOp": 11.7207,
+   "allocBytesPerOp": 3586085,
+   "storeCpuMsPerOp": 65.0459,
+   "storePhases": {
+    "phase:DispatchMany:commit": {
+     "count": 15,
+     "meanMs": 6.262,
+     "minMs": 3.565,
+     "p01Ms": 3.565,
+     "p50Ms": 5.51,
+     "p95Ms": 11.93,
+     "p99Ms": 11.93,
+     "maxMs": 11.93
+    },
+    "phase:DispatchMany:driverLane": {
+     "count": 15,
+     "meanMs": 0.001,
+     "minMs": 0.001,
+     "p01Ms": 0.001,
+     "p50Ms": 0.001,
+     "p95Ms": 0.002,
+     "p99Ms": 0.002,
+     "maxMs": 0.002
+    },
+    "phase:DispatchMany:function": {
+     "count": 15,
+     "meanMs": 39.685,
+     "minMs": 29.094,
+     "p01Ms": 29.094,
+     "p50Ms": 34.486,
+     "p95Ms": 82.848,
+     "p99Ms": 82.848,
+     "maxMs": 82.848
+    },
+    "phase:DispatchMany:open": {
+     "count": 15,
+     "meanMs": 0.006,
+     "minMs": 0.004,
+     "p01Ms": 0.004,
+     "p50Ms": 0.006,
+     "p95Ms": 0.008,
+     "p99Ms": 0.008,
+     "maxMs": 0.008
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 1.867,
+    "rowsWritten": 484.8
+   }
+  },
+  {
+   "arm": "prepare-batch",
+   "round": 5,
+   "ops": 15,
+   "meanMs": 1.4713,
+   "p50Ms": 1.4271,
+   "p99Ms": 1.9876,
+   "clientCpuMsPerOp": 1.8915,
+   "allocBytesPerOp": 2750016,
+   "storeCpuMsPerOp": 1.4608,
+   "storePhases": {},
+   "storeCountersPerOp": null
+  },
+  {
+   "arm": "prepared-batch",
+   "round": 5,
+   "ops": 15,
+   "meanMs": 48.8837,
+   "p50Ms": 47.174,
+   "p99Ms": 95.3536,
+   "clientCpuMsPerOp": 9.1313,
+   "allocBytesPerOp": 836509,
+   "storeCpuMsPerOp": 51.7777,
+   "storePhases": {
+    "phase:DispatchMany:commit": {
+     "count": 15,
+     "meanMs": 8.278,
+     "minMs": 3.677,
+     "p01Ms": 3.677,
+     "p50Ms": 5.465,
+     "p95Ms": 23.509,
+     "p99Ms": 23.509,
+     "maxMs": 23.509
+    },
+    "phase:DispatchMany:driverLane": {
+     "count": 15,
+     "meanMs": 0.001,
+     "minMs": 0,
+     "p01Ms": 0,
+     "p50Ms": 0,
+     "p95Ms": 0.002,
+     "p99Ms": 0.002,
+     "maxMs": 0.002
+    },
+    "phase:DispatchMany:function": {
+     "count": 15,
+     "meanMs": 39.582,
+     "minMs": 29.499,
+     "p01Ms": 29.499,
+     "p50Ms": 35.563,
+     "p95Ms": 70.844,
+     "p99Ms": 70.844,
+     "maxMs": 70.844
+    },
+    "phase:DispatchMany:open": {
+     "count": 15,
+     "meanMs": 0.006,
+     "minMs": 0.005,
+     "p01Ms": 0.005,
+     "p50Ms": 0.006,
+     "p95Ms": 0.009,
+     "p99Ms": 0.009,
+     "maxMs": 0.009
+    }
+   },
+   "storeCountersPerOp": {
+    "transactions": 2.333,
+    "rowsWritten": 221.267
+   }
+  }
+ ],
+ "cpuIdlePctBefore": 81,
+ "returncode": 0
+}

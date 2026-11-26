@@ -60,6 +60,8 @@ Start with 1 KiB plain jobs and the original 20,000 backlog. Extend only promisi
 
 ## Stage 2 — Isolate the shared engine
 
+> **Status, 26 November 2026.** Both experiments ran on this machine on memory-backed storage; see the [overview](../reports/queue-stage2-overview.md) and the [Redis](../reports/queue-stage2-redis.md), [PostgreSQL](../reports/queue-stage2-postgresql.md) and [SQLite](../reports/queue-stage2-sqlite.md) reports. Preparation is 0.3% to 3% of a single add and 4% to 13% of a 100-job bulk add; the store call is the first cost for adds on all three stores. For drain, Redis and PostgreSQL separate only when claim timing changes (claim ahead lifts Redis 33% to 36% and PostgreSQL 2× at 16 slots); SQLite shows no worker effect. Not done: multi-lane check, disk-backed storage, a second host, seven matched pairs.
+
 The Redis worker settings alone moved the same binary from 540 to 1,616 and from 407 to 959 jobs/s in two disk-backed backlog comparisons. That establishes that scheduling affects drain. It does not quantify the CPU overhead of the shared worker. Producer-only workloads run without consumers and exercise a different shared path. Investigate both before attributing a cross-store gap to the engine. [Measured comparisons](../reports/queue-benchmark-2026-11-24-investigation.md)
 
 ### A shared .NET experiment for all three producers

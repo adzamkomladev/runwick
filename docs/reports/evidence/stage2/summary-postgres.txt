@@ -1,0 +1,36 @@
+postgres  payload 1024 B, 600 single ops, 15 batches of 100, 5 rounds, tmpdir /dev/shm/s2/
+arm              ms/op median (range)       client cpu ms/op             KiB/op store cpu ms/op            cmds/op
+replay-single    6.969 (6.167-7.311)        2.881 (2.627-3.210)            60.8 2.959 (2.686-3.488)        2.077
+public-single    12.152 (11.405-12.852)     3.856 (3.429-4.469)           105.1 8.138 (7.669-8.818)        1.098
+prepare-single   0.033 (0.028-0.263)        0.043 (0.030-0.455)            38.7 0.003 (0.000-0.025)        -
+prepared-single  11.555 (10.399-16.750)     3.442 (3.230-4.636)            66.5 7.968 (7.311-10.975)       1.097
+store-single     11.124 (10.700-13.098)     3.269 (3.177-3.776)            64.9 7.912 (7.481-9.735)        1.087
+store-batch      54.100 (42.276-61.162)     6.592 (5.110-20.079)          790.2 45.658 (38.441-53.746)     1.867
+public-batch     54.584 (50.133-61.002)     14.910 (11.721-21.207)       3502.0 47.252 (41.369-65.046)     2
+prepare-batch    2.162 (1.471-8.129)        3.105 (1.891-21.125)         2685.6 0.017 (0.000-1.461)        -
+prepared-batch   50.897 (42.306-61.180)     9.131 (7.021-12.872)          816.9 45.212 (37.852-54.372)     2.333
+preparation split (ms per job, median): {'serializePayloadMs': 0.0087, 'prepareItemMs': 0.0141, 'digestsMs': 0.0351, 'prepareSingleMs': 0.0357}
+postgres: 3000 ops per arm, 5 rounds, tmpdir /dev/shm/s2/
+callers arm       ops/s median (range)        client cpu ms/op  KiB/op  store cpu ms/op  gen0/gen2 per arm
+     16 public          571 (458-607)                   1.481   100.4            7.246        13/2
+     16 prepared        565 (482-724)                   1.355    61.4            7.229        10/2
+     16 store           592 (537-639)                   1.311    60.1            6.999        10/2
+     64 public          490 (475-588)                   1.179   100.1            6.379         8/2
+     64 prepared        509 (458-668)                   0.954    61.3            6.268         8/2
+     64 store           526 (471-632)                   0.921    59.9            6.214         7/2
+== postgres slots 16
+run kind                            n jobs/s median (range)      cli cpu store cpu p99 ret→conf ms claim sz fin sz idle+backlog idle%
+w16-calibration-public              1      444 (444-444)         1.33      3.05           171.6      8.6   17.2            -    91
+w16-pair1-direct                    5      484 (432-525)         1.18      2.97           174.5      9.0   14.3         1.00    91
+w16-pair1-public                    5      376 (307-465)         1.48      3.59           190.9      8.5   16.9            -    91
+w16-pair2-direct-flush0             3      482 (482-542)         1.16      3.10           139.7      9.0   11.0         1.00    92
+w16-pair2-direct-flush20            3      430 (429-560)         1.23      3.18           206.7      9.0   16.7         1.00    89
+w16-pair2-public-claimahead16       3      757 (723-807)         0.86      2.09           191.7     17.0   29.2            -    90
+w16-pair2-public-inflight2          3      721 (649-724)         1.14      2.91           225.5      8.1   25.3            -    91
+== postgres slots 64
+run kind                            n jobs/s median (range)      cli cpu store cpu p99 ret→conf ms claim sz fin sz idle+backlog idle%
+w64-calibration-public              1     1179 (1179-1179)         0.59      1.63           120.2     32.0   32.0            -    92
+w64-pair1-direct                    3      918 (790-1053)         0.55      1.60          5594.0     32.0   32.0         0.73    92
+w64-pair1-public                    3     1087 (1057-1250)         0.66      1.75           166.0     32.0   32.0            -    93
+w64-pair2-public-claimahead32       3     1075 (922-1124)         0.65      1.74           130.1     32.0   32.0            -    94
+w64-pair2-public-inflight2          3     1806 (1229-1892)         0.56      1.73           161.8     31.2   31.6            -    89

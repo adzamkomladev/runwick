@@ -1,0 +1,36 @@
+redis  payload 1024 B, 1500 single ops, 30 batches of 100, 5 rounds, tmpdir /dev/shm/s2/
+arm              ms/op median (range)       client cpu ms/op             KiB/op store cpu ms/op            cmds/op
+replay-single    1.635 (1.533-2.061)        1.034 (0.874-1.620)            15.4 0.676 (0.531-0.948)        26.016
+public-single    2.381 (2.249-2.761)        1.213 (1.142-1.297)            54.0 1.204 (1.033-1.356)        21.016
+prepare-single   0.035 (0.033-0.068)        0.045 (0.039-0.064)            38.7 0.000 (0.000-0.000)        -
+prepared-single  2.254 (1.829-3.082)        1.057 (0.849-1.262)            15.4 1.105 (0.952-1.333)        21.016
+store-single     2.090 (1.929-2.421)        1.011 (0.861-1.131)            14.4 1.019 (0.981-1.131)        21.016
+store-batch      19.569 (17.015-25.085)     3.493 (2.947-8.115)           936.0 15.802 (13.438-24.165)     417.8
+public-batch     26.122 (22.621-40.046)     11.733 (9.552-20.407)        3649.0 17.986 (15.510-38.176)     417.8
+prepare-batch    3.274 (2.311-3.980)        3.674 (2.790-5.490)          2685.0 0.052 (0.017-3.853)        -
+prepared-batch   18.779 (16.263-28.801)     4.820 (2.489-6.111)           964.4 18.502 (13.625-27.376)     417.8
+preparation split (ms per job, median): {'serializePayloadMs': 0.0083, 'prepareItemMs': 0.0148, 'digestsMs': 0.0365, 'prepareSingleMs': 0.0379}
+redis: 12000 ops per arm, 5 rounds, tmpdir /dev/shm/s2/
+callers arm       ops/s median (range)        client cpu ms/op  KiB/op  store cpu ms/op  gen0/gen2 per arm
+     16 public         1224 (1016-1465)                   0.602    54.0            0.743        32/6
+     16 prepared       1458 (1122-1673)                   0.332    15.4            0.712        23/7
+     16 store          1400 (1230-1634)                   0.312    14.4            0.657        22/7
+     64 public         1772 (1699-1990)                   0.307    54.1            0.565        30/7
+     64 prepared       1852 (1790-1959)                   0.181    15.4            0.539        22/7
+     64 store          1907 (1727-2050)                   0.159    14.4            0.521        21/7
+== redis slots 16
+run kind                            n jobs/s median (range)      cli cpu store cpu p99 ret→conf ms claim sz fin sz idle+backlog idle%
+w16-calibration-public              1     1028 (1028-1028)         1.12      0.59            28.7      6.5    7.6            -    82
+w16-pair1-direct                    5     1057 (675-1149)         0.88      0.65            31.2      5.5    5.5         0.85    91
+w16-pair1-public                    5      948 (860-1015)         1.16      0.67            34.0      6.5    7.6            -    88
+w16-pair2-direct-flush0             3      972 (910-982)         0.95      0.70            33.0      5.5    5.5         0.85    89
+w16-pair2-direct-flush20            3     1078 (786-1166)         0.91      0.63            22.6      5.5    5.5         0.85    90
+w16-pair2-public-claimahead16       3     1288 (1196-1338)         0.91      0.53            54.1     12.4   11.8            -    91
+w16-pair2-public-inflight2          3      910 (652-932)         1.30      0.73            41.6      6.0    6.3            -    90
+== redis slots 64
+run kind                            n jobs/s median (range)      cli cpu store cpu p99 ret→conf ms claim sz fin sz idle+backlog idle%
+w64-calibration-public              1     1861 (1861-1861)         0.70      0.42            53.3     23.5   16.5            -    87
+w64-pair1-direct                    3     1312 (983-1389)         0.69      0.60            94.8     21.3   10.7         0.41    86
+w64-pair1-public                    3     1335 (1175-1405)         0.87      0.57            99.2     23.3   18.5            -    81
+w64-pair2-public-claimahead32       3     1773 (1719-2278)         0.80      0.43            85.3     31.7   20.0            -    88
+w64-pair2-public-inflight2          3     1561 (1514-1996)         0.75      0.51            88.8     21.9   18.4            -    86

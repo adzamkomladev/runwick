@@ -40,5 +40,6 @@ return args[0] switch
     "perf" => await PerfMode.RunAsync(a),
     "bench" => await BenchMode.RunAsync(a),
     "writefloor" => await WriteFloorMode.RunAsync(a),
+    "stage2" => await Stage2Mode.RunAsync(a),
     _ => 2,
 };

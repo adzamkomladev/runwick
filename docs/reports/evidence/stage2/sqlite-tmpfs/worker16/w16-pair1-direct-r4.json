@@ -1,0 +1,108 @@
+{
+ "mode": "stage2-worker",
+ "store": "sqlite",
+ "arm": "direct",
+ "slots": 16,
+ "jobs": 20000,
+ "confirmed": 20000,
+ "buffered": true,
+ "claimAhead": 0,
+ "claimsInFlightSetting": 1,
+ "claimSize": 8,
+ "finishSize": 19,
+ "flushMs": 5,
+ "usage": false,
+ "startupMsToFirstClaim": 11.8,
+ "drainSeconds": 42.13,
+ "jobsPerSec": 474.7,
+ "handlerReturnToConfirmMs": {
+  "p50": 19.49,
+  "p95": 49.17,
+  "p99": 82.26
+ },
+ "clientCpuMsPerJob": 3.1041,
+ "storeCpuMsPerJob": 0,
+ "storeCallLatencies": {
+  "dispatchMany": {
+   "count": 200,
+   "meanMs": 61.512,
+   "minMs": 32.214,
+   "p01Ms": 32.634,
+   "p50Ms": 53.182,
+   "p95Ms": 104.484,
+   "p99Ms": 167.151,
+   "maxMs": 204.493
+  },
+  "dueToBegin": {
+   "count": 20000,
+   "meanMs": 25233.904,
+   "minMs": 7151,
+   "p01Ms": 7696,
+   "p50Ms": 25106,
+   "p95Ms": 40459,
+   "p99Ms": 41742,
+   "maxMs": 42151
+  },
+  "finishMany": {
+   "count": 2301,
+   "meanMs": 11.575,
+   "minMs": 2.479,
+   "p01Ms": 3.515,
+   "p50Ms": 7.987,
+   "p95Ms": 28.343,
+   "p99Ms": 49.286,
+   "maxMs": 237.131
+  },
+  "finishManySize": {
+   "count": 2301,
+   "meanMs": 8.692,
+   "minMs": 8,
+   "p01Ms": 8,
+   "p50Ms": 8,
+   "p95Ms": 16,
+   "p99Ms": 16,
+   "maxMs": 19
+  },
+  "reserveAndBegin": {
+   "count": 2500,
+   "meanMs": 16.729,
+   "minMs": 4.068,
+   "p01Ms": 6.458,
+   "p50Ms": 13.265,
+   "p95Ms": 33.915,
+   "p99Ms": 60.554,
+   "maxMs": 244.169
+  },
+  "reserveAndBeginSize": {
+   "count": 2500,
+   "meanMs": 8,
+   "minMs": 8,
+   "p01Ms": 8,
+   "p50Ms": 8,
+   "p95Ms": 8,
+   "p99Ms": 8,
+   "maxMs": 8
+  }
+ },
+ "storeCallCounts": {
+  "dispatchMany:Applied": 200,
+  "finishMany.item:Applied": 20000,
+  "finishMany:Applied": 2301,
+  "reserveAndBegin.item:Applied": 20000,
+  "reserveAndBegin:Applied": 2500
+ },
+ "idleWithBacklog": {
+  "samples": 17331,
+  "idleSlotWithBacklogShare": 0.9991
+ },
+ "direct": {
+  "claimSizeUsed": 8,
+  "finishSizeUsed": 19,
+  "flushMsUsed": 5,
+  "claimers": 1,
+  "finishFailures": 0
+ },
+ "cpuIdlePctBefore": 84,
+ "idleGateTimedOut": false,
+ "returncode": 0
+}

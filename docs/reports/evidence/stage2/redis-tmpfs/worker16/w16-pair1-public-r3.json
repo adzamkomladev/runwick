@@ -1,0 +1,191 @@
+{
+ "mode": "stage2-worker",
+ "store": "redis",
+ "arm": "public",
+ "slots": 16,
+ "jobs": 20000,
+ "confirmed": 20000,
+ "buffered": false,
+ "claimAhead": 0,
+ "claimsInFlightSetting": 1,
+ "claimSize": null,
+ "finishSize": null,
+ "flushMs": null,
+ "usage": false,
+ "startupMsToFirstClaim": 126.8,
+ "drainSeconds": 21.104,
+ "jobsPerSec": 947.7,
+ "handlerReturnToConfirmMs": {
+  "p50": 5.39,
+  "p95": 16.16,
+  "p99": 32.9
+ },
+ "clientCpuMsPerJob": 1.1617,
+ "storeCpuMsPerJob": 0.676,
+ "storeCallLatencies": {
+  "cleanupBatch": {
+   "count": 14,
+   "meanMs": 2.842,
+   "minMs": 1.224,
+   "p01Ms": 1.224,
+   "p50Ms": 1.898,
+   "p95Ms": 8.195,
+   "p99Ms": 8.195,
+   "maxMs": 8.195
+  },
+  "dispatchMany": {
+   "count": 200,
+   "meanMs": 27.03,
+   "minMs": 15.45,
+   "p01Ms": 15.683,
+   "p50Ms": 24.216,
+   "p95Ms": 47.45,
+   "p99Ms": 65.259,
+   "maxMs": 85.018
+  },
+  "dueToBegin": {
+   "count": 20000,
+   "meanMs": 12743.008,
+   "minMs": 4100,
+   "p01Ms": 4528,
+   "p50Ms": 12491,
+   "p95Ms": 20736,
+   "p99Ms": 21230,
+   "maxMs": 21366
+  },
+  "finish": {
+   "count": 3277,
+   "meanMs": 5.458,
+   "minMs": 0.651,
+   "p01Ms": 1.118,
+   "p50Ms": 4.448,
+   "p95Ms": 11.51,
+   "p99Ms": 23.195,
+   "maxMs": 253.795
+  },
+  "finishMany": {
+   "count": 2248,
+   "meanMs": 6.305,
+   "minMs": 1.212,
+   "p01Ms": 1.685,
+   "p50Ms": 4.968,
+   "p95Ms": 13.57,
+   "p99Ms": 28.439,
+   "maxMs": 127.533
+  },
+  "finishManySize": {
+   "count": 2248,
+   "meanMs": 7.439,
+   "minMs": 2,
+   "p01Ms": 2,
+   "p50Ms": 6,
+   "p95Ms": 15,
+   "p99Ms": 15,
+   "maxMs": 16
+  },
+  "listExpired": {
+   "count": 4,
+   "meanMs": 42.154,
+   "minMs": 6.114,
+   "p01Ms": 6.114,
+   "p50Ms": 7.482,
+   "p95Ms": 134.123,
+   "p99Ms": 134.123,
+   "maxMs": 134.123
+  },
+  "presence": {
+   "count": 7,
+   "meanMs": 9.709,
+   "minMs": 2.718,
+   "p01Ms": 2.718,
+   "p50Ms": 6.415,
+   "p95Ms": 24.579,
+   "p99Ms": 24.579,
+   "maxMs": 24.579
+  },
+  "probe": {
+   "count": 13,
+   "meanMs": 5.732,
+   "minMs": 1.28,
+   "p01Ms": 1.28,
+   "p50Ms": 4.805,
+   "p95Ms": 13.987,
+   "p99Ms": 13.987,
+   "maxMs": 13.987
+  },
+  "reserveAndBegin": {
+   "count": 3054,
+   "meanMs": 5.792,
+   "minMs": 0.917,
+   "p01Ms": 1.261,
+   "p50Ms": 4.553,
+   "p95Ms": 13.031,
+   "p99Ms": 26.856,
+   "maxMs": 246.106
+  },
+  "reserveAndBeginSize": {
+   "count": 3053,
+   "meanMs": 6.551,
+   "minMs": 1,
+   "p01Ms": 1,
+   "p50Ms": 4,
+   "p95Ms": 15,
+   "p99Ms": 15,
+   "maxMs": 16
+  }
+ },
+ "storeCallCounts": {
+  "cleanupBatch:done": 14,
+  "dispatchMany:Applied": 200,
+  "finish:Applied": 3277,
+  "finishMany.item:Applied": 16723,
+  "finishMany:Applied": 2248,
+  "listExpired:none": 4,
+  "presence:accepted": 7,
+  "probe:empty": 1,
+  "probe:ready": 12,
+  "reserveAndBegin.item:Applied": 20000,
+  "reserveAndBegin:Applied": 3053,
+  "reserveAndBegin:NoWork": 1
+ },
+ "idleWithBacklog": {
+  "samples": 0,
+  "idleSlotWithBacklogShare": null
+ },
+ "direct": {
+  "handlerRuns": 20000
+ },
+ "storeCountersPerJob": {
+  "calls:client|id": 0.0002,
+  "calls:client|setinfo": 0.0004,
+  "calls:client|setname": 0.0002,
+  "calls:cluster|nodes": 0.0001,
+  "calls:cluster|slots": 0.0001,
+  "calls:config|get": 0.0002,
+  "calls:echo": 0.0002,
+  "calls:evalsha": 0.431,
+  "calls:get": 1.0001,
+  "calls:hdel": 1,
+  "calls:hello": 0.0002,
+  "calls:hexists": 1.1527,
+  "calls:hget": 0.1556,
+  "calls:hgetall": 2.4312,
+  "calls:hkeys": 0,
+  "calls:hmget": 0.0012,
+  "calls:hset": 3.4414,
+  "calls:info": 0.0004,
+  "calls:quit": 0.0001,
+  "calls:subscribe": 0.0001,
+  "calls:time": 0.431,
+  "calls:unsubscribe": 0,
+  "calls:zadd": 1.716,
+  "calls:zrange": 0.1582,
+  "calls:zrem": 0.8578,
+  "commandCalls": 12.7784,
+  "commandUsec": 612.6734,
+  "cpuSeconds": 0.0006
+ },
+ "cpuIdlePctBefore": 93,
+ "idleGateTimedOut": false,
+ "returncode": 0
+}

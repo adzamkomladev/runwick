@@ -1470,7 +1470,7 @@ internal static class BenchMode
     }
 
     /// <summary>A phase marker on stderr (stdout is the result JSON); ci/run.py reads the store and process counters when it sees one.</summary>
-    static void Phase(string name) => Console.Error.WriteLine($"@@PHASE {name} {DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}");
+    internal static void Phase(string name) => Console.Error.WriteLine($"@@PHASE {name} {DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}");
 
     /// <summary>
     /// Load-queue jobs by state as the store itself reports them (management job stats, the same for all three stores). States count jobs created in the
@@ -1562,7 +1562,7 @@ internal static class BenchMode
     }
 
     /// <summary>Redis's own cumulative counters, summed over every primary: command calls and time, and server CPU seconds.</summary>
-    static async Task<JsonObject> RedisCountersAsync(string configuration)
+    internal static async Task<JsonObject> RedisCountersAsync(string configuration)
     {
         using var redis = await StackExchange.Redis.ConnectionMultiplexer.ConnectAsync(configuration + ",allowAdmin=true").ConfigureAwait(false);
         var totals = new SortedDictionary<string, double>(StringComparer.Ordinal);
@@ -1597,12 +1597,13 @@ internal static class BenchMode
     /// PostgreSQL's own cumulative counters for the bench database: transactions, rows written, and (with --trace, which turns on
     /// track_functions) calls and server time of each runwick function. PostgreSQL does not report its CPU.
     /// </summary>
-    static async Task<JsonObject> PostgresCountersAsync(string connectionString, string database)
+    internal static async Task<JsonObject> PostgresCountersAsync(string connectionString, string database)
     {
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync().ConfigureAwait(false);
         await using var cmd = new NpgsqlCommand("""
-            SELECT 'transactions', (xact_commit + xact_rollback)::float8 FROM pg_stat_database WHERE datname = @db
+            SELECT 'walBytes', pg_wal_lsn_diff(pg_current_wal_lsn(), '0/0')::float8
+            UNION ALL SELECT 'transactions', (xact_commit + xact_rollback)::float8 FROM pg_stat_database WHERE datname = @db
             UNION ALL SELECT 'rowsWritten', (tup_inserted + tup_updated + tup_deleted)::float8 FROM pg_stat_database WHERE datname = @db
             UNION ALL SELECT 'functionCalls:' || funcname, calls::float8 FROM pg_stat_user_functions WHERE schemaname = 'runwick'
             UNION ALL SELECT 'functionMs:' || funcname, total_time FROM pg_stat_user_functions WHERE schemaname = 'runwick'

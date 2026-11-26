@@ -1,0 +1,9 @@
+@@PHASE seed-start 1795648498063
+Unhandled exception. Runwick.LocalCapacityExceededException: Local producer admission is full; the command was not submitted.
+   at Runwick.Dispatching.JobDispatcher.DispatchManyAsync(IReadOnlyList`1 items, BatchDispatchOptions options, CancellationToken cancellationToken) in /root/work/Spindle/src/Runwick/Dispatch/JobDispatcher.cs:line 63
+   at Runwick.Workloads.Stage2Worker.<>c__DisplayClass0_0.<<RunAsync>b__4>d.MoveNext() in /root/work/Spindle/tests/Runwick.Workloads/Stage2Worker.cs:line 66
+--- End of stack trace from previous location ---
+   at Runwick.Workloads.Stage2Worker.RunAsync(Args a) in /root/work/Spindle/tests/Runwick.Workloads/Stage2Worker.cs:line 61
+   at Runwick.Workloads.Stage2Worker.RunAsync(Args a) in /root/work/Spindle/tests/Runwick.Workloads/Stage2Worker.cs:line 171
+   at Program.<Main>$(String[] args) in /root/work/Spindle/tests/Runwick.Workloads/Program.cs:line 42
+   at Program.<Main>(String[] args)
